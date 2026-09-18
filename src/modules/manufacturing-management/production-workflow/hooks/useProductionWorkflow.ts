@@ -2,11 +2,12 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { JobOrder, User, RouteOperatorRecord, RoutingTask, JobOrderCancellationPreview, SalesOrderLink } from "../types";
+import { JobOrder, User, RouteOperatorRecord, RoutingTask, JobOrderCancellationPreview, SalesOrderLink, JobOrderMaterialLine } from "../types";
 import {
     fetchJobOrders,
     fetchUsersList as apiFetchUsers,
     fetchRouteOperators,
+    fetchJobOrderMaterials,
     manageRouteOperator,
     patchRoutingTask,
     fetchJobOrderCancellationPreview,
@@ -36,6 +37,8 @@ export function useProductionWorkflow() {
     const [users, setUsers] = useState<User[]>([]);
     const [selectedJobOrderId, setSelectedJobOrderId] = useState<string>("");
     const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
+    const [jobOrderMaterials, setJobOrderMaterials] = useState<JobOrderMaterialLine[]>([]);
+    const [loadingJobOrderMaterials, setLoadingJobOrderMaterials] = useState(false);
 
     // Operator logs for the selected task
     const [routeOperators, setRouteOperators] = useState<RouteOperatorRecord[]>([]);
@@ -372,6 +375,35 @@ const selectedTask = useMemo(() => {
     }, [selectedJobOrderId, selectedJobOrder, sortedTasks, activeStep, selectedTaskId]);
 
     useEffect(() => {
+        const jobOrderId = selectedJobOrder?.order_id || selectedJobOrder?.job_order_id;
+        if (!jobOrderId) {
+            setJobOrderMaterials([]);
+            setLoadingJobOrderMaterials(false);
+            return;
+        }
+
+        let disposed = false;
+        setLoadingJobOrderMaterials(true);
+        void fetchJobOrderMaterials(jobOrderId)
+            .then((materials) => {
+                if (!disposed) setJobOrderMaterials(materials);
+            })
+            .catch((error: any) => {
+                if (!disposed) {
+                    setJobOrderMaterials([]);
+                    console.error("Error fetching Job Order material batches:", error);
+                }
+            })
+            .finally(() => {
+                if (!disposed) setLoadingJobOrderMaterials(false);
+            });
+
+        return () => {
+            disposed = true;
+        };
+    }, [selectedJobOrder]);
+
+    useEffect(() => {
         if (sortedTasks.length > 0) {
             fetchJobOrderOperators(sortedTasks);
             setActiveManualUserId(null);
@@ -603,6 +635,50 @@ const selectedTask = useMemo(() => {
         }
     };
 
+    // Edit the latest completed operator session using Philippine wall-clock times.
+    const handleSaveOperatorTimes = async (
+        taskId: number,
+        opUserId: number,
+        routeOperatorId: number,
+        startedAt: string,
+        stoppedAt: string,
+        changeReason = "",
+        requestId = createOperatorRequestId("edit-times", taskId, opUserId)
+    ): Promise<boolean> => {
+        if (!selectedJobOrder || !startedAt || routeOperatorId <= 0) return false;
+        if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
+            toast.error("Operator times can only be edited while the Job Order is In Production.");
+            return false;
+        }
+
+        const taskObj = sortedTasks.find(t => t.id === taskId);
+        try {
+            const response = await manageRouteOperator({
+                action: "edit-times",
+                taskId,
+                userId: opUserId,
+                joId: selectedJobOrder.jo_id,
+                routeOperatorId,
+                routingId: taskObj?.routing_id || 0,
+                startedAt,
+                stoppedAt,
+                changeReason,
+                requestId
+            });
+            toast.success("Operator Time In and Time Out updated successfully.");
+            await fetchJobOrderOperators(
+                sortedTasks,
+                false,
+                response?.assignedPersonnel ?? response?.assignmentState?.assignedPersonnel
+            );
+            await fetchJobs(selectedJobOrder.jo_id, true);
+            return true;
+        } catch (err: any) {
+            toast.error(err.message || "Failed to update operator times.");
+            return false;
+        }
+    };
+
     // Complete a route after the terminal confirmation dialog has been accepted.
     // QA-required routes use the same explicit completion path as every other route;
     // the separate QA inspection workflow remains available in the manufacturing QA module.
@@ -736,7 +812,12 @@ const selectedTask = useMemo(() => {
 
     const handleWorkflowAction = useCallback(async (
         action: Extract<JobOrderWorkflowAction, "place-on-hold" | "resume-production" | "complete-production" | "terminate-production">,
-        input: { remarks?: string; resolutionRemarks?: string; terminationImage?: File | null } = {}
+        input: {
+            remarks?: string;
+            resolutionRemarks?: string;
+            terminationImage?: File | null;
+            workflowEvidenceImage?: File | null;
+        } = {}
     ): Promise<boolean> => {
         if (!selectedJobOrder) return false;
         const jobOrderId = selectedJobOrder.order_id || selectedJobOrder.job_order_id;
@@ -837,6 +918,8 @@ const selectedTask = useMemo(() => {
         setActiveManualUserId,
         selectedJobOrder,
         sortedTasks,
+        jobOrderMaterials,
+        loadingJobOrderMaterials,
         activeStep,
         fetchJobs,
         handleAddOperator,
@@ -845,6 +928,7 @@ const selectedTask = useMemo(() => {
         handleStartTimer,
         handleStopTimer,
         handleSaveManualHours,
+        handleSaveOperatorTimes,
         completeRouteStep,
         filteredJobOrders,
         branches,

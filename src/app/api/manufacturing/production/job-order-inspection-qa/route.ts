@@ -199,9 +199,16 @@ async function loadJobOrderSummaries() {
         current.push(yieldRow);
         yieldsByJobOrder.set(id, current);
     });
-    const acceptedByJobOrder = acceptedQuantityByJobOrder(
-        buildQAYieldAssessments(yields, inspections, routes)
-    );
+    const assessments = buildQAYieldAssessments(yields, inspections, routes);
+    const acceptedByJobOrder = acceptedQuantityByJobOrder(assessments);
+    const unresolvedByJobOrder = new Map<number, number>();
+    assessments.forEach((assessment) => {
+        if (assessment.qaStatus === "Passed") return;
+        unresolvedByJobOrder.set(
+            assessment.jobOrderId,
+            (unresolvedByJobOrder.get(assessment.jobOrderId) || 0) + 1
+        );
+    });
 
     const rows = jobOrders
         .map((jobOrder) => {
@@ -229,6 +236,7 @@ async function loadJobOrderSummaries() {
                 targetQuantity: numberValue(jobOrder.target_quantity ?? jobOrder.quantity),
                 producedQuantity,
                 yieldCount: ledgerRows.length,
+                unresolvedYieldCount: unresolvedByJobOrder.get(id) || 0,
                 latestYieldAt: timestampValue(latest?.logged_at || latest?.production_date),
                 createdAt: timestampValue(jobOrder.created_at),
                 modifiedAt: timestampValue(jobOrder.modified_at)
@@ -399,6 +407,7 @@ async function loadJobOrderDetails(id: number) {
         producedQuantity: dailyYields.reduce((sum, row) => (
             sum + (row.qaStatus === "Passed" ? row.goodQuantity + row.rejectedQuantity : 0)
         ), 0),
+        unresolvedYieldCount: dailyYields.filter((row) => row.qaStatus !== "Passed").length,
         latestYieldAt: timestampValue(dailyYields[0]?.loggedAt || dailyYields[0]?.productionDate),
         routes: routeModels,
         dailyYields,

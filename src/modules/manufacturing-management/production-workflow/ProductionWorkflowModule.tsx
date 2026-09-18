@@ -68,13 +68,15 @@ export default function ProductionWorkflowModule() {
         setActiveManualUserId,
         selectedJobOrder,
         sortedTasks,
+        jobOrderMaterials,
+        loadingJobOrderMaterials,
         fetchJobs,
         handleAddOperator,
         handleRemoveOperator,
         handleSwapOperator,
         handleStartTimer,
         handleStopTimer,
-        handleSaveManualHours,
+        handleSaveOperatorTimes,
         completeRouteStep,
         filteredJobOrders,
         branches,
@@ -608,6 +610,8 @@ export default function ProductionWorkflowModule() {
                                 selectedTaskId={selectedTaskId}
                                 setSelectedTaskId={setSelectedTaskId}
                                 selectedJobOrder={selectedJobOrder}
+                                jobOrderMaterials={jobOrderMaterials}
+                                loadingJobOrderMaterials={loadingJobOrderMaterials}
                                 routeOperators={routeOperators}
                                 users={users}
                                 loadingOperators={loadingOperators}
@@ -616,7 +620,7 @@ export default function ProductionWorkflowModule() {
                                 handleSwapOperator={handleSwapOperator}
                                 handleStartTimer={handleStartTimer}
                                 handleStopTimer={handleStopTimer}
-                                handleSaveManualHours={handleSaveManualHours}
+                                handleSaveOperatorTimes={handleSaveOperatorTimes}
                                 onBreakdownSaved={() => {
                                     void fetchJobs(selectedJobOrderId, true);
                                 }}

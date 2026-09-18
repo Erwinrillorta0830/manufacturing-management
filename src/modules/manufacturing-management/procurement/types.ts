@@ -124,6 +124,7 @@ export interface IncomingShipment {
     is_posted?: number | boolean | null;
     is_posted_amounts?: number | boolean | null;
     rejection_stage?: "Plant" | "Finance" | null;
+    finance_revision_remarks?: string | null;
     remark?: string;
     created_at?: string;
     payment_mode?: number | null;

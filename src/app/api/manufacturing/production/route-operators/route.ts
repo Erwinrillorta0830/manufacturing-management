@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { isCancelledJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
+import { formatPhtDateTime, parsePhtDateTime } from "../../directus-api";
 import { getSessionUserId } from "../../lot-transfers/_session";
 import {
     findOperatorRosterAudit,
@@ -26,7 +27,7 @@ if (DIRECTUS_STATIC_TOKEN) {
 
 const COLLECTION = "manufacturing_job_order_route_operators";
 const ROUTE_OPERATOR_FIELDS = "jo_route_operator_id,jo_route_id,operator_id,logged_hours,hourly_rate,logged_at,started_at,stopped_at,is_active";
-const OPERATOR_ROSTER_ACTIONS = new Set(["remove-operator", "swap-operator", "edit-hours"]);
+const OPERATOR_ROSTER_ACTIONS = new Set(["remove-operator", "swap-operator", "edit-hours", "edit-times"]);
 
 interface RouteOperatorRecord {
     id: number;
@@ -66,11 +67,11 @@ class DirectusRouteOperatorError extends Error {
     }
 }
 
-function isRosterChangeAction(action: string): action is "remove-operator" | "swap-operator" | "edit-hours" {
+function isRosterChangeAction(action: string): action is "remove-operator" | "swap-operator" | "edit-hours" | "edit-times" {
     return OPERATOR_ROSTER_ACTIONS.has(action);
 }
 
-function operatorAuditAction(action: "remove-operator" | "swap-operator" | "edit-hours"): "operator-remove" | "operator-swap" | "operator-edit" {
+function operatorAuditAction(action: "remove-operator" | "swap-operator" | "edit-hours" | "edit-times"): "operator-remove" | "operator-swap" | "operator-edit" {
     if (action === "remove-operator") return "operator-remove";
     if (action === "swap-operator") return "operator-swap";
     return "operator-edit";
@@ -92,8 +93,11 @@ function rosterRequestHash(body: Record<string, any>, actorId: number): string {
             action: textValue(body.action),
             taskId: positiveInteger(body.taskId),
             userId: positiveInteger(body.userId),
+            routeOperatorId: positiveInteger(body.routeOperatorId) || null,
             replacementUserId: positiveInteger(body.replacementUserId) || null,
             actualHours: body.actualHours ?? null,
+            startedAt: textValue(body.startedAt),
+            stoppedAt: textValue(body.stoppedAt),
             changeReason: textValue(body.changeReason)
         }))
         .digest("hex");
@@ -116,9 +120,23 @@ function changeReason(value: unknown): string {
 }
 
 function parseDirectusDateTime(value: string): number {
-    const normalized = value.trim().includes("T") ? value.trim() : value.trim().replace(" ", "T");
-    const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized);
-    return Date.parse(hasTimezone ? normalized : `${normalized}Z`);
+    return parsePhtDateTime(value) ?? Number.NaN;
+}
+
+function normalizePhtInput(value: unknown, label: string): { value: string; timestamp: number } {
+    const raw = textValue(value);
+    const match = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(raw);
+    if (!match) {
+        throw new DirectusRouteOperatorError(400, `${label} must use Philippine time in YYYY-MM-DDTHH:mm format.`, "OPERATOR_TIME_INVALID");
+    }
+
+    const normalized = `${match[1]}-${match[2]}-${match[3]} ${match[4]}:${match[5]}:${match[6] || "00"}`;
+    const timestamp = parsePhtDateTime(normalized);
+    if (timestamp === null || formatPhtDateTime(new Date(timestamp)) !== normalized) {
+        throw new DirectusRouteOperatorError(400, `${label} is not a valid Philippine timestamp.`, "OPERATOR_TIME_INVALID");
+    }
+
+    return { value: normalized, timestamp };
 }
 
 async function directusRequest<T>(resource: string, init: RequestInit = {}): Promise<T> {
@@ -173,6 +191,20 @@ async function findDirectusRecord(taskId: number, userId: number, activeOnly = f
     const records = await fetchDirectusRecords(taskId, userId, activeOnly);
     if (activeOnly) return records.find((record) => isActiveValue(record.is_active)) || null;
     return records.find((record) => isActiveValue(record.is_active)) || records[0] || null;
+}
+
+async function findDirectusRecordById(routeOperatorId: number): Promise<DirectusRouteOperator | null> {
+    const payload = await directusRequest<{ data?: DirectusRouteOperator }>(
+        `/items/${COLLECTION}/${encodeURIComponent(String(routeOperatorId))}?fields=${ROUTE_OPERATOR_FIELDS}`
+    );
+    return payload?.data || null;
+}
+
+async function findLatestEditableRecord(taskId: number, userId: number): Promise<DirectusRouteOperator | null> {
+    const records = await fetchDirectusRecords(taskId, userId);
+    return records
+        .filter((record) => isActiveValue(record.is_active) && record.started_at)
+        .sort((left, right) => Number(right.jo_route_operator_id) - Number(left.jo_route_operator_id))[0] || null;
 }
 
 function isActiveValue(value: unknown): boolean {
@@ -355,17 +387,20 @@ async function requireAuthenticatedActor(): Promise<number> {
 }
 
 function auditRemarks(
-    action: "remove-operator" | "swap-operator" | "edit-hours",
+    action: "remove-operator" | "swap-operator" | "edit-hours" | "edit-times",
     context: RouteJobOrderContext,
     userId: number,
     replacementUserId: number | null,
     actualHours: number | null,
-    reason: string
+    reason: string,
+    timeChange: { startedAt: string; stoppedAt: string | null } | null = null
 ): string {
     const detail = action === "swap-operator"
         ? `replacement operator ${replacementUserId}`
         : action === "edit-hours"
             ? `hours set to ${actualHours}`
+            : action === "edit-times" && timeChange
+                ? `Time In set to ${timeChange.startedAt}; Time Out ${timeChange.stoppedAt ? `set to ${timeChange.stoppedAt}` : "left running"}`
             : "removed from the active roster";
     const reasonDetail = reason ? ` Reason: ${reason}` : "";
     return `Operator ${userId} ${detail} on Route ${context.sequenceOrder} of ${context.jobOrderNo}.${reasonDetail}`;
@@ -485,17 +520,18 @@ export async function POST(request: Request) {
         const recordRosterAudit = async (
             assignmentState: ReturnType<typeof normalizeOperatorAssignments> | null,
             actualHours: number | null = null,
-            replacementUserId: number | null = null
+            replacementUserId: number | null = null,
+            timeChange: { startedAt: string; stoppedAt: string | null } | null = null
         ) => {
             const audit = await recordOperatorRosterAudit({
                 jobOrderId: context.jobOrderId,
                 oldStatus: normalizeJobOrderStatus(context.status) || context.status,
                 newStatus: normalizeJobOrderStatus(context.status) || context.status,
-                workflowAction: operatorAuditAction(action as "remove-operator" | "swap-operator" | "edit-hours"),
+                workflowAction: operatorAuditAction(action as "remove-operator" | "swap-operator" | "edit-hours" | "edit-times"),
                 changedBy: actorId as number,
                 eventKey: eventKey as string,
                 workflowRequestHash: requestHash as string,
-                remarks: auditRemarks(action as "remove-operator" | "swap-operator" | "edit-hours", context, userId, replacementUserId, actualHours, reason)
+                remarks: auditRemarks(action as "remove-operator" | "swap-operator" | "edit-hours" | "edit-times", context, userId, replacementUserId, actualHours, reason, timeChange)
             });
             return {
                 assignedPersonnel: assignmentState || context.assignedPersonnel,
@@ -530,7 +566,7 @@ export async function POST(request: Request) {
                 });
             }
 
-            const now = new Date().toISOString();
+            const now = formatPhtDateTime();
             const existingRecord = await findDirectusRecord(taskId, userId);
             const payload = {
                 started_at: now,
@@ -579,7 +615,7 @@ export async function POST(request: Request) {
                 return NextResponse.json({ error: "The active timer has no valid start time" }, { status: 409 });
             }
 
-            const stoppedAt = new Date().toISOString();
+            const stoppedAt = formatPhtDateTime();
             const elapsedHours = Math.max(0.01, (Date.now() - startedAt) / (1000 * 60 * 60));
             const totalHours = Math.round((Number(activeRecord.logged_hours || 0) + elapsedHours) * 100) / 100;
             const hourlyRate = Number(activeRecord.hourly_rate || determinedRate);
@@ -615,7 +651,7 @@ export async function POST(request: Request) {
                 return NextResponse.json({ error: "actualHours must be a non-negative number" }, { status: 400 });
             }
 
-            const now = new Date().toISOString();
+            const now = formatPhtDateTime();
             const existingRecord = await findDirectusRecord(taskId, userId);
             const saved = existingRecord
                 ? await directusRequest<{ data?: DirectusRouteOperator }>(`/items/${COLLECTION}/${existingRecord.jo_route_operator_id}`, {
@@ -690,6 +726,73 @@ export async function POST(request: Request) {
             });
         }
 
+        if (action === "edit-times") {
+            const routeOperatorId = positiveInteger(body.routeOperatorId);
+            if (!routeOperatorId) {
+                throw new DirectusRouteOperatorError(400, "routeOperatorId is required for edit-times.", "OPERATOR_SESSION_REQUIRED");
+            }
+
+            const existingRecord = await findDirectusRecordById(routeOperatorId);
+            if (!existingRecord
+                || Number(existingRecord.jo_route_id) !== taskId
+                || Number(existingRecord.operator_id) !== userId
+                || !isActiveValue(existingRecord.is_active)) {
+                throw new DirectusRouteOperatorError(409, "The selected operator session is not assigned to this route.", "OPERATOR_SESSION_NOT_FOUND");
+            }
+            if (!existingRecord.started_at) {
+                throw new DirectusRouteOperatorError(409, "The selected operator session has no Time In and cannot be edited.", "OPERATOR_SESSION_INVALID");
+            }
+
+            const latestEditableRecord = await findLatestEditableRecord(taskId, userId);
+            if (!latestEditableRecord || Number(latestEditableRecord.jo_route_operator_id) !== routeOperatorId) {
+                throw new DirectusRouteOperatorError(409, "Only the latest active or completed operator session can be edited.", "OPERATOR_SESSION_NOT_LATEST");
+            }
+
+            const startedAt = normalizePhtInput(body.startedAt, "Time In");
+            const stoppedAtInput = textValue(body.stoppedAt);
+            const stoppedAt = stoppedAtInput ? normalizePhtInput(stoppedAtInput, "Time Out") : null;
+            if (existingRecord.stopped_at && !stoppedAt) {
+                throw new DirectusRouteOperatorError(400, "A completed session requires Time Out.", "OPERATOR_TIME_REQUIRED");
+            }
+            if (stoppedAt && stoppedAt.timestamp <= startedAt.timestamp) {
+                throw new DirectusRouteOperatorError(400, "Time Out must be later than Time In.", "OPERATOR_TIME_ORDER_INVALID");
+            }
+
+            const elapsedHours = stoppedAt
+                ? Math.max(
+                    0.01,
+                    Math.round(((stoppedAt.timestamp - startedAt.timestamp) / (1000 * 60 * 60)) * 100) / 100
+                )
+                : Number(existingRecord.logged_hours || 0);
+            const loggedAt = formatPhtDateTime();
+            const saved = await directusRequest<{ data?: DirectusRouteOperator }>(`/items/${COLLECTION}/${routeOperatorId}`, {
+                method: "PATCH",
+                body: JSON.stringify({
+                    started_at: startedAt.value,
+                    ...(stoppedAt ? { stopped_at: stoppedAt.value, logged_hours: elapsedHours } : { stopped_at: null }),
+                    logged_at: loggedAt
+                })
+            });
+            const mapped = responseRecord(saved, joId);
+            const audit = await recordRosterAudit(
+                null,
+                elapsedHours,
+                null,
+                { startedAt: startedAt.value, stoppedAt: stoppedAt?.value || null }
+            );
+            return NextResponse.json({
+                success: true,
+                data: {
+                    ...mapped,
+                    user_name: userMeta.name,
+                    user_position: userMeta.position,
+                    is_active: true
+                },
+                assignedPersonnel: audit.assignedPersonnel,
+                auditId: audit.auditId
+            });
+        }
+
         if (action === "edit-hours") {
             const totalHours = Number(body.actualHours);
             if (!Number.isFinite(totalHours) || totalHours < 0) {
@@ -699,7 +802,7 @@ export async function POST(request: Request) {
             if (!existingRecord || !isActiveValue(existingRecord.is_active)) {
                 throw new DirectusRouteOperatorError(409, "The operator is not assigned to this route.", "OPERATOR_ASSIGNMENT_NOT_FOUND");
             }
-            const now = new Date().toISOString();
+            const now = formatPhtDateTime();
             const saved = await directusRequest<{ data?: DirectusRouteOperator }>(`/items/${COLLECTION}/${existingRecord.jo_route_operator_id}`, {
                 method: "PATCH",
                 body: JSON.stringify({

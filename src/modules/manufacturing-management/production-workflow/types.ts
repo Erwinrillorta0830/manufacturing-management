@@ -31,6 +31,7 @@ export interface RoutingTask {
     run_time_hours_factor?: number;
     work_center_id?: number | null;
     work_center_name?: string | null;
+    work_center?: WorkCenter | null;
     completed_at: string | null;
     requires_qa: number; // 0 or 1
     qa_template_id?: number | null;
@@ -210,11 +211,17 @@ export interface WorkCenter {
     serial?: string | null;
     asset?: {
         id?: number;
-        barcode?: string;
-        rfid_code?: string;
-        serial?: string;
-        item_name?: string;
-        condition?: string;
+        barcode?: string | null;
+        rfid_code?: string | null;
+        serial?: string | null;
+        item_name?: string | null;
+        item_image?: string | { id?: string | number } | null;
+        condition?: string | null;
+        is_active?: boolean | number | string | null;
+        item_id?: {
+            id?: number;
+            item_name?: string | null;
+        } | null;
     } | null;
     department?: {
         department_id?: number;
@@ -250,6 +257,9 @@ export interface JobOrderStatusHistoryRecord {
     history_id?: number;
     id?: number;
     job_order_id: number | string;
+    jo_route_id?: number | null;
+    reported_yield_quantity?: number | null;
+    evidence_image_id?: string | null;
     job_order_no?: string;
     work_center_id?: number | null;
     work_center_name?: string | null;
@@ -377,6 +387,23 @@ export interface ProductionMaterialReservation {
     variance_approved_at?: string | null;
     is_sub_assembly?: boolean;
     candidate_lots?: MaterialCandidateLot[];
+}
+
+export interface JobOrderMaterialBatch {
+    reservation_id?: number | null;
+    batch_no?: string | null;
+    reservation_status?: string | null;
+    reserved_quantity?: number;
+    staged_quantity?: number;
+    issued_to_wip_quantity?: number;
+    remaining_wip_quantity?: number;
+}
+
+export interface JobOrderMaterialLine {
+    jo_material_id?: number;
+    product_id: number;
+    product_name: string;
+    reservations: JobOrderMaterialBatch[];
 }
 
 export interface WipTopUpPayload {

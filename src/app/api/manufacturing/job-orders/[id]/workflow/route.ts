@@ -17,6 +17,12 @@ import {
     uploadJobOrderTerminationImage,
     validateJobOrderTerminationImage
 } from "@/app/api/manufacturing/production/job-order-termination/_image";
+import {
+    deleteJobOrderWorkflowEvidence,
+    JobOrderWorkflowEvidenceError,
+    uploadJobOrderWorkflowEvidence,
+    validateJobOrderWorkflowEvidence
+} from "../../_workflow-evidence";
 
 interface WorkflowActor {
     userId: number | null;
@@ -87,11 +93,13 @@ export async function POST(
     { params }: { params: Promise<{ id: string }> }
 ) {
     let uploadedTerminationImageId: string | null = null;
+    let uploadedWorkflowEvidenceImageId: string | null = null;
     try {
         const { id } = await params;
         const contentType = request.headers.get("content-type")?.toLowerCase() || "";
         let body: Record<string, unknown>;
         let terminationImage: File | null = null;
+        let workflowEvidenceImage: File | null = null;
 
         if (contentType.includes("multipart/form-data")) {
             const formData = await request.formData();
@@ -131,7 +139,8 @@ export async function POST(
                     code: "TERMINATION_IMAGE_INVALID"
                 }, { status: 422 });
             }
-            terminationImage = typeof File !== "undefined" && imageValue instanceof File ? imageValue : null;
+            workflowEvidenceImage = typeof File !== "undefined" && imageValue instanceof File ? imageValue : null;
+            terminationImage = workflowEvidenceImage;
         } else {
             const parsedBody = await request.json().catch(() => ({}));
             body = parsedBody && typeof parsedBody === "object" && !Array.isArray(parsedBody)
@@ -202,6 +211,35 @@ export async function POST(
             }
             uploadedTerminationImageId = await uploadJobOrderTerminationImage(terminationImage, String(id));
         }
+        if (action === "place-on-hold") {
+            if (!workflowEvidenceImage) {
+                return NextResponse.json({
+                    success: false,
+                    error: "A breakdown or hold evidence image is required.",
+                    code: "WORKFLOW_EVIDENCE_REQUIRED"
+                }, { status: 422 });
+            }
+            const imageError = validateJobOrderWorkflowEvidence(workflowEvidenceImage);
+            if (imageError) {
+                return NextResponse.json({
+                    success: false,
+                    error: imageError,
+                    code: "WORKFLOW_EVIDENCE_INVALID"
+                }, { status: 422 });
+            }
+            uploadedWorkflowEvidenceImageId = await uploadJobOrderWorkflowEvidence(
+                workflowEvidenceImage,
+                String(id),
+                "hold"
+            );
+        }
+
+        const routeId = body?.joRouteId === null || body?.joRouteId === undefined
+            ? null
+            : Number(body.joRouteId);
+        const reportedYieldQuantity = body?.reportedYieldQuantity === null || body?.reportedYieldQuantity === undefined
+            ? null
+            : Number(body.reportedYieldQuantity);
 
         const result = await executeJobOrderWorkflow(id, {
             action,
@@ -216,19 +254,38 @@ export async function POST(
                 : Number(body.workCenterId),
             overrideReason: overrideReason || undefined,
             force: body?.force === true,
-            terminationImageId: uploadedTerminationImageId
+            terminationImageId: uploadedTerminationImageId,
+            evidenceImageId: uploadedWorkflowEvidenceImageId,
+            joRouteId: routeId !== null && Number.isSafeInteger(routeId) && routeId > 0 ? routeId : null,
+            reportedYieldQuantity: reportedYieldQuantity !== null && Number.isFinite(reportedYieldQuantity) && reportedYieldQuantity >= 0
+                ? reportedYieldQuantity
+                : null
         });
 
         if (result.idempotent && uploadedTerminationImageId) {
             await deleteJobOrderTerminationImage(uploadedTerminationImageId);
             uploadedTerminationImageId = null;
         }
+        if (result.idempotent && uploadedWorkflowEvidenceImageId) {
+            await deleteJobOrderWorkflowEvidence(uploadedWorkflowEvidenceImageId);
+            uploadedWorkflowEvidenceImageId = null;
+        }
         return NextResponse.json({ success: true, data: result });
     } catch (error) {
         if (uploadedTerminationImageId) {
             await deleteJobOrderTerminationImage(uploadedTerminationImageId);
         }
+        if (uploadedWorkflowEvidenceImageId) {
+            await deleteJobOrderWorkflowEvidence(uploadedWorkflowEvidenceImageId);
+        }
         if (error instanceof JobOrderTerminationImageError) {
+            return NextResponse.json({
+                success: false,
+                error: error.message,
+                code: error.code
+            }, { status: error.status });
+        }
+        if (error instanceof JobOrderWorkflowEvidenceError) {
             return NextResponse.json({
                 success: false,
                 error: error.message,

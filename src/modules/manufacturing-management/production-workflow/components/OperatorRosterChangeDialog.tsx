@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchableSelect } from "../../planning-engineering/components/SearchableSelect";
+import { elapsedHours, toPhtDateTimeLocal } from "../operator-time";
 
 export type OperatorRosterChangeKind = "remove" | "swap" | "edit";
 
@@ -14,16 +15,21 @@ export interface OperatorRosterChange {
     kind: OperatorRosterChangeKind;
     taskId: number;
     operatorId: number;
+    routeOperatorId: number;
     jobOrderNo: string;
     routeLabel: string;
     operatorName: string;
     currentHours: number;
+    startedAt?: string | null;
+    stoppedAt?: string | null;
     replacementOptions: { value: string; label: string }[];
 }
 
 export interface OperatorRosterChangePayload {
     replacementUserId?: number;
     actualHours?: string;
+    startedAt?: string;
+    stoppedAt?: string;
     changeReason: string;
     requestId: string;
 }
@@ -53,7 +59,8 @@ export function OperatorRosterChangeDialog({
     const [reason, setReason] = useState("");
     const [note, setNote] = useState("");
     const [replacementUserId, setReplacementUserId] = useState("");
-    const [actualHours, setActualHours] = useState("");
+    const [startedAt, setStartedAt] = useState("");
+    const [stoppedAt, setStoppedAt] = useState("");
     const [requestId, setRequestId] = useState("");
     const [formError, setFormError] = useState<string | null>(null);
     const [submitting, setSubmitting] = useState(false);
@@ -63,7 +70,8 @@ export function OperatorRosterChangeDialog({
         setReason("");
         setNote("");
         setReplacementUserId("");
-        setActualHours(change.currentHours.toString());
+        setStartedAt(toPhtDateTimeLocal(change.startedAt));
+        setStoppedAt(toPhtDateTimeLocal(change.stoppedAt));
         setRequestId(createRequestId());
         setFormError(null);
     }, [change, open]);
@@ -71,6 +79,8 @@ export function OperatorRosterChangeDialog({
     if (!change) return null;
 
     const isBusy = saving || submitting;
+    const isRunningSession = Boolean(change.startedAt && !change.stoppedAt);
+    const calculatedHours = elapsedHours(startedAt, stoppedAt);
     const title = change.kind === "remove"
         ? "Confirm Operator Removal"
         : change.kind === "swap"
@@ -80,19 +90,26 @@ export function OperatorRosterChangeDialog({
         ? `Are you sure you want to remove ${change.operatorName} from Job Order ${change.jobOrderNo}? This action will be recorded in the shift log.`
         : change.kind === "swap"
             ? `Are you sure you want to replace ${change.operatorName} on Job Order ${change.jobOrderNo}? This action will be recorded in the shift log.`
-            : `Are you sure you want to update ${change.operatorName}'s logged hours on Job Order ${change.jobOrderNo}? This action will be recorded in the shift log.`;
+            : `Are you sure you want to update ${change.operatorName}'s Time In and Time Out on Job Order ${change.jobOrderNo}? This action will be recorded in the shift log.`;
 
     const handleSubmit = async () => {
         setFormError(null);
         const parsedReplacementId = Number(replacementUserId);
-        const parsedHours = Number(actualHours);
 
         if (change.kind === "swap" && (!Number.isSafeInteger(parsedReplacementId) || parsedReplacementId <= 0)) {
             setFormError("Select a replacement operator before confirming the roster change.");
             return;
         }
-        if (change.kind === "edit" && (!Number.isFinite(parsedHours) || parsedHours < 0)) {
-            setFormError("Enter a valid non-negative number of hours.");
+        if (change.kind === "edit" && !startedAt) {
+            setFormError("Enter Time In in Philippine time.");
+            return;
+        }
+        if (change.kind === "edit" && !stoppedAt && !isRunningSession) {
+            setFormError("A completed session requires Time Out.");
+            return;
+        }
+        if (change.kind === "edit" && stoppedAt && calculatedHours === null) {
+            setFormError("Time Out must be later than Time In.");
             return;
         }
 
@@ -104,7 +121,8 @@ export function OperatorRosterChangeDialog({
         try {
             const succeeded = await onConfirm({
                 replacementUserId: change.kind === "swap" ? parsedReplacementId : undefined,
-                actualHours: change.kind === "edit" ? actualHours : undefined,
+                startedAt: change.kind === "edit" ? startedAt : undefined,
+                stoppedAt: change.kind === "edit" ? stoppedAt : undefined,
                 changeReason,
                 requestId
             });
@@ -156,16 +174,38 @@ export function OperatorRosterChangeDialog({
 
                     {change.kind === "edit" && (
                         <div className="space-y-2">
-                            <Label htmlFor="operator-hours">Logged hours</Label>
-                            <Input
-                                id="operator-hours"
-                                type="number"
-                                min="0"
-                                step="0.1"
-                                value={actualHours}
-                                onChange={(event) => setActualHours(event.target.value)}
-                                disabled={isBusy}
-                            />
+                            <Label>Operator timestamps</Label>
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                <div className="space-y-1.5">
+                                    <Label htmlFor="operator-time-in">Time In (PHT)</Label>
+                                    <Input
+                                        id="operator-time-in"
+                                        type="datetime-local"
+                                        value={startedAt}
+                                        onChange={(event) => setStartedAt(event.target.value)}
+                                        disabled={isBusy}
+                                    />
+                                </div>
+                                <div className="space-y-1.5">
+                                    <Label htmlFor="operator-time-out">Time Out (PHT)</Label>
+                                    <Input
+                                        id="operator-time-out"
+                                        type="datetime-local"
+                                        value={stoppedAt}
+                                        onChange={(event) => setStoppedAt(event.target.value)}
+                                        disabled={isBusy}
+                                    />
+                                </div>
+                            </div>
+                            <p className="text-[11px] text-muted-foreground">
+                                {isRunningSession && !stoppedAt ? (
+                                    "Leave Time Out blank to keep this timer running."
+                                ) : (
+                                    <>Calculated logged hours: <span className="font-mono font-semibold text-foreground">
+                                        {calculatedHours === null ? "—" : `${calculatedHours.toFixed(2)}h`}
+                                    </span>. Logged hours will be recalculated from the edited timestamps.</>
+                                )}
+                            </p>
                         </div>
                     )}
 

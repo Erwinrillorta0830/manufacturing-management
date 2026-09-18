@@ -1080,7 +1080,7 @@ export function JobOrderShiftLogModal({
                                                          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[9px] text-muted-foreground">
                                                              <span>MM Lot: <strong className="font-mono text-foreground">{m.mm_lot_id || "—"}</strong></span>
                                                              <span>Inventory Lot: <strong className="font-mono text-foreground">{m.inventory_lot_id || "—"}</strong></span>
-                                                             <span>Batch: <strong className="font-mono text-foreground">{m.batch_no || "—"}</strong></span>
+                                                             <span>Batch No.: <strong className="font-mono text-foreground">{m.batch_no || "No batch assigned"}</strong></span>
                                                              <span>UOM: <strong className="font-mono text-foreground">{m.unit_shortcut || `#${m.uom_id || "—"}`}</strong></span>
                                                              <span>Status: <strong className="text-foreground">{m.reservation_status || "Not staged"}</strong></span>
                                                              <span>Remaining WIP: <strong className="font-mono text-foreground">{Number(m.available_stock || 0).toLocaleString()}</strong></span>

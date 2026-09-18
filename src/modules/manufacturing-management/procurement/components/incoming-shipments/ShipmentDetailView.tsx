@@ -1,6 +1,6 @@
 import React from "react";
 import Link from "next/link";
-import { Loader2, Globe, Building2, Calendar, Layers, Info, Anchor, Edit, Trash2, Printer, ArrowLeft, RotateCcw } from "lucide-react";
+import { Loader2, Globe, Building2, Calendar, Layers, Info, Anchor, Edit, Trash2, Printer, ArrowLeft, RotateCcw, Check, X } from "lucide-react";
 import { IncomingShipment, ShipmentLineItem, Supplier, PurchaseOrderPaymentMode } from "../../types";
 import { formatMoney, getStatusBadge, displayShipmentStatus } from "./ShipmentBadges";
 import { CancelPurchaseOrderDialog } from "./CancelPurchaseOrderDialog";
@@ -73,6 +73,10 @@ export function ShipmentDetailView({
     const legacyFinanceFeedback = legacyRemarkMatch
         ? storedRemark.slice(legacyRemarkMatch[0].length).trim()
         : "";
+    const currentFinanceRevisionRemarks = activeShipment?.finance_revision_remarks?.trim() || "";
+    const financeRevisionRemarks = currentFinanceRevisionRemarks || legacyFinanceFeedback;
+    const showLegacyFinanceFeedback = !currentFinanceRevisionRemarks && Boolean(legacyFinanceFeedback);
+    const isReturnedStatus = effectiveStatus === "Revision" || effectiveStatus === "Rejected";
     const resolvedSupplierName = (() => {
         if (!activeShipment) return "Supplier";
         const supId = typeof activeShipment.supplier_id === "object" && activeShipment.supplier_id !== null
@@ -187,7 +191,7 @@ export function ShipmentDetailView({
                                     <span className="mt-1 block whitespace-pre-wrap">{poRemark}</span>
                                 </div>
                             )}
-                            {legacyFinanceFeedback && (
+                            {showLegacyFinanceFeedback && (
                                 <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                                     <strong className="block text-[10px] uppercase tracking-wide">Legacy Finance Feedback</strong>
                                     <span className="mt-1 block whitespace-pre-wrap">{legacyFinanceFeedback}</span>
@@ -317,15 +321,26 @@ export function ShipmentDetailView({
                                     Some reference labels are unavailable. Refresh the page or retry before editing this purchase order.
                                 </p>
                             )}
+                            {isReturnedStatus && (
+                                <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-3 py-2.5 text-red-900" role="alert">
+                                    <div className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wide">
+                                        <Info className="h-3.5 w-3.5 text-red-600" />
+                                        {effectiveStatus === "Revision" ? "Returned for Revision" : "Rejected by Finance"}
+                                    </div>
+                                    <p className="mt-1 whitespace-pre-wrap break-words text-xs font-medium">
+                                        {financeRevisionRemarks || "No Finance revision remarks were recorded. Contact Finance before resubmitting."}
+                                    </p>
+                                </div>
+                            )}
                             {/* Status Progress Stepper (Read-Only) */}
                             <div className="mt-4 border bg-muted/20 rounded-xl p-4 space-y-3">
                                 <div className="text-[10px] font-extrabold text-muted-foreground uppercase tracking-wider block">{canonicalDrafting ? "Purchase Order Workflow Progress" : "Shipment Life Cycle Progress"}</div>
                                 <div className="w-full overflow-x-auto">
                                     <div className="relative flex min-w-[760px] items-center overflow-visible py-3">
                                     {(effectiveStatus === "Revision"
-                                        ? [initialWorkflowStatus, "Approved", "Revision"]
+                                        ? [initialWorkflowStatus, "Returned", "Revision"]
                                         : effectiveStatus === "Rejected"
-                                        ? [initialWorkflowStatus, "Approved", "Rejected"]
+                                        ? [initialWorkflowStatus, "Returned", "Rejected"]
                                         : [initialWorkflowStatus, "Approved", "Warehouse Receiving", "Receiving (QA)", "Received"]
                                     ).map((st, idx, arr) => {
                                         const statuses = arr;
@@ -343,30 +358,33 @@ export function ShipmentDetailView({
                                             : effectiveStatus;
                                         const currentIdx = statuses.indexOf(currentStatus);
                                         const stepIdx = statuses.indexOf(st);
+                                        const isFailedStep = isReturnedStatus && st === "Returned";
                                         
-                                        const isCompleted = stepIdx < currentIdx;
+                                        const isCompleted = stepIdx < currentIdx && !isFailedStep;
                                         const isActive = stepIdx === currentIdx;
-                                        const showCheck = isCompleted || (isActive && currentStatus === "Received");
+                                        const showCheck = !isFailedStep && (isCompleted || (isActive && currentStatus === "Received"));
                                         
                                         return (
                                             <React.Fragment key={st}>
                                                 <div className="flex flex-col items-center flex-1 relative z-10">
                                                     <div className={`h-6 w-6 rounded-full flex items-center justify-center border-2 text-[10px] font-bold transition-all ${
-                                                        isCompleted 
+                                                        isFailedStep
+                                                            ? "bg-red-500 border-red-500 text-white"
+                                                            : isCompleted
                                                             ? "bg-emerald-500 border-emerald-500 text-emerald-foreground" 
                                                             : isActive 
                                                                 ? "bg-primary border-primary text-primary-foreground shadow-md scale-110" 
                                                                 : "bg-background border-muted text-muted-foreground"
                                                     }`}>
-                                                        {showCheck ? "✓" : idx + 1}
+                                                        {isFailedStep ? <X className="h-3.5 w-3.5" /> : showCheck ? <Check className="h-3.5 w-3.5" /> : idx + 1}
                                                     </div>
                                                     <span className={`min-w-[125px] text-center whitespace-nowrap text-[9px] font-bold mt-1.5 ${
-                                                        isActive ? "text-primary animate-pulse" : "text-muted-foreground"
+                                                        isFailedStep ? "text-red-700" : isActive ? "text-primary animate-pulse" : "text-muted-foreground"
                                                     }`}>{st}</span>
                                                 </div>
                                                 {idx < arr.length - 1 && (
                                                     <div className={`flex-1 h-[2px] -mt-4 transition-all ${
-                                                        stepIdx < currentIdx ? "bg-emerald-500" : "bg-muted"
+                                                        isFailedStep || arr[idx + 1] === "Returned" ? "bg-red-400" : stepIdx < currentIdx ? "bg-emerald-500" : "bg-muted"
                                                     }`} />
                                                 )}
                                             </React.Fragment>
