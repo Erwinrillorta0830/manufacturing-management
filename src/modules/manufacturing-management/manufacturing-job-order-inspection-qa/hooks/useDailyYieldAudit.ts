@@ -7,6 +7,7 @@ import {
 } from "../../manufacturing-qa/services/qa-api";
 import { fetchEligibleFinishedGoodsLots } from "../../shared/finished-goods-lots-api";
 import type { EligibleFinishedGoodsLot } from "../../shared/finished-goods-lots-api";
+import { fetchRouteOperators, fetchUsersList } from "../../production-workflow/services/production-api";
 import type {
     DailyYieldQALog,
     DailyYieldQATemplate,
@@ -18,6 +19,7 @@ import type {
 
 interface UseDailyYieldAuditOptions {
     onSaved?: () => Promise<void> | void;
+    inspectorName?: string;
 }
 
 const EMPTY_ROUTES: JobOrderDailyYieldRoute[] = [];
@@ -27,10 +29,13 @@ function routeId(value: unknown): number {
     return Number.isSafeInteger(candidate) && candidate > 0 ? candidate : 0;
 }
 
-export function useDailyYieldAudit({ onSaved }: UseDailyYieldAuditOptions = {}) {
+export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAuditOptions = {}) {
     const [isOpen, setIsOpen] = useState(false);
     const [selectedYield, setSelectedYield] = useState<JobOrderDailyYieldRecord | null>(null);
     const [selectedDetails, setSelectedDetails] = useState<JobOrderDailyYieldDetails | null>(null);
+    const [auditStartedAt, setAuditStartedAt] = useState<string | null>(null);
+    const [routeOperatorsByRouteId, setRouteOperatorsByRouteId] = useState<Record<number, string[]>>({});
+    const [inspectorNamesById, setInspectorNamesById] = useState<Record<number, string>>({});
     const [qaTemplates, setQaTemplates] = useState<DailyYieldQATemplate[]>([]);
     const [qaLogs, setQaLogs] = useState<DailyYieldQALog[]>([]);
     const [referenceError, setReferenceError] = useState<string | null>(null);
@@ -176,6 +181,45 @@ export function useDailyYieldAudit({ onSaved }: UseDailyYieldAuditOptions = {}) 
         }
     }, []);
 
+    const loadRouteOperators = useCallback(async (routeIds: number[]) => {
+        const entries = await Promise.all(routeIds.map(async (routeIdValue) => {
+            try {
+                const response = await fetchRouteOperators(routeIdValue);
+                const names = [...new Set(
+                    (response.data || [])
+                        .filter((record) => record.is_active !== false)
+                        .map((record) => String(record.user_name || "").trim() || `User #${record.user_id}`)
+                        .filter(Boolean)
+                )];
+                return [routeIdValue, names] as const;
+            } catch {
+                return [routeIdValue, []] as const;
+            }
+        }));
+        setRouteOperatorsByRouteId(Object.fromEntries(entries));
+    }, []);
+
+    const loadInspectorNames = useCallback(async () => {
+        try {
+            const users = await fetchUsersList();
+            const entries = (Array.isArray(users) ? users : [])
+                .map((user) => {
+                    const record = user as unknown as Record<string, unknown>;
+                    const id = Number(record.user_id ?? record.id) || 0;
+                    if (!id) return null;
+                    const name = [record.user_fname ?? record.first_name, record.user_lname ?? record.last_name]
+                        .map((part) => String(part || "").trim())
+                        .filter(Boolean)
+                        .join(" ");
+                    return [id, name || `Inspector #${id}`] as const;
+                })
+                .filter((entry): entry is readonly [number, string] => entry !== null);
+            setInspectorNamesById(Object.fromEntries(entries));
+        } catch {
+            setInspectorNamesById({});
+        }
+    }, []);
+
     const openAudit = useCallback((
         yieldRecord: JobOrderDailyYieldRecord,
         details: JobOrderDailyYieldDetails,
@@ -189,6 +233,7 @@ export function useDailyYieldAudit({ onSaved }: UseDailyYieldAuditOptions = {}) 
 
         setSelectedYield(yieldRecord);
         setSelectedDetails(details);
+        setAuditStartedAt(new Date().toISOString());
         setMoisturePct("");
         setAcidityPh("");
         setSensoryStatus("Passed");
@@ -206,7 +251,9 @@ export function useDailyYieldAudit({ onSaved }: UseDailyYieldAuditOptions = {}) 
         setSelectedRouteId(preferredRoute?.id || pendingRoutes[0]?.id || sortedRoutes[0]?.id || null);
         setIsOpen(true);
         void loadOutputLots(details, yieldRecord);
-    }, [loadOutputLots]);
+        void loadRouteOperators(sortedRoutes.map((route) => route.id));
+        void loadInspectorNames();
+    }, [loadOutputLots, loadRouteOperators, loadInspectorNames]);
 
     const closeAudit = useCallback(() => {
         if (actionLoading) return;
@@ -337,6 +384,10 @@ export function useDailyYieldAudit({ onSaved }: UseDailyYieldAuditOptions = {}) 
         setIsOpen,
         selectedYield,
         selectedDetails,
+        inspectorName: inspectorName?.trim() || null,
+        auditStartedAt,
+        routeOperatorsByRouteId,
+        inspectorNamesById,
         routes,
         matchingLogs,
         referenceError,

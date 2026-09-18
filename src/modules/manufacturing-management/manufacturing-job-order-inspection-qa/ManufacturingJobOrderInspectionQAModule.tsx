@@ -161,9 +161,9 @@ function DailyYieldRow({
     );
 }
 
-export default function ManufacturingJobOrderInspectionQAModule() {
+export default function ManufacturingJobOrderInspectionQAModule({ inspectorName }: { inspectorName?: string }) {
     const jobOrderState = useJobOrderInspectionQA();
-    const auditState = useDailyYieldAudit({ onSaved: jobOrderState.refresh });
+    const auditState = useDailyYieldAudit({ onSaved: jobOrderState.refresh, inspectorName });
     const [closeConfirmOpen, setCloseConfirmOpen] = React.useState(false);
     const details = jobOrderState.selectedDetails;
     const canClose = details?.status === "For QA and Reconciliation";
