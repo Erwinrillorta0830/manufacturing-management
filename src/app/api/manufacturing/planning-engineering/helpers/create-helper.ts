@@ -15,6 +15,7 @@ import {
     readUomId,
     roundProductionValue
 } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
+import { normalizeOperatorAssignments, synchronizeJobOrderOperatorAssignments } from "../../job-orders/_operator-assignment-service";
 
 const QUANTITY_EPSILON = 0.000001;
 
@@ -418,6 +419,9 @@ export async function createJobOrder(
             uom_id: targetUomId,
             priority: numericPriority,
             primary_work_center_id: (joData as any).primary_work_center_id ? Number((joData as any).primary_work_center_id) : null,
+            assigned_personnel: normalizeOperatorAssignments(
+                (joData as any).assigned_personnel ?? (joData as any).assignments
+            ),
             shift_option: joData.shift_option || "8",
             sub_assembly_version_map: (joData as any).sub_assembly_version_map 
                 ? (typeof (joData as any).sub_assembly_version_map === "object" ? JSON.stringify((joData as any).sub_assembly_version_map) : (joData as any).sub_assembly_version_map) 
@@ -608,42 +612,6 @@ export async function createJobOrder(
                     if (!routeRes.ok) {
                         const errorText = routeResponseText || await routeRes.text();
                         throw new Error(`Failed to create Job Order route: ${routeRes.status} - ${errorText}`);
-                    }
-
-                    if (routeRes.ok) {
-                        const routeJson = await routeRes.json();
-                        const newRouteId = routeJson.data?.jo_route_id;
-                        if (newRouteId) {
-                            const stepSeq = Number(r.sequence_order || 0);
-                            const assignedUserIds = (joData as any).assignments?.[stepSeq] || [];
-                            for (const uId of assignedUserIds) {
-                                let userRate = 150;
-                                try {
-                                    const uRes = await fetch(`${DIRECTUS_URL}/items/user/${uId}?fields=hourly_rate`, { headers });
-                                    if (uRes.ok) {
-                                        const uData = (await uRes.json()).data;
-                                        userRate = Number(uData?.hourly_rate || 150);
-                                    }
-                                } catch (e) {
-                                    console.error("Error fetching user rate during creation:", e);
-                                }
-
-                                const assPayload = {
-                                    jo_route_id: newRouteId,
-                                    operator_id: Number(uId),
-                                    logged_hours: 0,
-                                    hourly_rate: userRate,
-                                    logged_at: formatPhtDateTime()
-                                };
-                                await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_route_operators`, {
-                                    method: "POST",
-                                    headers,
-                                    body: JSON.stringify(assPayload)
-                                }).catch(err => console.error("Error creating route operator assignment:", err));
-                            }
-                        }
-                    } else {
-                        console.error("Error creating manufacturing_job_order_routes row:", await routeRes.text());
                     }
 
                     // Extract BOM items (materials)
@@ -844,6 +812,15 @@ export async function createJobOrder(
                 }
             }
         }
+
+        // Persist the canonical personnel map and project it to every created
+        // route after all route IDs are known. The synchronizer is idempotent
+        // and never creates a second row for an existing route/operator pair.
+        await synchronizeJobOrderOperatorAssignments(
+            joIdInt,
+            headerPayload.assigned_personnel,
+            { persistMaster: false }
+        );
 
         // Calculate and generate daily breakdown runs based on total planned hours and shift option
         const shiftHours = Number(joData.shift_option || "8") || 8;

@@ -16,6 +16,11 @@ import {
 } from "../services/production-api";
 import { isJobOrderStatus, JOB_ORDER_STATUS, displayJobOrderStatus, normalizeJobOrderStatus } from "../../job-order-status";
 import type { JobOrderWorkflowAction } from "../../job-order-workflow";
+import {
+    buildDisplayRouteOperatorRecords,
+    getJobOrderOperatorAssignments,
+    normalizeOperatorAssignmentMap
+} from "../operator-assignment-display";
 
 export function useProductionWorkflow() {
     const searchParams = useSearchParams();
@@ -216,7 +221,11 @@ const selectedTask = useMemo(() => {
     };
 
     // Fetch Route Operators checked into all routing tasks in the Job Order
-    const fetchJobOrderOperators = useCallback(async (tasks: RoutingTask[], silent = false) => {
+    const fetchJobOrderOperators = useCallback(async (
+        tasks: RoutingTask[],
+        silent = false,
+        assignmentOverride?: unknown
+    ) => {
         if (tasks.length === 0) {
             setRouteOperators([]);
             setOperatorsSummary({ total_hours: 0 });
@@ -224,14 +233,22 @@ const selectedTask = useMemo(() => {
         }
         if (!silent) setLoadingOperators(true);
         try {
+            const selectedAssignments = assignmentOverride === undefined
+                ? getJobOrderOperatorAssignments(selectedJobOrder)
+                : normalizeOperatorAssignmentMap(assignmentOverride);
             const results = await Promise.all(
                 tasks.map(async (t) => {
                     try {
                         const res = await fetchRouteOperators(t.id);
-                        return res.data || [];
+                        const responseAssignments = res.assignmentState
+                            ? normalizeOperatorAssignmentMap(res.assignmentState.assignedPersonnel)
+                            : res.assignedPersonnel !== undefined && res.assignedPersonnel !== null
+                                ? normalizeOperatorAssignmentMap(res.assignedPersonnel)
+                                : selectedAssignments;
+                        return buildDisplayRouteOperatorRecords(t, res.data || [], responseAssignments, users);
                     } catch (e) {
                         console.error(`Error fetching operators for task ${t.id}:`, e);
-                        return [];
+                        return buildDisplayRouteOperatorRecords(t, [], selectedAssignments, users);
                     }
                 })
             );
@@ -248,7 +265,7 @@ const selectedTask = useMemo(() => {
         } finally {
             if (!silent) setLoadingOperators(false);
         }
-    }, []);
+    }, [selectedJobOrder, users]);
 
     // Load Branches List
     const loadBranches = async () => {
@@ -382,7 +399,7 @@ const selectedTask = useMemo(() => {
         const taskObj = sortedTasks.find(t => t.id === taskId);
 
         try {
-            await manageRouteOperator({
+            const response = await manageRouteOperator({
                 action,
                 taskId: taskId,
                 userId: uId,
@@ -397,7 +414,12 @@ const selectedTask = useMemo(() => {
                     ? `${userObj.user_fname || userObj.first_name} clocked in successfully.`
                     : `${userObj.user_fname || userObj.first_name} added to team log.`
             );
-            fetchJobOrderOperators(sortedTasks);
+            await fetchJobOrderOperators(
+                sortedTasks,
+                false,
+                response?.assignedPersonnel ?? response?.assignmentState?.assignedPersonnel
+            );
+            await fetchJobs(selectedJobOrder.jo_id, true);
         } catch (err: any) {
             toast.error(err.message || "Failed to add operator to task log.");
         }
@@ -405,14 +427,21 @@ const selectedTask = useMemo(() => {
 
     // Remove / Check Out Operator
     const handleRemoveOperator = async (taskId: number, opUserId: number) => {
+        if (!selectedJobOrder) return;
         try {
-            await manageRouteOperator({
+            const response = await manageRouteOperator({
                 action: "remove-operator",
                 taskId: taskId,
-                userId: opUserId
+                userId: opUserId,
+                joId: selectedJobOrder.jo_id
             });
             toast.success("Operator removed from step.");
-            fetchJobOrderOperators(sortedTasks);
+            await fetchJobOrderOperators(
+                sortedTasks,
+                false,
+                response?.assignedPersonnel ?? response?.assignmentState?.assignedPersonnel
+            );
+            await fetchJobs(selectedJobOrder.jo_id, true);
         } catch (err: any) {
             toast.error(err.message || "Failed to remove operator.");
         }
@@ -427,7 +456,7 @@ const selectedTask = useMemo(() => {
         }
         const taskObj = sortedTasks.find(t => t.id === taskId);
         try {
-            await manageRouteOperator({
+            const response = await manageRouteOperator({
                 action: "start-timer",
                 taskId: taskId,
                 userId: opUserId,
@@ -435,7 +464,12 @@ const selectedTask = useMemo(() => {
                 routingId: taskObj?.routing_id || 0
             });
             toast.success("Shift timer started.");
-            fetchJobOrderOperators(sortedTasks);
+            await fetchJobOrderOperators(
+                sortedTasks,
+                false,
+                response?.assignedPersonnel ?? response?.assignmentState?.assignedPersonnel
+            );
+            await fetchJobs(selectedJobOrder.jo_id, true);
         } catch (err: any) {
             toast.error(err.message || "Failed to start shift.");
         }
@@ -446,7 +480,7 @@ const selectedTask = useMemo(() => {
         if (!selectedJobOrder) return;
         const taskObj = sortedTasks.find(t => t.id === taskId);
         try {
-            await manageRouteOperator({
+            const response = await manageRouteOperator({
                 action: "stop-timer",
                 taskId: taskId,
                 userId: opUserId,
@@ -454,7 +488,12 @@ const selectedTask = useMemo(() => {
                 routingId: taskObj?.routing_id || 0
             });
             toast.success("Shift clocked out successfully.");
-            fetchJobOrderOperators(sortedTasks);
+            await fetchJobOrderOperators(
+                sortedTasks,
+                false,
+                response?.assignedPersonnel ?? response?.assignmentState?.assignedPersonnel
+            );
+            await fetchJobs(selectedJobOrder.jo_id, true);
         } catch (err: any) {
             toast.error(err.message || "Failed to stop shift.");
         }
@@ -475,7 +514,7 @@ const selectedTask = useMemo(() => {
         const taskObj = sortedTasks.find(t => t.id === taskId);
 
         try {
-            await manageRouteOperator({
+            const response = await manageRouteOperator({
                 action: "log-hours",
                 taskId: taskId,
                 userId: opUserId,
@@ -484,7 +523,12 @@ const selectedTask = useMemo(() => {
                 actualHours: parsedHours
             });
             toast.success("Hours logged successfully.");
-            fetchJobOrderOperators(sortedTasks);
+            await fetchJobOrderOperators(
+                sortedTasks,
+                false,
+                response?.assignedPersonnel ?? response?.assignmentState?.assignedPersonnel
+            );
+            await fetchJobs(selectedJobOrder.jo_id, true);
         } catch (err: any) {
             toast.error(err.message || "Failed to record manual hours.");
         }

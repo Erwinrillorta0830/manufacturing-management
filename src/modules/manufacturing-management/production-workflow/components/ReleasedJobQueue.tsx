@@ -209,7 +209,7 @@ export function ReleasedJobQueue({
                                 <tr>
                                     <th className="px-3 py-3 font-bold">Job Order</th>
                                     <th className="px-3 py-3 font-bold">Product / Journey</th>
-                                    <th className="px-3 py-3 text-right font-bold">Target / Produced</th>
+                                    <th className="whitespace-nowrap px-3 py-3 text-right font-bold">Target / Produced</th>
                                     <th className="px-3 py-3 font-bold">Workstation</th>
                                     <th className="px-3 py-3 font-bold">Due</th>
                                     <th className="px-3 py-3 text-right font-bold">Action</th>
@@ -271,10 +271,11 @@ export function ReleasedJobQueue({
                                                 <StepProgressBar completedSteps={completedSteps} totalSteps={totalSteps} />
                                                 <JobOrderJourneyBar journey={journey} compact className="mt-2" />
                                             </td>
-                                            <td className="px-3 py-3 text-right align-top">
-                                                <div className="font-sans text-sm font-bold text-foreground">{Number(jo.quantity || 0).toLocaleString()}</div>
-                                                <div className="mt-1 font-sans text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                                                    {Number(producedQty || 0).toLocaleString()}
+                                            <td className="whitespace-nowrap px-3 py-3 text-right align-top">
+                                                <div className="font-sans text-sm font-bold text-foreground">
+                                                    {Number(jo.quantity || 0).toLocaleString()}
+                                                    <span className="mx-1 font-normal text-muted-foreground">/</span>
+                                                    <span className="text-emerald-600 dark:text-emerald-400">{Number(producedQty || 0).toLocaleString()}</span>
                                                 </div>
                                                 <div className="mt-2 text-xs text-muted-foreground">
                                                     {totalHours.toFixed(1)} planned hrs
