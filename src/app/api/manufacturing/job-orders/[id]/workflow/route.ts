@@ -10,6 +10,7 @@ import {
     JOB_ORDER_WORKFLOW_ACTIONS,
     type JobOrderWorkflowAction
 } from "@/modules/manufacturing-management/job-order-workflow";
+import { JobOrderOperatorAssignmentError } from "../../_operator-assignment-service";
 import {
     deleteJobOrderTerminationImage,
     JobOrderTerminationImageError,
@@ -240,6 +241,13 @@ export async function POST(
                 error: error.message,
                 code: error.code,
                 ...(error.details ? { details: error.details } : {})
+            }, { status: error.status });
+        }
+        if (error instanceof JobOrderOperatorAssignmentError) {
+            return NextResponse.json({
+                success: false,
+                error: error.message,
+                code: error.code
             }, { status: error.status });
         }
         console.error("Job Order workflow request failed:", error);

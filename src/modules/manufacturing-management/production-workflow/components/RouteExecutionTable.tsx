@@ -3,22 +3,29 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
     AlertTriangle,
+    ArrowLeftRight,
     Building2,
     CheckCircle2,
     Layers,
     Loader2,
     Package,
+    Pencil,
     Play,
     Square,
     Trash2,
     User
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { SearchableSelect } from "../../planning-engineering/components/SearchableSelect";
 import { formatProductionValue } from "../../planning-engineering/utils/production-timing";
 import { JobOrder, RouteOperatorRecord, RoutingTask, User as UserType } from "../types";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+    OperatorRosterChange,
+    OperatorRosterChangeDialog,
+    OperatorRosterChangePayload
+} from "./OperatorRosterChangeDialog";
 import { WorkstationBreakdownDialog } from "./WorkstationBreakdownDialog";
 
 interface RouteExecutionTableProps {
@@ -30,10 +37,11 @@ interface RouteExecutionTableProps {
     users: UserType[];
     loadingOperators: boolean;
     handleAddOperator: (startTimer: boolean, taskId: number, assigneeId: string) => void;
-    handleRemoveOperator: (taskId: number, opUserId: number) => void;
+    handleRemoveOperator: (taskId: number, opUserId: number, changeReason?: string, requestId?: string) => Promise<boolean>;
+    handleSwapOperator: (taskId: number, opUserId: number, replacementUserId: number, changeReason?: string, requestId?: string) => Promise<boolean>;
     handleStartTimer: (taskId: number, opUserId: number) => void;
     handleStopTimer: (taskId: number, opUserId: number) => void;
-    handleSaveManualHours: (taskId: number, opUserId: number, hours: string) => void;
+    handleSaveManualHours: (taskId: number, opUserId: number, hours: string, changeReason?: string, requestId?: string) => Promise<boolean>;
     onRequestCompleteStep: (taskId: number) => void;
     onBreakdownSaved?: () => void;
     readOnly?: boolean;
@@ -47,10 +55,11 @@ interface RouteExecutionRowProps {
     users: UserType[];
     loadingOperators: boolean;
     handleAddOperator: RouteExecutionTableProps["handleAddOperator"];
-    handleRemoveOperator: RouteExecutionTableProps["handleRemoveOperator"];
     handleStartTimer: RouteExecutionTableProps["handleStartTimer"];
     handleStopTimer: RouteExecutionTableProps["handleStopTimer"];
-    handleSaveManualHours: RouteExecutionTableProps["handleSaveManualHours"];
+    onRequestRemoveOperator: (task: RoutingTask, operator: OperatorGroup) => void;
+    onRequestSwapOperator: (task: RoutingTask, operator: OperatorGroup, replacementOptions: { value: string; label: string }[]) => void;
+    onRequestEditOperator: (task: RoutingTask, operator: OperatorGroup) => void;
     onOpenBreakdown: (taskId: number) => void;
     onRequestCompleteStep: (taskId: number) => void;
     setSelectedTaskId: (id: number) => void;
@@ -76,6 +85,10 @@ function getUserLabel(users: UserType[], userId: number): string {
     const firstName = user.user_fname || user.first_name || "";
     const lastName = user.user_lname || user.last_name || "";
     return `${firstName} ${lastName}`.trim() || `User #${userId}`;
+}
+
+function getOperatorLabel(users: UserType[], operator: OperatorGroup): string {
+    return operator.latestSession.user_name?.trim() || getUserLabel(users, operator.userId);
 }
 
 function formatDateTime(value: string | null | undefined): string {
@@ -136,22 +149,21 @@ function RouteExecutionRow({
     users,
     loadingOperators,
     handleAddOperator,
-    handleRemoveOperator,
     handleStartTimer,
     handleStopTimer,
-    handleSaveManualHours,
+    onRequestRemoveOperator,
+    onRequestSwapOperator,
+    onRequestEditOperator,
     onOpenBreakdown,
     onRequestCompleteStep,
     setSelectedTaskId,
     readOnly
 }: RouteExecutionRowProps) {
     const [assigneeId, setAssigneeId] = useState("");
-    const [manualUserId, setManualUserId] = useState<number | null>(null);
-    const [manualHours, setManualHours] = useState("");
     const [materialsOpen, setMaterialsOpen] = useState(false);
 
     const taskOperators = useMemo(
-        () => routeOperators.filter((operator) => Number(operator.task_id) === Number(task.id)),
+        () => routeOperators.filter((operator) => Number(operator.task_id) === Number(task.id) && operator.is_active !== false),
         [routeOperators, task.id]
     );
     const groupedOperators = useMemo<OperatorGroup[]>(() => {
@@ -249,57 +261,69 @@ function RouteExecutionRow({
                     </div>
                 </td>
                 <td className="px-3 py-3 align-top" onClick={(event) => event.stopPropagation()}>
-                    {!readOnly && (
-                        <div className="flex min-w-[210px] gap-1.5">
-                            <SearchableSelect
-                                options={operatorOptions}
-                                value={assigneeId}
-                                onValueChange={setAssigneeId}
-                                placeholder="Assign personnel..."
-                                disabled={loadingOperators}
-                                className="h-8 min-w-0 flex-1 text-[10px]"
-                            />
-                            <div className="flex shrink-0 gap-1">
-                                <Button
-                                    type="button"
-                                    size="xs"
-                                    variant="outline"
-                                    disabled={!assigneeId}
-                                    onClick={() => {
-                                        handleAddOperator(false, task.id, assigneeId);
-                                        setAssigneeId("");
-                                    }}
-                                    className="h-8 px-2 text-[10px] font-bold"
-                                    title="Log personnel without starting a timer"
-                                >
-                                    Log
-                                </Button>
-                                <Button
-                                    type="button"
-                                    size="xs"
-                                    disabled={!assigneeId}
-                                    onClick={() => {
-                                        handleAddOperator(true, task.id, assigneeId);
-                                        setAssigneeId("");
-                                    }}
-                                    className="h-8 bg-primary px-2 text-[10px] font-bold text-primary-foreground"
-                                    title="Assign personnel and start timer"
-                                >
-                                    <Play className="h-3 w-3" />
-                                </Button>
+                    <div className="min-w-[210px] space-y-2">
+                        <div>
+                            <div className="mb-1 text-[9px] font-bold uppercase tracking-wider text-muted-foreground">
+                                Assigned Personnel
+                            </div>
+                            <div className="space-y-1">
+                                {groupedOperators.length === 0 ? (
+                                    <span className="text-[10px] italic text-muted-foreground">No personnel assigned</span>
+                                ) : groupedOperators.map((operator) => (
+                                    <div key={operator.userId} className="flex items-center gap-1.5 text-[10px] font-semibold text-foreground">
+                                        <User className="h-3 w-3 text-primary" />
+                                        <span className="truncate" title={getOperatorLabel(users, operator)}>{getOperatorLabel(users, operator)}</span>
+                                        {operator.activeSession && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-emerald-500" title="Timer running" />}
+                                    </div>
+                                ))}
                             </div>
                         </div>
-                    )}
-                    <div className="mt-2 space-y-1">
-                        {groupedOperators.length === 0 ? (
-                            <span className="text-[10px] italic text-muted-foreground">No personnel assigned</span>
-                        ) : groupedOperators.map((operator) => (
-                            <div key={operator.userId} className="flex items-center gap-1.5 text-[10px] font-semibold text-foreground">
-                                <User className="h-3 w-3 text-primary" />
-                                <span className="truncate" title={getUserLabel(users, operator.userId)}>{getUserLabel(users, operator.userId)}</span>
-                                {operator.activeSession && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-emerald-500" title="Timer running" />}
+                        {!readOnly && (
+                            <div className="border-t border-dashed border-border/70 pt-2">
+                                <div className="mb-1 text-[9px] font-bold uppercase tracking-wider text-muted-foreground">
+                                    Assign Additional Personnel
+                                </div>
+                                <div className="flex gap-1.5">
+                                    <SearchableSelect
+                                        options={operatorOptions}
+                                        value={assigneeId}
+                                        onValueChange={setAssigneeId}
+                                        placeholder="Select additional personnel..."
+                                        disabled={loadingOperators}
+                                        className="h-8 min-w-0 flex-1 text-[10px]"
+                                    />
+                                    <div className="flex shrink-0 gap-1">
+                                        <Button
+                                            type="button"
+                                            size="xs"
+                                            variant="outline"
+                                            disabled={!assigneeId}
+                                            onClick={() => {
+                                                handleAddOperator(false, task.id, assigneeId);
+                                                setAssigneeId("");
+                                            }}
+                                            className="h-8 px-2 text-[10px] font-bold"
+                                            title="Log additional personnel without starting a timer"
+                                        >
+                                            Log
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            size="xs"
+                                            disabled={!assigneeId}
+                                            onClick={() => {
+                                                handleAddOperator(true, task.id, assigneeId);
+                                                setAssigneeId("");
+                                            }}
+                                            className="h-8 bg-primary px-2 text-[10px] font-bold text-primary-foreground"
+                                            title="Assign additional personnel and start timer"
+                                        >
+                                            <Play className="h-3 w-3" />
+                                        </Button>
+                                    </div>
+                                </div>
                             </div>
-                        ))}
+                        )}
                     </div>
                 </td>
                 <td className="px-3 py-3 align-top" onClick={(event) => event.stopPropagation()}>
@@ -342,15 +366,20 @@ function RouteExecutionRow({
                         <div className="min-w-[280px] space-y-2">
                             {groupedOperators.map((operator) => {
                                 const isRunning = Boolean(operator.activeSession);
-                                const isEditing = manualUserId === operator.userId;
+                                const hasRecordedSession = operator.totalHours > 0
+                                    || Boolean(operator.latestSession.started_at || operator.latestSession.stopped_at);
+                                const hasProtectedLabor = isRunning || operator.totalHours > 0;
+                                const guardrailMessage = "Cannot remove or swap an operator with an active or logged timer. Pause or complete the tracking session first.";
                                 return (
                                     <div key={operator.userId} className="rounded-lg border border-border/60 bg-background/60 p-2">
                                         <div className="flex items-center justify-between gap-2">
-                                            <span className="truncate text-[10px] font-bold text-foreground">{getUserLabel(users, operator.userId)}</span>
+                                            <span className="truncate text-[10px] font-bold text-foreground">{getOperatorLabel(users, operator)}</span>
                                             {isRunning ? (
                                                 <RunningTimer startedAt={operator.activeSession!.started_at!} durationHours={shiftDurationHours} />
                                             ) : (
-                                                <span className="rounded bg-muted/50 px-1.5 py-0.5 text-[9px] font-semibold text-muted-foreground">Stopped</span>
+                                                <span className="rounded bg-muted/50 px-1.5 py-0.5 text-[9px] font-semibold text-muted-foreground">
+                                                    {hasRecordedSession ? "Stopped" : "Not started"}
+                                                </span>
                                             )}
                                         </div>
                                         <div className="mt-1 grid grid-cols-3 gap-1 text-[9px] text-muted-foreground">
@@ -359,46 +388,56 @@ function RouteExecutionRow({
                                             <span>Consumed: <strong className="block font-mono text-foreground">{operator.totalHours.toFixed(2)}h</strong></span>
                                         </div>
                                         <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                                            {isEditing ? (
-                                                <>
-                                                    <Input
-                                                        type="number"
-                                                        min="0"
-                                                        step="0.1"
-                                                        value={manualHours}
-                                                        onChange={(event) => setManualHours(event.target.value)}
-                                                        className="h-6 w-16 px-1 text-[10px] font-mono"
-                                                    />
-                                                    <Button type="button" size="xs" className="h-6 px-2 text-[9px]" onClick={() => {
-                                                        handleSaveManualHours(task.id, operator.userId, manualHours);
-                                                        setManualUserId(null);
-                                                        setManualHours("");
-                                                    }}>Save</Button>
-                                                    <Button type="button" size="xs" variant="outline" className="h-6 px-2 text-[9px]" onClick={() => {
-                                                        setManualUserId(null);
-                                                        setManualHours("");
-                                                    }}>Cancel</Button>
-                                                </>
+                                            {isRunning ? (
+                                                <Button type="button" size="xs" variant="outline" className="h-6 border-amber-500/30 px-2 text-[9px] font-bold text-amber-700 dark:text-amber-400" onClick={() => handleStopTimer(task.id, operator.userId)}>
+                                                    <Square className="mr-1 h-2.5 w-2.5 fill-current" /> Stop
+                                                </Button>
                                             ) : (
-                                                <>
-                                                    {isRunning ? (
-                                                        <Button type="button" size="xs" variant="outline" className="h-6 border-amber-500/30 px-2 text-[9px] font-bold text-amber-700 dark:text-amber-400" onClick={() => handleStopTimer(task.id, operator.userId)}>
-                                                            <Square className="mr-1 h-2.5 w-2.5 fill-current" /> Stop
-                                                        </Button>
-                                                    ) : (
-                                                        <Button type="button" size="xs" variant="outline" disabled={readOnly} className="h-6 border-emerald-500/30 px-2 text-[9px] font-bold text-emerald-700 dark:text-emerald-400" onClick={() => handleStartTimer(task.id, operator.userId)}>
-                                                            <Play className="mr-1 h-2.5 w-2.5 fill-current" /> Start
-                                                        </Button>
-                                                    )}
-                                                    <Button type="button" size="xs" variant="ghost" disabled={readOnly} className="h-6 px-1.5 text-[9px]" onClick={() => {
-                                                        setManualUserId(operator.userId);
-                                                        setManualHours(operator.totalHours.toString());
-                                                    }}>Manual</Button>
-                                                    <Button type="button" size="xs" variant="ghost" disabled={readOnly} className="h-6 px-1.5 text-[9px] text-destructive hover:text-destructive" onClick={() => handleRemoveOperator(task.id, operator.userId)} title="Remove personnel from route">
-                                                        <Trash2 className="h-3 w-3" />
-                                                    </Button>
-                                                </>
+                                                <Button type="button" size="xs" variant="outline" disabled={readOnly} className="h-6 border-emerald-500/30 px-2 text-[9px] font-bold text-emerald-700 dark:text-emerald-400" onClick={() => handleStartTimer(task.id, operator.userId)}>
+                                                    <Play className="mr-1 h-2.5 w-2.5 fill-current" /> Start
+                                                </Button>
                                             )}
+                                            <Button type="button" size="xs" variant="ghost" disabled={readOnly} className="h-6 px-1.5 text-[9px]" onClick={() => onRequestEditOperator(task, operator)}>
+                                                <Pencil className="mr-1 h-3 w-3" /> Edit
+                                            </Button>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <span tabIndex={hasProtectedLabor && !readOnly ? 0 : -1}>
+                                                        <Button
+                                                            type="button"
+                                                            size="xs"
+                                                            variant="ghost"
+                                                            disabled={readOnly || hasProtectedLabor}
+                                                            aria-label="Swap operator assignment"
+                                                            className="h-6 px-1.5 text-[9px] text-amber-700 hover:text-amber-800 dark:text-amber-400"
+                                                            onClick={() => onRequestSwapOperator(task, operator, operatorOptions)}
+                                                            title={hasProtectedLabor ? guardrailMessage : "Swap operator assignment"}
+                                                        >
+                                                            <ArrowLeftRight className="mr-1 h-3 w-3" /> Swap
+                                                        </Button>
+                                                    </span>
+                                                </TooltipTrigger>
+                                                {hasProtectedLabor && !readOnly && <TooltipContent>{guardrailMessage}</TooltipContent>}
+                                            </Tooltip>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <span tabIndex={hasProtectedLabor && !readOnly ? 0 : -1}>
+                                                        <Button
+                                                            type="button"
+                                                            size="xs"
+                                                            variant="ghost"
+                                                            disabled={readOnly || hasProtectedLabor}
+                                                            aria-label="Remove personnel from route"
+                                                            className="h-6 px-1.5 text-[9px] text-destructive hover:text-destructive"
+                                                            onClick={() => onRequestRemoveOperator(task, operator)}
+                                                            title={hasProtectedLabor ? guardrailMessage : "Remove personnel from route"}
+                                                        >
+                                                            <Trash2 className="h-3 w-3" />
+                                                        </Button>
+                                                    </span>
+                                                </TooltipTrigger>
+                                                {hasProtectedLabor && !readOnly && <TooltipContent>{guardrailMessage}</TooltipContent>}
+                                            </Tooltip>
                                         </div>
                                     </div>
                                 );
@@ -443,6 +482,7 @@ export function RouteExecutionTable({
     loadingOperators,
     handleAddOperator,
     handleRemoveOperator,
+    handleSwapOperator,
     handleStartTimer,
     handleStopTimer,
     handleSaveManualHours,
@@ -451,8 +491,57 @@ export function RouteExecutionTable({
     readOnly = false
 }: RouteExecutionTableProps) {
     const [breakdownTaskId, setBreakdownTaskId] = useState<number | null>(null);
+    const [pendingRosterChange, setPendingRosterChange] = useState<OperatorRosterChange | null>(null);
+    const [savingRosterChange, setSavingRosterChange] = useState(false);
     const completedCount = sortedTasks.filter((task) => task.status === "Completed").length;
     const breakdownTask = sortedTasks.find((task) => task.id === breakdownTaskId) || null;
+
+    const openRosterChange = (
+        kind: OperatorRosterChange["kind"],
+        task: RoutingTask,
+        operator: OperatorGroup,
+        replacementOptions: { value: string; label: string }[] = []
+    ) => {
+        setPendingRosterChange({
+            kind,
+            taskId: task.id,
+            operatorId: operator.userId,
+            jobOrderNo: selectedJobOrder.jo_id,
+            routeLabel: `Route ${task.sequence_order} · ${task.name}`,
+            operatorName: getOperatorLabel(users, operator),
+            currentHours: operator.totalHours,
+            replacementOptions
+        });
+    };
+
+    const confirmRosterChange = async (payload: OperatorRosterChangePayload): Promise<boolean> => {
+        if (!pendingRosterChange) return false;
+        setSavingRosterChange(true);
+        try {
+            const currentOperator = routeOperators
+                .find((candidate) => Number(candidate.task_id) === pendingRosterChange.taskId
+                    && Number(candidate.user_id) === pendingRosterChange.operatorId
+                    && candidate.is_active !== false);
+            if (!currentOperator) return false;
+
+            if (pendingRosterChange.kind === "remove") {
+                return await handleRemoveOperator(pendingRosterChange.taskId, currentOperator.user_id, payload.changeReason, payload.requestId);
+            }
+            if (pendingRosterChange.kind === "swap") {
+                if (!payload.replacementUserId) return false;
+                return await handleSwapOperator(pendingRosterChange.taskId, currentOperator.user_id, payload.replacementUserId, payload.changeReason, payload.requestId);
+            }
+            return await handleSaveManualHours(
+                pendingRosterChange.taskId,
+                currentOperator.user_id,
+                payload.actualHours || "",
+                payload.changeReason,
+                payload.requestId
+            );
+        } finally {
+            setSavingRosterChange(false);
+        }
+    };
 
     return (
         <section className="space-y-3">
@@ -496,10 +585,11 @@ export function RouteExecutionTable({
                                     users={users}
                                     loadingOperators={loadingOperators}
                                     handleAddOperator={handleAddOperator}
-                                    handleRemoveOperator={handleRemoveOperator}
                                     handleStartTimer={handleStartTimer}
                                     handleStopTimer={handleStopTimer}
-                                    handleSaveManualHours={handleSaveManualHours}
+                                    onRequestRemoveOperator={(rowTask, operator) => openRosterChange("remove", rowTask, operator)}
+                                    onRequestSwapOperator={(rowTask, operator, replacementOptions) => openRosterChange("swap", rowTask, operator, replacementOptions)}
+                                    onRequestEditOperator={(rowTask, operator) => openRosterChange("edit", rowTask, operator)}
                                     onOpenBreakdown={setBreakdownTaskId}
                                     onRequestCompleteStep={onRequestCompleteStep}
                                     setSelectedTaskId={setSelectedTaskId}
@@ -521,6 +611,15 @@ export function RouteExecutionTable({
                     setBreakdownTaskId(null);
                     onBreakdownSaved?.();
                 }}
+            />
+            <OperatorRosterChangeDialog
+                change={pendingRosterChange}
+                open={pendingRosterChange !== null}
+                saving={savingRosterChange}
+                onOpenChange={(open) => {
+                    if (!open) setPendingRosterChange(null);
+                }}
+                onConfirm={confirmRosterChange}
             />
         </section>
     );

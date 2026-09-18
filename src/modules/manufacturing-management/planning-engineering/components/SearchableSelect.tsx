@@ -26,6 +26,8 @@ export interface SearchableSelectProps {
     placeholder?: string;
     disabled?: boolean;
     className?: string;
+    id?: string;
+    ariaLabel?: string;
 }
 
 export function SearchableSelect({
@@ -35,6 +37,8 @@ export function SearchableSelect({
     placeholder = "Select option...",
     disabled = false,
     className,
+    id,
+    ariaLabel,
 }: SearchableSelectProps) {
     const [open, setOpen] = React.useState(false);
 
@@ -47,9 +51,11 @@ export function SearchableSelect({
         <Popover modal={false} open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
                 <Button
+                    id={id}
                     variant="outline"
                     role="combobox"
                     aria-expanded={open}
+                    aria-label={ariaLabel}
                     className={cn("w-full justify-between text-left font-normal", !value && "text-muted-foreground", className)}
                     disabled={disabled}
                 >

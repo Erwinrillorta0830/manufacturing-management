@@ -71,6 +71,7 @@ export default function ProductionWorkflowModule() {
         fetchJobs,
         handleAddOperator,
         handleRemoveOperator,
+        handleSwapOperator,
         handleStartTimer,
         handleStopTimer,
         handleSaveManualHours,
@@ -612,6 +613,7 @@ export default function ProductionWorkflowModule() {
                                 loadingOperators={loadingOperators}
                                 handleAddOperator={handleAddOperator}
                                 handleRemoveOperator={handleRemoveOperator}
+                                handleSwapOperator={handleSwapOperator}
                                 handleStartTimer={handleStartTimer}
                                 handleStopTimer={handleStopTimer}
                                 handleSaveManualHours={handleSaveManualHours}
@@ -722,7 +724,7 @@ export default function ProductionWorkflowModule() {
                     selectedJobOrder={selectedJobOrder!}
                     sortedTasks={sortedTasks}
                     users={users}
-                    allJobOperators={routeOperators}
+                    allJobOperators={routeOperators.filter((operator) => !operator.is_placeholder)}
                     onSuccess={() => fetchJobs(selectedJobOrderId)}
                 />
             )}

@@ -1,6 +1,17 @@
 /* eslint-disable */
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { isCancelledJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
+import { getSessionUserId } from "../../lot-transfers/_session";
+import {
+    findOperatorRosterAudit,
+    JobOrderOperatorAssignmentError,
+    normalizeOperatorAssignments,
+    recordOperatorRosterAudit,
+    removeJobOrderOperatorAssignment,
+    swapJobOrderOperatorAssignment,
+    updateJobOrderOperatorAssignment
+} from "../../job-orders/_operator-assignment-service";
 
 // Directus configuration
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
@@ -14,7 +25,8 @@ if (DIRECTUS_STATIC_TOKEN) {
 }
 
 const COLLECTION = "manufacturing_job_order_route_operators";
-const ROUTE_OPERATOR_FIELDS = "jo_route_operator_id,jo_route_id,operator_id,logged_hours,hourly_rate,logged_at,started_at,stopped_at";
+const ROUTE_OPERATOR_FIELDS = "jo_route_operator_id,jo_route_id,operator_id,logged_hours,hourly_rate,logged_at,started_at,stopped_at,is_active";
+const OPERATOR_ROSTER_ACTIONS = new Set(["remove-operator", "swap-operator", "edit-hours"]);
 
 interface RouteOperatorRecord {
     id: number;
@@ -27,6 +39,7 @@ interface RouteOperatorRecord {
     actual_hours: number;
     hourly_rate: number;
     labor_cost: number;
+    is_active: boolean;
 }
 
 interface DirectusRouteOperator {
@@ -38,6 +51,7 @@ interface DirectusRouteOperator {
     logged_at?: string | null;
     started_at?: string | null;
     stopped_at?: string | null;
+    is_active?: boolean | number | string | null;
 }
 
 class DirectusRouteOperatorError extends Error {
@@ -50,6 +64,55 @@ class DirectusRouteOperatorError extends Error {
         this.status = status;
         this.code = code;
     }
+}
+
+function isRosterChangeAction(action: string): action is "remove-operator" | "swap-operator" | "edit-hours" {
+    return OPERATOR_ROSTER_ACTIONS.has(action);
+}
+
+function operatorAuditAction(action: "remove-operator" | "swap-operator" | "edit-hours"): "operator-remove" | "operator-swap" | "operator-edit" {
+    if (action === "remove-operator") return "operator-remove";
+    if (action === "swap-operator") return "operator-swap";
+    return "operator-edit";
+}
+
+function textValue(value: unknown): string {
+    return value === undefined || value === null ? "" : String(value).trim();
+}
+
+function positiveInteger(value: unknown): number {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function rosterRequestHash(body: Record<string, any>, actorId: number): string {
+    return createHash("sha256")
+        .update(JSON.stringify({
+            actorId,
+            action: textValue(body.action),
+            taskId: positiveInteger(body.taskId),
+            userId: positiveInteger(body.userId),
+            replacementUserId: positiveInteger(body.replacementUserId) || null,
+            actualHours: body.actualHours ?? null,
+            changeReason: textValue(body.changeReason)
+        }))
+        .digest("hex");
+}
+
+function rosterEventKey(body: Record<string, any>, requestHash: string): string {
+    const suppliedRequestId = textValue(body.requestId);
+    if (suppliedRequestId.length > 96) {
+        throw new DirectusRouteOperatorError(400, "requestId must not exceed 96 characters.", "OPERATOR_REQUEST_ID_INVALID");
+    }
+    return `operator-roster:${suppliedRequestId || requestHash}`;
+}
+
+function changeReason(value: unknown): string {
+    const reason = textValue(value);
+    if (reason.length > 500) {
+        throw new DirectusRouteOperatorError(400, "changeReason must not exceed 500 characters.", "OPERATOR_CHANGE_REASON_INVALID");
+    }
+    return reason;
 }
 
 function parseDirectusDateTime(value: string): number {
@@ -108,7 +171,14 @@ async function fetchDirectusRecords(taskId?: number, userId?: number, activeOnly
 
 async function findDirectusRecord(taskId: number, userId: number, activeOnly = false): Promise<DirectusRouteOperator | null> {
     const records = await fetchDirectusRecords(taskId, userId, activeOnly);
-    return records[0] || null;
+    if (activeOnly) return records.find((record) => isActiveValue(record.is_active)) || null;
+    return records.find((record) => isActiveValue(record.is_active)) || records[0] || null;
+}
+
+function isActiveValue(value: unknown): boolean {
+    if (value === undefined || value === null || value === "") return true;
+    if (value === true || value === 1) return true;
+    return !["0", "false", "no", "inactive"].includes(String(value).trim().toLowerCase());
 }
 
 function mapDirectusRecord(record: DirectusRouteOperator, joId = ""): RouteOperatorRecord {
@@ -124,7 +194,8 @@ function mapDirectusRecord(record: DirectusRouteOperator, joId = ""): RouteOpera
         stopped_at: record.stopped_at || null,
         actual_hours: actualHours,
         hourly_rate: hourlyRate,
-        labor_cost: Math.round(actualHours * hourlyRate * 100) / 100
+        labor_cost: Math.round(actualHours * hourlyRate * 100) / 100,
+        is_active: isActiveValue(record.is_active)
     };
 }
 
@@ -143,24 +214,53 @@ function relationId(value: unknown): number {
     return Number(value ?? 0);
 }
 
-async function assertProductionMutationAllowed(taskId: number, action: string): Promise<void> {
-    const routePayload = await directusRequest<{ data?: { job_order_id?: unknown } }>(
-        `/items/manufacturing_job_order_routes/${taskId}?fields=jo_route_id,job_order_id`,
+interface RouteJobOrderContext {
+    jobOrderId: number;
+    jobOrderNo: string;
+    sequenceOrder: number;
+    status: string;
+    assignedPersonnel: ReturnType<typeof normalizeOperatorAssignments>;
+}
+
+async function getRouteJobOrderContext(taskId: number): Promise<RouteJobOrderContext> {
+    const routePayload = await directusRequest<{ data?: { job_order_id?: unknown; sequence_order?: unknown } }>(
+        `/items/manufacturing_job_order_routes/${taskId}?fields=jo_route_id,job_order_id,sequence_order`,
     );
     const jobOrderId = relationId(routePayload?.data?.job_order_id);
     if (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0) {
         throw new DirectusRouteOperatorError(404, "Routing task is not linked to a valid Job Order.", "JOB_ORDER_NOT_FOUND");
     }
+    const sequenceOrder = Number(routePayload?.data?.sequence_order);
+    if (!Number.isSafeInteger(sequenceOrder) || sequenceOrder <= 0) {
+        throw new DirectusRouteOperatorError(409, "Routing task is missing a valid sequence assignment.", "ROUTE_SEQUENCE_MISSING");
+    }
 
-    const jobOrderPayload = await directusRequest<{ data?: { status?: unknown; job_order_no?: unknown } }>(
-        `/items/manufacturing_job_orders/${jobOrderId}?fields=job_order_id,job_order_no,status`,
+    const jobOrderPayload = await directusRequest<{ data?: { status?: unknown; job_order_no?: unknown; assigned_personnel?: unknown } }>(
+        `/items/manufacturing_job_orders/${jobOrderId}?fields=job_order_id,job_order_no,status,assigned_personnel`,
     );
     const jobOrder = jobOrderPayload?.data;
+    if (!jobOrder) {
+        throw new DirectusRouteOperatorError(404, "Job Order was not found.", "JOB_ORDER_NOT_FOUND");
+    }
+    return {
+        jobOrderId,
+        jobOrderNo: String(jobOrder.job_order_no || `JO-${jobOrderId}`),
+        sequenceOrder,
+        status: String(jobOrder.status || ""),
+        assignedPersonnel: normalizeOperatorAssignments(jobOrder.assigned_personnel)
+    };
+}
+
+async function assertProductionMutationAllowed(taskId: number, action: string): Promise<RouteJobOrderContext> {
+    const context = await getRouteJobOrderContext(taskId);
+    const jobOrderId = context.jobOrderId;
+    const jobOrderNo = context.jobOrderNo;
+    const jobOrder = { status: context.status, job_order_no: jobOrderNo };
     const status = normalizeJobOrderStatus(jobOrder?.status);
     if (!status) {
         throw new DirectusRouteOperatorError(409, "The Job Order has an unknown status and cannot be changed.", "JOB_ORDER_STATUS_UNKNOWN");
     }
-    if (action === "stop-timer") return;
+    if (action === "stop-timer") return context;
     if (isCancelledJobOrderStatus(status)) {
         throw new DirectusRouteOperatorError(409, `Job Order ${jobOrder?.job_order_no || jobOrderId} is cancelled and cannot be changed.`, "JOB_ORDER_CANCELLED");
     }
@@ -173,6 +273,7 @@ async function assertProductionMutationAllowed(taskId: number, action: string): 
     if (!isJobOrderStatus(status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
         throw new DirectusRouteOperatorError(409, `Job Order ${jobOrder?.job_order_no || jobOrderId} must be In Production before operator activity can be changed.`, "JOB_ORDER_NOT_IN_PRODUCTION");
     }
+    return context;
 }
 
 // Fetch all users to resolve their metadata (names, rates, positions)
@@ -235,11 +336,39 @@ async function enrichRecords(records: RouteOperatorRecord[]): Promise<RouteOpera
 }
 
 function errorResponse(error: unknown, fallbackMessage: string) {
+    if (error instanceof JobOrderOperatorAssignmentError) {
+        return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+    }
     if (error instanceof DirectusRouteOperatorError) {
         const status = error.status >= 400 && error.status < 500 ? error.status : 502;
         return NextResponse.json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, { status });
     }
     return NextResponse.json({ error: error instanceof Error ? error.message : fallbackMessage }, { status: 500 });
+}
+
+async function requireAuthenticatedActor(): Promise<number> {
+    const actorId = await getSessionUserId();
+    if (!actorId || actorId <= 0) {
+        throw new DirectusRouteOperatorError(401, "An authenticated user is required for operator roster changes.", "AUTHENTICATION_REQUIRED");
+    }
+    return actorId;
+}
+
+function auditRemarks(
+    action: "remove-operator" | "swap-operator" | "edit-hours",
+    context: RouteJobOrderContext,
+    userId: number,
+    replacementUserId: number | null,
+    actualHours: number | null,
+    reason: string
+): string {
+    const detail = action === "swap-operator"
+        ? `replacement operator ${replacementUserId}`
+        : action === "edit-hours"
+            ? `hours set to ${actualHours}`
+            : "removed from the active roster";
+    const reasonDetail = reason ? ` Reason: ${reason}` : "";
+    return `Operator ${userId} ${detail} on Route ${context.sequenceOrder} of ${context.jobOrderNo}.${reasonDetail}`;
 }
 
 // GET handler
@@ -255,14 +384,26 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: "taskId must be a positive integer" }, { status: 400 });
         }
 
+        const context = taskId === undefined ? null : await getRouteJobOrderContext(taskId);
         const directusRecords = await fetchDirectusRecords(taskId, undefined, activeOnly);
-        const records = directusRecords.map(record => mapDirectusRecord(record, joId));
+        const responseJoId = joId || context?.jobOrderNo || (context ? String(context.jobOrderId) : "");
+        const records = directusRecords
+            .filter((record) => !activeOnly || isActiveValue(record.is_active))
+            .map(record => mapDirectusRecord(record, responseJoId));
         const enrichedRecords = await enrichRecords(records);
         const totalHours = enrichedRecords.reduce((sum, record) => sum + record.actual_hours, 0);
         const totalLaborCost = enrichedRecords.reduce((sum, record) => sum + record.labor_cost, 0);
 
         return NextResponse.json({
             data: enrichedRecords,
+            assignedPersonnel: context?.assignedPersonnel || null,
+            assignmentState: context
+                ? {
+                    jobOrderId: context.jobOrderId,
+                    jobOrderNo: context.jobOrderNo,
+                    assignedPersonnel: context.assignedPersonnel
+                }
+                : null,
             summary: {
                 total_hours: Math.round(totalHours * 100) / 100,
                 total_labor_cost: Math.round(totalLaborCost * 100) / 100
@@ -293,13 +434,84 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "taskId and userId must be positive integers" }, { status: 400 });
         }
 
-        await assertProductionMutationAllowed(taskId, action);
+        const joId = String(body.joId || "").trim();
+        if (!joId) {
+            return NextResponse.json({ error: "joId is required for route operator changes" }, { status: 400 });
+        }
 
-        const joId = String(body.joId || "");
+        const rosterAction = isRosterChangeAction(action);
+        const actorId = rosterAction ? await requireAuthenticatedActor() : null;
+        const requestHash = rosterAction ? rosterRequestHash(body, actorId as number) : null;
+        const eventKey = rosterAction ? rosterEventKey(body, requestHash as string) : null;
+        let context: RouteJobOrderContext;
+
+        if (rosterAction) {
+            context = await getRouteJobOrderContext(taskId);
+        } else {
+            context = await assertProductionMutationAllowed(taskId, action);
+        }
+
+        if (joId !== String(context.jobOrderId) && joId !== context.jobOrderNo) {
+            return NextResponse.json({ error: "The route does not belong to the supplied Job Order." }, { status: 409 });
+        }
+
+        if (rosterAction) {
+            const existingAudit = await findOperatorRosterAudit(eventKey as string, context.jobOrderId);
+            const expectedAction = operatorAuditAction(action);
+            if (existingAudit) {
+                if (existingAudit.workflow_action && existingAudit.workflow_action !== expectedAction) {
+                    throw new DirectusRouteOperatorError(409, "The request ID was already used for a different operator roster action.", "OPERATOR_REQUEST_ID_CONFLICT");
+                }
+                if (existingAudit.workflow_request_hash && existingAudit.workflow_request_hash !== requestHash) {
+                    throw new DirectusRouteOperatorError(409, "The request ID was already used with a different operator roster change.", "OPERATOR_REQUEST_ID_CONFLICT");
+                }
+                return NextResponse.json({
+                    success: true,
+                    idempotent: true,
+                    message: "The operator roster change was already applied.",
+                    assignedPersonnel: context.assignedPersonnel,
+                    auditId: positiveInteger(existingAudit.history_id ?? existingAudit.id) || null
+                });
+            }
+            context = await assertProductionMutationAllowed(taskId, action);
+        }
+
         const usersMap = await fetchUsersMap();
         const userMeta = usersMap.get(userId) || { name: `Operator #${userId}`, position: "Operator", rate: 150 };
         const requestedRate = Number(body.hourlyRate);
         const determinedRate = Number.isFinite(requestedRate) && requestedRate > 0 ? requestedRate : userMeta.rate;
+        const reason = rosterAction ? changeReason(body.changeReason) : "";
+
+        const recordRosterAudit = async (
+            assignmentState: ReturnType<typeof normalizeOperatorAssignments> | null,
+            actualHours: number | null = null,
+            replacementUserId: number | null = null
+        ) => {
+            const audit = await recordOperatorRosterAudit({
+                jobOrderId: context.jobOrderId,
+                oldStatus: normalizeJobOrderStatus(context.status) || context.status,
+                newStatus: normalizeJobOrderStatus(context.status) || context.status,
+                workflowAction: operatorAuditAction(action as "remove-operator" | "swap-operator" | "edit-hours"),
+                changedBy: actorId as number,
+                eventKey: eventKey as string,
+                workflowRequestHash: requestHash as string,
+                remarks: auditRemarks(action as "remove-operator" | "swap-operator" | "edit-hours", context, userId, replacementUserId, actualHours, reason)
+            });
+            return {
+                assignedPersonnel: assignmentState || context.assignedPersonnel,
+                auditId: positiveInteger(audit.history_id ?? audit.id) || null
+            };
+        };
+
+        let assignmentState: ReturnType<typeof normalizeOperatorAssignments> | null = null;
+        if (action === "start-timer" || action === "log-hours") {
+            assignmentState = (await updateJobOrderOperatorAssignment(
+                context.jobOrderId,
+                context.sequenceOrder,
+                userId,
+                true
+            )).assignments;
+        }
 
         if (action === "start-timer") {
             const activeRecord = await findDirectusRecord(taskId, userId, true);
@@ -307,11 +519,13 @@ export async function POST(request: Request) {
                 return NextResponse.json({
                     success: true,
                     message: "Timer already running",
+                    assignedPersonnel: context.assignedPersonnel,
                     data: {
                         ...mapDirectusRecord(activeRecord, joId),
                         user_name: userMeta.name,
                         user_position: userMeta.position,
-                        hourly_rate: determinedRate
+                        hourly_rate: determinedRate,
+                        is_active: true
                     }
                 });
             }
@@ -335,18 +549,21 @@ export async function POST(request: Request) {
                         jo_route_id: taskId,
                         operator_id: userId,
                         logged_hours: 0,
+                        is_active: true,
                         ...payload
                     })
                 });
             const mapped = responseRecord(saved, joId);
             return NextResponse.json({
                 success: true,
+                assignedPersonnel: assignmentState,
                 data: {
                     ...mapped,
                     user_name: userMeta.name,
                     user_position: userMeta.position,
                     hourly_rate: determinedRate,
-                    labor_cost: 0
+                    labor_cost: 0,
+                    is_active: true
                 }
             });
         }
@@ -378,10 +595,12 @@ export async function POST(request: Request) {
             const mapped = responseRecord(saved, joId);
             return NextResponse.json({
                 success: true,
+                assignedPersonnel: context.assignedPersonnel,
                 data: {
                     ...mapped,
                     user_name: userMeta.name,
-                    user_position: userMeta.position
+                    user_position: userMeta.position,
+                    is_active: true
                 }
             });
         }
@@ -416,26 +635,92 @@ export async function POST(request: Request) {
                         hourly_rate: determinedRate,
                         logged_at: now,
                         started_at: null,
-                        stopped_at: null
+                        stopped_at: null,
+                        is_active: true
                     })
                 });
             const mapped = responseRecord(saved, joId);
             return NextResponse.json({
                 success: true,
+                assignedPersonnel: assignmentState,
                 data: {
                     ...mapped,
                     user_name: userMeta.name,
-                    user_position: userMeta.position
+                    user_position: userMeta.position,
+                    is_active: true
                 }
             });
         }
 
         if (action === "remove-operator") {
-            const existingRecord = await findDirectusRecord(taskId, userId);
-            if (existingRecord) {
-                await directusRequest(`/items/${COLLECTION}/${existingRecord.jo_route_operator_id}`, { method: "DELETE" });
+            assignmentState = (await removeJobOrderOperatorAssignment(
+                context.jobOrderId,
+                context.sequenceOrder,
+                userId
+            )).assignments;
+            const audit = await recordRosterAudit(assignmentState);
+            return NextResponse.json({
+                success: true,
+                removedFromActiveRoster: true,
+                assignedPersonnel: audit.assignedPersonnel,
+                auditId: audit.auditId
+            });
+        }
+
+        if (action === "swap-operator") {
+            const replacementUserId = positiveInteger(body.replacementUserId);
+            if (!replacementUserId) {
+                throw new DirectusRouteOperatorError(400, "replacementUserId must be a positive integer.", "OPERATOR_REPLACEMENT_INVALID");
             }
-            return NextResponse.json({ success: true, deletedFromDirectus: Boolean(existingRecord) });
+            if (!usersMap.has(replacementUserId)) {
+                throw new DirectusRouteOperatorError(404, "The replacement operator was not found or is not eligible.", "OPERATOR_REPLACEMENT_INVALID");
+            }
+            assignmentState = (await swapJobOrderOperatorAssignment(
+                context.jobOrderId,
+                context.sequenceOrder,
+                userId,
+                replacementUserId
+            )).assignments;
+            const audit = await recordRosterAudit(assignmentState, null, replacementUserId);
+            return NextResponse.json({
+                success: true,
+                swapped: true,
+                assignedPersonnel: audit.assignedPersonnel,
+                auditId: audit.auditId
+            });
+        }
+
+        if (action === "edit-hours") {
+            const totalHours = Number(body.actualHours);
+            if (!Number.isFinite(totalHours) || totalHours < 0) {
+                throw new DirectusRouteOperatorError(400, "actualHours must be a non-negative number.", "OPERATOR_HOURS_INVALID");
+            }
+            const existingRecord = await findDirectusRecord(taskId, userId);
+            if (!existingRecord || !isActiveValue(existingRecord.is_active)) {
+                throw new DirectusRouteOperatorError(409, "The operator is not assigned to this route.", "OPERATOR_ASSIGNMENT_NOT_FOUND");
+            }
+            const now = new Date().toISOString();
+            const saved = await directusRequest<{ data?: DirectusRouteOperator }>(`/items/${COLLECTION}/${existingRecord.jo_route_operator_id}`, {
+                method: "PATCH",
+                body: JSON.stringify({
+                    logged_hours: Math.round(totalHours * 100) / 100,
+                    hourly_rate: determinedRate,
+                    logged_at: now
+                })
+            });
+            const mapped = responseRecord(saved, joId);
+            const audit = await recordRosterAudit(null, Math.round(totalHours * 100) / 100);
+            return NextResponse.json({
+                success: true,
+                data: {
+                    ...mapped,
+                    user_name: userMeta.name,
+                    user_position: userMeta.position,
+                    is_active: true
+                },
+                assignedPersonnel: audit.assignedPersonnel,
+                auditId: audit.auditId
+            });
         }
 
         return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
