@@ -648,10 +648,19 @@ export async function POST(request: Request) {
                 // the existing capacity-override workflow available, but reject
                 // status, scope, UOM, and invalid-capacity mismatches.
                 if (!eligibility.eligible && eligibility.reason !== "FULL") {
+                    const code = eligibility.reason === "UOM"
+                        ? RECEIVING_ERROR_CODES.STORAGE_LOT_UOM_MISMATCH
+                        : eligibility.reason === "PRODUCT_SCOPE"
+                            ? RECEIVING_ERROR_CODES.STORAGE_LOT_PRODUCT_TYPE_MISMATCH
+                            : eligibility.reason === "NEGATIVE_BALANCE"
+                                ? RECEIVING_ERROR_CODES.STORAGE_LOT_NEGATIVE_BALANCE
+                                : undefined;
                     throw new ReceivingPreviewError(
-                        `Storage lot ${String(lot.lot_name || allocation.storageLotId)} is not an eligible target for this product.`,
+                        eligibility.reason === "NEGATIVE_BALANCE"
+                            ? `Storage lot ${String(lot.lot_name || allocation.storageLotId)} has a negative inventory balance and must be reconciled before receiving.`
+                            : `Storage lot ${String(lot.lot_name || allocation.storageLotId)} is not an eligible target for this product.`,
                         409,
-                        eligibility.reason === "UOM" ? RECEIVING_ERROR_CODES.STORAGE_LOT_UOM_MISMATCH : undefined
+                        code
                     );
                 }
                 const contentConflict = findStorageLotContentConflict(
@@ -666,7 +675,8 @@ export async function POST(request: Request) {
                 if (contentConflict) {
                     throw new ReceivingPreviewError(
                         `Storage lot ${String(lot.lot_name || allocation.storageLotId)} already contains ${storedProductNameById.get(contentConflict.productId) || `product ${contentConflict.productId}`} (${productTypeClassification(contentConflict.productTypeId).label}) and cannot receive a different product type.`,
-                        409
+                        409,
+                        RECEIVING_ERROR_CODES.STORAGE_LOT_PRODUCT_TYPE_MISMATCH
                     );
                 }
                 const typeSet = productTypesByLot.get(allocation.storageLotId) || new Set<number>();
@@ -676,7 +686,11 @@ export async function POST(request: Request) {
         }
         for (const [lotId, typeSet] of productTypesByLot) {
             if (typeSet.size > 1) {
-                throw new ReceivingPreviewError(`Storage lot ${lotId} cannot be assigned to multiple Product Types in one receiving submission.`);
+                throw new ReceivingPreviewError(
+                    `Storage lot ${lotId} cannot be assigned to multiple Product Types in one receiving submission.`,
+                    409,
+                    RECEIVING_ERROR_CODES.STORAGE_LOT_PRODUCT_TYPE_MISMATCH
+                );
             }
         }
         const capacityByLot = new Map<number, number | null>();
@@ -686,11 +700,20 @@ export async function POST(request: Request) {
         }
         const capacityEvaluations = evaluateLotCapacities(capacityByLot, occupiedByLot, lotCapacityInputs);
         for (const evaluation of capacityEvaluations.values()) {
+            if (evaluation.negativeBalance) {
+                const lot = storageLotById.get(evaluation.lotId);
+                throw new ReceivingPreviewError(
+                    `Storage lot ${String(lot?.lot_name || evaluation.lotId)} has a negative inventory balance and must be reconciled before receiving.`,
+                    409,
+                    RECEIVING_ERROR_CODES.STORAGE_LOT_NEGATIVE_BALANCE
+                );
+            }
             if (evaluation.receiptOverageQuantity > LOT_CAPACITY_EPSILON) {
                 const lot = storageLotById.get(evaluation.lotId);
                 throw new ReceivingPreviewError(
                     `Storage lot ${String(lot?.lot_name || evaluation.lotId)} would exceed its maximum occupancy: ${evaluation.occupiedQuantity.toLocaleString()} on hand + ${evaluation.incomingQuantity.toLocaleString()} incoming against ${(evaluation.capacity ?? 0).toLocaleString()} capacity (over by ${evaluation.receiptOverageQuantity.toLocaleString()}). Reduce the allocated quantity or choose another lot.`,
-                    409
+                    409,
+                    RECEIVING_ERROR_CODES.STORAGE_LOT_CAPACITY_EXCEEDED
                 );
             }
         }

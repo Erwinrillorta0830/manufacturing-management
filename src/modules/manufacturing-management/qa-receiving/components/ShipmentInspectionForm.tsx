@@ -12,6 +12,7 @@ import { CreatableSelect } from "@/modules/manufacturing-management/finished-goo
 import { configuredBadStockBranchId } from "../services/qa-api";
 import { formatPhtTimestamp } from "../../shared/pht-date";
 import { LotAllocationSection } from "./LotAllocationModal";
+import QAProductItemsAllocationTable from "./QAProductItemsAllocationTable";
 
 function relationNumber(value: unknown, keys: string[]): number | null {
     if (value === null || value === undefined || value === "") return null;
@@ -642,7 +643,7 @@ export default function ShipmentInspectionForm({
                 {loadingLines ? (
                     <div className="p-8 text-center text-xs text-muted-foreground">Fetching manifest detail...</div>
                 ) : (
-                    lineItems.map(line => {
+                    lineItems.map((line, lineIndex) => {
                         const row = inspectionRows[line.line_id] || {
                             receivedQty: "",
                             acceptedQty: "",
@@ -653,6 +654,17 @@ export default function ShipmentInspectionForm({
 
                         const prod = line.product_id;
                         const productId = Number(prod.product_id);
+                        const brandName = prod.brand_name
+                            || (typeof prod.product_brand === "object" && prod.product_brand !== null
+                                ? prod.product_brand.brand_name || ""
+                                : typeof prod.product_brand === "string" ? prod.product_brand : "")
+                            || "—";
+                        const currencyCode = selectedShipment.currency_code === "USD" ? "USD" : "PHP";
+                        const transactionUnitPrice = Number(
+                            currencyCode === "PHP"
+                                ? line.base_unit_cost_php
+                                : line.unit_price_foreign ?? line.base_unit_cost_php ?? 0
+                        );
                         const productUnitId = relationNumber(prod.unit_of_measurement, ["unit_id", "uom_id", "id"]);
                         const lineStorageLots = storageLotsByProductId[productId] || [];
                         const lineRejectedStorageLots = rejectedStorageLotsByProductId[productId] || [];
@@ -917,7 +929,7 @@ export default function ShipmentInspectionForm({
                                     >
                                         <div className="flex items-center justify-between gap-2">
                                             <div>
-                                                <p className="text-[9px] font-extrabold uppercase tracking-wider text-emerald-700">Inventory allocation sequence</p>
+                                                <p className="text-[9px] font-extrabold uppercase tracking-wider text-emerald-700">Product Items</p>
                                                 <p className="text-[10px] text-muted-foreground">Select Lot → Batch Number → Manufacturing/Expiry Dates → Quantity. Lots are filtered by Product Type, UOM, and remaining capacity; allocations that would exceed a lot&apos;s maximum occupancy are blocked.</p>
                                                 {(lineIssue("acceptedStorageLot") || lineIssue("rejectedStorageLot")) && (
                                                     <p className="text-[9px] font-semibold text-red-600" role="alert">
@@ -949,20 +961,40 @@ export default function ShipmentInspectionForm({
                                             </p>
                                         )}
                                         {acceptedVal > 0 && (
-                                            <LotAllocationSection
-                                                productId={Number(prod.product_id)}
+                                            <QAProductItemsAllocationTable
+                                                index={lineIndex + 1}
+                                                brandName={brandName}
                                                 productName={String(prod.product_name || "")}
-                                                productUnitId={productUnitId}
-                                                isPackaging={row.isPackaging}
-                                                disposition="accepted"
-                                                allocations={row.acceptedLotAllocations}
-                                                otherAllocations={row.rejectedLotAllocations}
-                                                expectedQuantity={acceptedVal}
-                                                storageLots={lineStorageLots}
-                                                readOnly={readOnly || !hasCurrentReceipt || lineStorageLotLookup.status !== "loaded"}
-                                                batchDateDefaults={batchDateDefaults}
-                                                loadStorageLotBatches={loadStorageLotBatches}
-                                                onChange={allocations => handleUpdateAllocations(line.line_id, allocations)}
+                                                productCode={String(prod.product_code || "")}
+                                                uomName={lotUomLabel}
+                                                currencyCode={currencyCode}
+                                                unitPrice={transactionUnitPrice}
+                                                totalAmount={acceptedVal * transactionUnitPrice}
+                                                quantity={acceptedVal}
+                                                action={(
+                                                    <LotAllocationSection
+                                                        branchId={Number(selectedBranchId || selectedShipment.branch_id) || undefined}
+                                                        productId={Number(prod.product_id)}
+                                                        productName={String(prod.product_name || "")}
+                                                        productCode={String(prod.product_code || "")}
+                                                        productType={line.category_type || prod.category_type}
+                                                        productCategory={line.category_type || prod.category_type}
+                                                        categoryName={line.category_type || prod.category_type}
+                                                        productUnitId={productUnitId}
+                                                        productUomName={lotUomLabel}
+                                                        isPackaging={row.isPackaging}
+                                                        disposition="accepted"
+                                                        allocations={row.acceptedLotAllocations}
+                                                        otherAllocations={row.rejectedLotAllocations}
+                                                        expectedQuantity={acceptedVal}
+                                                        storageLots={lineStorageLots}
+                                                        readOnly={readOnly || !hasCurrentReceipt || lineStorageLotLookup.status !== "loaded"}
+                                                        compact
+                                                        batchDateDefaults={batchDateDefaults}
+                                                        loadStorageLotBatches={loadStorageLotBatches}
+                                                        onChange={allocations => handleUpdateAllocations(line.line_id, allocations)}
+                                                    />
+                                                )}
                                             />
                                         )}
                                         {rejectedVal > 0 && (
@@ -998,9 +1030,15 @@ export default function ShipmentInspectionForm({
                                             </p>
                                         )}
                                                 <LotAllocationSection
+                                                    branchId={Number(lineRejectedStorageLots[0]?.allocation_branch_id || lineRejectedStorageLots[0]?.branch_id || configuredBadStockBranchId(branches.find(branch => Number(branch.id) === Number(selectedBranchId || selectedShipment.branch_id))) || 0) || undefined}
                                                     productId={productId}
                                                     productName={String(prod.product_name || "")}
+                                                    productCode={String(prod.product_code || "")}
+                                                    productType={line.category_type || prod.category_type}
+                                                    productCategory={line.category_type || prod.category_type}
+                                                    categoryName={line.category_type || prod.category_type}
                                                     productUnitId={productUnitId}
+                                                    productUomName={lotUomLabel}
                                                     isPackaging={row.isPackaging}
                                                     disposition="rejected"
                                                     allocations={row.rejectedLotAllocations}

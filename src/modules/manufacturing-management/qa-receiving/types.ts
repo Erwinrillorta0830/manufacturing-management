@@ -85,6 +85,7 @@ export interface Shipment {
     reference_number: string;
     status: string;
     total_php_value: string;
+    currency_code?: "PHP" | "USD" | null;
     created_at: string;
     inventory_status?: number | null;
     payment_status?: number | null;
@@ -118,6 +119,8 @@ export interface Product {
     product_name: string;
     product_code: string;
     description: string;
+    brand_name?: string | null;
+    product_brand?: { brand_name?: string | null } | string | number | null;
     unit_of_measurement?: {
         unit_id: number;
         unit_shortcut: string;
@@ -190,6 +193,7 @@ export interface ShipmentLineItem {
     current_receipt_rejected_quantity?: number | null;
     current_receipt_error?: string | null;
     base_unit_cost_php: number;
+    unit_price_foreign?: number | string | null;
     lot_number?: string;
     batch_no?: string;
     lot_id?: number | null;

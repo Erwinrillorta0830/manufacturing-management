@@ -122,9 +122,13 @@ interface LotBatchSelectionModalProps {
   requestedQuantity?: number;
   adjustmentType?: 'IN' | 'OUT';
   mode?: 'SELECT_EXISTING' | 'CREATE_OR_ASSIGN';
+  readOnly?: boolean;
+  requireBatchDates?: boolean;
   initialValues?: Partial<LotBatchSelectionResult>;
   initialLotAllocations?: LotAllocationGroup[];
   existingFormAllocations?: FormSiblingAllocation[];
+  /** Optional server-filtered lot allowlist for workflows with stricter eligibility rules. */
+  allowedLotIds?: number[];
   onConfirm: (result: LotBatchSelectionResult) => void;
 }
 
@@ -133,10 +137,12 @@ function BatchQuantityInput({
   value,
   onChange,
   hasError,
+  disabled,
 }: {
   value: number | undefined | null;
   onChange: (val: number) => void;
   hasError?: boolean;
+  disabled?: boolean;
 }) {
   const [prevValue, setPrevValue] = useState(value);
   const [localValue, setLocalValue] = useState<string>(() =>
@@ -147,8 +153,8 @@ function BatchQuantityInput({
   if (value !== prevValue) {
     setPrevValue(value);
     const strVal = value === 0 || value === undefined || value === null ? '' : String(value);
-    const prevNum = localValue === '' ? 0 : parseInt(localValue, 10);
-    const newNum = strVal === '' ? 0 : parseInt(strVal, 10);
+    const prevNum = localValue === '' ? 0 : parseFloat(localValue);
+    const newNum = strVal === '' ? 0 : parseFloat(strVal);
     if (prevNum !== newNum) {
       setLocalValue(strVal);
     }
@@ -163,7 +169,7 @@ function BatchQuantityInput({
       if (raw === '') {
         onChange(0);
       } else {
-        const parsed = parseInt(raw, 10);
+        const parsed = parseFloat(raw);
         onChange(isNaN(parsed) ? 0 : Math.max(0, parsed));
       }
     }, 150);
@@ -175,7 +181,7 @@ function BatchQuantityInput({
       setLocalValue('');
       onChange(0);
     } else {
-      const parsed = parseInt(localValue, 10);
+      const parsed = parseFloat(localValue);
       const clean = isNaN(parsed) || parsed < 0 ? 0 : parsed;
       setLocalValue(clean === 0 ? '' : String(clean));
       onChange(clean);
@@ -186,8 +192,10 @@ function BatchQuantityInput({
     <Input
       type="number"
       min={0}
+      step="any"
       value={localValue}
       placeholder="0"
+      disabled={disabled}
       onFocus={(e) => e.target.select()}
       onClick={(e) => (e.target as HTMLInputElement).select()}
       onChange={handleChange}
@@ -215,9 +223,12 @@ export function LotBatchSelectionModal({
   categoryName,
   requestedQuantity = 0,
   adjustmentType = 'IN',
+  requireBatchDates = true,
   initialValues,
   initialLotAllocations,
   existingFormAllocations,
+  allowedLotIds,
+  readOnly = false,
   onConfirm,
 }: LotBatchSelectionModalProps) {
   const [lots, setLots] = useState<MMLot[]>([]);
@@ -488,7 +499,7 @@ export function LotBatchSelectionModal({
     const loadData = async () => {
       setLoading(true);
       try {
-        const [lotsData, branchInvLotsData, branchOnhandData, productInvLotsData] = await Promise.all([
+        const [fetchedLotsData, branchInvLotsData, branchOnhandData, productInvLotsData] = await Promise.all([
           fetchLotsByBranch(branchId),
           fetchInventoryLots({ branchId }),
           fetchBatchOnhand({ branchId }),
@@ -496,6 +507,13 @@ export function LotBatchSelectionModal({
         ]);
 
         if (!isMounted) return;
+
+        const allowedLotIdSet = allowedLotIds === undefined
+          ? null
+          : new Set(allowedLotIds.map(Number).filter((lotId) => Number.isSafeInteger(lotId) && lotId > 0));
+        const lotsData = allowedLotIdSet === null
+          ? (fetchedLotsData || [])
+          : (fetchedLotsData || []).filter((lot) => allowedLotIdSet.has(Number(lot.lot_id)));
 
         setLots(lotsData || []);
         setBranchOnhandList(branchOnhandData || []);
@@ -1115,7 +1133,7 @@ export function LotBatchSelectionModal({
     return () => {
       isMounted = false;
     };
-  }, [open, branchId, productId, requestedQuantity, productUomId, productType, productCategory, categoryName, productCode, productName, initialLotAllocations, initialValues, existingFormAllocations, isLotMatchingUom]);
+  }, [open, branchId, productId, requestedQuantity, productUomId, productType, productCategory, categoryName, productCode, productName, initialLotAllocations, initialValues, existingFormAllocations, allowedLotIds, isLotMatchingUom]);
 
   // Compute total allocated quantity across all lots & batches
   const totalAllocated = useMemo(() => {
@@ -1127,6 +1145,7 @@ export function LotBatchSelectionModal({
 
   // Add a new storage lot allocation group (supports splitting across multiple lots)
   const handleAddLotGroup = () => {
+    if (readOnly) return;
     const usedLotIds = new Set(lotGroups.map((g) => Number(g.lot_id)));
 
     // Prioritize selecting an active, UOM-matching, and product-type compatible lot (and matching bad stock state)
@@ -1208,11 +1227,13 @@ export function LotBatchSelectionModal({
 
   // Remove a storage lot allocation group
   const handleRemoveLotGroup = (index: number) => {
+    if (readOnly) return;
     setLotGroups(lotGroups.filter((_, i) => i !== index));
   };
 
   // Change selected lot inside a group - PRESERVES batch numbers, dates, and quantities
   const handleChangeLot = (groupIndex: number, newLotIdStr: string) => {
+    if (readOnly) return;
     const newLotId = Number(newLotIdStr);
     const matchedLot = lots.find((l) => Number(l.lot_id) === newLotId);
     if (!matchedLot) return;
@@ -1289,6 +1310,7 @@ export function LotBatchSelectionModal({
 
   // Remove a batch split under a specific lot
   const handleRemoveBatch = (groupIndex: number, batchIndex: number) => {
+    if (readOnly) return;
     setLotGroups(
       lotGroups.map((g, i) => {
         if (i === groupIndex) {
@@ -1305,6 +1327,7 @@ export function LotBatchSelectionModal({
 
   // Capacity-Aware Auto-Reallocate across all storage lot groups
   const handleReallocateLots = () => {
+    if (readOnly) return;
     const targetTotal =
       requestedQuantity ||
       ((initialValues as { quantity?: number; total_quantity?: number })?.quantity ??
@@ -1484,6 +1507,7 @@ export function LotBatchSelectionModal({
     field: keyof BatchRowAllocation,
     value: unknown
   ) => {
+    if (readOnly) return;
     setLotGroups(
       lotGroups.map((g, i) => {
         if (i === groupIndex) {
@@ -1532,6 +1556,7 @@ export function LotBatchSelectionModal({
       onhandQuantity?: number;
     }
   ) => {
+    if (readOnly) return;
     setLotGroups(
       lotGroups.map((g, i) => {
         if (i === groupIndex) {
@@ -1590,6 +1615,7 @@ export function LotBatchSelectionModal({
 
   // Atomically Apply Mfg Date and Expiry Date to all batches across this lot group
   const handleApplyDatesToAll = (groupIndex: number, mfgDate?: string, expDate?: string) => {
+    if (readOnly) return;
     setLotGroups((prevGroups) =>
       prevGroups.map((g, i) => {
         if (i === groupIndex) {
@@ -1705,10 +1731,10 @@ export function LotBatchSelectionModal({
           if (bQty <= 0) {
             errors.push(`Lot #${gIdx + 1}, Batch #${bIdx + 1}: Quantity must be greater than 0.`);
           }
-          if (!b.manufacturing_date) {
+          if (requireBatchDates && !b.manufacturing_date) {
             errors.push(`Lot #${gIdx + 1}, Batch #${bIdx + 1}: Manufacturing date is required.`);
           }
-          if (!b.expiry_date) {
+          if (requireBatchDates && !b.expiry_date) {
             errors.push(`Lot #${gIdx + 1}, Batch #${bIdx + 1}: Expiration date is required.`);
           }
           if (b.manufacturing_date && b.expiry_date) {
@@ -1723,12 +1749,12 @@ export function LotBatchSelectionModal({
     });
 
     return errors;
-  }, [lotGroups, totalAllocated, productUomName, adjustmentType, checkLotCompatibility, lotStoredSummaryMap, currentItemClassification, lots, isLotMatchingUom]);
+  }, [lotGroups, totalAllocated, productUomName, adjustmentType, checkLotCompatibility, lotStoredSummaryMap, currentItemClassification, lots, isLotMatchingUom, requireBatchDates]);
 
   const isValid = validationErrors.length === 0;
 
   const handleConfirm = () => {
-    if (!isValid || lotGroups.length === 0) return;
+    if (readOnly || !isValid || lotGroups.length === 0) return;
 
     const firstGroup = lotGroups[0];
     const firstBatch = firstGroup.batches[0];
@@ -1841,11 +1867,12 @@ export function LotBatchSelectionModal({
 
                 <div className="flex items-center gap-2 flex-wrap">
                   {lotGroups.length > 1 && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={handleReallocateLots}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={handleReallocateLots}
+                    disabled={readOnly}
                       className="h-8 text-xs font-bold gap-1.5 shrink-0 bg-background border-border shadow-xs hover:bg-muted cursor-pointer text-foreground"
                       title="Reallocate target quantity across lots according to each lot's capacity"
                     >
@@ -1859,6 +1886,7 @@ export function LotBatchSelectionModal({
                     size="sm"
                     variant="outline"
                     onClick={handleAddLotGroup}
+                    disabled={readOnly}
                     className="h-8 text-xs font-bold gap-1.5 shrink-0 bg-background border-border shadow-xs hover:bg-muted cursor-pointer"
                   >
                     <Plus className="w-3.5 h-3.5" />
@@ -2067,6 +2095,7 @@ export function LotBatchSelectionModal({
                                     })}
                                     value={String(group.lot_id)}
                                     onValueChange={(val) => handleChangeLot(gIdx, val)}
+                                    disabled={readOnly}
                                     placeholder="Select Storage Lot / Bay..."
                                     searchPlaceholder="Search lot name..."
                                     triggerTitle={groupLot ? `${groupLot.lot_name}${groupLot.max_batch_capacity ? ` (Cap: ${groupLot.max_batch_capacity.toLocaleString()} ${groupLot.unit_name || productUomName})` : ''}` : undefined}
@@ -2176,6 +2205,7 @@ export function LotBatchSelectionModal({
                             variant="ghost"
                             size="icon"
                             onClick={() => handleRemoveLotGroup(gIdx)}
+                            disabled={readOnly || lotGroups.length <= 1}
                             className="h-8 w-8 text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg"
                             title="Remove Lot Group"
                           >
@@ -2504,6 +2534,7 @@ export function LotBatchSelectionModal({
                                   };
                                   setToolbarDates({ ...toolbarDates, [gIdx]: { ...current, mfg: e.target.value } });
                                 }}
+                                disabled={readOnly}
                                 className="h-7 text-xs w-36 bg-background px-2 py-0"
                                 title="Select manufacturing date to apply"
                               />
@@ -2523,6 +2554,7 @@ export function LotBatchSelectionModal({
                                   };
                                   setToolbarDates({ ...toolbarDates, [gIdx]: { ...current, exp: e.target.value } });
                                 }}
+                                disabled={readOnly}
                                 className="h-7 text-xs w-36 bg-background px-2 py-0"
                                 title="Select expiration date to apply"
                               />
@@ -2541,6 +2573,7 @@ export function LotBatchSelectionModal({
 
                                 handleApplyDatesToAll(gIdx, currentMfg, currentExp);
                               }}
+                              disabled={readOnly}
                               className="h-7 text-xs font-bold px-3 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 cursor-pointer"
                               title="Apply selected dates to all batches in this lot"
                             >
@@ -2553,6 +2586,7 @@ export function LotBatchSelectionModal({
                             size="sm"
                             variant="ghost"
                             onClick={() => handleAddBatch(gIdx)}
+                            disabled={readOnly || !group.lot_id}
                             className="h-8 text-xs font-bold text-primary hover:bg-primary/10 gap-1 px-3 shrink-0 border border-primary/20"
                           >
                             <Plus className="w-3.5 h-3.5" /> Add Batch Split
@@ -2648,6 +2682,7 @@ export function LotBatchSelectionModal({
                                     .map((b) => b.batch_no)
                                     .filter(Boolean)}
                                   productUomName={productUomName}
+                                  disabled={readOnly}
                                   placeholder="Search or select batch..."
                                   onSelectBatch={(selectedBatchNo, meta) => {
                                     handleSelectBatchWithMeta(gIdx, bIdx, selectedBatchNo, meta);
@@ -2666,6 +2701,7 @@ export function LotBatchSelectionModal({
                                   value={batch.quantity}
                                   onChange={(newQty) => handleUpdateBatchField(gIdx, bIdx, 'quantity', newQty)}
                                   hasError={!batch.quantity || Number(batch.quantity) <= 0}
+                                  disabled={readOnly}
                                 />
                               </div>
 
@@ -2678,6 +2714,7 @@ export function LotBatchSelectionModal({
                                   type="date"
                                   value={batch.manufacturing_date ? batch.manufacturing_date.substring(0, 10) : ''}
                                   onChange={(e) => handleUpdateBatchField(gIdx, bIdx, 'manufacturing_date', e.target.value)}
+                                  disabled={readOnly}
                                   className={`h-9 text-xs transition-colors ${!batch.manufacturing_date ? 'border-destructive ring-1 ring-destructive/40 bg-destructive/5' : ''}`}
                                 />
                               </div>
@@ -2691,6 +2728,7 @@ export function LotBatchSelectionModal({
                                   type="date"
                                   value={batch.expiry_date ? batch.expiry_date.substring(0, 10) : ''}
                                   onChange={(e) => handleUpdateBatchField(gIdx, bIdx, 'expiry_date', e.target.value)}
+                                  disabled={readOnly}
                                   className={`h-9 text-xs transition-colors ${
                                     !batch.expiry_date || (batch.manufacturing_date && new Date(batch.expiry_date).getTime() < new Date(batch.manufacturing_date).getTime())
                                       ? 'border-destructive ring-1 ring-destructive/40 bg-destructive/5'
@@ -2706,6 +2744,7 @@ export function LotBatchSelectionModal({
                                 </Label>
                                 <Select
                                   value={batch.qa_status}
+                                  disabled={readOnly}
                                   onValueChange={(val) => handleUpdateBatchField(gIdx, bIdx, 'qa_status', val as QAStatus)}
                                 >
                                   <SelectTrigger
@@ -2760,7 +2799,7 @@ export function LotBatchSelectionModal({
                                   type="button"
                                   variant="ghost"
                                   size="icon"
-                                  disabled={group.batches.length <= 1}
+                                  disabled={readOnly || group.batches.length <= 1}
                                   onClick={() => handleRemoveBatch(gIdx, bIdx)}
                                   className="h-9 w-9 text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg disabled:opacity-30"
                                   title="Remove Batch"
@@ -2810,7 +2849,7 @@ export function LotBatchSelectionModal({
               type="button"
               size="sm"
               onClick={handleConfirm}
-              disabled={!isValid || loading}
+              disabled={readOnly || !isValid || loading}
               className="text-xs font-bold h-9 bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm gap-1.5"
             >
               <CheckCircle2 className="w-4 h-4" />

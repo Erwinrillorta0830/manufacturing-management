@@ -1,5 +1,5 @@
 import { lotUnitId, type MmLotRecord } from "../services/mm-lots.service";
-import { inspectLotCapacity, type LotCapacityStatus } from "./_lot-capacity";
+import { inspectLotCapacity, LOT_CAPACITY_EPSILON, type LotCapacityStatus } from "./_lot-capacity";
 
 export interface LotProductScope {
     productTypeId: number;
@@ -55,7 +55,7 @@ export function findStorageLotContentConflict(
 
 export interface StorageLotEligibility {
     eligible: boolean;
-    reason: "STATUS" | "UOM" | "PRODUCT_SCOPE" | "CAPACITY" | "FULL" | null;
+    reason: "STATUS" | "UOM" | "PRODUCT_SCOPE" | "CAPACITY" | "FULL" | "NEGATIVE_BALANCE" | null;
     capacity: number | null;
     capacityStatus: LotCapacityStatus;
     occupiedQuantity: number;
@@ -123,7 +123,8 @@ export function evaluateStorageLotEligibility(
     occupiedQuantity: number
 ): StorageLotEligibility {
     const inspectedCapacity = inspectLotCapacity(lot.max_batch_capacity);
-    const normalizedOccupied = Math.max(0, Number(occupiedQuantity) || 0);
+    const rawOccupied = Number(occupiedQuantity);
+    const normalizedOccupied = Number.isFinite(rawOccupied) ? Math.max(0, rawOccupied) : 0;
     const remainingCapacity = inspectedCapacity.capacity === null
         ? null
         : Math.max(0, inspectedCapacity.capacity - normalizedOccupied);
@@ -132,6 +133,16 @@ export function evaluateStorageLotEligibility(
         return {
             eligible: false,
             reason: "STATUS",
+            capacity: inspectedCapacity.capacity,
+            capacityStatus: inspectedCapacity.status,
+            occupiedQuantity: normalizedOccupied,
+            remainingCapacity
+        };
+    }
+    if (Number.isFinite(rawOccupied) && rawOccupied < -LOT_CAPACITY_EPSILON) {
+        return {
+            eligible: false,
+            reason: "NEGATIVE_BALANCE",
             capacity: inspectedCapacity.capacity,
             capacityStatus: inspectedCapacity.status,
             occupiedQuantity: normalizedOccupied,
