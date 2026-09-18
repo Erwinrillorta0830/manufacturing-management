@@ -17,7 +17,6 @@ interface ContributionMarginTableViewProps {
     brandSummaries: BrandLineSummary[];
     activeTab: "sku" | "category" | "brand";
     onTabChange: (tab: "sku" | "category" | "brand") => void;
-    isLoading?: boolean;
 }
 
 export function ContributionMarginTableView({
@@ -25,8 +24,7 @@ export function ContributionMarginTableView({
     categorySummaries,
     brandSummaries,
     activeTab,
-    onTabChange,
-    isLoading = false
+    onTabChange
 }: ContributionMarginTableViewProps) {
     const [page, setPage] = useState<number>(1);
     const [pageSize, setPageSize] = useState<number>(10);
@@ -80,10 +78,10 @@ export function ContributionMarginTableView({
 
     // Sort SKU Rows
     const sortedRows = [...rows].sort((a, b) => {
-        const aVal = (a as any)[sortField] ?? 0;
-        const bVal = (b as any)[sortField] ?? 0;
+        const aVal = (a as unknown as Record<string, unknown>)[sortField] ?? 0;
+        const bVal = (b as unknown as Record<string, unknown>)[sortField] ?? 0;
         if (typeof aVal === "string") {
-            return sortAsc ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+            return sortAsc ? aVal.localeCompare(String(bVal)) : String(bVal).localeCompare(aVal);
         }
         return sortAsc ? Number(aVal) - Number(bVal) : Number(bVal) - Number(aVal);
     });

@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { ProductCostBreakdownDetail } from "../types/contribution-margin.types";
 import { formatCurrency, formatNumber } from "@/lib/utils";
-import { X, Package, Users, Cpu, DollarSign, Layers } from "lucide-react";
+import { X, Package, Users, Cpu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface ContributionMarginDetailModalProps {

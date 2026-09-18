@@ -167,7 +167,6 @@ export default function ContributionMarginReportModule() {
                         brandSummaries={brandSummaries}
                         activeTab={activeTab}
                         onTabChange={setActiveTab}
-                        isLoading={isLoading}
                     />
                 </>
             )}

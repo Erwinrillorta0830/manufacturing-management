@@ -2,7 +2,7 @@
 
 import React from "react";
 import { DefectCategorySummary } from "../types/scrap-rejection.types";
-import { PieChart, ChevronRight } from "lucide-react";
+import { PieChart } from "lucide-react";
 
 interface ScrapDefectParetoChartProps {
     defectCategories: DefectCategorySummary[];

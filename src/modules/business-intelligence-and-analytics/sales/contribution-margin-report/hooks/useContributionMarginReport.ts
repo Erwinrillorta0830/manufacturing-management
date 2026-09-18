@@ -2,10 +2,6 @@
 
 import { useState, useEffect, useCallback } from "react";
 import {
-    ContributionMarginRow,
-    CategoryLineSummary,
-    BrandLineSummary,
-    ContributionMarginSummaryKPIs,
     ContributionMarginFilters,
     ContributionMarginReportResponse
 } from "../types/contribution-margin.types";

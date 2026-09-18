@@ -89,3 +89,42 @@ export interface ContributionMarginReportResponse {
     availableCategories: Array<{ id: number; name: string }>;
     availableBrands: Array<{ id: number; name: string }>;
 }
+
+export interface DirectMaterialLine {
+    product_name: string;
+    product_code: string;
+    batch_no?: string | null;
+    quantity_consumed: number;
+    unit_cost: number;
+    total_cost: number;
+}
+
+export interface DirectLaborLine {
+    operator_name: string;
+    logged_hours: number;
+    hourly_rate: number;
+    labor_cost: number;
+}
+
+export interface VariableOverheadLine {
+    work_center_name: string;
+    actual_run_hours: number;
+    overhead_cost_per_hour: number;
+    total_overhead_cost: number;
+}
+
+export interface ProductCostBreakdownDetail {
+    product_id: number;
+    product_name: string;
+    product_code: string;
+    category_name: string;
+    brand_name: string;
+    invoiced_quantity: number;
+    average_selling_price: number;
+    unit_variable_cost: number;
+    contribution_margin_amount: number;
+    contribution_margin_ratio: number;
+    materials: DirectMaterialLine[];
+    labor: DirectLaborLine[];
+    overheads: VariableOverheadLine[];
+}

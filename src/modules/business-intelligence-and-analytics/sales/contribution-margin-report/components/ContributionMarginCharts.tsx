@@ -78,7 +78,7 @@ export function ContributionMarginCharts({
                                 tickFormatter={(val) => `₱${(val / 1000).toFixed(0)}k`}
                             />
                             <Tooltip
-                                formatter={(value: any, name: any) => {
+                                formatter={(value: unknown, name: unknown) => {
                                     const num = Number(value) || 0;
                                     const label = name === "netRevenue"
                                         ? "Net Sales Revenue"
@@ -140,7 +140,7 @@ export function ContributionMarginCharts({
                                 domain={[0, 'auto']}
                             />
                             <Tooltip
-                                formatter={(value: any) => [`${Number(value).toFixed(1)}%`, "Contribution Margin Ratio"]}
+                                formatter={(value: unknown) => [`${Number(value).toFixed(1)}%`, "Contribution Margin Ratio"]}
                                 contentStyle={{
                                     backgroundColor: "hsl(var(--popover))",
                                     borderColor: "hsl(var(--border))",

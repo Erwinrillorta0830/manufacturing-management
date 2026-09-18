@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { X, Layers, Clock, AlertTriangle, FileText, CheckCircle2 } from "lucide-react";
+import { X, Layers, Clock, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrapDetailBreakdown } from "../types/scrap-rejection.types";
 import { formatPHP } from "../services/scrap-rejection.helpers";

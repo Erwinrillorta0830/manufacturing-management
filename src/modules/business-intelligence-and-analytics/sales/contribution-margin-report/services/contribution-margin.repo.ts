@@ -25,6 +25,9 @@ export interface RawInvoiceDetail {
     product_id: number;
     quantity: number | string;
     unit_price?: number | string | null;
+    gross_amount?: number | string | null;
+    discount_amount?: number | string | null;
+    total_amount?: number | string | null;
     net_amount?: number | string | null;
     amount?: number | string | null;
 }

@@ -3,7 +3,6 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import {
     ScrapReportRow,
-    ScrapSummaryKPIs,
     ScrapFilters,
     ScrapMasterData,
     DefectCategorySummary,
@@ -23,18 +22,6 @@ const initialFilters: ScrapFilters = {
     dateTo: ""
 };
 
-const initialKPIs: ScrapSummaryKPIs = {
-    total_jobs: 0,
-    total_produced_units: 0,
-    total_scrapped_units: 0,
-    overall_scrap_rate: 0,
-    total_material_loss_php: 0,
-    total_rework_hours: 0,
-    total_rework_labor_cost_php: 0,
-    top_defect_category: "None",
-    top_rejection_reason: "None"
-};
-
 const initialMasterData: ScrapMasterData = {
     branches: [],
     products: [],
@@ -45,7 +32,6 @@ const initialMasterData: ScrapMasterData = {
 
 export function useScrapAndRejectionReport() {
     const [allRows, setAllRows] = useState<ScrapReportRow[]>([]);
-    const [summaryKPIs, setSummaryKPIs] = useState<ScrapSummaryKPIs>(initialKPIs);
     const [defectCategories, setDefectCategories] = useState<DefectCategorySummary[]>([]);
     const [masterData, setMasterData] = useState<ScrapMasterData>(initialMasterData);
     const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -85,7 +71,6 @@ export function useScrapAndRejectionReport() {
 
             const data = await res.json();
             setAllRows(data.rows || []);
-            setSummaryKPIs(data.summary || initialKPIs);
             setDefectCategories(data.defectCategories || []);
             setMasterData(data.masterData || initialMasterData);
         } catch (err: unknown) {

@@ -9,7 +9,11 @@ import {
 import {
     ContributionMarginRow,
     ContributionMarginReportResponse,
-    ContributionMarginFilters
+    ContributionMarginFilters,
+    ProductCostBreakdownDetail,
+    DirectMaterialLine,
+    DirectLaborLine,
+    VariableOverheadLine
 } from "../types/contribution-margin.types";
 
 export class ContributionMarginService {
@@ -392,6 +396,122 @@ export class ContributionMarginService {
             summary,
             availableCategories,
             availableBrands
+        };
+    }
+
+    /**
+     * Fetch itemized cost breakdown drilldown for a specific product
+     */
+    static async fetchProductCostBreakdown(productId: number): Promise<ProductCostBreakdownDetail | null> {
+        const report = await this.generateReport();
+        const row = report.rows.find(r => r.product_id === productId);
+        if (!row) return null;
+
+        const [manufacturingData, routingData, catalogData] = await Promise.all([
+            ContributionMarginRepo.fetchJobOrdersAndConsumage(),
+            ContributionMarginRepo.fetchRoutingLaborAndOverheads(),
+            ContributionMarginRepo.fetchProductsAndCatalogs()
+        ]);
+
+        const productsMap = new Map<number, { name: string; code: string; cost: number }>();
+        catalogData.products.forEach(p => {
+            productsMap.set(p.product_id, {
+                name: String(p.product_name || `Product #${p.product_id}`),
+                code: String(p.product_code || `PRD-${p.product_id}`),
+                cost: Number(p.cost_per_unit || p.estimated_unit_cost || 0)
+            });
+        });
+
+        const usersMap = new Map<number, string>();
+        routingData.users.forEach(u => {
+            const name = [u.user_fname, u.user_lname].filter(Boolean).join(" ");
+            usersMap.set(u.user_id, name || `User #${u.user_id}`);
+        });
+
+        const workCentersMap = new Map<number, { name: string; rate: number }>();
+        routingData.workCenters.forEach(wc => {
+            workCentersMap.set(wc.work_center_id, {
+                name: wc.work_center_name,
+                rate: Number(wc.overhead_cost_per_hour || 0)
+            });
+        });
+
+        const ledgerToJoMap = new Map<number, number>();
+        manufacturingData.yieldLedgers.forEach(y => {
+            ledgerToJoMap.set(Number(y.ledger_id), Number(y.job_order_id));
+        });
+
+        const joSet = new Set(row.job_order_ids);
+
+        // Materials
+        const materials: DirectMaterialLine[] = [];
+        manufacturingData.consumage.forEach(c => {
+            const joId = ledgerToJoMap.get(Number(c.ledger_id));
+            if (!joId || !joSet.has(joId)) return;
+            const p = productsMap.get(Number(c.product_id));
+            const qty = Number(c.quantity_consumed || 0);
+            const uCost = p?.cost || 0;
+            materials.push({
+                product_name: p?.name || `Material #${c.product_id}`,
+                product_code: p?.code || `RAW-${c.product_id}`,
+                batch_no: c.batch_no || null,
+                quantity_consumed: qty,
+                unit_cost: uCost,
+                total_cost: qty * uCost
+            });
+        });
+
+        // Labor
+        const labor: DirectLaborLine[] = [];
+        const routeIdToJoMap = new Map<number, number>();
+        routingData.routes.forEach(r => {
+            routeIdToJoMap.set(Number(r.jo_route_id), Number(r.job_order_id));
+        });
+
+        routingData.routeOperators.forEach(ro => {
+            const joId = routeIdToJoMap.get(Number(ro.jo_route_id));
+            if (!joId || !joSet.has(joId)) return;
+            const opName = usersMap.get(Number(ro.operator_id)) || `Operator #${ro.operator_id}`;
+            const hrs = Number(ro.logged_hours || 0);
+            const rate = Number(ro.hourly_rate || 0);
+            labor.push({
+                operator_name: opName,
+                logged_hours: hrs,
+                hourly_rate: rate,
+                labor_cost: hrs * rate
+            });
+        });
+
+        // Overheads
+        const overheads: VariableOverheadLine[] = [];
+        routingData.routes.forEach(r => {
+            const joId = Number(r.job_order_id);
+            if (!joSet.has(joId)) return;
+            const wc = workCentersMap.get(Number(r.work_center_id));
+            const hrs = Number(r.actual_run_hours || r.planned_run_hours || 0);
+            const rate = wc?.rate || 0;
+            overheads.push({
+                work_center_name: wc?.name || `Work Center #${r.work_center_id}`,
+                actual_run_hours: hrs,
+                overhead_cost_per_hour: rate,
+                total_overhead_cost: hrs * rate
+            });
+        });
+
+        return {
+            product_id: row.product_id,
+            product_name: row.product_name,
+            product_code: row.product_code,
+            category_name: row.category_name,
+            brand_name: row.brand_name,
+            invoiced_quantity: row.invoiced_quantity,
+            average_selling_price: row.average_selling_price,
+            unit_variable_cost: row.unit_manufacturing_cost,
+            contribution_margin_amount: row.contribution_margin_amount,
+            contribution_margin_ratio: row.contribution_margin_ratio,
+            materials,
+            labor,
+            overheads
         };
     }
 }

@@ -1,5 +1,4 @@
 import { ScrapReportRow, ScrapSummaryKPIs, DefectCategorySummary } from "../types/scrap-rejection.types";
-import { formatPHP } from "../services/scrap-rejection.helpers";
 
 export function exportScrapCSV(
     rows: ScrapReportRow[],
