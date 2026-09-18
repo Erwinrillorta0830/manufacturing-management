@@ -178,6 +178,8 @@ interface ProductMin {
     product_id: number;
     product_name?: string;
     product_code?: string;
+    brand_name?: string | null;
+    product_brand?: { brand_name?: string | null } | string | number | null;
     product_type?: unknown;
     unit_of_measurement?: unknown;
     unit_of_measurement_count?: number;
@@ -1020,7 +1022,7 @@ export async function fetchShipmentLineItems(
         const productIds = popData.map((p) => typeof p.product_id === "object" && p.product_id ? p.product_id.product_id : p.product_id).filter(Boolean);
         let products: ProductMin[] = [];
         if (productIds.length > 0) {
-            const prodUrl = `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=*,unit_of_measurement.*,weight_unit_id.*,parent_id,parent_id.unit_of_measurement.unit_shortcut,weight,product_weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id,cbm_height,cbm_width,cbm_length,product_type&limit=-1`;
+            const prodUrl = `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=*,product_brand.brand_name,unit_of_measurement.*,weight_unit_id.*,parent_id,parent_id.unit_of_measurement.unit_shortcut,weight,product_weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id,cbm_height,cbm_width,cbm_length,product_type&limit=-1`;
             const prodRes = await fetch(prodUrl, { headers, cache: "no-store" });
             if (prodRes.ok) {
                 products = (await prodRes.json()).data as ProductMin[] || [];

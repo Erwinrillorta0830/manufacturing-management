@@ -370,9 +370,16 @@ export async function GET(request: Request) {
                 const lotId = lotNumber(lot.lot_id) as number;
                 const eligibility = evaluateStorageLotEligibility(lot, product, occupiedByLot.get(lotId) || 0);
                 if (!eligibility.eligible) {
+                    const code = eligibility.reason === "UOM"
+                        ? RECEIVING_ERROR_CODES.STORAGE_LOT_UOM_MISMATCH
+                        : eligibility.reason === "PRODUCT_SCOPE"
+                            ? RECEIVING_ERROR_CODES.STORAGE_LOT_PRODUCT_TYPE_MISMATCH
+                            : eligibility.reason === "NEGATIVE_BALANCE"
+                                ? RECEIVING_ERROR_CODES.STORAGE_LOT_NEGATIVE_BALANCE
+                                : undefined;
                     return NextResponse.json({
                         error: "The selected storage lot is not compatible with this product.",
-                        ...(eligibility.reason === "UOM" ? { code: RECEIVING_ERROR_CODES.STORAGE_LOT_UOM_MISMATCH } : {})
+                        ...(code ? { code } : {})
                     }, { status: 409 });
                 }
                 const conflict = findStorageLotContentConflict(buildStoredProducts(lotId), targetScope);
