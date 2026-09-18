@@ -104,15 +104,36 @@ export class ContributionMarginService {
             }
         });
 
-        // Map sales returns by product_id
-        const productReturnsMap = new Map<number, { qty: number; amount: number }>();
-        returnsData.details.forEach(rd => {
-            const pid = Number(rd.product_id);
-            const cur = productReturnsMap.get(pid) || { qty: 0, amount: 0 };
-            const q = Number(rd.quantity || 0);
-            const a = Number(rd.total_amount || rd.gross_amount || 0);
-            productReturnsMap.set(pid, { qty: cur.qty + q, amount: cur.amount + a });
+        // Map sales returns that strictly belong to the filtered Paid invoices
+        const paidInvoiceNoSet = new Set(filteredInvoices.map(i => String(i.invoice_no || "").trim().toLowerCase()).filter(Boolean));
+        const paidOrderIdSet = new Set(filteredInvoices.map(i => String(i.order_id || "").trim()).filter(Boolean));
+
+        const matchedReturnNumbers = new Set<string>();
+        returnsData.returns.forEach(r => {
+            const rInvNo = String(r.invoice_no || "").trim().toLowerCase();
+            const rOrdId = String(r.order_id || "").trim();
+            const rInvId = Number(r.invoice_no);
+
+            if (
+                (rInvNo && paidInvoiceNoSet.has(rInvNo)) ||
+                (rOrdId && paidOrderIdSet.has(rOrdId)) ||
+                (Number.isFinite(rInvId) && paidInvoiceIdSet.has(rInvId))
+            ) {
+                if (r.return_number) matchedReturnNumbers.add(r.return_number);
+            }
         });
+
+        const productReturnsMap = new Map<number, { qty: number; amount: number }>();
+        if (matchedReturnNumbers.size > 0) {
+            returnsData.details.forEach(rd => {
+                if (!matchedReturnNumbers.has(rd.return_no)) return;
+                const pid = Number(rd.product_id);
+                const cur = productReturnsMap.get(pid) || { qty: 0, amount: 0 };
+                const q = Number(rd.quantity || 0);
+                const a = Number(rd.total_amount || rd.gross_amount || 0);
+                productReturnsMap.set(pid, { qty: cur.qty + q, amount: cur.amount + a });
+            });
+        }
 
         // Map SOD to Job Order Allocations
         const sodToJoMap = new Map<number, number[]>();
@@ -217,9 +238,9 @@ export class ContributionMarginService {
                 if (!pid) return;
                 const qty = Number(d.quantity || 0);
                 const price = Number(d.unit_price || 0);
-                const gross = qty * price;
-                const net = Number(d.net_amount || d.amount || gross);
-                const discount = Math.max(0, gross - net);
+                const gross = d.gross_amount !== undefined && d.gross_amount !== null ? Number(d.gross_amount) : (qty * price);
+                const net = d.total_amount !== undefined && d.total_amount !== null ? Number(d.total_amount) : (d.net_amount !== undefined && d.net_amount !== null ? Number(d.net_amount) : gross);
+                const discount = d.discount_amount !== undefined && d.discount_amount !== null ? Number(d.discount_amount) : Math.max(0, gross - net);
 
                 const current = productAggregationMap.get(pid) || {
                     invoiced_quantity: 0,
