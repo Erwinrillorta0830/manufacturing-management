@@ -16,6 +16,18 @@ import {
 } from "../services/production-api";
 import { isJobOrderStatus, JOB_ORDER_STATUS, displayJobOrderStatus, normalizeJobOrderStatus } from "../../job-order-status";
 import type { JobOrderWorkflowAction } from "../../job-order-workflow";
+import {
+    buildDisplayRouteOperatorRecords,
+    getJobOrderOperatorAssignments,
+    normalizeOperatorAssignmentMap
+} from "../operator-assignment-display";
+
+function createOperatorRequestId(action: string, taskId: number, userId: number): string {
+    const suffix = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    return `${action}:${taskId}:${userId}:${suffix}`;
+}
 
 export function useProductionWorkflow() {
     const searchParams = useSearchParams();
@@ -216,7 +228,11 @@ const selectedTask = useMemo(() => {
     };
 
     // Fetch Route Operators checked into all routing tasks in the Job Order
-    const fetchJobOrderOperators = useCallback(async (tasks: RoutingTask[], silent = false) => {
+    const fetchJobOrderOperators = useCallback(async (
+        tasks: RoutingTask[],
+        silent = false,
+        assignmentOverride?: unknown
+    ) => {
         if (tasks.length === 0) {
             setRouteOperators([]);
             setOperatorsSummary({ total_hours: 0 });
@@ -224,14 +240,22 @@ const selectedTask = useMemo(() => {
         }
         if (!silent) setLoadingOperators(true);
         try {
+            const selectedAssignments = assignmentOverride === undefined
+                ? getJobOrderOperatorAssignments(selectedJobOrder)
+                : normalizeOperatorAssignmentMap(assignmentOverride);
             const results = await Promise.all(
                 tasks.map(async (t) => {
                     try {
                         const res = await fetchRouteOperators(t.id);
-                        return res.data || [];
+                        const responseAssignments = res.assignmentState
+                            ? normalizeOperatorAssignmentMap(res.assignmentState.assignedPersonnel)
+                            : res.assignedPersonnel !== undefined && res.assignedPersonnel !== null
+                                ? normalizeOperatorAssignmentMap(res.assignedPersonnel)
+                                : selectedAssignments;
+                        return buildDisplayRouteOperatorRecords(t, res.data || [], responseAssignments, users);
                     } catch (e) {
                         console.error(`Error fetching operators for task ${t.id}:`, e);
-                        return [];
+                        return buildDisplayRouteOperatorRecords(t, [], selectedAssignments, users);
                     }
                 })
             );
@@ -248,7 +272,7 @@ const selectedTask = useMemo(() => {
         } finally {
             if (!silent) setLoadingOperators(false);
         }
-    }, []);
+    }, [selectedJobOrder, users]);
 
     // Load Branches List
     const loadBranches = async () => {
@@ -382,7 +406,7 @@ const selectedTask = useMemo(() => {
         const taskObj = sortedTasks.find(t => t.id === taskId);
 
         try {
-            await manageRouteOperator({
+            const response = await manageRouteOperator({
                 action,
                 taskId: taskId,
                 userId: uId,
@@ -397,24 +421,88 @@ const selectedTask = useMemo(() => {
                     ? `${userObj.user_fname || userObj.first_name} clocked in successfully.`
                     : `${userObj.user_fname || userObj.first_name} added to team log.`
             );
-            fetchJobOrderOperators(sortedTasks);
+            await fetchJobOrderOperators(
+                sortedTasks,
+                false,
+                response?.assignedPersonnel ?? response?.assignmentState?.assignedPersonnel
+            );
+            await fetchJobs(selectedJobOrder.jo_id, true);
         } catch (err: any) {
             toast.error(err.message || "Failed to add operator to task log.");
         }
     };
 
-    // Remove / Check Out Operator
-    const handleRemoveOperator = async (taskId: number, opUserId: number) => {
+    // Remove Operator from the active roster while preserving historical logs.
+    const handleRemoveOperator = async (
+        taskId: number,
+        opUserId: number,
+        changeReason = "",
+        requestId = createOperatorRequestId("remove-operator", taskId, opUserId)
+    ): Promise<boolean> => {
+        if (!selectedJobOrder) return false;
+        if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
+            toast.error("Operators can only be changed while the Job Order is In Production.");
+            return false;
+        }
         try {
-            await manageRouteOperator({
+            const response = await manageRouteOperator({
                 action: "remove-operator",
                 taskId: taskId,
-                userId: opUserId
+                userId: opUserId,
+                joId: selectedJobOrder.jo_id,
+                changeReason,
+                requestId
             });
             toast.success("Operator removed from step.");
-            fetchJobOrderOperators(sortedTasks);
+            await fetchJobOrderOperators(
+                sortedTasks,
+                false,
+                response?.assignedPersonnel ?? response?.assignmentState?.assignedPersonnel
+            );
+            await fetchJobs(selectedJobOrder.jo_id, true);
+            return true;
         } catch (err: any) {
             toast.error(err.message || "Failed to remove operator.");
+            return false;
+        }
+    };
+
+    // Replace an operator without deleting the existing labor record.
+    const handleSwapOperator = async (
+        taskId: number,
+        opUserId: number,
+        replacementUserId: number,
+        changeReason = "",
+        requestId = createOperatorRequestId("swap-operator", taskId, opUserId)
+    ) => {
+        if (!selectedJobOrder) return false;
+        if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
+            toast.error("Operators can only be changed while the Job Order is In Production.");
+            return false;
+        }
+        const taskObj = sortedTasks.find((task) => task.id === taskId);
+        try {
+            const response = await manageRouteOperator({
+                action: "swap-operator",
+                taskId,
+                userId: opUserId,
+                joId: selectedJobOrder.jo_id,
+                routingId: taskObj?.routing_id || 0,
+                replacementUserId,
+                changeReason,
+                requestId
+            });
+            toast.success("Operator reassigned successfully.");
+            await fetchJobOrderOperators(
+                sortedTasks,
+                false,
+                response?.assignedPersonnel ?? response?.assignmentState?.assignedPersonnel
+            );
+            await fetchJobs(selectedJobOrder.jo_id, true);
+            return true;
+        } catch (err: any) {
+            toast.error(err.message || "Failed to reassign operator.");
+            return false;
         }
     };
 
@@ -427,7 +515,7 @@ const selectedTask = useMemo(() => {
         }
         const taskObj = sortedTasks.find(t => t.id === taskId);
         try {
-            await manageRouteOperator({
+            const response = await manageRouteOperator({
                 action: "start-timer",
                 taskId: taskId,
                 userId: opUserId,
@@ -435,7 +523,12 @@ const selectedTask = useMemo(() => {
                 routingId: taskObj?.routing_id || 0
             });
             toast.success("Shift timer started.");
-            fetchJobOrderOperators(sortedTasks);
+            await fetchJobOrderOperators(
+                sortedTasks,
+                false,
+                response?.assignedPersonnel ?? response?.assignmentState?.assignedPersonnel
+            );
+            await fetchJobs(selectedJobOrder.jo_id, true);
         } catch (err: any) {
             toast.error(err.message || "Failed to start shift.");
         }
@@ -446,7 +539,7 @@ const selectedTask = useMemo(() => {
         if (!selectedJobOrder) return;
         const taskObj = sortedTasks.find(t => t.id === taskId);
         try {
-            await manageRouteOperator({
+            const response = await manageRouteOperator({
                 action: "stop-timer",
                 taskId: taskId,
                 userId: opUserId,
@@ -454,39 +547,59 @@ const selectedTask = useMemo(() => {
                 routingId: taskObj?.routing_id || 0
             });
             toast.success("Shift clocked out successfully.");
-            fetchJobOrderOperators(sortedTasks);
+            await fetchJobOrderOperators(
+                sortedTasks,
+                false,
+                response?.assignedPersonnel ?? response?.assignmentState?.assignedPersonnel
+            );
+            await fetchJobs(selectedJobOrder.jo_id, true);
         } catch (err: any) {
             toast.error(err.message || "Failed to stop shift.");
         }
     };
 
     // Manual Hours Entry Save
-    const handleSaveManualHours = async (taskId: number, opUserId: number, hoursStr: string) => {
-        if (!selectedJobOrder || !hoursStr) return;
+    const handleSaveManualHours = async (
+        taskId: number,
+        opUserId: number,
+        hoursStr: string,
+        changeReason = "",
+        requestId = createOperatorRequestId("edit-hours", taskId, opUserId)
+    ): Promise<boolean> => {
+        if (!selectedJobOrder || !hoursStr) return false;
         if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
             toast.error("Production hours can only be logged while the Job Order is In Production.");
-            return;
+            return false;
         }
         const parsedHours = parseFloat(hoursStr);
         if (isNaN(parsedHours) || parsedHours < 0) {
             toast.error("Please enter a valid positive number of hours.");
-            return;
+            return false;
         }
         const taskObj = sortedTasks.find(t => t.id === taskId);
 
         try {
-            await manageRouteOperator({
-                action: "log-hours",
+            const response = await manageRouteOperator({
+                action: "edit-hours",
                 taskId: taskId,
                 userId: opUserId,
                 joId: selectedJobOrder.jo_id,
                 routingId: taskObj?.routing_id || 0,
-                actualHours: parsedHours
+                actualHours: parsedHours,
+                changeReason,
+                requestId
             });
-            toast.success("Hours logged successfully.");
-            fetchJobOrderOperators(sortedTasks);
+            toast.success("Operator hours updated successfully.");
+            await fetchJobOrderOperators(
+                sortedTasks,
+                false,
+                response?.assignedPersonnel ?? response?.assignmentState?.assignedPersonnel
+            );
+            await fetchJobs(selectedJobOrder.jo_id, true);
+            return true;
         } catch (err: any) {
             toast.error(err.message || "Failed to record manual hours.");
+            return false;
         }
     };
 
@@ -728,6 +841,7 @@ const selectedTask = useMemo(() => {
         fetchJobs,
         handleAddOperator,
         handleRemoveOperator,
+        handleSwapOperator,
         handleStartTimer,
         handleStopTimer,
         handleSaveManualHours,

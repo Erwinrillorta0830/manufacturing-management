@@ -1008,6 +1008,7 @@ export async function handleGET(request: Request) {
                     return {
                         mmLotId: group.mmLotId,
                         lotName: group.mmLotId ? (mmLotNameById.get(group.mmLotId) || null) : null,
+                        storageLocation: group.mmLotId ? (mmLotNameById.get(group.mmLotId) || null) : null,
                         batchNo: group.batchNo,
                         status: lotStatusRank.find((candidate) => group.statuses.includes(candidate)) || group.statuses[0] || null,
                         allocated,

@@ -15,6 +15,7 @@ import {
     JOB_ORDER_WORKFLOW_ACTIONS,
     type JobOrderWorkflowAction
 } from "@/modules/manufacturing-management/job-order-workflow";
+import { synchronizeJobOrderOperatorAssignments } from "./_operator-assignment-service";
 
 const QUANTITY_EPSILON = 0.000001;
 
@@ -929,6 +930,14 @@ export async function executeJobOrderWorkflow(
     }
 
     if (command.action === "start-production") {
+        await synchronizeJobOrderOperatorAssignments(
+            jobOrderId,
+            jobOrder.assigned_personnel,
+            {
+                useExistingWhenMissing: true,
+                mergeExistingWhenMissing: true
+            }
+        );
         await markReservationsWip(jobOrderId, command.actorUserId, new Date().toISOString());
     }
 

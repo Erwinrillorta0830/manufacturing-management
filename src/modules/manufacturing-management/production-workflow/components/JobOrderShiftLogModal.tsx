@@ -1,6 +1,7 @@
 /* eslint-disable */
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
+    Camera,
     User,
     Clock,
     DollarSign,
@@ -13,7 +14,9 @@ import {
     Trash2,
     PackagePlus,
     CheckCircle2,
+    FolderOpen,
     ImageIcon,
+    Video,
     X
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -71,6 +74,16 @@ export function JobOrderShiftLogModal({
     const [evidenceImage, setEvidenceImage] = useState<File | null>(null);
     const [evidenceImageError, setEvidenceImageError] = useState<string | null>(null);
     const [evidenceImagePreview, setEvidenceImagePreview] = useState<string | null>(null);
+    const cameraInputRef = useRef<HTMLInputElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const webcamVideoRef = useRef<HTMLVideoElement>(null);
+    const webcamStreamRef = useRef<MediaStream | null>(null);
+    const webcamRequestRef = useRef(0);
+    const [webcamStream, setWebcamStream] = useState<MediaStream | null>(null);
+    const [isWebcamOpen, setIsWebcamOpen] = useState(false);
+    const [isWebcamStarting, setIsWebcamStarting] = useState(false);
+    const [isWebcamReady, setIsWebcamReady] = useState(false);
+    const [webcamError, setWebcamError] = useState<string | null>(null);
 
     const totalPlannedHours = sortedTasks.reduce(
         (sum, task) => sum + Number(task.planned_setup_hours || 0) + Number(task.planned_run_hours || 0),
@@ -87,7 +100,7 @@ export function JobOrderShiftLogModal({
         return `${fname} ${lname}`.trim() || `User #${uId}`;
     };
 
-    const activeOperator = allJobOperators.find((operator) => operator.stopped_at === null);
+    const activeOperator = allJobOperators.find((operator) => operator.started_at !== null && operator.stopped_at === null);
     const operatorLabel = activeOperator ? getUserLabel(activeOperator.user_id) : "Authenticated operator";
 
     useEffect(() => {
@@ -101,14 +114,120 @@ export function JobOrderShiftLogModal({
         return () => URL.revokeObjectURL(previewUrl);
     }, [evidenceImage]);
 
-    const handleEvidenceImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0] || null;
-        event.target.value = "";
+    const setEvidenceImageFromFile = (file: File | null) => {
         if (!file) return;
 
         const validationError = validateProductionYieldImage(file);
         setEvidenceImageError(validationError);
         setEvidenceImage(validationError ? null : file);
+    };
+
+    const handleEvidenceImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0] || null;
+        event.target.value = "";
+        setEvidenceImageFromFile(file);
+    };
+
+    const stopWebcam = useCallback(() => {
+        webcamRequestRef.current += 1;
+        webcamStreamRef.current?.getTracks().forEach((track) => track.stop());
+        webcamStreamRef.current = null;
+        setWebcamStream(null);
+        if (webcamVideoRef.current) webcamVideoRef.current.srcObject = null;
+        setIsWebcamOpen(false);
+        setIsWebcamStarting(false);
+        setIsWebcamReady(false);
+        setWebcamError(null);
+    }, []);
+
+    useEffect(() => {
+        if (!open && (isWebcamOpen || webcamStreamRef.current)) stopWebcam();
+    }, [open, isWebcamOpen, stopWebcam]);
+
+    useEffect(() => {
+        return () => {
+            webcamRequestRef.current += 1;
+            webcamStreamRef.current?.getTracks().forEach((track) => track.stop());
+            webcamStreamRef.current = null;
+        };
+    }, []);
+
+    useEffect(() => {
+        if (!isWebcamOpen || !webcamStream || !webcamVideoRef.current) return;
+
+        const video = webcamVideoRef.current;
+        const handleMetadata = () => setIsWebcamReady(video.videoWidth > 0 && video.videoHeight > 0);
+        video.srcObject = webcamStream;
+        video.addEventListener("loadedmetadata", handleMetadata);
+        void video.play().catch(() => setWebcamError("The webcam preview could not be started."));
+
+        return () => {
+            video.removeEventListener("loadedmetadata", handleMetadata);
+        };
+    }, [isWebcamOpen, webcamStream]);
+
+    const openWebcam = async () => {
+        setWebcamError(null);
+        setIsWebcamReady(false);
+
+        if (!navigator.mediaDevices?.getUserMedia) {
+            setWebcamError("Webcam access is not supported by this browser. Use Take Photo or Choose File instead.");
+            setIsWebcamOpen(true);
+            return;
+        }
+
+        const requestId = ++webcamRequestRef.current;
+        setIsWebcamStarting(true);
+        setIsWebcamOpen(true);
+
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: "user" },
+                audio: false
+            });
+
+            if (requestId !== webcamRequestRef.current || !open) {
+                stream.getTracks().forEach((track) => track.stop());
+                return;
+            }
+
+            webcamStreamRef.current = stream;
+            setWebcamStream(stream);
+        } catch {
+            if (requestId === webcamRequestRef.current) {
+                setWebcamError("Unable to access the webcam. Allow camera permission in your browser, then try again.");
+            }
+        } finally {
+            if (requestId === webcamRequestRef.current) setIsWebcamStarting(false);
+        }
+    };
+
+    const captureWebcamPhoto = () => {
+        const video = webcamVideoRef.current;
+        if (!video || !video.videoWidth || !video.videoHeight) {
+            setWebcamError("The webcam is not ready yet. Wait for the preview, then try again.");
+            return;
+        }
+
+        const canvas = document.createElement("canvas");
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const context = canvas.getContext("2d");
+        if (!context) {
+            setWebcamError("The browser could not capture the webcam frame.");
+            return;
+        }
+
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => {
+            if (!blob) {
+                setWebcamError("The browser could not create an image from the webcam frame.");
+                return;
+            }
+
+            setEvidenceImageFromFile(new File([blob], `shift-evidence-${Date.now()}.jpg`, { type: "image/jpeg" }));
+            stopWebcam();
+        }, "image/jpeg", 0.92);
     };
 
     const removeEvidenceImage = () => {
@@ -752,25 +871,99 @@ export function JobOrderShiftLogModal({
                                         <p className="text-[10px] text-muted-foreground">
                                             Attach one PNG, JPG, or WEBP photo captured at the end of the shift. Maximum file size: 5 MB.
                                         </p>
-                                        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                onClick={() => cameraInputRef.current?.click()}
+                                                className="h-10 w-full rounded-lg border-sky-500/30 text-xs font-semibold"
+                                                aria-label="Take a shift evidence photo"
+                                            >
+                                                <Camera className="mr-2 h-4 w-4" /> Take Photo
+                                            </Button>
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                onClick={openWebcam}
+                                                disabled={isWebcamStarting}
+                                                className="h-10 w-full rounded-lg border-sky-500/30 text-xs font-semibold"
+                                                aria-label="Use the computer webcam for shift evidence"
+                                            >
+                                                <Video className="mr-2 h-4 w-4" /> {isWebcamStarting ? "Opening Webcam..." : "Use Webcam"}
+                                            </Button>
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                onClick={() => fileInputRef.current?.click()}
+                                                className="h-10 w-full rounded-lg border-sky-500/30 text-xs font-semibold"
+                                                aria-label="Choose a shift evidence image file"
+                                            >
+                                                <FolderOpen className="mr-2 h-4 w-4" /> Choose File
+                                            </Button>
                                             <Input
-                                                id="production-evidence-image"
+                                                ref={cameraInputRef}
+                                                id="production-evidence-camera"
                                                 type="file"
-                                                accept="image/jpeg,image/jpg,image/png,image/webp"
+                                                accept="image/*"
+                                                capture="environment"
                                                 onChange={handleEvidenceImageChange}
-                                                className="h-9 rounded-lg bg-background border-sky-500/30 text-xs file:mr-3 file:rounded-md file:border-0 file:bg-sky-500/10 file:px-2 file:py-1 file:text-xs file:font-semibold file:text-sky-700 dark:file:text-sky-300"
+                                                aria-label="Take a shift evidence photo"
+                                                className="sr-only"
+                                            />
+                                            <Input
+                                                ref={fileInputRef}
+                                                id="production-evidence-image"
+                                                    type="file"
+                                                    accept="image/jpeg,image/jpg,image/png,image/webp"
+                                                onChange={handleEvidenceImageChange}
+                                                aria-label="Choose a shift evidence image file"
+                                                className="sr-only"
                                             />
                                             {evidenceImage && (
                                                 <Button
                                                     type="button"
                                                     variant="outline"
                                                     onClick={removeEvidenceImage}
-                                                    className="h-9 shrink-0 rounded-lg border-sky-500/30 text-xs"
+                                                    className="h-10 rounded-lg border-sky-500/30 text-xs sm:col-span-3"
                                                 >
                                                     <X className="h-3.5 w-3.5 mr-1" /> Remove
                                                 </Button>
                                             )}
                                         </div>
+                                        {isWebcamOpen && (
+                                            <div className="space-y-2 rounded-lg border border-sky-500/20 bg-background/70 p-2" aria-live="polite">
+                                                {webcamError ? (
+                                                    <p className="text-[10px] font-semibold text-destructive" role="alert">{webcamError}</p>
+                                                ) : (
+                                                    <video
+                                                        ref={webcamVideoRef}
+                                                        autoPlay
+                                                        muted
+                                                        playsInline
+                                                        className="aspect-video w-full rounded-md bg-black object-cover"
+                                                        aria-label="Live computer webcam preview"
+                                                    />
+                                                )}
+                                                <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                                                    <Button
+                                                        type="button"
+                                                        onClick={captureWebcamPhoto}
+                                                        disabled={!isWebcamReady || Boolean(webcamError)}
+                                                        className="h-10 text-xs font-semibold"
+                                                    >
+                                                        <Camera className="mr-2 h-4 w-4" /> Capture Photo
+                                                    </Button>
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        onClick={stopWebcam}
+                                                        className="h-10 text-xs font-semibold"
+                                                    >
+                                                        Close Webcam
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        )}
                                         {evidenceImageError && (
                                             <p className="text-[10px] font-semibold text-destructive" role="alert">{evidenceImageError}</p>
                                         )}

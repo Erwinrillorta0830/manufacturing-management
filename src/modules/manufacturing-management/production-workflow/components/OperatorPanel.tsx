@@ -502,7 +502,9 @@ export default function OperatorPanel({
                                                     />
                                                 ) : (
                                                     <span className="text-[9px] text-muted-foreground font-semibold px-1.5 py-0.5 rounded bg-muted/40 border border-border/30">
-                                                        Clocked Out
+                                                        {gop.total_logged_hours > 0 || gop.latest_session?.started_at || gop.latest_session?.stopped_at
+                                                            ? "Clocked Out"
+                                                            : "Not started"}
                                                     </span>
                                                 )}
                                                 

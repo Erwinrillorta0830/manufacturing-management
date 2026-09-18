@@ -34,6 +34,7 @@ const STATUS_HISTORY_FIELDS = [
     "changed_by",
     "changed_at",
     "remarks",
+    "workflow_action",
     "work_center_id"
 ].join(",");
 

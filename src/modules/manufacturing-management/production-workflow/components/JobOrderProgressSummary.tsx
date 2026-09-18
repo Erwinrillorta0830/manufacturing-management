@@ -1,8 +1,8 @@
 /* eslint-disable */
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
-import { Activity, ChevronRight, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Activity, RefreshCw } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -11,6 +11,7 @@ import { JobOrder } from "../types";
 interface RawMaterialProgressLot {
     mmLotId: number | null;
     lotName: string | null;
+    storageLocation?: string | null;
     batchNo: string | null;
     status: string | null;
     allocated: number;
@@ -48,6 +49,11 @@ interface JobOrderProgressResponse {
     finishedGoods?: FinishedGoodsProgressLine[];
 }
 
+interface RawMaterialProgressRow {
+    line: RawMaterialProgressLine;
+    lot: RawMaterialProgressLot | null;
+}
+
 function formatQuantity(value: number): string {
     return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 6 });
 }
@@ -62,7 +68,7 @@ const LOT_STATUS_STYLES: Record<string, string> = {
 
 function ProgressSkeleton() {
     return (
-        <div className="grid gap-4 xl:grid-cols-2" role="status" aria-label="Loading Job Order progress">
+        <div className="space-y-6" role="status" aria-label="Loading Job Order progress">
             {Array.from({ length: 2 }).map((_, sectionIndex) => (
                 <div key={sectionIndex} className="space-y-2">
                     <div className="h-3 w-28 animate-pulse rounded bg-muted" />
@@ -82,7 +88,6 @@ export function JobOrderProgressSummary({ jobOrder }: { jobOrder: JobOrder }) {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [data, setData] = useState<JobOrderProgressResponse | null>(null);
-    const [expandedMaterialIds, setExpandedMaterialIds] = useState<Set<number>>(new Set());
 
     // Refetch whenever the Job Order changes or production activity updates its
     // output counters (the terminal refetches jobs after shift runs/starts).
@@ -114,31 +119,21 @@ export function JobOrderProgressSummary({ jobOrder }: { jobOrder: JobOrder }) {
         void load();
     }, [load]);
 
-    useEffect(() => {
-        setExpandedMaterialIds(new Set());
-    }, [jobOrderId]);
-
-    const toggleMaterialLots = (materialId: number) => {
-        setExpandedMaterialIds((previous) => {
-            const next = new Set(previous);
-            if (next.has(materialId)) {
-                next.delete(materialId);
-            } else {
-                next.add(materialId);
-            }
-            return next;
-        });
-    };
-
     if (!jobOrderId) return null;
 
     const rawMaterialLines = data?.rawMaterials?.lines || [];
     const rawMaterialTotal = data?.rawMaterials?.total || null;
     const finishedGoods = data?.finishedGoods || [];
     const jobOrderLabel = data?.jobOrder?.jobOrderNo || jobOrder.job_order_no || jobOrder.jo_id;
+    const rawMaterialRows = rawMaterialLines.flatMap((line): RawMaterialProgressRow[] => {
+        const lots = line.lots || [];
+        return lots.length > 0
+            ? lots.map((lot) => ({ line, lot }))
+            : [{ line, lot: null }];
+    });
 
     return (
-        <Card className="border border-border bg-card shadow-sm rounded-xl">
+        <Card className="rounded-xl border border-border bg-card shadow-sm">
             <CardHeader className="flex flex-col gap-2 border-b bg-muted/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <CardTitle className="flex items-center gap-2 text-sm font-bold">
@@ -173,122 +168,18 @@ export function JobOrderProgressSummary({ jobOrder }: { jobOrder: JobOrder }) {
                         </Button>
                     </div>
                 ) : (
-                    <div className="grid gap-4 xl:grid-cols-2">
-                        {/* Raw Materials */}
-                        <div className="space-y-2">
-                            <h4 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Raw Materials</h4>
-                            <div className="overflow-x-auto rounded-lg border bg-background">
-                                <Table>
-                                    <TableHeader className="bg-muted/40">
-                                        <TableRow>
-                                            <TableHead className="h-8 px-3 text-[10px] font-bold uppercase">Material</TableHead>
-                                            <TableHead className="h-8 px-3 text-[10px] font-bold uppercase">UOM</TableHead>
-                                            <TableHead className="h-8 px-3 text-right text-[10px] font-bold uppercase">Reserved</TableHead>
-                                            <TableHead className="h-8 px-3 text-right text-[10px] font-bold uppercase">Consumed</TableHead>
-                                            <TableHead className="h-8 px-3 text-right text-[10px] font-bold uppercase">Remaining</TableHead>
-                                        </TableRow>
-                                    </TableHeader>
-                                    <TableBody>
-                                        {rawMaterialLines.length === 0 ? (
-                                            <TableRow>
-                                                <TableCell colSpan={5} className="px-3 py-4 text-center text-xs text-muted-foreground">
-                                                    No raw materials are allocated to this Job Order.
-                                                </TableCell>
-                                            </TableRow>
-                                        ) : rawMaterialLines.map((line) => {
-                                            const lots = line.lots || [];
-                                            const isExpanded = expandedMaterialIds.has(line.materialId);
-                                            const detailId = `jo-progress-lots-${line.materialId}`;
-
-                                            return (
-                                                <React.Fragment key={line.materialId}>
-                                                    <TableRow>
-                                                        <TableCell className="px-3 py-2 text-xs font-semibold">
-                                                            {lots.length > 0 ? (
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => toggleMaterialLots(line.materialId)}
-                                                                    aria-expanded={isExpanded}
-                                                                    aria-controls={detailId}
-                                                                    className="inline-flex items-center gap-1.5 text-left font-semibold transition-colors hover:text-primary"
-                                                                >
-                                                                    <ChevronRight className={`h-3.5 w-3.5 shrink-0 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
-                                                                    {line.productName}
-                                                                </button>
-                                                            ) : (
-                                                                line.productName
-                                                            )}
-                                                        </TableCell>
-                                                        <TableCell className="px-3 py-2 text-xs text-muted-foreground">{line.unitShortcut}</TableCell>
-                                                        <TableCell className="px-3 py-2 text-right font-mono text-xs font-bold tabular-nums">{formatQuantity(line.reserved)}</TableCell>
-                                                        <TableCell className="px-3 py-2 text-right font-mono text-xs text-amber-700 tabular-nums dark:text-amber-400">{formatQuantity(line.consumed)}</TableCell>
-                                                        <TableCell className="px-3 py-2 text-right font-mono text-xs font-black text-emerald-700 tabular-nums dark:text-emerald-400">{formatQuantity(line.remaining)}</TableCell>
-                                                    </TableRow>
-                                                    {isExpanded && lots.length > 0 && (
-                                                        <TableRow id={detailId} className="bg-muted/20 hover:bg-muted/20">
-                                                            <TableCell colSpan={5} className="px-3 py-2">
-                                                                <div className="overflow-x-auto rounded-md border bg-background">
-                                                                    <Table>
-                                                                        <TableHeader className="bg-muted/40">
-                                                                            <TableRow>
-                                                                                <TableHead className="h-7 px-2 text-[10px] font-bold uppercase">Storage Lot</TableHead>
-                                                                                <TableHead className="h-7 px-2 text-[10px] font-bold uppercase">Batch No.</TableHead>
-                                                                                <TableHead className="h-7 px-2 text-[10px] font-bold uppercase">Status</TableHead>
-                                                                                <TableHead className="h-7 px-2 text-right text-[10px] font-bold uppercase">Allocated</TableHead>
-                                                                                <TableHead className="h-7 px-2 text-right text-[10px] font-bold uppercase">Consumed</TableHead>
-                                                                                <TableHead className="h-7 px-2 text-right text-[10px] font-bold uppercase">Remaining</TableHead>
-                                                                            </TableRow>
-                                                                        </TableHeader>
-                                                                        <TableBody>
-                                                                            {lots.map((lot, lotIndex) => (
-                                                                                <TableRow key={`${line.materialId}-${lot.mmLotId ?? "none"}-${lot.batchNo ?? ""}-${lotIndex}`}>
-                                                                                    <TableCell className="px-2 py-1.5 text-[11px] font-semibold text-foreground">
-                                                                                        {lot.lotName || (lot.mmLotId ? `Lot #${lot.mmLotId}` : "—")}
-                                                                                    </TableCell>
-                                                                                    <TableCell className="px-2 py-1.5 font-mono text-[11px] text-muted-foreground">{lot.batchNo || "—"}</TableCell>
-                                                                                    <TableCell className="px-2 py-1.5">
-                                                                                        <span className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${LOT_STATUS_STYLES[lot.status || ""] || LOT_STATUS_STYLES.SOFT}`}>
-                                                                                            {lot.status || "—"}
-                                                                                        </span>
-                                                                                    </TableCell>
-                                                                                    <TableCell className="px-2 py-1.5 text-right font-mono text-[11px] font-bold tabular-nums">{formatQuantity(lot.allocated)}</TableCell>
-                                                                                    <TableCell className="px-2 py-1.5 text-right font-mono text-[11px] text-amber-700 tabular-nums dark:text-amber-400">{formatQuantity(lot.consumed)}</TableCell>
-                                                                                    <TableCell className="px-2 py-1.5 text-right font-mono text-[11px] text-emerald-700 tabular-nums dark:text-emerald-400">{formatQuantity(lot.remaining)}</TableCell>
-                                                                                </TableRow>
-                                                                            ))}
-                                                                        </TableBody>
-                                                                    </Table>
-                                                                </div>
-                                                            </TableCell>
-                                                        </TableRow>
-                                                    )}
-                                                </React.Fragment>
-                                            );
-                                        })}
-                                        {rawMaterialTotal && (
-                                            <TableRow className="bg-muted/30">
-                                                <TableCell colSpan={2} className="px-3 py-2 text-xs font-black">Total ({rawMaterialTotal.unitShortcut})</TableCell>
-                                                <TableCell className="px-3 py-2 text-right font-mono text-xs font-black tabular-nums">{formatQuantity(rawMaterialTotal.reserved)}</TableCell>
-                                                <TableCell className="px-3 py-2 text-right font-mono text-xs font-black tabular-nums">{formatQuantity(rawMaterialTotal.consumed)}</TableCell>
-                                                <TableCell className="px-3 py-2 text-right font-mono text-xs font-black tabular-nums">{formatQuantity(rawMaterialTotal.remaining)}</TableCell>
-                                            </TableRow>
-                                        )}
-                                    </TableBody>
-                                </Table>
-                            </div>
-                        </div>
-
+                    <div className="space-y-6">
                         {/* Finished Goods */}
-                        <div className="space-y-2">
+                        <div className="w-full space-y-2">
                             <h4 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Finished Goods</h4>
-                            <div className="overflow-x-auto rounded-lg border bg-background">
-                                <Table>
+                            <div className="w-full overflow-x-auto rounded-lg border bg-background">
+                                <Table className="min-w-[560px]">
                                     <TableHeader className="bg-muted/40">
                                         <TableRow>
-                                            <TableHead className="h-8 px-3 text-[10px] font-bold uppercase">Sales Order No.</TableHead>
-                                            <TableHead className="h-8 px-3 text-right text-[10px] font-bold uppercase">Target Quantity</TableHead>
-                                            <TableHead className="h-8 px-3 text-right text-[10px] font-bold uppercase">Produced</TableHead>
-                                            <TableHead className="h-8 px-3 text-right text-[10px] font-bold uppercase">Remaining</TableHead>
+                                            <TableHead className="h-8 whitespace-nowrap px-3 text-[10px] font-bold uppercase">Sales Order No.</TableHead>
+                                            <TableHead className="h-8 whitespace-nowrap px-3 text-right text-[10px] font-bold uppercase">Target Quantity</TableHead>
+                                            <TableHead className="h-8 whitespace-nowrap px-3 text-right text-[10px] font-bold uppercase">Produced</TableHead>
+                                            <TableHead className="h-8 whitespace-nowrap px-3 text-right text-[10px] font-bold uppercase">Remaining</TableHead>
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
@@ -301,11 +192,76 @@ export function JobOrderProgressSummary({ jobOrder }: { jobOrder: JobOrder }) {
                                         ) : finishedGoods.map((line, index) => (
                                             <TableRow key={`${line.orderNo}-${index}`}>
                                                 <TableCell className="px-3 py-2 text-xs font-semibold">{line.orderNo}</TableCell>
-                                                <TableCell className="px-3 py-2 text-right font-mono text-xs font-bold tabular-nums">{formatQuantity(line.targetQuantity)}</TableCell>
-                                                <TableCell className="px-3 py-2 text-right font-mono text-xs text-amber-700 tabular-nums dark:text-amber-400">{formatQuantity(line.produced)}</TableCell>
-                                                <TableCell className="px-3 py-2 text-right font-mono text-xs font-black text-emerald-700 tabular-nums dark:text-emerald-400">{formatQuantity(line.remaining)}</TableCell>
+                                                <TableCell className="whitespace-nowrap px-3 py-2 text-right font-mono text-xs font-bold tabular-nums">{formatQuantity(line.targetQuantity)}</TableCell>
+                                                <TableCell className="whitespace-nowrap px-3 py-2 text-right font-mono text-xs text-amber-700 tabular-nums dark:text-amber-400">{formatQuantity(line.produced)}</TableCell>
+                                                <TableCell className="whitespace-nowrap px-3 py-2 text-right font-mono text-xs font-black text-emerald-700 tabular-nums dark:text-emerald-400">{formatQuantity(line.remaining)}</TableCell>
                                             </TableRow>
                                         ))}
+                                    </TableBody>
+                                </Table>
+                            </div>
+                        </div>
+
+                        {/* Raw Materials */}
+                        <div className="w-full space-y-2">
+                            <h4 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Raw Materials</h4>
+                            <div className="w-full overflow-x-auto rounded-lg border bg-background">
+                                <Table className="min-w-[960px]">
+                                    <TableHeader className="bg-muted/40">
+                                        <TableRow>
+                                            <TableHead className="h-8 min-w-[180px] whitespace-nowrap px-3 text-[10px] font-bold uppercase">Material</TableHead>
+                                            <TableHead className="h-8 min-w-[150px] whitespace-nowrap px-3 text-[10px] font-bold uppercase">Lot / Batch No.</TableHead>
+                                            <TableHead className="h-8 min-w-[170px] whitespace-nowrap px-3 text-[10px] font-bold uppercase">Storage Location</TableHead>
+                                            <TableHead className="h-8 min-w-[140px] whitespace-nowrap px-3 text-[10px] font-bold uppercase">Reservation Status</TableHead>
+                                            <TableHead className="h-8 min-w-[80px] whitespace-nowrap px-3 text-[10px] font-bold uppercase">UOM</TableHead>
+                                            <TableHead className="h-8 min-w-[110px] whitespace-nowrap px-3 text-right text-[10px] font-bold uppercase">Reserved</TableHead>
+                                            <TableHead className="h-8 min-w-[110px] whitespace-nowrap px-3 text-right text-[10px] font-bold uppercase">Consumed</TableHead>
+                                            <TableHead className="h-8 min-w-[110px] whitespace-nowrap px-3 text-right text-[10px] font-bold uppercase">Remaining</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {rawMaterialRows.length === 0 ? (
+                                            <TableRow>
+                                                <TableCell colSpan={8} className="px-3 py-4 text-center text-xs text-muted-foreground">
+                                                    No raw materials are allocated to this Job Order.
+                                                </TableCell>
+                                            </TableRow>
+                                        ) : rawMaterialRows.map(({ line, lot }, rowIndex) => {
+                                            const reserved = lot ? lot.allocated : line.reserved;
+                                            const consumed = lot ? lot.consumed : line.consumed;
+                                            const remaining = lot ? lot.remaining : line.remaining;
+                                            const lotOrBatch = lot?.batchNo || (lot?.mmLotId ? `Lot #${lot.mmLotId}` : "-");
+                                            const rowKey = `${line.materialId}-${lot?.mmLotId ?? "none"}-${lot?.batchNo ?? ""}-${rowIndex}`;
+
+                                            return (
+                                                <TableRow key={rowKey}>
+                                                    <TableCell className="px-3 py-2 text-xs font-semibold">{line.productName}</TableCell>
+                                                    <TableCell className="whitespace-nowrap px-3 py-2 font-mono text-xs text-muted-foreground">{lotOrBatch}</TableCell>
+                                                    <TableCell className="whitespace-nowrap px-3 py-2 text-xs font-semibold text-foreground">{lot?.storageLocation || lot?.lotName || "-"}</TableCell>
+                                                    <TableCell className="px-3 py-2">
+                                                        {lot?.status ? (
+                                                            <span className={`inline-flex items-center whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${LOT_STATUS_STYLES[lot.status] || LOT_STATUS_STYLES.SOFT}`}>
+                                                                {lot.status}
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-xs text-muted-foreground">-</span>
+                                                        )}
+                                                    </TableCell>
+                                                    <TableCell className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">{line.unitShortcut}</TableCell>
+                                                    <TableCell className="whitespace-nowrap px-3 py-2 text-right font-mono text-xs font-bold tabular-nums">{formatQuantity(reserved)}</TableCell>
+                                                    <TableCell className="whitespace-nowrap px-3 py-2 text-right font-mono text-xs text-amber-700 tabular-nums dark:text-amber-400">{formatQuantity(consumed)}</TableCell>
+                                                    <TableCell className="whitespace-nowrap px-3 py-2 text-right font-mono text-xs font-black text-emerald-700 tabular-nums dark:text-emerald-400">{formatQuantity(remaining)}</TableCell>
+                                                </TableRow>
+                                            );
+                                        })}
+                                        {rawMaterialTotal && (
+                                            <TableRow className="bg-muted/30">
+                                                <TableCell colSpan={5} className="px-3 py-2 text-xs font-black">Total ({rawMaterialTotal.unitShortcut})</TableCell>
+                                                <TableCell className="px-3 py-2 text-right font-mono text-xs font-black tabular-nums">{formatQuantity(rawMaterialTotal.reserved)}</TableCell>
+                                                <TableCell className="px-3 py-2 text-right font-mono text-xs font-black tabular-nums">{formatQuantity(rawMaterialTotal.consumed)}</TableCell>
+                                                <TableCell className="px-3 py-2 text-right font-mono text-xs font-black tabular-nums">{formatQuantity(rawMaterialTotal.remaining)}</TableCell>
+                                            </TableRow>
+                                        )}
                                     </TableBody>
                                 </Table>
                             </div>

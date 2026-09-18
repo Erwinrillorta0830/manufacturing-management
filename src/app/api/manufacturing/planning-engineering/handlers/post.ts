@@ -426,6 +426,7 @@ function buildSchedulingDbPayload(
         created_by: encoderId,
         parent_job_order_id: jo.parentJobOrderId || jo.parent_job_order_id || null,
         sub_assembly_version_map: jo.subAssemblyVersionMap || jo.sub_assembly_version_map || null,
+        assigned_personnel: jo.assigned_personnel ?? jo.assignedPersonnel ?? jo.assignments ?? null,
         assignments: jo.assignments || null,
         products: [{
             product_id: schedulingPlan.productId,
@@ -1558,6 +1559,7 @@ export async function handlePOST(request: Request) {
             created_by: encoderId,
             parent_job_order_id: jo.parentJobOrderId || jo.parent_job_order_id || null,
             sub_assembly_version_map: jo.subAssemblyVersionMap || jo.sub_assembly_version_map || null,
+            assigned_personnel: jo.assigned_personnel ?? jo.assignedPersonnel ?? jo.assignments ?? null,
             assignments: jo.assignments || null,
             // disabled-lint-next-line @typescript-eslint/no-explicit-any
             products: schedulingPlan
