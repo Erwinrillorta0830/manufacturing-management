@@ -71,6 +71,7 @@ export default function ProductionWorkflowModule() {
         fetchJobs,
         handleAddOperator,
         handleRemoveOperator,
+        handleSwapOperator,
         handleStartTimer,
         handleStopTimer,
         handleSaveManualHours,
@@ -612,6 +613,7 @@ export default function ProductionWorkflowModule() {
                                 loadingOperators={loadingOperators}
                                 handleAddOperator={handleAddOperator}
                                 handleRemoveOperator={handleRemoveOperator}
+                                handleSwapOperator={handleSwapOperator}
                                 handleStartTimer={handleStartTimer}
                                 handleStopTimer={handleStopTimer}
                                 handleSaveManualHours={handleSaveManualHours}

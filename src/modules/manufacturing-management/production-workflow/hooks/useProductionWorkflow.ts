@@ -22,6 +22,13 @@ import {
     normalizeOperatorAssignmentMap
 } from "../operator-assignment-display";
 
+function createOperatorRequestId(action: string, taskId: number, userId: number): string {
+    const suffix = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    return `${action}:${taskId}:${userId}:${suffix}`;
+}
+
 export function useProductionWorkflow() {
     const searchParams = useSearchParams();
     // --- State Variables ---
@@ -425,15 +432,26 @@ const selectedTask = useMemo(() => {
         }
     };
 
-    // Remove / Check Out Operator
-    const handleRemoveOperator = async (taskId: number, opUserId: number) => {
-        if (!selectedJobOrder) return;
+    // Remove Operator from the active roster while preserving historical logs.
+    const handleRemoveOperator = async (
+        taskId: number,
+        opUserId: number,
+        changeReason = "",
+        requestId = createOperatorRequestId("remove-operator", taskId, opUserId)
+    ): Promise<boolean> => {
+        if (!selectedJobOrder) return false;
+        if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
+            toast.error("Operators can only be changed while the Job Order is In Production.");
+            return false;
+        }
         try {
             const response = await manageRouteOperator({
                 action: "remove-operator",
                 taskId: taskId,
                 userId: opUserId,
-                joId: selectedJobOrder.jo_id
+                joId: selectedJobOrder.jo_id,
+                changeReason,
+                requestId
             });
             toast.success("Operator removed from step.");
             await fetchJobOrderOperators(
@@ -442,8 +460,49 @@ const selectedTask = useMemo(() => {
                 response?.assignedPersonnel ?? response?.assignmentState?.assignedPersonnel
             );
             await fetchJobs(selectedJobOrder.jo_id, true);
+            return true;
         } catch (err: any) {
             toast.error(err.message || "Failed to remove operator.");
+            return false;
+        }
+    };
+
+    // Replace an operator without deleting the existing labor record.
+    const handleSwapOperator = async (
+        taskId: number,
+        opUserId: number,
+        replacementUserId: number,
+        changeReason = "",
+        requestId = createOperatorRequestId("swap-operator", taskId, opUserId)
+    ) => {
+        if (!selectedJobOrder) return false;
+        if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
+            toast.error("Operators can only be changed while the Job Order is In Production.");
+            return false;
+        }
+        const taskObj = sortedTasks.find((task) => task.id === taskId);
+        try {
+            const response = await manageRouteOperator({
+                action: "swap-operator",
+                taskId,
+                userId: opUserId,
+                joId: selectedJobOrder.jo_id,
+                routingId: taskObj?.routing_id || 0,
+                replacementUserId,
+                changeReason,
+                requestId
+            });
+            toast.success("Operator reassigned successfully.");
+            await fetchJobOrderOperators(
+                sortedTasks,
+                false,
+                response?.assignedPersonnel ?? response?.assignmentState?.assignedPersonnel
+            );
+            await fetchJobs(selectedJobOrder.jo_id, true);
+            return true;
+        } catch (err: any) {
+            toast.error(err.message || "Failed to reassign operator.");
+            return false;
         }
     };
 
@@ -500,37 +559,47 @@ const selectedTask = useMemo(() => {
     };
 
     // Manual Hours Entry Save
-    const handleSaveManualHours = async (taskId: number, opUserId: number, hoursStr: string) => {
-        if (!selectedJobOrder || !hoursStr) return;
+    const handleSaveManualHours = async (
+        taskId: number,
+        opUserId: number,
+        hoursStr: string,
+        changeReason = "",
+        requestId = createOperatorRequestId("edit-hours", taskId, opUserId)
+    ): Promise<boolean> => {
+        if (!selectedJobOrder || !hoursStr) return false;
         if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
             toast.error("Production hours can only be logged while the Job Order is In Production.");
-            return;
+            return false;
         }
         const parsedHours = parseFloat(hoursStr);
         if (isNaN(parsedHours) || parsedHours < 0) {
             toast.error("Please enter a valid positive number of hours.");
-            return;
+            return false;
         }
         const taskObj = sortedTasks.find(t => t.id === taskId);
 
         try {
             const response = await manageRouteOperator({
-                action: "log-hours",
+                action: "edit-hours",
                 taskId: taskId,
                 userId: opUserId,
                 joId: selectedJobOrder.jo_id,
                 routingId: taskObj?.routing_id || 0,
-                actualHours: parsedHours
+                actualHours: parsedHours,
+                changeReason,
+                requestId
             });
-            toast.success("Hours logged successfully.");
+            toast.success("Operator hours updated successfully.");
             await fetchJobOrderOperators(
                 sortedTasks,
                 false,
                 response?.assignedPersonnel ?? response?.assignmentState?.assignedPersonnel
             );
             await fetchJobs(selectedJobOrder.jo_id, true);
+            return true;
         } catch (err: any) {
             toast.error(err.message || "Failed to record manual hours.");
+            return false;
         }
     };
 
@@ -772,6 +841,7 @@ const selectedTask = useMemo(() => {
         fetchJobs,
         handleAddOperator,
         handleRemoveOperator,
+        handleSwapOperator,
         handleStartTimer,
         handleStopTimer,
         handleSaveManualHours,

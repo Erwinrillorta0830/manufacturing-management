@@ -23,12 +23,18 @@ export interface DirectusRouteOperator {
 }
 
 export class JobOrderOperatorAssignmentError extends Error {
-    readonly status = 400;
-    readonly code = "JOB_ORDER_OPERATOR_ASSIGNMENT_INVALID";
+    readonly status: number;
+    readonly code: string;
 
-    constructor(message: string) {
+    constructor(
+        message: string,
+        status = 400,
+        code = "JOB_ORDER_OPERATOR_ASSIGNMENT_INVALID"
+    ) {
         super(message);
         this.name = "JobOrderOperatorAssignmentError";
+        this.status = status;
+        this.code = code;
     }
 }
 
@@ -55,6 +61,17 @@ export function isActiveRouteOperator(record: Pick<DirectusRouteOperator, "is_ac
 
 function isRunning(record: Pick<DirectusRouteOperator, "started_at" | "stopped_at">): boolean {
     return Boolean(record.started_at && !record.stopped_at);
+}
+
+function loggedHours(record: Pick<DirectusRouteOperator, "logged_hours">): number {
+    const value = Number(record.logged_hours ?? 0);
+    return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+export function isRouteOperatorProtected(
+    record: Pick<DirectusRouteOperator, "started_at" | "stopped_at" | "logged_hours">
+): boolean {
+    return isRunning(record) || loggedHours(record) > 0;
 }
 
 function routeId(route: DirectusRoute): number {
@@ -298,10 +315,12 @@ export async function synchronizeJobOrderOperatorAssignments(
             && !desiredKeys.has(`${currentRouteId}:${currentOperatorId}`)
             && isActiveRouteOperator(row);
     });
-    const runningRemoval = activeRemovals.find(isRunning);
-    if (runningRemoval) {
+    const protectedRemoval = activeRemovals.find(isRouteOperatorProtected);
+    if (protectedRemoval) {
         throw new JobOrderOperatorAssignmentError(
-            `Operator ${operatorId(runningRemoval)} cannot be removed while the route timer is active. Stop the timer first.`
+            `Operator ${operatorId(protectedRemoval)} cannot be removed because an active or logged timer record would be affected. Pause or complete the tracking session first.`,
+            409,
+            "OPERATOR_ROSTER_CHANGE_BLOCKED"
         );
     }
 
@@ -334,9 +353,11 @@ export async function synchronizeJobOrderOperatorAssignments(
             }
             for (const duplicate of rows) {
                 if (duplicate === keeper) continue;
-                if (isRunning(duplicate)) {
+                if (isRouteOperatorProtected(duplicate)) {
                     throw new JobOrderOperatorAssignmentError(
-                        `Operator ${operatorId(duplicate)} has an active timer and cannot be de-duplicated. Stop the timer first.`
+                        `Operator ${operatorId(duplicate)} has an active or logged timer and cannot be de-duplicated. Pause or complete the tracking session first.`,
+                        409,
+                        "OPERATOR_ROSTER_CHANGE_BLOCKED"
                     );
                 }
                 if (isActiveRouteOperator(duplicate)) {
@@ -398,4 +419,146 @@ export async function updateJobOrderOperatorAssignment(
     else current.delete(userId);
     next[sequenceKey] = [...current].sort((left, right) => left - right);
     return synchronizeJobOrderOperatorAssignments(jobOrderId, next);
+}
+
+async function readCurrentOperatorAssignments(jobOrderId: number): Promise<OperatorAssignmentMap> {
+    const canonical = await readJobOrderAssignedPersonnel(jobOrderId);
+    if (Object.keys(canonical).length > 0) return canonical;
+    return readProjectedOperatorAssignments(jobOrderId);
+}
+
+export async function removeJobOrderOperatorAssignment(
+    jobOrderId: number,
+    sequenceOrder: number,
+    userId: number
+): Promise<OperatorAssignmentSyncResult> {
+    if (!Number.isSafeInteger(sequenceOrder) || sequenceOrder <= 0) {
+        throw new JobOrderOperatorAssignmentError("A valid routing sequence is required for personnel removal.");
+    }
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+        throw new JobOrderOperatorAssignmentError("A valid operator ID is required for personnel removal.");
+    }
+
+    const current = await readCurrentOperatorAssignments(jobOrderId);
+    const sequenceKey = String(sequenceOrder);
+    if (!(current[sequenceKey] || []).includes(userId)) {
+        throw new JobOrderOperatorAssignmentError(
+            `Operator ${userId} is not assigned to routing sequence ${sequenceOrder}.`,
+            409,
+            "OPERATOR_ASSIGNMENT_NOT_FOUND"
+        );
+    }
+
+    const next = { ...current };
+    next[sequenceKey] = (next[sequenceKey] || []).filter((id) => id !== userId);
+    return synchronizeJobOrderOperatorAssignments(jobOrderId, next);
+}
+
+export async function swapJobOrderOperatorAssignment(
+    jobOrderId: number,
+    sequenceOrder: number,
+    userId: number,
+    replacementUserId: number
+): Promise<OperatorAssignmentSyncResult> {
+    if (!Number.isSafeInteger(sequenceOrder) || sequenceOrder <= 0) {
+        throw new JobOrderOperatorAssignmentError("A valid routing sequence is required for personnel reassignment.");
+    }
+    if (!Number.isSafeInteger(userId) || userId <= 0 || !Number.isSafeInteger(replacementUserId) || replacementUserId <= 0) {
+        throw new JobOrderOperatorAssignmentError("Valid current and replacement operator IDs are required for personnel reassignment.");
+    }
+    if (userId === replacementUserId) {
+        throw new JobOrderOperatorAssignmentError(
+            "The replacement operator must be different from the current operator.",
+            409,
+            "OPERATOR_REPLACEMENT_INVALID"
+        );
+    }
+
+    const current = await readCurrentOperatorAssignments(jobOrderId);
+    const sequenceKey = String(sequenceOrder);
+    const sequenceOperators = current[sequenceKey] || [];
+    if (!sequenceOperators.includes(userId)) {
+        throw new JobOrderOperatorAssignmentError(
+            `Operator ${userId} is not assigned to routing sequence ${sequenceOrder}.`,
+            409,
+            "OPERATOR_ASSIGNMENT_NOT_FOUND"
+        );
+    }
+    if (sequenceOperators.includes(replacementUserId)) {
+        throw new JobOrderOperatorAssignmentError(
+            `Operator ${replacementUserId} is already assigned to routing sequence ${sequenceOrder}.`,
+            409,
+            "OPERATOR_DUPLICATE_ASSIGNMENT"
+        );
+    }
+
+    const next = { ...current };
+    next[sequenceKey] = sequenceOperators
+        .filter((id) => id !== userId)
+        .concat(replacementUserId)
+        .sort((left, right) => left - right);
+    return synchronizeJobOrderOperatorAssignments(jobOrderId, next);
+}
+
+export interface OperatorRosterAuditInput {
+    jobOrderId: number;
+    oldStatus: string;
+    newStatus: string;
+    workflowAction: "operator-remove" | "operator-swap" | "operator-edit";
+    changedBy: number;
+    changedAt?: string;
+    eventKey: string;
+    workflowRequestHash: string;
+    remarks: string;
+}
+
+export interface OperatorRosterAuditRecord {
+    history_id?: number | string;
+    id?: number | string;
+    event_key?: string;
+    workflow_action?: string;
+    workflow_request_hash?: string;
+    remarks?: string;
+}
+
+export async function findOperatorRosterAudit(eventKey: string, jobOrderId?: number): Promise<OperatorRosterAuditRecord | null> {
+    const params = new URLSearchParams({
+        "filter[event_key][_eq]": eventKey,
+        fields: "history_id,event_key,workflow_action,workflow_request_hash,remarks",
+        limit: "1"
+    });
+    if (jobOrderId) params.set("filter[job_order_id][_eq]", String(jobOrderId));
+    const payload = await directusRequest<{ data?: OperatorRosterAuditRecord[] }>(
+        `/items/manufacturing_job_order_status_history?${params.toString()}`
+    );
+    return Array.isArray(payload?.data) ? payload.data[0] || null : null;
+}
+
+export async function recordOperatorRosterAudit(
+    input: OperatorRosterAuditInput
+): Promise<OperatorRosterAuditRecord> {
+    const existing = await findOperatorRosterAudit(input.eventKey, input.jobOrderId);
+    if (existing) return existing;
+
+    const payload = await directusRequest<{ data?: OperatorRosterAuditRecord }>(
+        "/items/manufacturing_job_order_status_history",
+        {
+            method: "POST",
+            body: JSON.stringify({
+                job_order_id: input.jobOrderId,
+                old_status: input.oldStatus,
+                new_status: input.newStatus,
+                workflow_action: input.workflowAction,
+                changed_by: input.changedBy,
+                changed_at: input.changedAt || formatPhtDateTime(),
+                event_key: input.eventKey,
+                workflow_request_hash: input.workflowRequestHash,
+                remarks: input.remarks
+            })
+        }
+    );
+    if (!payload?.data) {
+        throw new Error("Directus returned no operator roster audit record.");
+    }
+    return payload.data;
 }
