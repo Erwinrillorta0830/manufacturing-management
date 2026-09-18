@@ -24,14 +24,14 @@ export function trimmedString(value: unknown): string {
 
 export function validateTelephone(value: unknown): string | null {
     const telephone = trimmedString(value);
-    if (!telephone) return "Telephone Number is required.";
+    if (!telephone) return "Contact Number is required.";
     if (!/^\+?[\d\s\-()]+$/.test(telephone)) {
-        return "Telephone Number may contain only digits, spaces, hyphens, parentheses, and an optional leading +.";
+        return "Contact Number may contain only digits, spaces, hyphens, parentheses, and an optional leading +.";
     }
 
     const digitCount = telephone.replace(/\D/g, "").length;
     if (digitCount < 7 || digitCount > 15) {
-        return "Telephone Number must contain 7 to 15 digits.";
+        return "Contact Number must contain 7 to 15 digits.";
     }
 
     return null;
@@ -48,10 +48,6 @@ export function validateCustomerProfileFields(
 
     const telephoneError = validateTelephone(input.tel_number);
     if (telephoneError) errors.tel_number = telephoneError;
-
-    if (!trimmedString(input.bank_details)) {
-        errors.bank_details = "Bank Details are required.";
-    }
 
     if (!positiveInteger(input.price_type_id)) {
         errors.price_type_id = "Price Type must be a valid active price-template ID.";
