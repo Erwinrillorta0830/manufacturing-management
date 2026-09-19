@@ -17,7 +17,6 @@ import { jsPDF } from "jspdf";
 import {
     Hash,
     Calendar,
-    Truck,
     PackageSearch,
     Boxes,
     Lock,
@@ -29,10 +28,9 @@ import {
     CheckCircle,
     Printer,
     Settings2,
-    Loader2,
-    Layers
+    Loader2
 } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 
 import { toast } from "sonner";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
@@ -87,7 +85,6 @@ export const ConvertToInvoiceModal: React.FC<ConvertToInvoiceModalProps> = ({
     ]);
     const [activeReceiptId, setActiveReceiptId] = useState<string>("1");
     const [isPreviewOpen, setIsPreviewOpen] = useState(false);
-    const [receiptToPreview, setReceiptToPreview] = useState<Receipt | null>(null);
     const [previewFilterId, setPreviewFilterId] = useState<string>("ALL");
     const [isValidating, setIsValidating] = useState(false);
     const [isTemplateEditorOpen, setIsTemplateEditorOpen] = useState(false);
@@ -607,11 +604,7 @@ export const ConvertToInvoiceModal: React.FC<ConvertToInvoiceModalProps> = ({
                     return;
                 }
             }
-
-            // All valid — open preview showing the current active receipt or first replacement
-            const activeReceipt = receipts.find(r => r.id === activeReceiptId && !r.is_void_reference);
-            const firstReplacement = receipts.find(r => !r.is_void_reference);
-            setReceiptToPreview(activeReceipt || firstReplacement || receipts[0]);
+            // All valid — open preview showing the current active receipt
             setPreviewFilterId(activeReceiptId || "ALL");
             setIsPreviewOpen(true);
         } catch (err) {
@@ -885,8 +878,6 @@ export const ConvertToInvoiceModal: React.FC<ConvertToInvoiceModalProps> = ({
     }, [receiptTypes, selectedTypeId, conversionData, order]);
 
     const previewPaperWidth = isOfficialReceipt ? "210mm" : "58mm";
-    const thermalPaperWidth = "58mm";
-    const thermalContentWidth = "50mm";
     const previewPaperHeight = isOfficialReceipt ? "265mm" : "auto";
     const previewDialogWidthClass = isOfficialReceipt
         ? "!w-[min(calc(210mm+3rem),calc(100vw-1rem))] !max-w-[min(calc(210mm+3rem),calc(100vw-1rem))] sm:!max-w-[min(calc(210mm+3rem),calc(100vw-1rem))]"

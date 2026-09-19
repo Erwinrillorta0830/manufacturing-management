@@ -13,7 +13,6 @@ import {
     Search,
     Building2,
     Calendar,
-    FileText,
     Check,
     Layers,
     AlertCircle,
@@ -287,44 +286,6 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
         setPickedQtys(newPickedMap);
     };
 
-    // Quantity adjustment for consolidated product (distributes across underlying details)
-    const handleProductQtyChange = (productId: number, maxQty: number, nextVal: number) => {
-        const item = consolidatedProducts.find((p) => p.productId === productId);
-        if (!item) return;
-
-        const prodAllocs = allocationsByProduct.get(productId) || [];
-        const totalAllocated = prodAllocs.reduce((sum, a) => sum + Number(a.quantity || 0), 0);
-        // If there are no allocated lots or totalAllocated is 0, cannot pick
-        if (prodAllocs.length === 0 || totalAllocated <= 0) {
-            return;
-        }
-
-        const effectiveMax = Math.min(maxQty, totalAllocated);
-        const clamped = Math.max(0, Math.min(effectiveMax, nextVal));
-        let remainingToDistribute = clamped;
-        const newPickedMap = { ...pickedQtys };
-
-        for (const d of item.details) {
-            const dMax = Number(d.orderedQuantity || 0);
-            const assign = Math.min(remainingToDistribute, dMax);
-            newPickedMap[d.id] = assign;
-            remainingToDistribute -= assign;
-        }
-        setPickedQtys(newPickedMap);
-
-        // Synchronize lot quantities for this product sequentially
-        const nextLotMap = { ...lotPickedQtys };
-        let budget = clamped;
-        for (let i = 0; i < prodAllocs.length; i++) {
-            const a = prodAllocs[i];
-            const key = getLotKey(productId, a, i);
-            const allocQty = Number(a.quantity || 0);
-            const assign = Math.min(budget, allocQty);
-            nextLotMap[key] = assign;
-            budget = Math.max(0, budget - assign);
-        }
-        setLotPickedQtys(nextLotMap);
-    };
 
     // Click on individual batch/lot card to pick / unpick for consolidated product
     const handleToggleLotPick = (productId: number, maxQty: number, alloc: LotAllocation, allocIdx: number) => {

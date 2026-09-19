@@ -33,8 +33,6 @@ import {
     CreateConsolidationPayload,
     CustomAllocationItem,
     AvailableLotBatch,
-    InvoiceBreakdownItem,
-    InvoiceLineAllocationBreakdown,
 } from "../types";
 import { fetchAllocationPreview } from "../services/invoice-consolidation-api";
 import { generateConsolidationPDF } from "../utils/ConsolidationSummaryPrint";
@@ -470,43 +468,6 @@ export default function CreateConsolidationModal({
 
     const aggregatedProducts = computeAggregatedProducts(candidates, selectedIds);
 
-    // Lookup map for invoice allocation breakdown
-    const invoiceBreakdownMap = useMemo(() => {
-        const map = new Map<
-            number,
-            Map<
-                number,
-                Array<{
-                    inventoryLotId: number;
-                    lotId: number;
-                    lotName: string;
-                    batchNo: string;
-                    expiryDate: string | null;
-                    quantity: number;
-                }>
-            >
-        >();
-        if (!allocationPreview?.invoiceBreakdown) return map;
-
-        for (const inv of allocationPreview.invoiceBreakdown) {
-            const lineMap = new Map<
-                number,
-                Array<{
-                    inventoryLotId: number;
-                    lotId: number;
-                    lotName: string;
-                    batchNo: string;
-                    expiryDate: string | null;
-                    quantity: number;
-                }>
-            >();
-            for (const line of inv.lines) {
-                lineMap.set(line.productId, line.allocations || []);
-            }
-            map.set(inv.invoiceId, lineMap);
-        }
-        return map;
-    }, [allocationPreview]);
 
     // Available batches grouped by productId
     const batchesByProduct = useMemo(() => {
@@ -1112,9 +1073,10 @@ export default function CreateConsolidationModal({
 
             await generateConsolidationPDF(printData);
             toast.success("Consolidation Picklist PDF generated successfully.");
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error("Failed to print picklist:", err);
-            toast.error("Failed to generate picklist PDF: " + (err?.message || "Unknown error"));
+            const errorMsg = err instanceof Error ? err.message : "Unknown error";
+            toast.error("Failed to generate picklist PDF: " + errorMsg);
         }
     };
 

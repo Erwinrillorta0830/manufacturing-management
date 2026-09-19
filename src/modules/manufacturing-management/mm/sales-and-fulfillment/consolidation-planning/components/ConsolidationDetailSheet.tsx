@@ -108,22 +108,20 @@ export default function ConsolidationDetailSheet({
 }: Props) {
     const [search, setSearch] = useState("");
     const [expandedOrderId, setExpandedOrderId] = useState<number | null>(null);
-    const [loadingAllocations, setLoadingAllocations] = useState(false);
     const [allocationState, setAllocationState] = useState<{
         batchId: number;
         allocations: LotAllocation[];
         error: string | null;
     } | null>(null);
 
+    const loadingAllocations = Boolean(consolidation && allocationState?.batchId !== consolidation.id);
+
     useEffect(() => {
         if (!consolidation) {
-            setAllocationState(null);
-            setLoadingAllocations(false);
             return;
         }
         const batchId = consolidation.id;
         let active = true;
-        setLoadingAllocations(true);
 
         fetchAllocations(batchId)
             .then((allocations) => {
@@ -135,11 +133,6 @@ export default function ConsolidationDetailSheet({
                 if (active) {
                     console.error(`[ConsolidationDetail] fetchAllocations ERROR for batchId=${batchId}:`, error.message);
                     setAllocationState({ batchId, allocations: [], error: error.message });
-                }
-            })
-            .finally(() => {
-                if (active) {
-                    setLoadingAllocations(false);
                 }
             });
         return () => {

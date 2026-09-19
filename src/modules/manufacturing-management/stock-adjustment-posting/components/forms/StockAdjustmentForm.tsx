@@ -835,7 +835,7 @@ export function StockAdjustmentForm({
         setLoading(false);
       }
     },
-    [id, createAdjustment, updateAdjustment, onSuccess, form, mode]
+    [id, createAdjustment, updateAdjustment, onSuccess, form, mode, fetchNextDocNo]
   );
 
   const handleSaveAndExit = useCallback(async () => {
@@ -878,7 +878,7 @@ export function StockAdjustmentForm({
       },
       onInvalid
     )();
-  }, [id, createAdjustment, updateAdjustment, router, form, pendingExitAction]);
+  }, [id, createAdjustment, updateAdjustment, router, form, pendingExitAction, fetchNextDocNo]);
 
   const handleConfirmModalItems = useCallback(
     (newItems: StockAdjustmentItem[]) => {

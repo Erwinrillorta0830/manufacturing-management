@@ -531,7 +531,6 @@ export function StockConversionModal({
       }
     }
   };
-  const populateManualFromFefo = populateManualFromPlan;
 
   // Active allocations for source stock based on mode
   const activeAllocations = useMemo(() => {

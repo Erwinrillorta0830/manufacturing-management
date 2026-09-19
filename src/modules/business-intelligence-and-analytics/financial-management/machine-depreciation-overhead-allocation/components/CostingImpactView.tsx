@@ -5,9 +5,7 @@ import { motion } from "framer-motion";
 import {
     Layers,
     Info,
-    TrendingUp,
     Package,
-    ArrowRight,
     ArrowUpRight,
     ArrowDownRight,
     Minus,
@@ -15,7 +13,6 @@ import {
     ChevronsUpDown,
     Check,
     Calculator,
-    Sparkles,
     ChevronLeft,
     ChevronRight
 } from "lucide-react";
@@ -98,10 +95,9 @@ export default function CostingImpactView({
     // Initial fetch when work center is selected
     useEffect(() => {
         if (currentWc) {
-            const rate = parseFloat(simulatedRateInput) || currentWc.overhead_cost_per_hour;
-            fetchImpactSimulation(currentWc.work_center_id, rate);
+            fetchImpactSimulation(currentWc.work_center_id, currentWc.overhead_cost_per_hour);
         }
-    }, [currentWc?.work_center_id, fetchImpactSimulation]);
+    }, [currentWc, fetchImpactSimulation]);
 
     const handleApplySimulation = () => {
         if (!currentWc) return;
@@ -112,16 +108,6 @@ export default function CostingImpactView({
         }
         setCurrentPage(1);
         fetchImpactSimulation(currentWc.work_center_id, parsedRate);
-    };
-
-    const handleUseCalculatedRate = () => {
-        if (!impactData) return;
-        const calcRateStr = impactData.calculated_burden_rate.toFixed(2);
-        setSimulatedRateInput(calcRateStr);
-        if (currentWc) {
-            setCurrentPage(1);
-            fetchImpactSimulation(currentWc.work_center_id, impactData.calculated_burden_rate);
-        }
     };
 
     if (workCenters.length === 0) {

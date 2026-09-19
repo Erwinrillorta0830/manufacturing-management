@@ -42,53 +42,6 @@ interface ApprovalModalProps {
     onSuccess: () => void;
 }
 
-function getLotOrderLabels(
-    orders: Array<{ invoiceNo: string; customerName: string; quantity: number }>,
-    allocations: LotAllocation[],
-    allocIdx: number
-): Array<{ orderNo: string; customer: string; qty: number }> {
-    const alloc = allocations[allocIdx];
-    if (alloc?.orderNo) {
-        const matchedCust = alloc.customerName || (orders.find((o) => o.invoiceNo === alloc.orderNo)?.customerName || "Customer");
-        return [{
-            orderNo: alloc.orderNo,
-            customer: matchedCust,
-            qty: Number(alloc.quantity || 0),
-        }];
-    }
-
-    if (!orders || orders.length === 0) return [];
-
-    let orderPos = 0;
-    const orderIntervals = orders.map((o) => {
-        const start = orderPos;
-        const end = orderPos + Number(o.quantity || 0);
-        orderPos = end;
-        return { ...o, start, end };
-    });
-
-    let allocStart = 0;
-    for (let i = 0; i < allocIdx; i++) {
-        allocStart += Number(allocations[i]?.quantity || 0);
-    }
-    const allocQty = Number(allocations[allocIdx]?.quantity || 0);
-    const allocEnd = allocStart + allocQty;
-
-    const matched: Array<{ orderNo: string; customer: string; qty: number }> = [];
-    for (const ord of orderIntervals) {
-        const overlapStart = Math.max(allocStart, ord.start);
-        const overlapEnd = Math.min(allocEnd, ord.end);
-        if (overlapEnd > overlapStart) {
-            matched.push({
-                orderNo: ord.invoiceNo,
-                customer: ord.customerName,
-                qty: overlapEnd - overlapStart,
-            });
-        }
-    }
-    return matched;
-}
-
 export function ApprovalModal({
     batch,
     open,

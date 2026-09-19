@@ -1577,7 +1577,7 @@ export function StockAdjustmentManualForm({
       },
       onInvalid
     )();
-  }, [id, createAdjustment, updateAdjustment, router, form, pendingExitAction]);
+  }, [id, createAdjustment, updateAdjustment, router, form, pendingExitAction, fetchNextDocNo]);
 
   // ——————————————————————————————————————————————————————————————————————————————
   const onSubmit = useCallback(
@@ -1656,7 +1656,7 @@ export function StockAdjustmentManualForm({
         setLoading(false);
       }
     },
-    [id, createAdjustment, updateAdjustment, onSuccess, handleClearForm]
+    [id, createAdjustment, updateAdjustment, onSuccess, handleClearForm, fetchNextDocNo, form]
   );
 
   // ——————————————————————————————————————————————————————————————————————————————
