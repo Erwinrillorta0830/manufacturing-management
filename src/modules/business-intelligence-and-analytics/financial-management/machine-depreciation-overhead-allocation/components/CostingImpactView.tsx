@@ -42,7 +42,50 @@ import {
 } from "@/components/ui/command";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { WorkCenterOption, WorkCenterImpactSummary } from "../types";
+
+export interface WorkCenterOption {
+    work_center_id: number;
+    work_center_name: string;
+    asset_id?: number | null;
+    overhead_cost_per_hour: number;
+    capacity_per_hour?: number | null;
+    is_active: boolean;
+}
+
+export interface RoutingCostingImpact {
+    route_id: number;
+    sequence_order: number;
+    operation_name: string;
+    product_id: number;
+    product_name: string;
+    version_id: number;
+    version_name: string;
+    version_number?: string | null;
+    work_center_id: number;
+    work_center_name: string;
+    setup_time_hours: number;
+    run_time_hours: number;
+    cycle_time_hours: number;
+    step_batch_size: number;
+    current_overhead_cost_per_batch: number;
+    current_overhead_cost_per_unit: number;
+    simulated_overhead_cost_per_batch: number;
+    simulated_overhead_cost_per_unit: number;
+    cogm_variance_per_unit: number;
+    cogm_variance_per_batch: number;
+}
+
+export interface WorkCenterImpactSummary {
+    work_center_id: number;
+    work_center_name: string;
+    current_rate: number;
+    simulated_rate: number;
+    calculated_burden_rate: number;
+    hourly_variance: number;
+    total_affected_products: number;
+    total_affected_routes: number;
+    routes: RoutingCostingImpact[];
+}
 
 interface CostingImpactViewProps {
     workCenters: WorkCenterOption[];

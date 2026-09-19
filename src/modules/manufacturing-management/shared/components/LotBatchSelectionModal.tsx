@@ -122,6 +122,9 @@ interface LotBatchSelectionModalProps {
   requestedQuantity?: number;
   adjustmentType?: 'IN' | 'OUT';
   mode?: 'SELECT_EXISTING' | 'CREATE_OR_ASSIGN';
+  requireBatchDates?: boolean;
+  readOnly?: boolean;
+  allowedLotIds?: number[];
   initialValues?: Partial<LotBatchSelectionResult>;
   initialLotAllocations?: LotAllocationGroup[];
   existingFormAllocations?: FormSiblingAllocation[];
@@ -215,6 +218,9 @@ export function LotBatchSelectionModal({
   categoryName,
   requestedQuantity = 0,
   adjustmentType = 'IN',
+  requireBatchDates,
+  readOnly = false,
+  allowedLotIds,
   initialValues,
   initialLotAllocations,
   existingFormAllocations,
@@ -497,7 +503,10 @@ export function LotBatchSelectionModal({
 
         if (!isMounted) return;
 
-        setLots(lotsData || []);
+        const filteredLots = allowedLotIds && allowedLotIds.length > 0
+          ? (lotsData || []).filter((l) => allowedLotIds.includes(l.lot_id))
+          : (lotsData || []);
+        setLots(filteredLots);
         setBranchOnhandList(branchOnhandData || []);
         setBranchInvLotsList(branchInvLotsData || []);
 
@@ -1115,7 +1124,7 @@ export function LotBatchSelectionModal({
     return () => {
       isMounted = false;
     };
-  }, [open, branchId, productId, requestedQuantity, productUomId, productType, productCategory, categoryName, productCode, productName, initialLotAllocations, initialValues, existingFormAllocations, isLotMatchingUom]);
+  }, [open, branchId, productId, requestedQuantity, productUomId, productType, productCategory, categoryName, productCode, productName, initialLotAllocations, initialValues, existingFormAllocations, isLotMatchingUom, allowedLotIds]);
 
   // Compute total allocated quantity across all lots & batches
   const totalAllocated = useMemo(() => {
@@ -1817,11 +1826,14 @@ export function LotBatchSelectionModal({
           if (bQty <= 0) {
             errors.push(`Lot #${gIdx + 1}, Batch #${bIdx + 1}: Quantity must be greater than 0.`);
           }
-          if (!b.manufacturing_date) {
-            errors.push(`Lot #${gIdx + 1}, Batch #${bIdx + 1}: Manufacturing date is required.`);
-          }
-          if (!b.expiry_date) {
-            errors.push(`Lot #${gIdx + 1}, Batch #${bIdx + 1}: Expiration date is required.`);
+          const datesRequired = requireBatchDates !== undefined ? requireBatchDates : true;
+          if (datesRequired) {
+            if (!b.manufacturing_date) {
+              errors.push(`Lot #${gIdx + 1}, Batch #${bIdx + 1}: Manufacturing date is required.`);
+            }
+            if (!b.expiry_date) {
+              errors.push(`Lot #${gIdx + 1}, Batch #${bIdx + 1}: Expiration date is required.`);
+            }
           }
           if (b.manufacturing_date && b.expiry_date) {
             const mTime = new Date(b.manufacturing_date).getTime();
@@ -1835,7 +1847,7 @@ export function LotBatchSelectionModal({
     });
 
     return errors;
-  }, [lotGroups, totalAllocated, productUomName, adjustmentType, checkLotCompatibility, lotStoredSummaryMap, currentItemClassification, lots, isLotMatchingUom, requestedQuantity]);
+  }, [lotGroups, totalAllocated, productUomName, adjustmentType, checkLotCompatibility, lotStoredSummaryMap, currentItemClassification, lots, isLotMatchingUom, requestedQuantity, requireBatchDates]);
 
   const isValid = validationErrors.length === 0;
 
@@ -1858,6 +1870,7 @@ export function LotBatchSelectionModal({
       total_quantity: totalAllocated,
     };
 
+    if (readOnly) return;
     onConfirm(result);
     onOpenChange(false);
   };
@@ -2960,7 +2973,7 @@ export function LotBatchSelectionModal({
               type="button"
               size="sm"
               onClick={handleConfirm}
-              disabled={!isValid || loading}
+              disabled={!isValid || loading || readOnly}
               className="text-xs font-bold h-9 bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm gap-1.5"
             >
               <CheckCircle2 className="w-4 h-4" />
