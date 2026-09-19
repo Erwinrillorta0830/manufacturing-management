@@ -28,6 +28,7 @@ export interface LotCapacityAllocationAudit extends LotCapacityAudit {
 export interface LotCapacityEvaluation {
     lotId: number;
     capacity: number | null;
+    negativeBalance: boolean;
     occupiedQuantity: number;
     incomingQuantity: number;
     availableBeforeReceipt: number | null;
@@ -80,7 +81,10 @@ export function evaluateLotCapacities(
     const evaluations = new Map<number, LotCapacityEvaluation>();
     for (const [lotId, lotAllocations] of allocationsByLot) {
         const capacity = capacityByLot.get(lotId) ?? null;
-        const occupiedQuantity = Math.max(0, Number(occupiedByLot.get(lotId) || 0));
+        const rawOccupiedQuantity = Number(occupiedByLot.get(lotId) ?? 0);
+        const normalizedOccupiedQuantity = Number.isFinite(rawOccupiedQuantity) ? rawOccupiedQuantity : 0;
+        const negativeBalance = normalizedOccupiedQuantity < -LOT_CAPACITY_EPSILON;
+        const occupiedQuantity = Math.max(0, normalizedOccupiedQuantity);
         const incomingQuantity = lotAllocations.reduce(
             (sum, allocation) => sum + Math.max(0, Number(allocation.quantity) || 0),
             0
@@ -113,6 +117,7 @@ export function evaluateLotCapacities(
         evaluations.set(lotId, {
             lotId,
             capacity,
+            negativeBalance,
             occupiedQuantity,
             incomingQuantity,
             availableBeforeReceipt,

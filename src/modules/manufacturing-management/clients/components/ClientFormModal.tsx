@@ -681,7 +681,7 @@ export default function ClientFormModal({
 
                                 <div className="space-y-1.5">
                                     <label className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1">
-                                        Telephone Number
+                                        Contact Number
                                         <span className="text-destructive font-bold text-[11px]">*</span>
                                     </label>
                                     <input
@@ -700,12 +700,10 @@ export default function ClientFormModal({
 
                                 <div className="space-y-1.5">
                                     <label className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1">
-                                        Bank Details
-                                        <span className="text-destructive font-bold text-[11px]">*</span>
+                                        Bank Details (Optional)
                                     </label>
                                     <input
                                         type="text"
-                                        required
                                         value={formData.bank_details}
                                         onChange={(e) => setFormData((prev: ClientFormData) => ({ ...prev, bank_details: e.target.value }))}
                                         placeholder="Bank, account name, or routing details"

@@ -428,6 +428,30 @@ function applyCustomerFilters(
     });
 }
 
+function customerActivityTimestamp(value: unknown): number {
+    if (typeof value !== "string" || !value.trim()) return 0;
+    const text = value.trim();
+    const zoned = /[zZ]|[+-]\d{2}:?\d{2}$/.test(text) ? text : `${text}+08:00`;
+    const time = new Date(zoned).getTime();
+    return Number.isFinite(time) ? time : 0;
+}
+
+function customerSortKey(customer: UnknownRecord): number {
+    const record = asRecord(customer) || {};
+    return Math.max(
+        customerActivityTimestamp(record.updated_at),
+        customerActivityTimestamp(record.date_entered)
+    );
+}
+
+function compareCustomersByRecentActivity(left: UnknownRecord, right: UnknownRecord): number {
+    const activity = customerSortKey(right) - customerSortKey(left);
+    if (activity !== 0) return activity > 0 ? 1 : -1;
+    const leftId = Number((asRecord(left) || {}).id) || 0;
+    const rightId = Number((asRecord(right) || {}).id) || 0;
+    return rightId - leftId;
+}
+
 async function fetchCustomerPageFromDirectus(
     page: number,
     pageSize: number,
@@ -435,9 +459,7 @@ async function fetchCustomerPageFromDirectus(
     status: CustomerStatusFilter
 ): Promise<{ data: UnknownRecord[]; total: number }> {
     const params = new URLSearchParams({
-        limit: String(pageSize),
-        offset: String((page - 1) * pageSize),
-        sort: "customer_name,id",
+        limit: "-1",
         fields: CUSTOMER_READ_FIELDS,
         meta: "filter_count"
     });
@@ -457,8 +479,14 @@ async function fetchCustomerPageFromDirectus(
         throw new Error("Directus returned an invalid customer page.");
     }
 
+    // Directus REST cannot sort by COALESCE(updated_at, date_entered), and a
+    // plain updated_at DESC would surface never-modified rows (NULL) first,
+    // so the most-recent-activity sort happens here before slicing the page.
+    const rows = (record.data as UnknownRecord[]).map(normalizeCustomer);
+    rows.sort(compareCustomersByRecentActivity);
+    const start = (page - 1) * pageSize;
     return {
-        data: record.data.map(normalizeCustomer),
+        data: rows.slice(start, start + pageSize),
         total: directusFilterCount(body)
     };
 }
@@ -571,7 +599,8 @@ export async function createCustomer(
             price_type: priceType.price_type_name,
             encoder_id: audit.userId,
             updated_by: audit.userId,
-            updated_at: audit.updatedAt
+            updated_at: null,
+            date_entered: audit.updatedAt
         }
     );
     return normalizeCustomer(created);
