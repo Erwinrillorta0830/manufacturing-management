@@ -14,9 +14,9 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { SalesInvoiceHeader, SalesInvoiceDetail } from "../types";
-import { ReceiptPreview } from "@/modules/manufacturing-management/invoicing-and-billing/invoicing/components/ReceiptPreview";
-import { generateInvoiceReceiptPdf } from "@/modules/manufacturing-management/invoicing-and-billing/invoicing/utils/generateInvoiceReceiptPdf";
-import { PrintableInvoice } from "@/modules/manufacturing-management/invoicing-and-billing/invoicing/types";
+import { ReceiptPreview } from "@/modules/manufacturing-management/invoicing-and-billing/invoicing-old/components/ReceiptPreview";
+import { generateInvoiceReceiptPdf } from "@/modules/manufacturing-management/invoicing-and-billing/invoicing-old/utils/generateInvoiceReceiptPdf";
+import { PrintableInvoice } from "@/modules/manufacturing-management/invoicing-and-billing/invoicing-old/types";
 
 interface SalesInvoiceDetailModalProps {
     invoice: SalesInvoiceHeader | null;
@@ -188,15 +188,14 @@ export default function SalesInvoiceDetailModal({
                                                 {invoice.invoice_no}
                                             </h3>
                                             <span
-                                                className={`rounded-full px-3 py-0.5 text-xs font-black uppercase border ${
-                                                    invoice.status === "Paid"
+                                                className={`rounded-full px-3 py-0.5 text-xs font-black uppercase border ${invoice.status === "Paid"
                                                         ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30"
                                                         : invoice.status === "Partially Paid"
-                                                        ? "bg-amber-500/10 text-amber-600 border-amber-500/30"
-                                                        : invoice.status === "Cancelled"
-                                                        ? "bg-muted text-muted-foreground border-muted-foreground/30"
-                                                        : "bg-rose-500/10 text-rose-600 border-rose-500/30"
-                                                }`}
+                                                            ? "bg-amber-500/10 text-amber-600 border-amber-500/30"
+                                                            : invoice.status === "Cancelled"
+                                                                ? "bg-muted text-muted-foreground border-muted-foreground/30"
+                                                                : "bg-rose-500/10 text-rose-600 border-rose-500/30"
+                                                    }`}
                                             >
                                                 {invoice.status}
                                             </span>
@@ -398,16 +397,16 @@ export default function SalesInvoiceDetailModal({
                                                                 {detail.product?.product_code || "N/A"}
                                                             </td>
                                                             <td className="p-3.5 text-center font-medium">
-                                                                {detail.product?.uom }
+                                                                {detail.product?.uom}
                                                             </td>
                                                             <td className="p-3.5 text-right font-black">
                                                                 {detail.quantity}
                                                             </td>
                                                             <td className="p-3.5 text-right">
-                                                                ₱{Number(detail.unit_price  ).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                                ₱{Number(detail.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                                             </td>
                                                             <td className="p-3.5 text-right">
-                                                                ₱{Number(detail.gross_amount  ).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                                ₱{Number(detail.gross_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                                             </td>
                                                             <td className="p-3.5 text-right font-black text-foreground">
                                                                 ₱{Number(detail.net_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
@@ -618,7 +617,7 @@ export default function SalesInvoiceDetailModal({
                                                 <td className="p-2 border-r border-gray-300 font-mono text-[10px]">{idx + 1}</td>
                                                 <td className="p-2 border-r border-gray-300 font-bold">{detail.product?.description || `Product #${detail.id}`}</td>
                                                 <td className="p-2 border-r border-gray-300 font-mono">{detail.product?.product_code || "N/A"}</td>
-                                                <td className="p-2 border-r border-gray-300 text-center">{detail.product?.uom }</td>
+                                                <td className="p-2 border-r border-gray-300 text-center">{detail.product?.uom}</td>
                                                 <td className="p-2 border-r border-gray-300 text-right font-bold">{detail.quantity}</td>
                                                 <td className="p-2 border-r border-gray-300 text-right">₱{Number(detail.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                                                 <td className="p-2 text-right font-black">₱{Number(detail.net_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>

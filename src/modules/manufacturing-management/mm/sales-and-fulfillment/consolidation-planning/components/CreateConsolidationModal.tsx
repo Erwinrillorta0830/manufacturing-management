@@ -24,6 +24,7 @@ import {
     Layers,
     Maximize2,
     Minimize2,
+    Printer,
 } from "lucide-react";
 import {
     CandidateInvoice,
@@ -36,6 +37,7 @@ import {
     InvoiceLineAllocationBreakdown,
 } from "../types";
 import { fetchAllocationPreview } from "../services/invoice-consolidation-api";
+import { generateConsolidationPDF } from "../utils/ConsolidationSummaryPrint";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SearchableSelect } from "@/modules/manufacturing-management/shared/components/SearchableSelect";
@@ -66,6 +68,12 @@ function computeAggregatedProducts(
             totalQuantity: number;
             invoiceIds: number[];
             versionNames: string[];
+            orders: Array<{
+                invoiceId: number;
+                orderNo: string;
+                customerName: string;
+                quantity: number;
+            }>;
         }
     >();
 
@@ -73,6 +81,12 @@ function computeAggregatedProducts(
         for (const p of inv.products) {
             const existing = agg.get(p.productId);
             const version = p.versionName || "Unversioned";
+            const orderEntry = {
+                invoiceId: inv.invoiceId,
+                orderNo: inv.orderNo || inv.invoiceNo,
+                customerName: inv.customerName,
+                quantity: p.quantity,
+            };
             if (!existing) {
                 agg.set(p.productId, {
                     productId: p.productId,
@@ -81,6 +95,7 @@ function computeAggregatedProducts(
                     totalQuantity: p.quantity,
                     invoiceIds: [inv.invoiceId],
                     versionNames: [version],
+                    orders: [orderEntry],
                 });
             } else {
                 agg.set(p.productId, {
@@ -92,6 +107,7 @@ function computeAggregatedProducts(
                     versionNames: existing.versionNames.includes(version)
                         ? existing.versionNames
                         : [...existing.versionNames, version],
+                    orders: [...existing.orders, orderEntry],
                 });
             }
         }
@@ -108,6 +124,7 @@ function computeAggregatedProducts(
                 e.versionNames.length > 1
                     ? "Multiple versions"
                     : e.versionNames[0] || "Not assigned",
+            orders: e.orders,
         }))
         .sort((a, b) => a.productName.localeCompare(b.productName));
 }
@@ -123,7 +140,7 @@ export default function CreateConsolidationModal({
     const [step, setStep] = useState<ModalStep>(1);
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
     const [expandedInvoiceIds, setExpandedInvoiceIds] = useState<Set<number>>(new Set());
-    const [collapsedStep2InvoiceIds, setCollapsedStep2InvoiceIds] = useState<Set<number>>(new Set());
+    const [collapsedStep2ProductIds, setCollapsedStep2ProductIds] = useState<Set<number>>(new Set());
     const [expandedStep3ProdIds, setExpandedStep3ProdIds] = useState<Set<number>>(new Set());
     const [step2Search, setStep2Search] = useState<string>("");
     const [step2CustomerFilter, setStep2CustomerFilter] = useState<string>("ALL");
@@ -159,12 +176,12 @@ export default function CreateConsolidationModal({
     const [previewLoading, setPreviewLoading] = useState(false);
     const [previewError, setPreviewError] = useState<string | null>(null);
 
-    // Manual allocation state: key = `${invoiceId}:${productId}:${inventoryLotId}:${batchNo}:${lotId}` -> allocated quantity
+    // Manual allocation state: key = `${productId}:${inventoryLotId}:${batchNo}:${lotId}` -> allocated quantity
     const [manualAllocations, setManualAllocations] = useState<Record<string, number>>({});
 
     const getManualKey = useCallback(
-        (invoiceId: number, productId: number, inventoryLotId?: number, lotId?: number, batchNo?: string) =>
-            `${invoiceId}:${productId}:${inventoryLotId || 0}:${batchNo || "LOT-N/A"}:${lotId || 0}`,
+        (productId: number, inventoryLotId?: number, lotId?: number, batchNo?: string) =>
+            `${productId}:${inventoryLotId || 0}:${batchNo || "LOT-N/A"}:${lotId || 0}`,
         []
     );
 
@@ -181,13 +198,18 @@ export default function CreateConsolidationModal({
             fetchAllocationPreview({ branchId: branch.id, invoiceIds }, controller.signal)
                 .then((preview) => {
                     setAllocationPreview(preview);
-                    // Pre-fill manual allocations with default FEFO allocations per invoice
+                    // Pre-fill manual allocations with default FEFO allocations per product
                     const initialManual: Record<string, number> = {};
-                    if (preview.invoiceBreakdown && preview.invoiceBreakdown.length > 0) {
+                    if (preview.allocations && preview.allocations.length > 0) {
+                        for (const a of preview.allocations) {
+                            const key = getManualKey(a.productId, a.inventoryLotId, a.lotId, a.batchNo);
+                            initialManual[key] = (initialManual[key] || 0) + a.quantity;
+                        }
+                    } else if (preview.invoiceBreakdown && preview.invoiceBreakdown.length > 0) {
                         for (const inv of preview.invoiceBreakdown) {
                             for (const line of inv.lines || []) {
                                 for (const a of line.allocations || []) {
-                                    const key = getManualKey(inv.invoiceId, line.productId, a.inventoryLotId, a.lotId, a.batchNo);
+                                    const key = getManualKey(line.productId, a.inventoryLotId, a.lotId, a.batchNo);
                                     initialManual[key] = (initialManual[key] || 0) + a.quantity;
                                 }
                             }
@@ -240,7 +262,7 @@ export default function CreateConsolidationModal({
         setManualAllocations({});
         setAllowExpiredBatches(false);
         setShowExpiredConfirmModal(false);
-        setCollapsedStep2InvoiceIds(new Set());
+        setCollapsedStep2ProductIds(new Set());
         setExpandedInvoiceIds(new Set());
         setExpandedStep3ProdIds(new Set());
         setSearch("");
@@ -412,21 +434,21 @@ export default function CreateConsolidationModal({
         step2ProductFilter !== "ALL" ||
         step2StatusFilter !== "ALL";
 
-    const toggleStep2Invoice = (id: number) => {
-        setCollapsedStep2InvoiceIds((prev) => {
+    const toggleStep2Product = (productId: number) => {
+        setCollapsedStep2ProductIds((prev) => {
             const next = new Set(prev);
-            if (next.has(id)) next.delete(id);
-            else next.add(id);
+            if (next.has(productId)) next.delete(productId);
+            else next.add(productId);
             return next;
         });
     };
 
-    const expandAllStep2Invoices = () => {
-        setCollapsedStep2InvoiceIds(new Set());
+    const expandAllStep2Products = () => {
+        setCollapsedStep2ProductIds(new Set());
     };
 
-    const collapseAllStep2Invoices = () => {
-        setCollapsedStep2InvoiceIds(new Set(selectedIds));
+    const collapseAllStep2Products = () => {
+        setCollapsedStep2ProductIds(new Set(aggregatedProducts.map((p) => p.productId)));
     };
 
     const toggleStep3Product = (productId: number) => {
@@ -498,32 +520,59 @@ export default function CreateConsolidationModal({
         return map;
     }, [allocationPreview]);
 
-    // Manual allocation summary per invoice line (invoiceId, productId)
-    const getManualLineSummary = useCallback(
-        (invoiceId: number, productId: number, requiredQty: number) => {
+    // Manual allocation total for a product
+    const getProductManualAllocation = useCallback(
+        (productId: number) => {
             const batches = batchesByProduct.get(productId) || [];
             let allocated = 0;
             for (const b of batches) {
-                const key = getManualKey(invoiceId, productId, b.inventoryLotId, b.lotId, b.batchNo);
+                const key = getManualKey(productId, b.inventoryLotId, b.lotId, b.batchNo);
                 allocated += Number(manualAllocations[key] || 0);
             }
-            const difference = allocated - requiredQty;
+            return allocated;
+        },
+        [batchesByProduct, getManualKey, manualAllocations]
+    );
+
+    // Manual allocation summary per product
+    const getProductManualSummary = useCallback(
+        (productId: number, totalRequired: number) => {
+            const allocated = getProductManualAllocation(productId);
+            const difference = allocated - totalRequired;
             return {
-                required: requiredQty,
+                required: totalRequired,
                 allocated,
                 isValid: difference === 0,
                 difference,
             };
         },
-        [batchesByProduct, getManualKey, manualAllocations]
+        [getProductManualAllocation]
     );
 
-    // Batch total allocated quantity across all selected invoices
+    // Auto allocation summary per product
+    const getProductAutoAllocation = useCallback(
+        (productId: number, totalRequired: number) => {
+            const allocs = (allocationPreview?.allocations || []).filter((a) => a.productId === productId && a.quantity > 0);
+            const allocated = allocs.reduce((sum, a) => sum + a.quantity, 0);
+            const difference = allocated - totalRequired;
+            return {
+                allocations: allocs,
+                required: totalRequired,
+                allocated,
+                difference,
+                hasShortage: allocated < totalRequired,
+                isFullyCovered: allocated >= totalRequired && totalRequired > 0,
+            };
+        },
+        [allocationPreview]
+    );
+
+    // Batch total allocated quantity across all products
     const batchTotalAllocatedMap = useMemo(() => {
         const map = new Map<string, number>();
         for (const [key, qty] of Object.entries(manualAllocations)) {
             if (Number(qty) > 0) {
-                const [, productIdStr, invLotIdStr, batchNo, lotIdStr] = key.split(":");
+                const [productIdStr, invLotIdStr, batchNo, lotIdStr] = key.split(":");
                 const batchKey = `${productIdStr}:${invLotIdStr || 0}:${batchNo}:${lotIdStr || 0}`;
                 map.set(batchKey, (map.get(batchKey) || 0) + Number(qty));
             }
@@ -531,43 +580,33 @@ export default function CreateConsolidationModal({
         return map;
     }, [manualAllocations]);
 
-    // Validation: all selected invoice lines must be balanced
+    // Validation: all consolidated products must be balanced
     const isManualValid = useMemo(() => {
-        if (selectedInvoices.length === 0) return false;
-
-        // 1. Every invoice line must have exactly its required quantity allocated
-        for (const inv of selectedInvoices) {
-            for (const p of inv.products) {
-                const summary = getManualLineSummary(inv.invoiceId, p.productId, p.quantity);
-                if (!summary.isValid) return false;
-            }
+        if (aggregatedProducts.length === 0) return false;
+        for (const p of aggregatedProducts) {
+            const summary = getProductManualSummary(p.productId, p.totalQuantity);
+            if (!summary.isValid) return false;
         }
-
         return true;
-    }, [selectedInvoices, getManualLineSummary]);
+    }, [aggregatedProducts, getProductManualSummary]);
 
     const handleManualQtyChange = (
-        invoiceId: number,
         productId: number,
         inventoryLotId: number | undefined,
         lotId: number | undefined,
         batchNo: string | undefined,
         maxAvail: number,
-        val: string
+        val: string,
+        totalRequired: number
     ) => {
-        const parsed = Math.max(0, Number(val) || 0);
-        const key = getManualKey(invoiceId, productId, inventoryLotId, lotId, batchNo);
-        // console.log("[ManualAlloc] QTY SET", {
-        //     invoiceId,
-        //     productId,
-        //     inventoryLotId,
-        //     lotId,
-        //     batchNo,
-        //     maxAvail,
-        //     rawVal: val,
-        //     parsed,
-        //     key,
-        // });
+        const key = getManualKey(productId, inventoryLotId, lotId, batchNo);
+        const currentAlloc = getProductManualAllocation(productId);
+        const currentBatchAlloc = Number(manualAllocations[key] || 0);
+        const otherBatchesAlloc = currentAlloc - currentBatchAlloc;
+        const remainingDemand = Math.max(0, totalRequired - otherBatchesAlloc);
+        const allowedMax = Math.min(maxAvail, remainingDemand);
+
+        const parsed = Math.max(0, Math.min(allowedMax, Number(val) || 0));
         setManualAllocations((prev) => ({
             ...prev,
             [key]: parsed,
@@ -586,11 +625,16 @@ export default function CreateConsolidationModal({
     const handleResetToAutoFEFO = useCallback(() => {
         if (!allocationPreview) return;
         const initialManual: Record<string, number> = {};
-        if (allocationPreview.invoiceBreakdown && allocationPreview.invoiceBreakdown.length > 0) {
+        if (allocationPreview.allocations && allocationPreview.allocations.length > 0) {
+            for (const a of allocationPreview.allocations) {
+                const key = getManualKey(a.productId, a.inventoryLotId, a.lotId, a.batchNo);
+                initialManual[key] = (initialManual[key] || 0) + a.quantity;
+            }
+        } else if (allocationPreview.invoiceBreakdown && allocationPreview.invoiceBreakdown.length > 0) {
             for (const inv of allocationPreview.invoiceBreakdown) {
                 for (const line of inv.lines || []) {
                     for (const a of line.allocations || []) {
-                        const key = getManualKey(inv.invoiceId, line.productId, a.inventoryLotId, a.lotId, a.batchNo);
+                        const key = getManualKey(line.productId, a.inventoryLotId, a.lotId, a.batchNo);
                         initialManual[key] = (initialManual[key] || 0) + a.quantity;
                     }
                 }
@@ -630,101 +674,64 @@ export default function CreateConsolidationModal({
         });
 
         const newManual: Record<string, number> = {};
-        const newInvoiceBreakdown: InvoiceBreakdownItem[] = [];
         const newAggregatedAllocs: AllocationPreview["allocations"] = [];
         const productShortageMap = new Map<number, { productId: number; productName: string; quantity: number }>();
         let reallocatedCount = 0;
 
-        // Iterate through selected candidate invoices and lines in order
-        for (const inv of selectedInvoices) {
-            const lineBreakdowns: InvoiceLineAllocationBreakdown[] = [];
+        for (const prod of aggregatedProducts) {
+            let remainingNeeded = prod.totalQuantity;
+            const candidateBatches = unexpiredBatchesByProduct.get(prod.productId) || [];
 
-            for (const prod of inv.products) {
-                let remainingNeeded = prod.quantity;
-                const candidateBatches = unexpiredBatchesByProduct.get(prod.productId) || [];
-                const lineAllocations: InvoiceLineAllocationBreakdown["allocations"] = [];
+            for (const b of candidateBatches) {
+                const batchKey = `${b.productId}:${b.inventoryLotId || 0}:${b.batchNo}:${b.lotId || 0}`;
+                const avail = remainingBatchCapMap.get(batchKey) || 0;
+                if (avail > 0 && remainingNeeded > 0) {
+                    const allocateQty = Math.min(remainingNeeded, avail);
+                    const mKey = getManualKey(prod.productId, b.inventoryLotId, b.lotId, b.batchNo);
+                    newManual[mKey] = allocateQty;
+                    remainingBatchCapMap.set(batchKey, avail - allocateQty);
+                    remainingNeeded -= allocateQty;
+                    reallocatedCount += allocateQty;
 
-                for (const b of candidateBatches) {
-                    const batchKey = `${b.productId}:${b.inventoryLotId || 0}:${b.batchNo}:${b.lotId || 0}`;
-                    const avail = remainingBatchCapMap.get(batchKey) || 0;
-                    if (avail > 0 && remainingNeeded > 0) {
-                        const allocateQty = Math.min(remainingNeeded, avail);
-                        const mKey = getManualKey(inv.invoiceId, prod.productId, b.inventoryLotId, b.lotId, b.batchNo);
-                        newManual[mKey] = allocateQty;
-                        remainingBatchCapMap.set(batchKey, avail - allocateQty);
-                        remainingNeeded -= allocateQty;
-                        reallocatedCount += allocateQty;
-
-                        lineAllocations.push({
-                            inventoryLotId: b.inventoryLotId,
-                            lotId: b.lotId,
-                            lotName: b.lotName,
-                            batchNo: b.batchNo,
-                            expiryDate: b.expiryDate,
-                            quantity: allocateQty,
-                        });
-
-                        newAggregatedAllocs.push({
-                            productId: prod.productId,
-                            productName: prod.productName,
-                            productCode: prod.productCode,
-                            inventoryLotId: b.inventoryLotId,
-                            lotId: b.lotId,
-                            lotName: b.lotName,
-                            batchNo: b.batchNo,
-                            expiryDate: b.expiryDate,
-                            quantity: allocateQty,
-                        });
-                    } else {
-                        const mKey = getManualKey(inv.invoiceId, prod.productId, b.inventoryLotId, b.lotId, b.batchNo);
-                        if (newManual[mKey] === undefined) {
-                            newManual[mKey] = 0;
-                        }
-                    }
-                }
-
-                // Ensure all expired batches for this product line are explicitly 0
-                for (const b of allocationPreview.availableBatches || []) {
-                    if (b.productId === prod.productId && isBatchExpired(b.expiryDate)) {
-                        const mKey = getManualKey(inv.invoiceId, prod.productId, b.inventoryLotId, b.lotId, b.batchNo);
+                    newAggregatedAllocs.push({
+                        productId: prod.productId,
+                        productName: prod.productName,
+                        productCode: prod.productCode,
+                        inventoryLotId: b.inventoryLotId,
+                        lotId: b.lotId,
+                        lotName: b.lotName,
+                        batchNo: b.batchNo,
+                        expiryDate: b.expiryDate,
+                        quantity: allocateQty,
+                    });
+                } else {
+                    const mKey = getManualKey(prod.productId, b.inventoryLotId, b.lotId, b.batchNo);
+                    if (newManual[mKey] === undefined) {
                         newManual[mKey] = 0;
                     }
                 }
-
-                if (remainingNeeded > 0) {
-                    const existingShortage = productShortageMap.get(prod.productId);
-                    if (existingShortage) {
-                        existingShortage.quantity += remainingNeeded;
-                    } else {
-                        productShortageMap.set(prod.productId, {
-                            productId: prod.productId,
-                            productName: prod.productName,
-                            quantity: remainingNeeded,
-                        });
-                    }
-                }
-
-                lineBreakdowns.push({
-                    detailId: 0,
-                    productId: prod.productId,
-                    productName: prod.productName,
-                    productCode: prod.productCode,
-                    requiredQuantity: prod.quantity,
-                    allocations: lineAllocations,
-                });
             }
 
-            newInvoiceBreakdown.push({
-                invoiceId: inv.invoiceId,
-                lines: lineBreakdowns,
-            });
+            // Ensure all expired batches for this product are explicitly 0
+            for (const b of allocationPreview.availableBatches || []) {
+                if (b.productId === prod.productId && isBatchExpired(b.expiryDate)) {
+                    const mKey = getManualKey(prod.productId, b.inventoryLotId, b.lotId, b.batchNo);
+                    newManual[mKey] = 0;
+                }
+            }
+
+            if (remainingNeeded > 0) {
+                productShortageMap.set(prod.productId, {
+                    productId: prod.productId,
+                    productName: prod.productName,
+                    quantity: remainingNeeded,
+                });
+            }
         }
 
-        // Update preview state directly so Auto FEFO reflects unexpired stock immediately
         setAllocationPreview({
             ...allocationPreview,
             allocations: newAggregatedAllocs,
-            invoiceBreakdown: newInvoiceBreakdown,
             shortages: Array.from(productShortageMap.values()),
         });
 
@@ -735,18 +742,28 @@ export default function CreateConsolidationModal({
         toast.success(`Expired batches excluded. Reallocated ${reallocatedCount} unit(s) across unexpired FEFO stock.`, {
             duration: 4500,
         });
-    }, [allocationPreview, getManualKey, isBatchExpired, selectedInvoices]);
+    }, [allocationPreview, getManualKey, isBatchExpired, aggregatedProducts]);
 
     const handleSwitchToManual = useCallback(() => {
         if (!allocationPreview) return;
         const updatedManual: Record<string, number> = {};
 
-        // 1. Populate from FEFO invoice breakdown
-        if (allocationPreview.invoiceBreakdown && allocationPreview.invoiceBreakdown.length > 0) {
+        // 1. Populate from FEFO allocations
+        if (allocationPreview.allocations && allocationPreview.allocations.length > 0) {
+            for (const a of allocationPreview.allocations) {
+                const key = getManualKey(a.productId, a.inventoryLotId, a.lotId, a.batchNo);
+                const currentVal = manualAllocations[key] !== undefined ? manualAllocations[key] : a.quantity;
+                if (isBatchExpired(a.expiryDate)) {
+                    updatedManual[key] = 0;
+                } else {
+                    updatedManual[key] = currentVal;
+                }
+            }
+        } else if (allocationPreview.invoiceBreakdown && allocationPreview.invoiceBreakdown.length > 0) {
             for (const inv of allocationPreview.invoiceBreakdown) {
                 for (const line of inv.lines || []) {
                     for (const a of line.allocations || []) {
-                        const key = getManualKey(inv.invoiceId, line.productId, a.inventoryLotId, a.lotId, a.batchNo);
+                        const key = getManualKey(line.productId, a.inventoryLotId, a.lotId, a.batchNo);
                         const currentVal = manualAllocations[key] !== undefined ? manualAllocations[key] : a.quantity;
                         if (isBatchExpired(a.expiryDate)) {
                             updatedManual[key] = 0;
@@ -762,10 +779,10 @@ export default function CreateConsolidationModal({
         for (const [key, qty] of Object.entries(manualAllocations)) {
             if (qty > 0) {
                 const parts = key.split(":");
-                const productId = Number(parts[1]);
-                const invLotId = Number(parts[2]);
-                const batchNo = parts[3];
-                const lotId = Number(parts[4]);
+                const productId = Number(parts[0]);
+                const invLotId = Number(parts[1]);
+                const batchNo = parts[2];
+                const lotId = Number(parts[3]);
                 const batch = allocationPreview.availableBatches?.find(
                     (b) =>
                         b.productId === productId &&
@@ -788,105 +805,57 @@ export default function CreateConsolidationModal({
         });
     }, [allocationPreview, getManualKey, isBatchExpired, manualAllocations]);
 
-    const getInvoiceLineAllocations = useCallback(
-        (invoiceId: number, productId: number, requiredQty: number) => {
-            const fromMap = invoiceBreakdownMap.get(invoiceId)?.get(productId);
-            if (fromMap && fromMap.length > 0) {
-                const total = fromMap.reduce((s, a) => s + a.quantity, 0);
-                return {
-                    allocations: fromMap,
-                    allocatedQty: total,
-                    shortageQty: Math.max(0, requiredQty - total),
-                };
-            }
-
-            if (allocationPreview?.allocations) {
-                const matchingAllocs = allocationPreview.allocations.filter((a) => a.productId === productId);
-                if (matchingAllocs.length > 0) {
-                    const total = matchingAllocs.reduce((s, a) => s + a.quantity, 0);
-                    return {
-                        allocations: matchingAllocs,
-                        allocatedQty: Math.min(requiredQty, total),
-                        shortageQty: Math.max(0, requiredQty - total),
-                    };
-                }
-            }
-
-            return {
-                allocations: [],
-                allocatedQty: 0,
-                shortageQty: requiredQty,
-            };
-        },
-        [invoiceBreakdownMap, allocationPreview]
-    );
-
-    const getInvoiceAllocationStatus = useCallback(
-        (inv: CandidateInvoice) => {
-            let totalReq = 0;
-            let totalAlloc = 0;
-            let hasShortage = false;
-
-            for (const p of inv.products) {
-                totalReq += p.quantity;
-                const lineInfo = getInvoiceLineAllocations(inv.invoiceId, p.productId, p.quantity);
-                totalAlloc += lineInfo.allocatedQty;
-                if (lineInfo.shortageQty > 0) {
-                    hasShortage = true;
-                }
-            }
-
-            return {
-                totalRequired: totalReq,
-                totalAllocated: totalAlloc,
-                hasShortage,
-                isFullyAllocated: totalAlloc >= totalReq && totalReq > 0,
-            };
-        },
-        [getInvoiceLineAllocations]
-    );
-
-    const filteredStep2Invoices = useMemo(() => {
-        return selectedInvoices.filter((inv) => {
+    const filteredStep2Products = useMemo(() => {
+        return aggregatedProducts.filter((p) => {
             // Customer filter
-            if (step2CustomerFilter !== "ALL" && inv.customerCode !== step2CustomerFilter) {
-                return false;
+            if (step2CustomerFilter !== "ALL") {
+                const hasCustomer = p.orders.some((o) => {
+                    const candidate = selectedInvoices.find((inv) => inv.invoiceId === o.invoiceId);
+                    return candidate?.customerCode === step2CustomerFilter;
+                });
+                if (!hasCustomer) return false;
             }
 
             // Product filter
             if (step2ProductFilter !== "ALL") {
-                const pId = Number(step2ProductFilter);
-                if (!inv.products.some((p) => p.productId === pId)) {
+                if (p.productId !== Number(step2ProductFilter)) {
                     return false;
                 }
             }
 
-            // Allocation status filter (in Auto mode)
+            // Allocation status filter
             if (step2StatusFilter !== "ALL") {
-                const status = getInvoiceAllocationStatus(inv);
-                if (step2StatusFilter === "ALLOCATED" && !status.isFullyAllocated) return false;
-                if (step2StatusFilter === "SHORTAGE" && !status.hasShortage) return false;
+                if (allocationMode === "auto") {
+                    const allocs = (allocationPreview?.allocations || []).filter((a) => a.productId === p.productId);
+                    const allocQty = allocs.reduce((s, a) => s + a.quantity, 0);
+                    const isFullyCovered = allocQty >= p.totalQuantity && p.totalQuantity > 0;
+                    if (step2StatusFilter === "ALLOCATED" && !isFullyCovered) return false;
+                    if (step2StatusFilter === "SHORTAGE" && isFullyCovered) return false;
+                } else {
+                    const summary = getProductManualSummary(p.productId, p.totalQuantity);
+                    if (step2StatusFilter === "ALLOCATED" && !summary.isValid) return false;
+                    if (step2StatusFilter === "SHORTAGE" && summary.isValid) return false;
+                }
             }
 
-            // Search query filter (matches Invoice #, Customer, SO #, PO #, Product Name/Code, or Lot/Batch)
+            // Search query filter
             if (step2Search.trim()) {
                 const q = step2Search.toLowerCase();
-                const matchInvoice = inv.invoiceNo.toLowerCase().includes(q);
-                const matchCustomer =
-                    inv.customerName.toLowerCase().includes(q) || (inv.customerCode || "").toLowerCase().includes(q);
-                const matchSo = (inv.orderNo || "").toLowerCase().includes(q);
-                const matchPo = (inv.poNo || "").toLowerCase().includes(q);
-                const matchProd = inv.products.some(
-                    (p) => p.productName.toLowerCase().includes(q) || p.productCode.toLowerCase().includes(q)
+                const matchProd =
+                    p.productName.toLowerCase().includes(q) ||
+                    p.productCode.toLowerCase().includes(q);
+                const matchOrder = p.orders.some(
+                    (o) =>
+                        o.orderNo.toLowerCase().includes(q) ||
+                        o.customerName.toLowerCase().includes(q)
                 );
-                const matchBatch = inv.products.some((p) => {
-                    const lineInfo = getInvoiceLineAllocations(inv.invoiceId, p.productId, p.quantity);
-                    return lineInfo.allocations.some(
-                        (a) => (a.batchNo || "").toLowerCase().includes(q) || (a.lotName || "").toLowerCase().includes(q)
-                    );
-                });
+                const matchBatch = (batchesByProduct.get(p.productId) || []).some(
+                    (b) =>
+                        (b.batchNo || "").toLowerCase().includes(q) ||
+                        (b.lotName || "").toLowerCase().includes(q)
+                );
 
-                if (!matchInvoice && !matchCustomer && !matchSo && !matchPo && !matchProd && !matchBatch) {
+                if (!matchProd && !matchOrder && !matchBatch) {
                     return false;
                 }
             }
@@ -894,13 +863,16 @@ export default function CreateConsolidationModal({
             return true;
         });
     }, [
-        selectedInvoices,
+        aggregatedProducts,
         step2CustomerFilter,
         step2ProductFilter,
         step2StatusFilter,
         step2Search,
-        getInvoiceAllocationStatus,
-        getInvoiceLineAllocations,
+        allocationMode,
+        allocationPreview,
+        getProductManualSummary,
+        batchesByProduct,
+        selectedInvoices,
     ]);
 
     const executeSubmit = async (allowPartial: boolean = false) => {
@@ -909,37 +881,29 @@ export default function CreateConsolidationModal({
         let customAllocations: CustomAllocationItem[] | undefined = undefined;
 
         if (allocationMode === "manual") {
-            const aggMap = new Map<string, CustomAllocationItem>();
+            const list: CustomAllocationItem[] = [];
             for (const [key, qty] of Object.entries(manualAllocations)) {
                 if (qty > 0) {
-                    const [invIdStr, pIdStr, invLotIdStr, batchNo, lotIdStr] = key.split(":");
-                    const invoiceId = Number(invIdStr || 0);
+                    const [pIdStr, invLotIdStr, batchNo, lotIdStr] = key.split(":");
                     const productId = Number(pIdStr);
                     const inventoryLotId = Number(invLotIdStr || 0);
                     const lotId = Number(lotIdStr || 0);
-                    const batchKey = `${invoiceId}:${productId}:${inventoryLotId}:${batchNo}:${lotId}`;
-                    const existing = aggMap.get(batchKey);
-                    if (existing) {
-                        existing.quantity += qty;
-                    } else {
-                        const batch = (allocationPreview?.availableBatches || []).find(
-                            (b) =>
-                                b.productId === productId &&
-                                ((inventoryLotId > 0 && b.inventoryLotId === inventoryLotId) ||
-                                    (b.batchNo === batchNo && b.lotId === lotId))
-                        );
-                        aggMap.set(batchKey, {
-                            invoiceId: invoiceId || undefined,
-                            productId,
-                            inventoryLotId: batch?.inventoryLotId || inventoryLotId,
-                            lotId: batch?.lotId || lotId,
-                            batchNo: batch?.batchNo || batchNo,
-                            quantity: qty,
-                        });
-                    }
+                    const batch = (allocationPreview?.availableBatches || []).find(
+                        (b) =>
+                            b.productId === productId &&
+                            ((inventoryLotId > 0 && b.inventoryLotId === inventoryLotId) ||
+                                (b.batchNo === batchNo && b.lotId === lotId))
+                    );
+                    list.push({
+                        productId,
+                        inventoryLotId: batch?.inventoryLotId || inventoryLotId,
+                        lotId: batch?.lotId || lotId,
+                        batchNo: batch?.batchNo || batchNo,
+                        quantity: qty,
+                    });
                 }
             }
-            customAllocations = Array.from(aggMap.values());
+            customAllocations = list;
         }
 
         setSubmitting(true);
@@ -972,23 +936,21 @@ export default function CreateConsolidationModal({
                 type: "shortage" | "excess";
             }> = [];
 
-            for (const inv of selectedInvoices) {
-                for (const p of inv.products) {
-                    const summary = getManualLineSummary(inv.invoiceId, p.productId, p.quantity);
-                    if (summary.difference !== 0) {
-                        discrepancies.push({
-                            invoiceId: inv.invoiceId,
-                            invoiceNo: inv.invoiceNo,
-                            customerName: inv.customerName,
-                            productId: p.productId,
-                            productName: p.productName,
-                            productCode: p.productCode,
-                            requiredQty: summary.required,
-                            allocatedQty: summary.allocated,
-                            difference: summary.difference,
-                            type: summary.difference < 0 ? "shortage" : "excess",
-                        });
-                    }
+            for (const p of aggregatedProducts) {
+                const summary = getProductManualSummary(p.productId, p.totalQuantity);
+                if (summary.difference !== 0) {
+                    discrepancies.push({
+                        invoiceId: 0,
+                        invoiceNo: "Consolidated Demand",
+                        customerName: `${p.orders.length} order(s)`,
+                        productId: p.productId,
+                        productName: p.productName,
+                        productCode: p.productCode,
+                        requiredQty: summary.required,
+                        allocatedQty: summary.allocated,
+                        difference: summary.difference,
+                        type: summary.difference < 0 ? "shortage" : "excess",
+                    });
                 }
             }
 
@@ -1021,30 +983,26 @@ export default function CreateConsolidationModal({
             quantity: number;
         }> = [];
 
-        if (allocationMode === "auto" && allocationPreview?.invoiceBreakdown) {
-            for (const inv of allocationPreview.invoiceBreakdown) {
-                for (const line of inv.lines || []) {
-                    for (const a of line.allocations || []) {
-                        if (a.quantity > 0 && isBatchExpired(a.expiryDate)) {
-                            list.push({
-                                batchNo: a.batchNo,
-                                lotName: a.lotName,
-                                expiryDate: a.expiryDate!,
-                                productName: line.productName,
-                                quantity: a.quantity,
-                            });
-                        }
-                    }
+        if (allocationMode === "auto" && allocationPreview?.allocations) {
+            for (const a of allocationPreview.allocations) {
+                if (a.quantity > 0 && isBatchExpired(a.expiryDate)) {
+                    list.push({
+                        batchNo: a.batchNo,
+                        lotName: a.lotName,
+                        expiryDate: a.expiryDate!,
+                        productName: a.productName,
+                        quantity: a.quantity,
+                    });
                 }
             }
         } else if (allocationMode === "manual" && allocationPreview?.availableBatches) {
             for (const [key, qty] of Object.entries(manualAllocations)) {
                 if (qty > 0) {
                     const parts = key.split(":");
-                    const productId = Number(parts[1]);
-                    const invLotId = Number(parts[2]);
-                    const batchNo = parts[3];
-                    const lotId = Number(parts[4]);
+                    const productId = Number(parts[0]);
+                    const invLotId = Number(parts[1]);
+                    const batchNo = parts[2];
+                    const lotId = Number(parts[3]);
                     const batch = allocationPreview.availableBatches.find(
                         (b) =>
                             b.productId === productId &&
@@ -1064,6 +1022,101 @@ export default function CreateConsolidationModal({
         }
         return list;
     }, [allocationMode, allocationPreview, manualAllocations, isBatchExpired]);
+
+    const handlePrintPicklist = async () => {
+        try {
+            const details = aggregatedProducts.map((p) => {
+                return {
+                    productId: p.productId,
+                    productCode: p.productCode,
+                    productName: p.productName,
+                    brand: "Standard",
+                    category: "Finished Goods",
+                    unit: "pcs",
+                    orderedQuantity: p.totalQuantity,
+                    pickedQuantity: 0,
+                };
+            });
+
+            const invoices = selectedInvoices.map((inv) => ({
+                invoiceNo: inv.orderNo || inv.invoiceNo,
+                customerName: inv.customerName,
+                products: inv.products.map((pr) => ({
+                    productName: pr.productName,
+                    productCode: pr.productCode,
+                    quantity: pr.quantity,
+                })),
+            }));
+
+            const allocations: Array<{
+                productId: number;
+                productName: string;
+                lotName: string;
+                batchNo: string;
+                manufacturingDate: string | null;
+                expiryDate: string | null;
+                quantity: number;
+            }> = [];
+
+            if (allocationMode === "manual") {
+                for (const [key, qty] of Object.entries(manualAllocations)) {
+                    if (Number(qty) > 0) {
+                        const [pIdStr, invLotIdStr, batchNo, lotIdStr] = key.split(":");
+                        const productId = Number(pIdStr);
+                        const invLotId = Number(invLotIdStr || 0);
+                        const lotId = Number(lotIdStr || 0);
+                        const b = (allocationPreview?.availableBatches || []).find(
+                            (batch) =>
+                                batch.productId === productId &&
+                                ((invLotId > 0 && batch.inventoryLotId === invLotId) ||
+                                    (batch.batchNo === batchNo && batch.lotId === lotId))
+                        );
+                        const prod = aggregatedProducts.find((p) => p.productId === productId);
+                        allocations.push({
+                            productId,
+                            productName: prod?.productName || b?.productName || "Product",
+                            lotName: b?.lotName || "Lot",
+                            batchNo: b?.batchNo || batchNo,
+                            manufacturingDate: null,
+                            expiryDate: b?.expiryDate || null,
+                            quantity: Number(qty),
+                        });
+                    }
+                }
+            } else if (allocationPreview?.allocations && allocationPreview.allocations.length > 0) {
+                for (const a of allocationPreview.allocations) {
+                    if (a.quantity > 0) {
+                        allocations.push({
+                            productId: a.productId,
+                            productName: a.productName,
+                            lotName: a.lotName,
+                            batchNo: a.batchNo,
+                            manufacturingDate: null,
+                            expiryDate: a.expiryDate || null,
+                            quantity: a.quantity,
+                        });
+                    }
+                }
+            }
+
+            const printData = {
+                consolidatorNo: `DRAFT-${branch.branchCode || "CONSOL"}-${new Date().toISOString().slice(0, 10)}`,
+                branchName: branch.branchName,
+                status: "DRAFT PLAN",
+                createdAt: new Date().toISOString(),
+                details,
+                invoices,
+                totalInvoices: selectedIds.size,
+                allocations,
+            };
+
+            await generateConsolidationPDF(printData);
+            toast.success("Consolidation Picklist PDF generated successfully.");
+        } catch (err: any) {
+            console.error("Failed to print picklist:", err);
+            toast.error("Failed to generate picklist PDF: " + (err?.message || "Unknown error"));
+        }
+    };
 
     const canProceedToStep2 = selectedIds.size > 0;
 
@@ -1280,9 +1333,14 @@ export default function CreateConsolidationModal({
                                         size="sm"
                                         onClick={toggleAll}
                                         className="h-8.5 text-xs font-bold rounded-xl bg-card border-border/60"
-                                        disabled={filtered.length === 0}
+                                        disabled={loading || filtered.length === 0}
                                     >
-                                        {selectedIds.size === filtered.length && filtered.length > 0 ? (
+                                        {loading ? (
+                                            <>
+                                                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-primary" />
+                                                Loading...
+                                            </>
+                                        ) : selectedIds.size === filtered.length && filtered.length > 0 ? (
                                             <>
                                                 <CheckSquare className="mr-1.5 h-3.5 w-3.5 text-primary" />
                                                 Deselect All
@@ -1295,7 +1353,16 @@ export default function CreateConsolidationModal({
                                         )}
                                     </Button>
                                     <span className="text-xs text-muted-foreground font-bold bg-muted/40 px-2.5 py-1.5 rounded-xl border border-border/40">
-                                        <strong className="text-foreground">{selectedIds.size}</strong> of {filtered.length} selected
+                                        {loading ? (
+                                            <span className="inline-flex items-center gap-1.5">
+                                                <Loader2 className="h-3 w-3 animate-spin text-primary" />
+                                                Checking orders...
+                                            </span>
+                                        ) : (
+                                            <>
+                                                <strong className="text-foreground">{selectedIds.size}</strong> of {filtered.length} selected
+                                            </>
+                                        )}
                                     </span>
                                 </div>
                             </div>
@@ -1304,8 +1371,11 @@ export default function CreateConsolidationModal({
                         {/* Candidates Table */}
                         <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-7 space-y-4">
                             {loading ? (
-                                <div className="flex h-48 items-center justify-center">
-                                    <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                                <div className="flex h-64 flex-col items-center justify-center gap-3 py-16">
+                                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                                    <p className="text-xs font-semibold text-muted-foreground animate-pulse">
+                                        Loading eligible sales orders for this branch...
+                                    </p>
                                 </div>
                             ) : filtered.length === 0 ? (
                                 <div className="py-16 text-center text-xs text-muted-foreground space-y-2">
@@ -1552,14 +1622,14 @@ export default function CreateConsolidationModal({
 
                             {/* Actions & Mode Switcher */}
                             <div className="flex flex-wrap items-center gap-2">
-                                {/* Expand / Collapse All Orders */}
+                                {/* Expand / Collapse All Products */}
                                 <div className="flex items-center gap-1 bg-muted/40 p-0.5 rounded-xl border border-border/60">
                                     <Button
                                         variant="ghost"
                                         size="sm"
-                                        onClick={expandAllStep2Invoices}
+                                        onClick={expandAllStep2Products}
                                         className="h-7 px-2 text-[10px] font-bold rounded-lg text-muted-foreground hover:text-foreground"
-                                        title="Expand all order cards"
+                                        title="Expand all product cards"
                                     >
                                         <Maximize2 className="h-3 w-3 mr-1" />
                                         Expand All
@@ -1567,9 +1637,9 @@ export default function CreateConsolidationModal({
                                     <Button
                                         variant="ghost"
                                         size="sm"
-                                        onClick={collapseAllStep2Invoices}
+                                        onClick={collapseAllStep2Products}
                                         className="h-7 px-2 text-[10px] font-bold rounded-lg text-muted-foreground hover:text-foreground"
-                                        title="Collapse all order cards"
+                                        title="Collapse all product cards"
                                     >
                                         <Minimize2 className="h-3 w-3 mr-1" />
                                         Collapse All
@@ -1642,14 +1712,14 @@ export default function CreateConsolidationModal({
                             <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[280px]">
                                 <div className="flex items-center gap-1 text-[11px] font-bold text-muted-foreground mr-1">
                                     <Filter className="h-3.5 w-3.5 text-primary" />
-                                    <span>Filter Orders:</span>
+                                    <span>Filter Products:</span>
                                 </div>
 
                                 {/* Search by text */}
                                 <div className="relative min-w-[220px] max-w-sm flex-1">
                                     <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                                     <Input
-                                        placeholder="Search order #, customer, SO, PO, product, batch #..."
+                                        placeholder="Search product, code, order #, customer, batch #..."
                                         value={step2Search}
                                         onChange={(e) => setStep2Search(e.target.value)}
                                         className="h-8 pl-7 pr-7 text-xs bg-muted/20 rounded-xl border-border/60"
@@ -1718,7 +1788,7 @@ export default function CreateConsolidationModal({
                             </div>
 
                             <span className="text-[11px] text-muted-foreground font-bold bg-muted/30 px-2.5 py-1 rounded-xl border border-border/40 shrink-0">
-                                Showing <strong className="text-foreground">{filteredStep2Invoices.length}</strong> of {selectedInvoices.length} orders
+                                Showing <strong className="text-foreground">{filteredStep2Products.length}</strong> of {aggregatedProducts.length} products
                             </span>
                         </div>
 
@@ -1823,13 +1893,13 @@ export default function CreateConsolidationModal({
                                         </div>
                                     )}
 
-                                    {/* GROUPED BY ORDER -> PRODUCT -> LOT/RACK/BATCHES (MAX 5 SCROLLABLE) */}
+                                    {/* GROUPED BY PRODUCT -> CONTRIBUTING SOs -> LOT/RACK/BATCHES (MAX 5 SCROLLABLE) */}
                                     <div className="space-y-4">
                                         <div className="flex items-center justify-between">
                                             <div className="flex items-center gap-2">
                                                 <Package className="h-4 w-4 text-primary" />
                                                 <h3 className="text-xs font-black uppercase tracking-wider text-foreground">
-                                                    Allocations by Order & Product ({filteredStep2Invoices.length})
+                                                    Allocations by Product ({filteredStep2Products.length})
                                                 </h3>
                                             </div>
                                             <span className="text-[11px] text-muted-foreground font-semibold">
@@ -1837,10 +1907,10 @@ export default function CreateConsolidationModal({
                                             </span>
                                         </div>
 
-                                        {filteredStep2Invoices.length === 0 ? (
+                                        {filteredStep2Products.length === 0 ? (
                                             <div className="rounded-3xl border border-dashed border-border/70 p-8 text-center bg-card/50 space-y-3">
                                                 <Filter className="h-8 w-8 text-muted-foreground mx-auto" />
-                                                <h4 className="font-bold text-foreground text-sm">No Orders Match Your Filters</h4>
+                                                <h4 className="font-bold text-foreground text-sm">No Products Match Your Filters</h4>
                                                 <p className="text-xs text-muted-foreground max-w-sm mx-auto">
                                                     Try adjusting your search query, customer, product, or allocation status filters.
                                                 </p>
@@ -1855,21 +1925,23 @@ export default function CreateConsolidationModal({
                                                 </Button>
                                             </div>
                                         ) : (
-                                            filteredStep2Invoices.map((inv, invIdx) => {
-                                                const isExpanded = !collapsedStep2InvoiceIds.has(inv.invoiceId);
-                                                const status = getInvoiceAllocationStatus(inv);
+                                            filteredStep2Products.map((p, pIdx) => {
+                                                const isExpanded = !collapsedStep2ProductIds.has(p.productId);
+                                                const availableBatches = batchesByProduct.get(p.productId) || [];
+                                                const autoInfo = getProductAutoAllocation(p.productId, p.totalQuantity);
+                                                const manualSummary = getProductManualSummary(p.productId, p.totalQuantity);
 
                                                 return (
                                                     <motion.div
-                                                        key={inv.invoiceId}
+                                                        key={p.productId}
                                                         initial={{ opacity: 0, y: -10 }}
                                                         animate={{ opacity: 1, y: 0 }}
-                                                        transition={{ duration: 0.2, delay: Math.min(invIdx * 0.035, 0.35) }}
+                                                        transition={{ duration: 0.2, delay: Math.min(pIdx * 0.035, 0.35) }}
                                                         className="rounded-3xl border border-border/70 bg-card shadow-sm overflow-hidden transition-all"
                                                     >
-                                                        {/* LEVEL 1: ORDER HEADER */}
+                                                        {/* PRODUCT HEADER */}
                                                         <div
-                                                            onClick={() => toggleStep2Invoice(inv.invoiceId)}
+                                                            onClick={() => toggleStep2Product(p.productId)}
                                                             className="flex flex-wrap items-center justify-between gap-3 border-b border-border/50 bg-muted/20 px-4 py-3 cursor-pointer hover:bg-muted/30 transition-colors"
                                                         >
                                                             <div className="flex flex-wrap items-center gap-3">
@@ -1886,461 +1958,366 @@ export default function CreateConsolidationModal({
                                                                     </motion.div>
                                                                 </button>
 
-                                                                <div className="flex items-center gap-2">
-                                                                    <div className="rounded-lg bg-primary/10 p-1.5">
-                                                                        <FileText className="h-4 w-4 text-primary" />
+                                                                <div className="flex items-center gap-2.5">
+                                                                    <div className="rounded-lg bg-primary/10 p-2">
+                                                                        <Package className="h-4 w-4 text-primary" />
                                                                     </div>
                                                                     <div>
-                                                                        <div className="flex items-center gap-2">
-
-                                                                            <span className="font-mono font-black text-sm text-foreground">
-                                                                                {inv.orderNo}
+                                                                        <div className="flex flex-wrap items-center gap-2">
+                                                                            <span className="font-black text-sm text-foreground">
+                                                                                {p.productName}
                                                                             </span>
-                                                                            {inv.poNo && (
-                                                                                <span className="text-[10px] text-muted-foreground bg-card border border-border/50 px-1.5 py-0.5 rounded-md">
-                                                                                    PO: <strong className="text-foreground">{inv.poNo}</strong>
+                                                                            <span className="font-mono text-[10px] text-muted-foreground bg-card border border-border/50 px-1.5 py-0.5 rounded-md">
+                                                                                {p.productCode}
+                                                                            </span>
+                                                                            {p.versionLabel && (
+                                                                                <span className="rounded-full bg-primary/10 border border-primary/20 px-2 py-0.5 text-[9px] font-bold text-primary">
+                                                                                    {p.versionLabel}
                                                                                 </span>
                                                                             )}
                                                                         </div>
-                                                                        <p className="text-[11px] text-muted-foreground">
-                                                                            <strong className="text-foreground">{inv.customerName}</strong>{" "}
-                                                                            <span className="font-mono">({inv.customerCode})</span>
-                                                                            {inv.invoiceDate && (
-                                                                                <> · {new Date(inv.invoiceDate).toLocaleDateString()}</>
-                                                                            )}
-                                                                        </p>
+
+                                                                        {/* Contributing Sales Orders Badges */}
+                                                                        <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                                                                            <span className="text-[10px] font-bold text-muted-foreground">
+                                                                                {p.orders.length} Order(s):
+                                                                            </span>
+                                                                            {p.orders.map((o) => (
+                                                                                <span
+                                                                                    key={o.invoiceId}
+                                                                                    className="inline-flex items-center gap-1 rounded-md bg-card border border-border/60 px-1.5 py-0.5 text-[10px] font-mono text-foreground font-semibold shadow-2xs"
+                                                                                    title={`${o.customerName} - ${o.quantity} units`}
+                                                                                >
+                                                                                    <span>{o.orderNo}</span>
+                                                                                    <span className="font-black text-primary font-sans">({o.quantity})</span>
+                                                                                </span>
+                                                                            ))}
+                                                                        </div>
                                                                     </div>
                                                                 </div>
                                                             </div>
 
                                                             <div className="flex items-center gap-3">
-                                                                                                                                {/* Invoice allocation status pill */}
+                                                                {/* Demand & Allocation Status */}
+                                                                <div className="text-right">
+                                                                    <div className="text-xs font-semibold text-muted-foreground">
+                                                                        Total Demand: <strong className="text-sm font-black text-foreground">{p.totalQuantity}</strong>
+                                                                    </div>
+                                                                </div>
+
                                                                 {allocationMode === "auto" ? (
-                                                                    status.hasShortage ? (
+                                                                    autoInfo.hasShortage ? (
                                                                         <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 text-[10px] font-bold text-amber-600">
                                                                             <AlertTriangle className="h-3 w-3" />
-                                                                            Shortage
+                                                                            Allocated: {autoInfo.allocated} / {p.totalQuantity} (Short: {Math.abs(autoInfo.difference)})
                                                                         </span>
                                                                     ) : (
                                                                         <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 text-[10px] font-bold text-emerald-600">
                                                                             <CheckCircle2 className="h-3 w-3" />
-                                                                            Fully Allocated
+                                                                            Allocated: {autoInfo.allocated} / {p.totalQuantity}
                                                                         </span>
                                                                     )
                                                                 ) : (
-                                                                    <span className="inline-flex items-center gap-1  px-2.5 py-1 text-[10px] font-bold text-primary">
-                                                                        Manual Allocation
+                                                                    <span
+                                                                        className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold ${
+                                                                            manualSummary.isValid
+                                                                                ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
+                                                                                : "bg-amber-500/10 text-amber-600 border border-amber-500/20"
+                                                                        }`}
+                                                                    >
+                                                                        {manualSummary.isValid ? (
+                                                                            <>
+                                                                                <CheckCircle2 className="h-3 w-3" />
+                                                                                Allocated: {manualSummary.allocated} / {p.totalQuantity}
+                                                                            </>
+                                                                        ) : (
+                                                                            <>
+                                                                                <AlertTriangle className="h-3 w-3" />
+                                                                                Allocated: {manualSummary.allocated} / {p.totalQuantity}{" "}
+                                                                                {manualSummary.difference < 0
+                                                                                    ? `(Short: ${Math.abs(manualSummary.difference)})`
+                                                                                    : `(Over: +${manualSummary.difference})`}
+                                                                            </>
+                                                                        )}
                                                                     </span>
                                                                 )}
-
-                                                                <div className="text-right">
-                                                                    <p className="text-xs font-black text-foreground">
-                                                                        ₱{(inv.netAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                                                    </p>
-                                                                    <p className="text-[10px] text-muted-foreground font-semibold">
-                                                                        {inv.products.length} product(s)
-                                                                    </p>
-                                                                </div>
-
-
                                                             </div>
                                                         </div>
 
-                                                        {/* LEVEL 2: PRODUCTS UNDER INVOICE */}
+                                                        {/* EXPANDED ALLOCATION DETAILS */}
                                                         <AnimatePresence initial={false}>
                                                             {isExpanded && (
                                                                 <motion.div
-                                                                    key={`step2-expanded-${inv.invoiceId}`}
+                                                                    key={`step2-prod-expanded-${p.productId}`}
                                                                     initial={{ opacity: 0, height: 0 }}
                                                                     animate={{ opacity: 1, height: "auto" }}
                                                                     exit={{ opacity: 0, height: 0 }}
                                                                     transition={{ duration: 0.25, ease: "easeInOut" }}
                                                                     className="overflow-hidden"
                                                                 >
-                                                                    <div className="p-4 space-y-4 bg-card">
-                                                                        {inv.products.map((prod, pIdx) => {
-                                                                            const lineInfo = getInvoiceLineAllocations(
-                                                                                inv.invoiceId,
-                                                                                prod.productId,
-                                                                                prod.quantity
-                                                                            );
-                                                                            const availableBatches = batchesByProduct.get(prod.productId) || [];
-
-                                                                            return (
+                                                                    <div className="p-4 bg-card">
+                                                                        <AnimatePresence mode="wait">
+                                                                            {allocationMode === "auto" ? (
                                                                                 <motion.div
-                                                                                    key={`${inv.invoiceId}-${prod.productId}`}
+                                                                                    key="step2-prod-auto"
                                                                                     initial={{ opacity: 0, y: -6 }}
                                                                                     animate={{ opacity: 1, y: 0 }}
-                                                                                    transition={{ duration: 0.18, delay: Math.min(pIdx * 0.025, 0.25) }}
-                                                                                    className="rounded-2xl border border-border/60 bg-muted/10 p-3.5 space-y-3"
+                                                                                    exit={{ opacity: 0, y: 6 }}
+                                                                                    transition={{ duration: 0.18 }}
+                                                                                    className="space-y-3"
                                                                                 >
-                                                                            {/* Product Header */}
-                                                                            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/40 pb-2.5">
-                                                                                <div className="flex items-center gap-2">
-                                                                                    <div className="rounded-lg bg-card p-1.5 border border-border/50 shadow-sm">
-                                                                                        <Package className="h-4 w-4 text-primary" />
-                                                                                    </div>
-                                                                                    <div>
-                                                                                        <div className="flex items-center gap-2">
-                                                                                            <h4 className="text-xs font-black text-foreground">
-                                                                                                {prod.productName}
-                                                                                            </h4>
-                                                                                            <span className="font-mono text-[10px] text-muted-foreground">
-                                                                                                {prod.productCode}
+                                                                                    {autoInfo.allocations.length > 0 ? (
+                                                                                        <div className="max-h-[220px] overflow-y-auto rounded-2xl border border-border/50 bg-card shadow-sm">
+                                                                                            <table className="w-full text-left text-xs border-collapse">
+                                                                                                <thead className="sticky top-0 z-10 bg-muted/90 backdrop-blur-sm border-b border-border/60">
+                                                                                                    <tr className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">
+                                                                                                        <th className="p-2.5">Lot / Rack</th>
+                                                                                                        <th className="p-2.5">Batch No</th>
+                                                                                                        <th className="p-2.5">Expiry Date</th>
+                                                                                                        <th className="p-2.5 text-right">Allocated Quantity</th>
+                                                                                                    </tr>
+                                                                                                </thead>
+                                                                                                <tbody className="divide-y divide-border/40">
+                                                                                                    {autoInfo.allocations.map((a, idx) => (
+                                                                                                        <tr
+                                                                                                            key={`${a.inventoryLotId}-${a.batchNo}-${idx}`}
+                                                                                                            className="bg-emerald-500/[0.07] hover:bg-emerald-500/15 border-l-4 border-l-emerald-500 transition-colors"
+                                                                                                        >
+                                                                                                            <td className="p-2.5 font-bold text-foreground">
+                                                                                                                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-black">
+                                                                                                                    {a.lotName}
+                                                                                                                </span>
+                                                                                                            </td>
+                                                                                                            <td className="p-2.5 font-mono">
+                                                                                                                <span className="font-bold text-foreground bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                                                                                                                    {a.batchNo}
+                                                                                                                </span>
+                                                                                                            </td>
+                                                                                                            <td className="p-2.5 text-muted-foreground font-medium">
+                                                                                                                <div className="flex items-center gap-1.5">
+                                                                                                                    <span>{a.expiryDate || "-"}</span>
+                                                                                                                    {isBatchExpired(a.expiryDate) && (
+                                                                                                                        <span className="inline-flex items-center rounded bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 px-1.5 py-0.5 text-[9px] font-black uppercase">
+                                                                                                                            Expired
+                                                                                                                        </span>
+                                                                                                                    )}
+                                                                                                                </div>
+                                                                                                            </td>
+                                                                                                            <td className="p-2.5 text-right">
+                                                                                                                <span className="inline-flex items-center rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[10px] font-black text-emerald-600">
+                                                                                                                    {a.quantity}
+                                                                                                                </span>
+                                                                                                            </td>
+                                                                                                        </tr>
+                                                                                                    ))}
+                                                                                                </tbody>
+                                                                                            </table>
+                                                                                        </div>
+                                                                                    ) : (
+                                                                                        <div className="rounded-xl border border-dashed border-border/70 p-3 text-center text-xs text-muted-foreground">
+                                                                                            No lot allocations available for this product line.
+                                                                                        </div>
+                                                                                    )}
+
+                                                                                    {autoInfo.hasShortage && (
+                                                                                        <div className="flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-bold text-amber-700 dark:text-amber-300">
+                                                                                            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+                                                                                            <span>
+                                                                                                Shortage of <strong>{Math.abs(autoInfo.difference)}</strong> unit(s) cannot be fulfilled by current FEFO inventory.
                                                                                             </span>
                                                                                         </div>
-                                                                                        {prod.versionName && (
-                                                                                            <span className="rounded-full bg-primary/10 border border-primary/20 px-2 py-0.5 text-[9px] font-bold text-primary">
-                                                                                                {prod.versionName}
-                                                                                            </span>
-                                                                                        )}
-                                                                                    </div>
-                                                                                </div>
-
-                                                                                <div className="flex items-center gap-2 text-xs">
-                                                                                    {/* <span className="font-semibold text-muted-foreground bg-card px-2 py-1 rounded-lg border border-border/40">
-                                                                                        Quantity Demand: <strong className="text-foreground">{prod.quantity}</strong>
-                                                                                    </span> */}
-
-                                                                                    {allocationMode === "auto" ? (
-                                                                                        <span
-                                                                                            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
-                                                                                                lineInfo.shortageQty === 0
-                                                                                                    ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
-                                                                                                    : "bg-amber-500/10 text-amber-600 border border-amber-500/20"
-                                                                                            }`}
-                                                                                        >
-                                                                                            {lineInfo.shortageQty === 0 ? (
-                                                                                                <>
-                                                                                                    <CheckCircle2 className="h-3 w-3" />
-                                                                                                    Allocated: {lineInfo.allocatedQty} / {prod.quantity}
-                                                                                                </>
-                                                                                            ) : (
-                                                                                                <>
-                                                                                                    <AlertTriangle className="h-3 w-3" />
-                                                                                                    Allocated: {lineInfo.allocatedQty} / {prod.quantity} (Short: {lineInfo.shortageQty})
-                                                                                                </>
-                                                                                            )}
-                                                                                        </span>
-                                                                                    ) : (
-                                                                                        (() => {
-                                                                                            const lineSummary = getManualLineSummary(
-                                                                                                inv.invoiceId,
-                                                                                                prod.productId,
-                                                                                                prod.quantity
-                                                                                            );
-                                                                                            return (
-                                                                                                <span
-                                                                                                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
-                                                                                                        lineSummary.isValid
-                                                                                                            ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
-                                                                                                            : "bg-amber-500/10 text-amber-600 border border-amber-500/20"
-                                                                                                    }`}
-                                                                                                >
-                                                                                                    {lineSummary.isValid ? (
-                                                                                                        <>
-                                                                                                            <CheckCircle2 className="h-3 w-3" />
-                                                                                                            Allocated: {lineSummary.allocated} / {prod.quantity}
-                                                                                                        </>
-                                                                                                    ) : (
-                                                                                                        <>
-                                                                                                            <AlertTriangle className="h-3 w-3" />
-                                                                                                            Allocated: {lineSummary.allocated} / {prod.quantity}{" "}
-                                                                                                            {lineSummary.difference < 0
-                                                                                                                ? `(Short: ${Math.abs(lineSummary.difference)})`
-                                                                                                                : `(Over: ${lineSummary.difference})`}
-                                                                                                        </>
-                                                                                                    )}
-                                                                                                </span>
-                                                                                            );
-                                                                                        })()
                                                                                     )}
-                                                                                </div>
-                                                                            </div>
+                                                                                </motion.div>
+                                                                            ) : (
+                                                                                /* MANUAL ALLOCATION MODE TABLE */
+                                                                                <motion.div
+                                                                                    key="step2-prod-manual"
+                                                                                    initial={{ opacity: 0, y: -6 }}
+                                                                                    animate={{ opacity: 1, y: 0 }}
+                                                                                    exit={{ opacity: 0, y: 6 }}
+                                                                                    transition={{ duration: 0.18 }}
+                                                                                >
+                                                                                    {availableBatches.filter((b) => {
+                                                                                        const key = getManualKey(p.productId, b.inventoryLotId, b.lotId, b.batchNo);
+                                                                                        const currentQty = Number(manualAllocations[key] || 0);
+                                                                                        return b.availableQuantity > 0 || currentQty > 0;
+                                                                                    }).length > 0 ? (
+                                                                                        <div className="max-h-[260px] overflow-y-auto rounded-2xl border border-border/50 bg-card shadow-sm">
+                                                                                            <table className="w-full text-left text-xs border-collapse">
+                                                                                                <thead className="sticky top-0 z-10 bg-muted/90 backdrop-blur-sm border-b border-border/60">
+                                                                                                    <tr className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">
+                                                                                                        <th className="p-2.5">Lot / Rack</th>
+                                                                                                        <th className="p-2.5">Batch No</th>
+                                                                                                        <th className="p-2.5">Expiry Date</th>
+                                                                                                        <th className="p-2.5">Condition</th>
+                                                                                                        <th className="p-2.5 text-right">Available</th>
+                                                                                                        <th className="p-2.5 text-right w-44">Allocate Quantity</th>
+                                                                                                    </tr>
+                                                                                                </thead>
+                                                                                                <tbody className="divide-y divide-border/40">
+                                                                                                    {availableBatches.filter((b) => {
+                                                                                                        const key = getManualKey(p.productId, b.inventoryLotId, b.lotId, b.batchNo);
+                                                                                                        const currentQty = Number(manualAllocations[key] || 0);
+                                                                                                        return b.availableQuantity > 0 || currentQty > 0;
+                                                                                                    }).map((b, bIdx) => {
+                                                                                                        const key = getManualKey(
+                                                                                                            p.productId,
+                                                                                                            b.inventoryLotId,
+                                                                                                            b.lotId,
+                                                                                                            b.batchNo
+                                                                                                        );
+                                                                                                        const currentQty = Number(manualAllocations[key] || 0);
+                                                                                                        const isAllocated = currentQty > 0;
+                                                                                                        const batchKey = `${p.productId}:${b.inventoryLotId || 0}:${b.batchNo || "LOT-N/A"}:${b.lotId || 0}`;
+                                                                                                        const totalBatchAlloc = batchTotalAllocatedMap.get(batchKey) || 0;
+                                                                                                        const isNegativeBalance = b.availableQuantity < 0 || totalBatchAlloc > b.availableQuantity;
+                                                                                                        const isZeroQuantity = b.availableQuantity === 0 && totalBatchAlloc <= 0;
 
-                                                                            {/* LEVEL 3: LOT / RACK / BATCHES (MAX 5 ITEMS, SCROLLABLE) */}
-                                                                            <AnimatePresence mode="wait">
-                                                                                {allocationMode === "auto" ? (
-                                                                                    <motion.div
-                                                                                        key="level3-auto-fefo"
-                                                                                        initial={{ opacity: 0, y: -6 }}
-                                                                                        animate={{ opacity: 1, y: 0 }}
-                                                                                        exit={{ opacity: 0, y: 6 }}
-                                                                                        transition={{ duration: 0.18 }}
-                                                                                    >
-                                                                                        {lineInfo.allocations.filter((a) => a.quantity > 0).length > 0 ? (
-                                                                                            <div className="max-h-[195px] overflow-y-auto rounded-2xl border border-border/50 bg-card shadow-sm">
-                                                                                                <table className="w-full text-left text-xs border-collapse">
-                                                                                                    <thead className="sticky top-0 z-10 bg-muted/90 backdrop-blur-sm border-b border-border/60">
-                                                                                                        <tr className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">
-                                                                                                            <th className="p-2.5">Lot / Rack</th>
-                                                                                                            <th className="p-2.5">Batch No</th>
-                                                                                                            <th className="p-2.5">Expiry Date</th>
-                                                                                                            <th className="p-2.5 text-right">Allocated Quantity</th>
-                                                                                                        </tr>
-                                                                                                    </thead>
-                                                                                                    <tbody className="divide-y divide-border/40">
-                                                                                                        {lineInfo.allocations.filter((a) => a.quantity > 0).map((a, idx) => {
-                                                                                                            const isAllocated = a.quantity > 0;
-                                                                                                            return (
-                                                                                                                <tr
-                                                                                                                    key={`${a.inventoryLotId}-${idx}`}
-                                                                                                                    className={`transition-colors ${
-                                                                                                                        isAllocated
-                                                                                                                            ? "bg-emerald-500/[0.07] hover:bg-emerald-500/15 border-l-4 border-l-emerald-500"
-                                                                                                                            : "hover:bg-muted/10"
-                                                                                                                    }`}
-                                                                                                                >
-                                                                                                                    <td className="p-2.5 font-bold text-foreground">
-                                                                                                                        {isAllocated ? (
-                                                                                                                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-black">
-                                                                                                                                {a.lotName}
-                                                                                                                            </span>
-                                                                                                                        ) : (
-                                                                                                                            a.lotName
-                                                                                                                        )}
-                                                                                                                    </td>
-                                                                                                                    <td className="p-2.5 font-mono">
-                                                                                                                        {isAllocated ? (
-                                                                                                                            <span className="font-bold text-foreground bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
-                                                                                                                                {a.batchNo}
-                                                                                                                            </span>
-                                                                                                                        ) : (
-                                                                                                                            <span className="text-muted-foreground">{a.batchNo}</span>
-                                                                                                                        )}
-                                                                                                                    </td>
-                                                                                                                    <td className="p-2.5 text-muted-foreground font-medium">
-                                                                                                                        <div className="flex items-center gap-1.5">
-                                                                                                                            <span>{a.expiryDate || "-"}</span>
-                                                                                                                            {isBatchExpired(a.expiryDate) && (
-                                                                                                                                <span className="inline-flex items-center rounded bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 px-1.5 py-0.5 text-[9px] font-black uppercase">
-                                                                                                                                    Expired
+                                                                                                        return (
+                                                                                                            <tr
+                                                                                                                key={`batch-row-${p.productId}-${b.lotId}-${b.batchNo}-${b.inventoryLotId || bIdx}`}
+                                                                                                                className={`transition-colors ${
+                                                                                                                    isAllocated
+                                                                                                                        ? "bg-primary/10 hover:bg-primary/15 border-l-4 border-l-primary"
+                                                                                                                        : "hover:bg-muted/10"
+                                                                                                                }`}
+                                                                                                            >
+                                                                                                                <td className="p-2.5 font-bold text-foreground">
+                                                                                                                    {isAllocated ? (
+                                                                                                                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-primary/20 text-primary font-black">
+                                                                                                                            {b.lotName}
+                                                                                                                        </span>
+                                                                                                                    ) : (
+                                                                                                                        b.lotName
+                                                                                                                    )}
+                                                                                                                </td>
+                                                                                                                <td className="p-2.5 font-mono">
+                                                                                                                    <div className="flex flex-col gap-1">
+                                                                                                                        <div>
+                                                                                                                            {isAllocated ? (
+                                                                                                                                <span className="font-bold text-foreground bg-primary/10 px-1.5 py-0.5 rounded border border-primary/20">
+                                                                                                                                    {b.batchNo}
                                                                                                                                 </span>
+                                                                                                                            ) : (
+                                                                                                                                <span className="text-muted-foreground">{b.batchNo}</span>
                                                                                                                             )}
                                                                                                                         </div>
-                                                                                                                    </td>
-                                                                                                                    <td className="p-2.5 text-right">
-                                                                                                                        <span className="inline-flex items-center rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[10px] font-black text-emerald-600">
-                                                                                                                            {a.quantity}
-                                                                                                                        </span>
-                                                                                                                    </td>
-                                                                                                                </tr>
-                                                                                                            );
-                                                                                                        })}
-                                                                                                    </tbody>
-                                                                                                </table>
-                                                                                            </div>
-                                                                                        ) : (
-                                                                                            <div className="rounded-xl border border-dashed border-border/70 p-3 text-center text-xs text-muted-foreground">
-                                                                                                No lot allocations available for this product line.
-                                                                                            </div>
-                                                                                        )}
-
-                                                                                        {lineInfo.shortageQty > 0 && (
-                                                                                            <div className="mt-2 flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-bold text-amber-700 dark:text-amber-300">
-                                                                                                <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
-                                                                                                <span>
-                                                                                                    Shortage of <strong>{lineInfo.shortageQty}</strong> unit(s) cannot be fulfilled by current FEFO inventory.
-                                                                                                </span>
-                                                                                            </div>
-                                                                                        )}
-                                                                                    </motion.div>
-                                                                                ) : (
-                                                                                    /* MANUAL ALLOCATION MODE TABLE */
-                                                                                    <motion.div
-                                                                                        key="level3-manual"
-                                                                                        initial={{ opacity: 0, y: -6 }}
-                                                                                        animate={{ opacity: 1, y: 0 }}
-                                                                                        exit={{ opacity: 0, y: 6 }}
-                                                                                        transition={{ duration: 0.18 }}
-                                                                                    >
-                                                                                        {availableBatches.filter((b) => {
-                                                                                            const key = getManualKey(inv.invoiceId, prod.productId, b.inventoryLotId, b.lotId, b.batchNo);
-                                                                                            const currentQty = Number(manualAllocations[key] || 0);
-                                                                                            return b.availableQuantity > 0 || currentQty > 0;
-                                                                                        }).length > 0 ? (
-                                                                                            <div className="max-h-[220px] overflow-y-auto rounded-2xl border border-border/50 bg-card shadow-sm">
-                                                                                                <table className="w-full text-left text-xs border-collapse">
-                                                                                                    <thead className="sticky top-0 z-10 bg-muted/90 backdrop-blur-sm border-b border-border/60">
-                                                                                                        <tr className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">
-                                                                                                            <th className="p-2.5">Lot / Rack</th>
-                                                                                                            <th className="p-2.5">Batch No</th>
-                                                                                                            <th className="p-2.5">Expiry Date</th>
-                                                                                                            <th className="p-2.5">Condition</th>
-                                                                                                        
-                                                                                                            <th className="p-2.5 text-right w-44">Allocate Quantity</th>
-                                                                                                        </tr>
-                                                                                                    </thead>
-                                                                                                    <tbody className="divide-y divide-border/40">
-                                                                                                        {availableBatches.filter((b) => {
-                                                                                                            const key = getManualKey(inv.invoiceId, prod.productId, b.inventoryLotId, b.lotId, b.batchNo);
-                                                                                                            const currentQty = Number(manualAllocations[key] || 0);
-                                                                                                            return b.availableQuantity > 0 || currentQty > 0;
-                                                                                                        }).map((b, bIdx) => {
-                                                                                                            const key = getManualKey(
-                                                                                                                inv.invoiceId,
-                                                                                                                prod.productId,
-                                                                                                                b.inventoryLotId,
-                                                                                                                b.lotId,
-                                                                                                                b.batchNo
-                                                                                                            );
-                                                                                                            const currentQty = Number(manualAllocations[key] || 0);
-                                                                                                            const isAllocated = currentQty > 0;
-                                                                                                            const batchKey = `${prod.productId}:${b.inventoryLotId || 0}:${b.batchNo}:${b.lotId || 0}`;
-                                                                                                            const totalBatchAlloc = batchTotalAllocatedMap.get(batchKey) || 0;
-                                                                                                            const isNegativeBalance = b.availableQuantity < 0 || totalBatchAlloc > b.availableQuantity;
-                                                                                                            const isZeroQuantity = b.availableQuantity === 0 && totalBatchAlloc <= 0;
-
-                                                                                                            return (
-                                                                                                                <tr
-                                                                                                                    key={`batch-row-${inv.invoiceId}-${prod.productId}-${b.lotId}-${b.batchNo}-${b.inventoryLotId || bIdx}`}
-                                                                                                                    className={`transition-colors ${
-                                                                                                                        isAllocated
-                                                                                                                            ? "bg-primary/10 hover:bg-primary/15 border-l-4 border-l-primary"
-                                                                                                                            : "hover:bg-muted/10"
-                                                                                                                    }`}
-                                                                                                                >
-                                                                                                                    <td className="p-2.5 font-bold text-foreground">
-                                                                                                                        {isAllocated ? (
-                                                                                                                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-primary/20 text-primary font-black">
-                                                                                                                                {b.lotName}
-                                                                                                                            </span>
-                                                                                                                        ) : (
-                                                                                                                            b.lotName
-                                                                                                                        )}
-                                                                                                                    </td>
-                                                                                                                    <td className="p-2.5 font-mono">
-                                                                                                                        <div className="flex flex-col gap-1">
+                                                                                                                        {isNegativeBalance && (
                                                                                                                             <div>
-                                                                                                                                {isAllocated ? (
-                                                                                                                                    <span className="font-bold text-foreground bg-primary/10 px-1.5 py-0.5 rounded border border-primary/20">
-                                                                                                                                        {b.batchNo}
-                                                                                                                                    </span>
-                                                                                                                                ) : (
-                                                                                                                                    <span className="text-muted-foreground">{b.batchNo}</span>
-                                                                                                                                )}
-                                                                                                                            </div>
-                                                                                                                            {isNegativeBalance && (
-                                                                                                                                <div>
-                                                                                                                                    <span className="inline-flex items-center gap-1 rounded bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30 px-1.5 py-0.5 text-[9px] font-black uppercase">
-                                                                                                                                        <AlertTriangle className="h-2.5 w-2.5 shrink-0" />
-                                                                                                                                        Negative Balance Warning
-                                                                                                                                    </span>
-                                                                                                                                </div>
-                                                                                                                            )}
-                                                                                                                            {isZeroQuantity && (
-                                                                                                                                <div>
-                                                                                                                                    <span className="inline-flex items-center gap-1 rounded bg-muted text-muted-foreground border border-border/70 px-1.5 py-0.5 text-[9px] font-bold uppercase">
-                                                                                                                                        Zero Quantity
-                                                                                                                                    </span>
-                                                                                                                                </div>
-                                                                                                                            )}
-                                                                                                                        </div>
-                                                                                                                    </td>
-                                                                                                                    <td className="p-2.5 text-muted-foreground font-medium">
-                                                                                                                        <div className="flex items-center gap-1.5">
-                                                                                                                            <span>{b.expiryDate || "-"}</span>
-                                                                                                                            {isBatchExpired(b.expiryDate) && (
-                                                                                                                                <span className="inline-flex items-center rounded bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 px-1.5 py-0.5 text-[9px] font-black uppercase">
-                                                                                                                                    Expired
+                                                                                                                                <span className="inline-flex items-center gap-1 rounded bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30 px-1.5 py-0.5 text-[9px] font-black uppercase">
+                                                                                                                                    <AlertTriangle className="h-2.5 w-2.5 shrink-0" />
+                                                                                                                                    Negative Balance Warning
                                                                                                                                 </span>
-                                                                                                                            )}
-                                                                                                                        </div>
-                                                                                                                    </td>
-                                                                                                                    <td className="p-2.5">
-                                                                                                                        <span className="rounded-full bg-muted px-2 py-0.5 text-[9px] font-bold uppercase">
-                                                                                                                            {b.inventoryCondition}
-                                                                                                                        </span>
-                                                                                                                    </td>
-                                                                                                                    <td className="p-2.5 text-right">
-                                                                                                                        <div className="flex items-center justify-end gap-1.5">
-                                                                                                                            <Input
-                                                                                                                                type="number"
-                                                                                                                                min={0}
-                                                                                                                                value={currentQty || ""}
-                                                                                                                                placeholder="0"
-                                                                                                                                onFocus={(e) => e.target.select()}
-                                                                                                                                onClick={(e) => (e.target as HTMLInputElement).select()}
-                                                                                                                                onBlur={(e) => {
-                                                                                                                                    if (e.target.value === "" || isNaN(Number(e.target.value))) {
-                                                                                                                                        handleManualQtyChange(
-                                                                                                                                            inv.invoiceId,
-                                                                                                                                            prod.productId,
-                                                                                                                                            b.inventoryLotId,
-                                                                                                                                            b.lotId,
-                                                                                                                                            b.batchNo,
-                                                                                                                                            b.availableQuantity,
-                                                                                                                                            "0"
-                                                                                                                                        );
-                                                                                                                                    }
-                                                                                                                                }}
-                                                                                                                                onChange={(e) =>
+                                                                                                                            </div>
+                                                                                                                        )}
+                                                                                                                        {isZeroQuantity && (
+                                                                                                                            <div>
+                                                                                                                                <span className="inline-flex items-center gap-1 rounded bg-muted text-muted-foreground border border-border/70 px-1.5 py-0.5 text-[9px] font-bold uppercase">
+                                                                                                                                    Zero Quantity
+                                                                                                                                </span>
+                                                                                                                            </div>
+                                                                                                                        )}
+                                                                                                                    </div>
+                                                                                                                </td>
+                                                                                                                <td className="p-2.5 text-muted-foreground font-medium">
+                                                                                                                    <div className="flex items-center gap-1.5">
+                                                                                                                        <span>{b.expiryDate || "-"}</span>
+                                                                                                                        {isBatchExpired(b.expiryDate) && (
+                                                                                                                            <span className="inline-flex items-center rounded bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 px-1.5 py-0.5 text-[9px] font-black uppercase">
+                                                                                                                                Expired
+                                                                                                                            </span>
+                                                                                                                        )}
+                                                                                                                    </div>
+                                                                                                                </td>
+                                                                                                                <td className="p-2.5">
+                                                                                                                    <span className="rounded-full bg-muted px-2 py-0.5 text-[9px] font-bold uppercase">
+                                                                                                                        {b.inventoryCondition}
+                                                                                                                    </span>
+                                                                                                                </td>
+                                                                                                                <td className="p-2.5 text-right font-mono font-bold text-foreground">
+                                                                                                                    {b.availableQuantity}
+                                                                                                                </td>
+                                                                                                                <td className="p-2.5 text-right">
+                                                                                                                    <div className="flex items-center justify-end gap-1.5">
+                                                                                                                        <Input
+                                                                                                                            type="number"
+                                                                                                                            min={0}
+                                                                                                                            value={currentQty || ""}
+                                                                                                                            placeholder="0"
+                                                                                                                            onFocus={(e) => e.target.select()}
+                                                                                                                            onClick={(e) => (e.target as HTMLInputElement).select()}
+                                                                                                                            onBlur={(e) => {
+                                                                                                                                if (e.target.value === "" || isNaN(Number(e.target.value))) {
                                                                                                                                     handleManualQtyChange(
-                                                                                                                                        inv.invoiceId,
-                                                                                                                                        prod.productId,
+                                                                                                                                        p.productId,
                                                                                                                                         b.inventoryLotId,
                                                                                                                                         b.lotId,
                                                                                                                                         b.batchNo,
                                                                                                                                         b.availableQuantity,
-                                                                                                                                        e.target.value
-                                                                                                                                    )
+                                                                                                                                        "0",
+                                                                                                                                        p.totalQuantity
+                                                                                                                                    );
                                                                                                                                 }
-                                                                                                                                className={`h-8 w-24 text-right text-xs font-mono font-bold ${
-                                                                                                                                    isAllocated ? "border-primary bg-primary/5 font-black text-primary ring-1 ring-primary/30" : "bg-card"
-                                                                                                                                }`}
-                                                                                                                            />
-                                                                                                                            <Button
-                                                                                                                                type="button"
-                                                                                                                                variant={isAllocated ? "default" : "outline"}
-                                                                                                                                size="sm"
-                                                                                                                                onClick={() => {
-                                                                                                                                    const lineSummary = getManualLineSummary(
-                                                                                                                                        inv.invoiceId,
-                                                                                                                                        prod.productId,
-                                                                                                                                        prod.quantity
-                                                                                                                                    );
-                                                                                                                                    const totalAlloc = lineSummary.allocated;
-                                                                                                                                    const totalReq = prod.quantity;
-                                                                                                                                    const diff = totalReq - (totalAlloc - currentQty);
-                                                                                                                                    const fillAmount = Math.max(0, diff);
-                                                                                                                                    handleManualQtyChange(
-                                                                                                                                        inv.invoiceId,
-                                                                                                                                        prod.productId,
-                                                                                                                                        b.inventoryLotId,
-                                                                                                                                        b.lotId,
-                                                                                                                                        b.batchNo,
-                                                                                                                                        b.availableQuantity,
-                                                                                                                                        String(fillAmount)
-                                                                                                                                    );
-                                                                                                                                }}
-                                                                                                                                className="h-8 px-2 text-[10px] font-bold rounded-lg"
-                                                                                                                            >
-                                                                                                                                Fill
-                                                                                                                            </Button>
-                                                                                                                        </div>
-                                                                                                                    </td>
-                                                                                                                </tr>
-                                                                                                            );
-                                                                                                        })}
-                                                                                                    </tbody>
-                                                                                                </table>
-                                                                                            </div>
-                                                                                        ) : (
-                                                                                            <div className="rounded-xl border border-dashed border-border/70 p-3 text-center text-xs text-muted-foreground italic">
-                                                                                                No available stock batches found for this product in warehouse.
-                                                                                            </div>
-                                                                                        )}
-                                                                                    </motion.div>
-                                                                                )}
-                                                                            </AnimatePresence>
-                                                                        </motion.div>
-                                                                    );
-                                                                })}
-                                                            </div>
-                                                        </motion.div>
-                                                    )}
-                                                </AnimatePresence>
-                                            </motion.div>
+                                                                                                                            }}
+                                                                                                                            onChange={(e) =>
+                                                                                                                                handleManualQtyChange(
+                                                                                                                                    p.productId,
+                                                                                                                                    b.inventoryLotId,
+                                                                                                                                    b.lotId,
+                                                                                                                                    b.batchNo,
+                                                                                                                                    b.availableQuantity,
+                                                                                                                                    e.target.value,
+                                                                                                                                    p.totalQuantity
+                                                                                                                                )
+                                                                                                                            }
+                                                                                                                            className={`h-8 w-24 text-right text-xs font-mono font-bold ${
+                                                                                                                                isAllocated ? "border-primary bg-primary/5 font-black text-primary ring-1 ring-primary/30" : "bg-card"
+                                                                                                                            }`}
+                                                                                                                        />
+                                                                                                                        <Button
+                                                                                                                            type="button"
+                                                                                                                            variant={isAllocated ? "default" : "outline"}
+                                                                                                                            size="sm"
+                                                                                                                            onClick={() => {
+                                                                                                                                const currentAlloc = getProductManualAllocation(p.productId);
+                                                                                                                                const otherBatchesAlloc = currentAlloc - currentQty;
+                                                                                                                                const remainingDemand = Math.max(0, p.totalQuantity - otherBatchesAlloc);
+                                                                                                                                const fillAmount = Math.min(b.availableQuantity, remainingDemand);
+                                                                                                                                handleManualQtyChange(
+                                                                                                                                    p.productId,
+                                                                                                                                    b.inventoryLotId,
+                                                                                                                                    b.lotId,
+                                                                                                                                    b.batchNo,
+                                                                                                                                    b.availableQuantity,
+                                                                                                                                    String(fillAmount),
+                                                                                                                                    p.totalQuantity
+                                                                                                                                );
+                                                                                                                            }}
+                                                                                                                            className="h-8 px-2 text-[10px] font-bold rounded-lg"
+                                                                                                                        >
+                                                                                                                            Fill
+                                                                                                                        </Button>
+                                                                                                                    </div>
+                                                                                                                </td>
+                                                                                                            </tr>
+                                                                                                        );
+                                                                                                    })}
+                                                                                                </tbody>
+                                                                                            </table>
+                                                                                        </div>
+                                                                                    ) : (
+                                                                                        <div className="rounded-xl border border-dashed border-border/70 p-3 text-center text-xs text-muted-foreground italic">
+                                                                                            No available stock batches found for this product in warehouse.
+                                                                                        </div>
+                                                                                    )}
+                                                                                </motion.div>
+                                                                            )}
+                                                                        </AnimatePresence>
+                                                                    </div>
+                                                                </motion.div>
+                                                            )}
+                                                        </AnimatePresence>
+                                                    </motion.div>
                                                 );
                                             })
                                         )}
@@ -2473,6 +2450,17 @@ export default function CreateConsolidationModal({
                                         </h3>
                                     </div>
                                     <div className="flex items-center gap-2">
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={handlePrintPicklist}
+                                            className="h-7 px-2.5 text-[10px] font-bold rounded-lg border-border/60 hover:bg-muted/40 gap-1.5"
+                                            title="Print Consolidation Picklist (Portrait PDF)"
+                                        >
+                                            <Printer className="h-3.5 w-3.5 text-primary" />
+                                            Print Picklist
+                                        </Button>
                                         <div className="flex items-center gap-1 bg-muted/40 p-0.5 rounded-xl border border-border/60">
                                             <Button
                                                 variant="ghost"
@@ -2520,35 +2508,23 @@ export default function CreateConsolidationModal({
                                             {aggregatedProducts.map((p, pIdx) => {
                                                 const isExpanded = expandedStep3ProdIds.has(p.productId);
                                                 let productAllocatedQty = 0;
-                                                const assignedByOrderMap = new Map<number, {
-                                                    invoiceId: number;
-                                                    orderNo: string;
-                                                    customerName: string;
-                                                    batches: Array<{ batchNo: string; lotName: string; quantity: number }>;
-                                                }>();
-
-                                                const getOrCreateOrderEntry = (invId: number) => {
-                                                    let entry = assignedByOrderMap.get(invId);
-                                                    if (!entry) {
-                                                        const candidate = selectedInvoices.find((c) => c.invoiceId === invId);
-                                                        entry = {
-                                                            invoiceId: invId,
-                                                            orderNo: candidate?.orderNo || candidate?.invoiceNo || (invId ? `#${invId}` : "Unspecified Order"),
-                                                            customerName: candidate?.customerName || "",
-                                                            batches: [],
-                                                        };
-                                                        assignedByOrderMap.set(invId, entry);
-                                                    }
-                                                    return entry;
-                                                };
+                                                const allocatedBatches: Array<{
+                                                    batchNo: string;
+                                                    lotName: string;
+                                                    lotId?: number;
+                                                    inventoryLotId?: number;
+                                                    expiryDate?: string | null;
+                                                    quantity: number;
+                                                    availableQuantity?: number;
+                                                }> = [];
 
                                                 if (allocationMode === "manual") {
                                                     for (const [key, qty] of Object.entries(manualAllocations)) {
                                                         if (Number(qty) > 0) {
-                                                            const [invIdStr, prodIdStr, invLotIdStr, batchNo, lotIdStr] = key.split(":");
-                                                            if (Number(prodIdStr) === p.productId) {
-                                                                const invId = Number(invIdStr || 0);
-                                                                productAllocatedQty += Number(qty);
+                                                            const [pIdStr, invLotIdStr, batchNo, lotIdStr] = key.split(":");
+                                                            if (Number(pIdStr) === p.productId) {
+                                                                const numericQty = Number(qty);
+                                                                productAllocatedQty += numericQty;
                                                                 const invLotId = Number(invLotIdStr || 0);
                                                                 const lotId = Number(lotIdStr || 0);
                                                                 const b = (allocationPreview?.availableBatches || []).find(
@@ -2557,22 +2533,50 @@ export default function CreateConsolidationModal({
                                                                         ((invLotId > 0 && batch.inventoryLotId === invLotId) ||
                                                                             (batch.batchNo === batchNo && batch.lotId === lotId))
                                                                 );
-                                                                if (b) {
-                                                                    const entry = getOrCreateOrderEntry(invId);
-                                                                    const existingAssigned = entry.batches.find(
-                                                                        (ab) => ab.batchNo === b.batchNo && ab.lotName === b.lotName
-                                                                    );
-                                                                    if (existingAssigned) {
-                                                                        existingAssigned.quantity += Number(qty);
-                                                                    } else {
-                                                                        entry.batches.push({
-                                                                            batchNo: b.batchNo,
-                                                                            lotName: b.lotName,
-                                                                            quantity: Number(qty),
-                                                                        });
-                                                                    }
+                                                                const existing = allocatedBatches.find(
+                                                                    (ab) => ab.batchNo === (b?.batchNo || batchNo) && ab.lotName === (b?.lotName || "Warehouse Lot")
+                                                                );
+                                                                if (existing) {
+                                                                    existing.quantity += numericQty;
+                                                                } else {
+                                                                    allocatedBatches.push({
+                                                                        batchNo: b?.batchNo || batchNo,
+                                                                        lotName: b?.lotName || "Warehouse Lot",
+                                                                        lotId: b?.lotId || lotId,
+                                                                        inventoryLotId: b?.inventoryLotId || invLotId,
+                                                                        expiryDate: b?.expiryDate || null,
+                                                                        quantity: numericQty,
+                                                                        availableQuantity: b?.availableQuantity,
+                                                                    });
                                                                 }
                                                             }
+                                                        }
+                                                    }
+                                                } else if (allocationPreview?.allocations && allocationPreview.allocations.length > 0) {
+                                                    const allocs = allocationPreview.allocations.filter((a) => a.productId === p.productId && a.quantity > 0);
+                                                    for (const a of allocs) {
+                                                        productAllocatedQty += a.quantity;
+                                                        const b = (allocationPreview?.availableBatches || []).find(
+                                                            (batch) =>
+                                                                batch.productId === p.productId &&
+                                                                ((a.inventoryLotId && batch.inventoryLotId === a.inventoryLotId) ||
+                                                                    (batch.batchNo === a.batchNo && batch.lotId === a.lotId))
+                                                        );
+                                                        const existing = allocatedBatches.find(
+                                                            (ab) => ab.batchNo === a.batchNo && ab.lotName === a.lotName
+                                                        );
+                                                        if (existing) {
+                                                            existing.quantity += a.quantity;
+                                                        } else {
+                                                            allocatedBatches.push({
+                                                                batchNo: a.batchNo,
+                                                                lotName: a.lotName,
+                                                                lotId: a.lotId,
+                                                                inventoryLotId: a.inventoryLotId,
+                                                                expiryDate: a.expiryDate || b?.expiryDate || null,
+                                                                quantity: a.quantity,
+                                                                availableQuantity: b?.availableQuantity,
+                                                            });
                                                         }
                                                     }
                                                 } else if (allocationPreview?.invoiceBreakdown && allocationPreview.invoiceBreakdown.length > 0) {
@@ -2582,17 +2586,26 @@ export default function CreateConsolidationModal({
                                                                 for (const a of line.allocations || []) {
                                                                     if (a.quantity > 0) {
                                                                         productAllocatedQty += a.quantity;
-                                                                        const entry = getOrCreateOrderEntry(inv.invoiceId);
-                                                                        const existingAssigned = entry.batches.find(
+                                                                        const b = (allocationPreview?.availableBatches || []).find(
+                                                                            (batch) =>
+                                                                                batch.productId === p.productId &&
+                                                                                ((a.inventoryLotId && batch.inventoryLotId === a.inventoryLotId) ||
+                                                                                    (batch.batchNo === a.batchNo && batch.lotId === a.lotId))
+                                                                        );
+                                                                        const existing = allocatedBatches.find(
                                                                             (ab) => ab.batchNo === a.batchNo && ab.lotName === a.lotName
                                                                         );
-                                                                        if (existingAssigned) {
-                                                                            existingAssigned.quantity += a.quantity;
+                                                                        if (existing) {
+                                                                            existing.quantity += a.quantity;
                                                                         } else {
-                                                                            entry.batches.push({
+                                                                            allocatedBatches.push({
                                                                                 batchNo: a.batchNo,
                                                                                 lotName: a.lotName,
+                                                                                lotId: a.lotId,
+                                                                                inventoryLotId: a.inventoryLotId,
+                                                                                expiryDate: a.expiryDate || b?.expiryDate || null,
                                                                                 quantity: a.quantity,
+                                                                                availableQuantity: b?.availableQuantity,
                                                                             });
                                                                         }
                                                                     }
@@ -2600,21 +2613,8 @@ export default function CreateConsolidationModal({
                                                             }
                                                         }
                                                     }
-                                                } else {
-                                                    const allocs = (allocationPreview?.allocations || []).filter((a) => a.productId === p.productId && a.quantity > 0);
-                                                    productAllocatedQty = allocs.reduce((sum, a) => sum + a.quantity, 0);
-                                                    const entry = getOrCreateOrderEntry(0);
-                                                    for (const a of allocs) {
-                                                        entry.batches.push({
-                                                            batchNo: a.batchNo,
-                                                            lotName: a.lotName,
-                                                            quantity: a.quantity,
-                                                        });
-                                                    }
                                                 }
 
-                                                const assignedOrders = Array.from(assignedByOrderMap.values()).filter((o) => o.batches.length > 0);
-                                                const totalAssignedBatchCount = assignedOrders.reduce((s, o) => s + o.batches.length, 0);
                                                 const isFullyCovered = productAllocatedQty >= p.totalQuantity;
                                                 const diff = p.totalQuantity - productAllocatedQty;
 
@@ -2667,14 +2667,14 @@ export default function CreateConsolidationModal({
                                                                 </span>
                                                             </td>
                                                             <td className="p-3.5">
-                                                                {assignedOrders.length > 0 ? (
+                                                                {allocatedBatches.length > 0 ? (
                                                                     <div className="flex items-center gap-1.5 flex-wrap">
                                                                         <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 border border-primary/20 px-2.5 py-1 text-[10px] font-bold text-primary">
                                                                             <Package className="h-3 w-3" />
-                                                                            {assignedOrders.length} order(s) · {totalAssignedBatchCount} batch(es)
+                                                                            {allocatedBatches.length} batch(es) ({productAllocatedQty} units)
                                                                         </span>
                                                                         <span className="text-[10px] text-muted-foreground font-semibold">
-                                                                            ({isExpanded ? "Click to collapse" : "Click to view hierarchy"})
+                                                                            ({isExpanded ? "Click to collapse" : "Click to view lots"})
                                                                         </span>
                                                                     </div>
                                                                 ) : (
@@ -2704,7 +2704,7 @@ export default function CreateConsolidationModal({
                                                             </td>
                                                         </motion.tr>
 
-                                                        {/* EXPANDED NESTED HIERARCHY PANEL (ORDER -> LOT/RACK -> BATCH) */}
+                                                        {/* EXPANDED ALLOCATED LOTS & BATCHES PANEL */}
                                                         <AnimatePresence initial={false}>
                                                             {isExpanded && (
                                                                 <motion.tr
@@ -2727,92 +2727,58 @@ export default function CreateConsolidationModal({
                                                                                 <div className="flex items-center justify-between">
                                                                                     <p className="text-[11px] font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                                                                                         <Layers className="h-3.5 w-3.5 text-primary" />
-                                                                                        Allocated Demand Hierarchy for <span className="text-foreground font-bold">{p.productName}</span>
+                                                                                        Allocated Lots &amp; Batches for <span className="text-foreground font-bold">{p.productName}</span>
                                                                                     </p>
-
+                                                                                    <span className="text-xs font-bold text-primary bg-primary/10 px-2.5 py-1 rounded-full border border-primary/20">
+                                                                                        Total Allocated: {productAllocatedQty} / {p.totalQuantity} units
+                                                                                    </span>
                                                                                 </div>
 
-                                                                                {assignedOrders.length > 0 ? (
-                                                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                                                                        {assignedOrders.map((orderGroup) => (
-                                                                                            <div
-                                                                                                key={`step3-tree-order-${p.productId}-${orderGroup.invoiceId}`}
-                                                                                                className="rounded-2xl border border-border/60 bg-card p-3.5 shadow-sm space-y-2.5"
-                                                                                            >
-                                                                                                {/* LEVEL 1: ORDER HEADER */}
-                                                                                                <div className="flex items-center justify-between border-b border-border/40 pb-2">
-                                                                                                    <div className="flex items-center gap-2">
-                                                                                                        <div className="rounded-lg bg-primary/10 p-1.5">
-                                                                                                            <FileText className="h-3.5 w-3.5 text-primary" />
-                                                                                                        </div>
-                                                                                                        <div>
-                                                                                                            <span className="font-mono font-black text-xs text-foreground">
-                                                                                                                {orderGroup.orderNo}
+                                                                                {allocatedBatches.length > 0 ? (
+                                                                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                                                                                        {allocatedBatches.map((b, bIdx) => {
+                                                                                            const isNegative = b.availableQuantity !== undefined
+                                                                                                ? (b.availableQuantity < 0 || b.quantity > b.availableQuantity)
+                                                                                                : false;
+
+                                                                                            return (
+                                                                                                <div
+                                                                                                    key={`allocated-batch-${p.productId}-${b.batchNo}-${bIdx}`}
+                                                                                                    className="flex items-center justify-between gap-3 rounded-2xl border border-border/60 bg-card p-3 shadow-xs"
+                                                                                                >
+                                                                                                    <div className="min-w-0 space-y-1">
+                                                                                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                                                                                            <span className="font-bold text-xs text-foreground">
+                                                                                                                {b.lotName}
                                                                                                             </span>
-                                                                                                            {orderGroup.customerName && (
-                                                                                                                <p className="text-[10px] font-semibold text-muted-foreground">
-                                                                                                                    {orderGroup.customerName}
-                                                                                                                </p>
-                                                                                                            )}
+                                                                                                            <span className="font-mono text-[10px] text-muted-foreground bg-muted/30 px-1.5 py-0.5 rounded border border-border/40">
+                                                                                                                {b.batchNo}
+                                                                                                            </span>
                                                                                                         </div>
+                                                                                                        <p className="text-[10px] text-muted-foreground">
+                                                                                                            {b.expiryDate
+                                                                                                                ? `Exp: ${new Date(b.expiryDate).toLocaleDateString()}`
+                                                                                                                : "No expiration"}
+                                                                                                        </p>
                                                                                                     </div>
-                                                                                                    <span className="text-[10px] font-black text-primary bg-primary/10 px-2 py-0.5 rounded-full border border-primary/20">
-                                                                                                        {orderGroup.batches.reduce((s, b) => s + b.quantity, 0)} units
-                                                                                                    </span>
+
+                                                                                                    <div className="flex items-center gap-2 shrink-0">
+                                                                                                        {isNegative && (
+                                                                                                            <span className="inline-flex items-center gap-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 text-[8px] font-black uppercase">
+                                                                                                                <AlertTriangle className="h-2.5 w-2.5" /> Negative
+                                                                                                            </span>
+                                                                                                        )}
+                                                                                                        <span className="font-black text-primary text-xs bg-primary/5 px-2.5 py-1 rounded-lg border border-primary/15 font-mono">
+                                                                                                            {b.quantity} units
+                                                                                                        </span>
+                                                                                                    </div>
                                                                                                 </div>
-
-                                                                                                {/* LEVEL 2 & 3: LOT / RACK & BATCHES */}
-                                                                                                <div className="space-y-1.5 pl-1">
-                                                                                                    {orderGroup.batches.map((b, bIdx) => {
-                                                                                                        const batchInfo = (allocationPreview?.availableBatches || []).find(
-                                                                                                            (ab) => ab.productId === p.productId && ab.batchNo === b.batchNo
-                                                                                                        );
-                                                                                                        const isNegative = batchInfo ? (batchInfo.availableQuantity < 0 || b.quantity > batchInfo.availableQuantity) : false;
-
-                                                                                                        return (
-                                                                                                            <div
-                                                                                                                key={`tree-batch-${p.productId}-${orderGroup.invoiceId}-${b.batchNo}-${bIdx}`}
-                                                                                                                className="flex items-center justify-between gap-2 rounded-xl border border-border/50 bg-muted/20 px-3 py-2 text-xs"
-                                                                                                            >
-                                                                                                                <div className="flex items-center gap-2 min-w-0">
-                                                                                                                    <span className="text-muted-foreground font-mono">└──</span>
-                                                                                                                    <div className="min-w-0">
-                                                                                                                        <div className="flex items-center gap-1.5">
-                                                                                                                            <span className="font-bold text-foreground">
-                                                                                                                                {b.lotName}
-                                                                                                                            </span>
-                                                                                                                            <span className="font-mono text-[10px] text-muted-foreground bg-card px-1.5 py-0.5 rounded border border-border/40">
-                                                                                                                                {b.batchNo}
-                                                                                                                            </span>
-                                                                                                                        </div>
-                                                                                                                        {batchInfo?.expiryDate && (
-                                                                                                                            <p className="text-[9px] text-muted-foreground mt-0.5">
-                                                                                                                                Exp: {batchInfo.expiryDate}
-                                                                                                                            </p>
-                                                                                                                        )}
-                                                                                                                    </div>
-                                                                                                                </div>
-
-                                                                                                                <div className="flex items-center gap-2 shrink-0">
-                                                                                                                    {isNegative && (
-                                                                                                                        <span className="inline-flex items-center gap-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 text-[8px] font-black uppercase">
-                                                                                                                            <AlertTriangle className="h-2.5 w-2.5" /> Negative
-                                                                                                                        </span>
-                                                                                                                    )}
-                                                                                                                    <span className="font-black text-primary text-xs bg-card px-2 py-1 rounded-lg border border-border/60">
-                                                                                                                        {b.quantity} qty
-                                                                                                                    </span>
-                                                                                                                </div>
-                                                                                                            </div>
-                                                                                                        );
-                                                                                                    })}
-                                                                                                </div>
-                                                                                            </div>
-                                                                                        ))}
+                                                                                            );
+                                                                                        })}
                                                                                     </div>
                                                                                 ) : (
-                                                                                    <div className="rounded-xl border border-dashed border-border/60 p-4 text-center text-xs text-muted-foreground">
-                                                                                        No stock batches allocated for this product line.
+                                                                                    <div className="py-6 text-center text-xs text-muted-foreground italic bg-card rounded-2xl border border-border/40">
+                                                                                        No lots allocated for this product.
                                                                                     </div>
                                                                                 )}
                                                                             </div>
@@ -2839,6 +2805,16 @@ export default function CreateConsolidationModal({
                             </div>
 
                             <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={handlePrintPicklist}
+                                    className="rounded-xl font-bold gap-1.5"
+                                    title="Print Consolidation Picklist (Portrait PDF)"
+                                >
+                                    <Printer className="h-4 w-4 text-primary" />
+                                    Print Picklist
+                                </Button>
                                 <Button
                                     variant="outline"
                                     onClick={() => setStep(2)}

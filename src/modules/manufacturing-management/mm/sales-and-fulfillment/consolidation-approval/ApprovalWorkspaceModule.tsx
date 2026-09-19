@@ -178,7 +178,7 @@ export default function ApprovalWorkspaceModule({ batchNo }: ApprovalWorkspaceMo
                                             {d.productName || `Product #${d.productId}`}
                                         </h3>
                                         <p className="text-[10px] font-mono text-muted-foreground mt-0.5">
-                                            {d.productCode || `ID: ${d.productId}`}
+                                            {d.productCode  }
                                         </p>
                                     </div>
 

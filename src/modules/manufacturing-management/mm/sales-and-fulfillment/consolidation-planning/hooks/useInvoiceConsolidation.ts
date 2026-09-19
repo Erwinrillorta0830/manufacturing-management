@@ -22,6 +22,7 @@ export function useInvoiceConsolidation() {
     const [consolidations, setConsolidations] = useState<InvoiceConsolidation[]>([]);
     const [summary, setSummary] = useState<StatusSummary>({ Pending: 0, Picking: 0, Picked: 0, Audited: 0, All: 0 });
     const [candidates, setCandidates] = useState<CandidateInvoice[]>([]);
+    const [candidatesLoading, setCandidatesLoading] = useState(false);
     const [branches, setBranches] = useState<Branch[]>([]);
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
@@ -86,32 +87,19 @@ export function useInvoiceConsolidation() {
         setSelectedConsolidation(null);
         setShowCreateModal(false);
         setCandidates([]);
+        setCandidatesLoading(false);
     }, []);
 
     const loadCandidates = useCallback(async (bId: number) => {
+        setCandidatesLoading(true);
         try {
             const data = await fetchCandidates(bId);
-            // console.log(
-            //     `[Consolidation UI] Candidate Orders loaded for Branch ${bId} (${data.length} candidate(s)):`,
-            //     data.map((c) => ({
-            //         orderNo: c.orderNo,
-            //         customer: c.customerName,
-            //         orderStatus: c.orderStatus,
-            //         documentType: c.documentType,
-            //         products: c.products.map((p) => ({
-            //             productId: p.productId,
-            //             productName: p.productName,
-            //             orderedQty: (p as { orderedQuantity?: number }).orderedQuantity,
-            //             allocatedQty: (p as { allocatedQuantity?: number }).allocatedQuantity,
-            //             consolidatedQty: (p as { consolidatedQuantity?: number }).consolidatedQuantity,
-            //             remainingQty: (p as { remainingQuantity?: number }).remainingQuantity ?? p.quantity,
-            //         })),
-            //     }))
-            // );
             setCandidates(data);
         } catch (e) {
             const err = e as Error;
             toast.error(err.message || "Failed to load candidate invoices");
+        } finally {
+            setCandidatesLoading(false);
         }
     }, []);
 
@@ -249,6 +237,7 @@ export function useInvoiceConsolidation() {
         consolidations,
         summary,
         candidates,
+        candidatesLoading,
         branches,
         selectedBranch,
         loading,

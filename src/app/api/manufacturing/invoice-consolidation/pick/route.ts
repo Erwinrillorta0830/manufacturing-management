@@ -417,13 +417,17 @@ export async function PATCH(req: NextRequest) {
 
                     if (invoiceIds.length > 0) {
                         const sodRes = await fetch(
-                            `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_in]=${invoiceIds.join(",")}&fields=detail_id&limit=-1`,
+                            `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_in]=${invoiceIds.join(",")}&fields=detail_id,product_id&limit=-1`,
                             { headers: directusHeaders, cache: "no-store" }
                         );
                         if (sodRes.ok) {
-                            const detailIds = ((await sodRes.json()).data || [])
-                                .map((row: { detail_id: number }) => Number(row.detail_id))
-                                .filter(Boolean);
+                            const sodList: { detail_id: number; product_id: number }[] = ((await sodRes.json()).data || [])
+                                .map((row: { detail_id: number; product_id: number }) => ({
+                                    detail_id: Number(row.detail_id),
+                                    product_id: Number(row.product_id),
+                                }))
+                                .filter((d: { detail_id: number; product_id: number }) => Boolean(d.detail_id));
+                            const detailIds = sodList.map((d: { detail_id: number; product_id: number }) => d.detail_id);
 
                             if (detailIds.length > 0) {
                                 const soRes = await fetch(
@@ -450,33 +454,59 @@ export async function PATCH(req: NextRequest) {
                                             let budget = Number(item.pickedQuantity || 0);
                                             const itemResIds = (item.reservationIds || []).map(Number);
 
-                                            for (const rId of itemResIds) {
-                                                const r = reservations.find((x) => Number(x.id || x.reservation_id) === rId);
-                                                if (!r) continue;
+                                            if (itemResIds.length > 0) {
+                                                for (const rId of itemResIds) {
+                                                    const r = reservations.find((x) => Number(x.id || x.reservation_id) === rId);
+                                                    if (!r) continue;
 
-                                                const resQty = Number(r.reserved_quantity ?? r.quantity ?? 0);
-                                                const pickedPart = Math.min(budget, resQty);
-                                                budget = Math.max(0, budget - pickedPart);
+                                                    const resQty = Number(r.reserved_quantity ?? r.quantity ?? 0);
+                                                    const pickedPart = Math.min(budget, resQty);
+                                                    budget = Math.max(0, budget - pickedPart);
 
-                                                const patchRes = await fetch(`${DIRECTUS_URL}/items/sales_order_reservation/${rId}`, {
-                                                    method: "PATCH",
-                                                    headers: directusHeaders,
-                                                    body: JSON.stringify({
-                                                        picked_quantity: pickedPart,
-                                                        status: pickedPart >= resQty && resQty > 0 ? "Picked" : "Reserved",
-                                                        modified_date: phNow,
-                                                        modified_by: userId,
-                                                    }),
-                                                }).catch(() => null);
-
-                                                if (patchRes && !patchRes.ok) {
-                                                    await fetch(`${DIRECTUS_URL}/items/sales_order_reservation/${rId}`, {
+                                                    const patchRes = await fetch(`${DIRECTUS_URL}/items/sales_order_reservation/${rId}`, {
                                                         method: "PATCH",
                                                         headers: directusHeaders,
                                                         body: JSON.stringify({
+                                                            picked_quantity: pickedPart,
                                                             status: pickedPart >= resQty && resQty > 0 ? "Picked" : "Reserved",
                                                             modified_date: phNow,
                                                             modified_by: userId,
+                                                        }),
+                                                    }).catch(() => null);
+
+                                                    if (patchRes && !patchRes.ok) {
+                                                        await fetch(`${DIRECTUS_URL}/items/sales_order_reservation/${rId}`, {
+                                                            method: "PATCH",
+                                                            headers: directusHeaders,
+                                                            body: JSON.stringify({
+                                                                status: pickedPart >= resQty && resQty > 0 ? "Picked" : "Reserved",
+                                                                modified_date: phNow,
+                                                                modified_by: userId,
+                                                            }),
+                                                        }).catch(() => null);
+                                                    }
+                                                }
+                                            } else if (Number(item.pickedQuantity || 0) > 0) {
+                                                // Additional floor-picked lot not in original reservation
+                                                const matchDetail = sodList.find((d) => Number(d.product_id) === Number(item.productId));
+                                                if (matchDetail) {
+                                                    await fetch(`${DIRECTUS_URL}/items/sales_order_reservation`, {
+                                                        method: "POST",
+                                                        headers: directusHeaders,
+                                                        body: JSON.stringify({
+                                                            sales_order_detail_id: matchDetail.detail_id,
+                                                            product_id: item.productId,
+                                                            inventory_lot_id: item.inventoryLotId || null,
+                                                            lot_id: item.lotId || null,
+                                                            batch_no: item.batchNo || "LOT-N/A",
+                                                            reserved_quantity: Number(item.pickedQuantity || 0),
+                                                            quantity: Number(item.pickedQuantity || 0),
+                                                            picked_quantity: Number(item.pickedQuantity || 0),
+                                                            status: "Picked",
+                                                            created_by: userId,
+                                                            created_at: phNow,
+                                                            modified_by: userId,
+                                                            modified_date: phNow,
                                                         }),
                                                     }).catch(() => null);
                                                 }

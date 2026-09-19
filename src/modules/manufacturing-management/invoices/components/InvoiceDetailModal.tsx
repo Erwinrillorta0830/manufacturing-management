@@ -3,8 +3,8 @@
 import React, { useState, useMemo } from "react";
 import { Invoice, InvoiceLineItem, PrinterAlignmentSettings } from "../types";
 import { X, Printer, Loader2 } from "lucide-react";
-import { fetchPrintableInvoice } from "../../invoicing-and-billing/invoicing/services/invoicing-api";
-import { generateInvoiceReceiptPdf } from "../../invoicing-and-billing/invoicing/utils/generateInvoiceReceiptPdf";
+import { fetchPrintableInvoice } from "../../invoicing-and-billing/invoicing-old/services/invoicing-api";
+import { generateInvoiceReceiptPdf } from "../../invoicing-and-billing/invoicing-old/utils/generateInvoiceReceiptPdf";
 
 interface PaymentHistoryItem {
     amount: number;
@@ -82,7 +82,8 @@ export default function InvoiceDetailModal({
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
             {/* Elegant self-contained media print styling */}
-            <style dangerouslySetInnerHTML={{ __html: `
+            <style dangerouslySetInnerHTML={{
+                __html: `
                 @media print {
                     /* Ensure a pure white layout on print with zero browser padding/margins */
                     html, body {
@@ -145,23 +146,22 @@ export default function InvoiceDetailModal({
                             <h3 className="text-sm font-black text-foreground uppercase tracking-wide">
                                 Invoice Details
                             </h3>
-                            <span 
-                                className={`text-[9px] font-extrabold uppercase px-2.5 py-0.5 rounded-full border ${
-                                    invoice.status === "Paid" 
-                                        ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-500" 
+                            <span
+                                className={`text-[9px] font-extrabold uppercase px-2.5 py-0.5 rounded-full border ${invoice.status === "Paid"
+                                        ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-500"
                                         : invoice.status === "Partially Paid"
-                                        ? "bg-amber-500/10 border-amber-500/20 text-amber-500"
-                                        : invoice.status === "Cancelled"
-                                        ? "bg-slate-500/10 border-slate-500/20 text-slate-500"
-                                        : "bg-rose-500/10 border-rose-500/20 text-rose-500"
-                                }`}
+                                            ? "bg-amber-500/10 border-amber-500/20 text-amber-500"
+                                            : invoice.status === "Cancelled"
+                                                ? "bg-slate-500/10 border-slate-500/20 text-slate-500"
+                                                : "bg-rose-500/10 border-rose-500/20 text-rose-500"
+                                    }`}
                             >
                                 {invoice.status}
                             </span>
                         </div>
                         <p className="text-[10px] text-muted-foreground mt-0.5">Ref: {invoice.invoice_no}</p>
                     </div>
-                    <button 
+                    <button
                         onClick={onClose}
                         className="p-1 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground border-none cursor-pointer"
                     >
@@ -179,125 +179,125 @@ export default function InvoiceDetailModal({
                     ) : (
                         <>
                             {/* Upper Metadata Block */}
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-muted/20 border rounded-xl p-4">
-                        <div>
-                            <span className="text-[9px] font-bold text-muted-foreground uppercase block">Customer</span>
-                            <span className="text-xs font-black text-foreground mt-0.5 block truncate">
-                                {invoice.customer_name || "N/A"}
-                            </span>
-                        </div>
-                        <div>
-                            <span className="text-[9px] font-bold text-muted-foreground uppercase block">Invoice Date</span>
-                            <span className="text-xs font-bold text-foreground mt-0.5 block">
-                                {new Date(invoice.invoice_date).toLocaleDateString()}
-                            </span>
-                        </div>
-                        <div>
-                            <span className="text-[9px] font-bold text-muted-foreground uppercase block">Due Date</span>
-                            <span className="text-xs font-bold text-foreground mt-0.5 block">
-                                {new Date(invoice.due_date).toLocaleDateString()}
-                            </span>
-                        </div>
-                        <div>
-                            <span className="text-[9px] font-bold text-muted-foreground uppercase block">Sales Order Ref</span>
-                            <span className="text-xs font-bold text-primary mt-0.5 block">
-                                {invoice.sales_order_no || "Manual"}
-                            </span>
-                        </div>
-                    </div>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-muted/20 border rounded-xl p-4">
+                                <div>
+                                    <span className="text-[9px] font-bold text-muted-foreground uppercase block">Customer</span>
+                                    <span className="text-xs font-black text-foreground mt-0.5 block truncate">
+                                        {invoice.customer_name || "N/A"}
+                                    </span>
+                                </div>
+                                <div>
+                                    <span className="text-[9px] font-bold text-muted-foreground uppercase block">Invoice Date</span>
+                                    <span className="text-xs font-bold text-foreground mt-0.5 block">
+                                        {new Date(invoice.invoice_date).toLocaleDateString()}
+                                    </span>
+                                </div>
+                                <div>
+                                    <span className="text-[9px] font-bold text-muted-foreground uppercase block">Due Date</span>
+                                    <span className="text-xs font-bold text-foreground mt-0.5 block">
+                                        {new Date(invoice.due_date).toLocaleDateString()}
+                                    </span>
+                                </div>
+                                <div>
+                                    <span className="text-[9px] font-bold text-muted-foreground uppercase block">Sales Order Ref</span>
+                                    <span className="text-xs font-bold text-primary mt-0.5 block">
+                                        {invoice.sales_order_no || "Manual"}
+                                    </span>
+                                </div>
+                            </div>
 
-                    {/* Table items */}
-                    <div className="border rounded-xl overflow-hidden">
-                        <div className="bg-muted/30 px-4 py-2 border-b">
-                            <span className="text-[9px] font-extrabold uppercase text-muted-foreground tracking-wider">Invoiced Items</span>
-                        </div>
-                        <div className="divide-y max-h-40 overflow-y-auto">
-                            {invoiceDetails.map((item, index) => (
-                                <div key={index} className="px-4 py-2.5 flex items-center justify-between text-xs hover:bg-muted/10">
-                                    <div className="min-w-0">
-                                        <p className="font-bold text-foreground truncate">{item.product_id?.product_name || `Product #${item.product_id}`}</p>
-                                        <p className="text-[9px] text-muted-foreground mt-0.5">
-                                            Code: {item.product_id?.product_code || "N/A"} | UOM: {item.product_id?.uom || "PCS"}
-                                        </p>
+                            {/* Table items */}
+                            <div className="border rounded-xl overflow-hidden">
+                                <div className="bg-muted/30 px-4 py-2 border-b">
+                                    <span className="text-[9px] font-extrabold uppercase text-muted-foreground tracking-wider">Invoiced Items</span>
+                                </div>
+                                <div className="divide-y max-h-40 overflow-y-auto">
+                                    {invoiceDetails.map((item, index) => (
+                                        <div key={index} className="px-4 py-2.5 flex items-center justify-between text-xs hover:bg-muted/10">
+                                            <div className="min-w-0">
+                                                <p className="font-bold text-foreground truncate">{item.product_id?.product_name || `Product #${item.product_id}`}</p>
+                                                <p className="text-[9px] text-muted-foreground mt-0.5">
+                                                    Code: {item.product_id?.product_code || "N/A"} | UOM: {item.product_id?.uom || "PCS"}
+                                                </p>
+                                            </div>
+                                            <div className="text-right shrink-0">
+                                                <p className="font-black text-foreground">{item.quantity} × ₱{Number(item.unit_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                                                <p className="text-[9px] text-emerald-600 font-bold mt-0.5">₱{Number(item.net_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Cost Ledger breakdown */}
+                            <div className="flex flex-col sm:flex-row gap-4 justify-between items-start">
+                                {/* Remaining balance highlights */}
+                                <div className="w-full sm:flex-1 bg-muted/5 border rounded-xl p-4 space-y-2 text-xs">
+                                    <div className="flex justify-between font-bold text-foreground">
+                                        <span>Net Invoiced Balance:</span>
+                                        <span>₱{invoice.net_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                                     </div>
-                                    <div className="text-right shrink-0">
-                                        <p className="font-black text-foreground">{item.quantity} × ₱{Number(item.unit_price || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}</p>
-                                        <p className="text-[9px] text-emerald-600 font-bold mt-0.5">₱{Number(item.net_amount || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}</p>
+                                    <div className="flex justify-between text-emerald-600 font-bold">
+                                        <span>Total Collected Amount:</span>
+                                        <span>₱{totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                    </div>
+                                    <div className="border-t pt-2 flex justify-between font-black text-xs text-primary">
+                                        <span>Outstanding Due:</span>
+                                        <span>₱{remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                                     </div>
                                 </div>
-                            ))}
-                        </div>
-                    </div>
 
-                    {/* Cost Ledger breakdown */}
-                    <div className="flex flex-col sm:flex-row gap-4 justify-between items-start">
-                        {/* Remaining balance highlights */}
-                        <div className="w-full sm:flex-1 bg-muted/5 border rounded-xl p-4 space-y-2 text-xs">
-                            <div className="flex justify-between font-bold text-foreground">
-                                <span>Net Invoiced Balance:</span>
-                                <span>₱{invoice.net_amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                                <div className="w-full sm:max-w-xs bg-muted/10 border rounded-xl p-4 space-y-2 text-xs">
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Subtotal Gross:</span>
+                                        <span className="font-bold">₱{invoice.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">VAT (12%):</span>
+                                        <span className="font-bold">₱{invoice.vat_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                    </div>
+                                    {invoice.discount_amount > 0 && (
+                                        <div className="flex justify-between text-rose-600 font-medium">
+                                            <span>Discount:</span>
+                                            <span>-₱{invoice.discount_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                        </div>
+                                    )}
+                                    <div className="border-t pt-2 flex justify-between font-black text-sm text-foreground">
+                                        <span>Total Invoiced:</span>
+                                        <span>₱{invoice.net_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                    </div>
+                                </div>
                             </div>
-                            <div className="flex justify-between text-emerald-600 font-bold">
-                                <span>Total Collected Amount:</span>
-                                <span>₱{totalPaid.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
-                            </div>
-                            <div className="border-t pt-2 flex justify-between font-black text-xs text-primary">
-                                <span>Outstanding Due:</span>
-                                <span>₱{remainingBalance.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
-                            </div>
-                        </div>
 
-                        <div className="w-full sm:max-w-xs bg-muted/10 border rounded-xl p-4 space-y-2 text-xs">
-                            <div className="flex justify-between">
-                                <span className="text-muted-foreground">Subtotal Gross:</span>
-                                <span className="font-bold">₱{invoice.total_amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
-                            </div>
-                            <div className="flex justify-between">
-                                <span className="text-muted-foreground">VAT (12%):</span>
-                                <span className="font-bold">₱{invoice.vat_amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
-                            </div>
-                            {invoice.discount_amount > 0 && (
-                                <div className="flex justify-between text-rose-600 font-medium">
-                                    <span>Discount:</span>
-                                    <span>-₱{invoice.discount_amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                            {/* Payment History Log */}
+                            {payments.length > 0 && (
+                                <div className="border rounded-xl overflow-hidden">
+                                    <div className="bg-muted/30 px-4 py-2 border-b">
+                                        <span className="text-[9px] font-extrabold uppercase text-muted-foreground tracking-wider">Payment Collection History</span>
+                                    </div>
+                                    <div className="divide-y max-h-32 overflow-y-auto">
+                                        {payments.map((p: PaymentHistoryItem, idx: number) => (
+                                            <div key={idx} className="px-4 py-2 flex justify-between items-center text-xs hover:bg-muted/5">
+                                                <div>
+                                                    <p className="font-bold text-foreground">{p.method} (Ref: {p.reference || "N/A"})</p>
+                                                    <p className="text-[9px] text-muted-foreground mt-0.5">{new Date(p.date).toLocaleString()}</p>
+                                                </div>
+                                                <div className="text-right font-black text-emerald-600">
+                                                    ₱{Number(p.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
                             )}
-                            <div className="border-t pt-2 flex justify-between font-black text-sm text-foreground">
-                                <span>Total Invoiced:</span>
-                                <span>₱{invoice.net_amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
-                            </div>
-                        </div>
-                    </div>
 
-                    {/* Payment History Log */}
-                    {payments.length > 0 && (
-                        <div className="border rounded-xl overflow-hidden">
-                            <div className="bg-muted/30 px-4 py-2 border-b">
-                                <span className="text-[9px] font-extrabold uppercase text-muted-foreground tracking-wider">Payment Collection History</span>
-                            </div>
-                            <div className="divide-y max-h-32 overflow-y-auto">
-                                {payments.map((p: PaymentHistoryItem, idx: number) => (
-                                    <div key={idx} className="px-4 py-2 flex justify-between items-center text-xs hover:bg-muted/5">
-                                        <div>
-                                            <p className="font-bold text-foreground">{p.method} (Ref: {p.reference || "N/A"})</p>
-                                            <p className="text-[9px] text-muted-foreground mt-0.5">{new Date(p.date).toLocaleString()}</p>
-                                        </div>
-                                        <div className="text-right font-black text-emerald-600">
-                                            ₱{Number(p.amount).toLocaleString(undefined, {minimumFractionDigits: 2})}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Remarks Log */}
-                    {invoice.remarks && (
-                        <div className="bg-amber-500/5 border border-amber-500/10 rounded-xl p-4">
-                            <span className="text-[9px] font-bold text-amber-500 uppercase block mb-1">Audit Ledger Remarks</span>
-                            <p className="text-xs text-muted-foreground whitespace-pre-line leading-relaxed">{invoice.remarks}</p>
-                        </div>
-                    )}
+                            {/* Remarks Log */}
+                            {invoice.remarks && (
+                                <div className="bg-amber-500/5 border border-amber-500/10 rounded-xl p-4">
+                                    <span className="text-[9px] font-bold text-amber-500 uppercase block mb-1">Audit Ledger Remarks</span>
+                                    <p className="text-xs text-muted-foreground whitespace-pre-line leading-relaxed">{invoice.remarks}</p>
+                                </div>
+                            )}
 
 
                         </>
@@ -352,7 +352,7 @@ export default function InvoiceDetailModal({
             {/* ========================================================================= */}
             {/* 🖨️ DETAILED PRINT BLUEPRINT (Visible only during window.print())          */}
             {/* ========================================================================= */}
-            <div 
+            <div
                 id="invoice-print-blueprint"
                 className="hidden print:block absolute left-0 top-0 font-mono text-black select-none pointer-events-none"
                 style={{
@@ -363,7 +363,7 @@ export default function InvoiceDetailModal({
                 }}
             >
                 {/* 1. Invoice Date */}
-                <div 
+                <div
                     className="absolute font-bold"
                     style={{
                         left: `${alignment.leftMargin + alignment.offsets.invoiceDate.x}mm`,
@@ -374,7 +374,7 @@ export default function InvoiceDetailModal({
                 </div>
 
                 {/* 2. Invoice Number */}
-                <div 
+                <div
                     className="absolute font-bold"
                     style={{
                         left: `${alignment.leftMargin + alignment.offsets.invoiceNo.x}mm`,
@@ -385,7 +385,7 @@ export default function InvoiceDetailModal({
                 </div>
 
                 {/* 3. Customer Name */}
-                <div 
+                <div
                     className="absolute font-bold"
                     style={{
                         left: `${alignment.leftMargin + alignment.offsets.customerName.x}mm`,
@@ -396,7 +396,7 @@ export default function InvoiceDetailModal({
                 </div>
 
                 {/* 3b. Customer Address */}
-                <div 
+                <div
                     className="absolute"
                     style={{
                         left: `${alignment.leftMargin + alignment.offsets.customerAddress.x}mm`,
@@ -407,7 +407,7 @@ export default function InvoiceDetailModal({
                 </div>
 
                 {/* 3c. Customer TIN */}
-                <div 
+                <div
                     className="absolute"
                     style={{
                         left: `${alignment.leftMargin + alignment.offsets.customerTin.x}mm`,
@@ -418,7 +418,7 @@ export default function InvoiceDetailModal({
                 </div>
 
                 {/* 4. Terms */}
-                <div 
+                <div
                     className="absolute"
                     style={{
                         left: `${alignment.leftMargin + alignment.offsets.terms.x}mm`,
@@ -434,7 +434,7 @@ export default function InvoiceDetailModal({
                     return (
                         <React.Fragment key={idx}>
                             {/* Quantity */}
-                            <div 
+                            <div
                                 className="absolute text-right"
                                 style={{
                                     left: `${alignment.leftMargin + alignment.offsets.colQty.x}mm`,
@@ -444,9 +444,9 @@ export default function InvoiceDetailModal({
                             >
                                 {item.quantity}
                             </div>
-                            
+
                             {/* UOM */}
-                            <div 
+                            <div
                                 className="absolute"
                                 style={{
                                     left: `${alignment.leftMargin + alignment.offsets.colUnit.x}mm`,
@@ -457,7 +457,7 @@ export default function InvoiceDetailModal({
                             </div>
 
                             {/* Description */}
-                            <div 
+                            <div
                                 className="absolute truncate"
                                 style={{
                                     left: `${alignment.leftMargin + alignment.offsets.colDescription.x}mm`,
@@ -469,7 +469,7 @@ export default function InvoiceDetailModal({
                             </div>
 
                             {/* Unit Price */}
-                            <div 
+                            <div
                                 className="absolute text-right"
                                 style={{
                                     left: `${alignment.leftMargin + alignment.offsets.colUnitPrice.x}mm`,
@@ -481,7 +481,7 @@ export default function InvoiceDetailModal({
                             </div>
 
                             {/* Net Amount */}
-                            <div 
+                            <div
                                 className="absolute text-right"
                                 style={{
                                     left: `${alignment.leftMargin + alignment.offsets.colAmount.x}mm`,
@@ -496,7 +496,7 @@ export default function InvoiceDetailModal({
                 })}
 
                 {/* 6. Total Amount */}
-                <div 
+                <div
                     className="absolute font-extrabold text-right"
                     style={{
                         left: `${alignment.leftMargin + alignment.offsets.totalAmount.x}mm`,

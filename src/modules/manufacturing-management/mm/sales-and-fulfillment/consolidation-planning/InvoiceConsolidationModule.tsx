@@ -52,6 +52,7 @@ export default function InvoiceConsolidationModule() {
         consolidations,
         summary,
         candidates,
+        candidatesLoading,
         branches,
         selectedBranch,
         loading,
@@ -392,7 +393,7 @@ export default function InvoiceConsolidationModule() {
                     onClose={() => setShowCreateModal(false)}
                     branch={selectedBranch}
                     candidates={candidates}
-                    loading={loading}
+                    loading={candidatesLoading}
                     onSubmit={handleCreate}
                 />
             )}
