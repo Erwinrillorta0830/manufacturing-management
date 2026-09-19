@@ -612,7 +612,7 @@ export default function ProductReconciliationModal({
         for (const item of lineItems) {
             if (item.returned_quantity > 0 && item.reservations && item.reservations.length > 0) {
                 const physicalDispatched = item.reservations.reduce(
-                    (sum, r) => sum + (Number(r.picked_quantity) || 0),
+                    (sum, r) => sum + (Number(r.picked_quantity || r.reserved_quantity) || 0),
                     0
                 );
                 const targetReturn = physicalDispatched > 0 ? Math.min(item.returned_quantity, physicalDispatched) : item.returned_quantity;
@@ -1313,7 +1313,7 @@ export default function ProductReconciliationModal({
                     {allocationModalItemIndex !== null && lineItems[allocationModalItemIndex] && (() => {
                         const targetItem = lineItems[allocationModalItemIndex];
                         const physicalDispatched = (targetItem.reservations || []).reduce(
-                            (sum, r) => sum + (Number(r.picked_quantity) || 0),
+                            (sum, r) => sum + (Number(r.picked_quantity || r.reserved_quantity) || 0),
                             0
                         );
                         const itemBaseline = targetItem.invoiced_quantity !== undefined && targetItem.invoiced_quantity !== null

@@ -211,6 +211,18 @@ export async function fetchAllocations(batchId: number): Promise<LotAllocation[]
     return data.allocations ?? [];
 }
 
+export async function fetchAllocationsWithBatches(batchId: number): Promise<{
+    allocations: LotAllocation[];
+    availableBatches: import("./consolidation-types").AvailableLotBatchItem[];
+}> {
+    const res = await fetchWithSessionRetry(`${LEGACY}/allocations?batchId=${batchId}`);
+    const data = await handleResponse(res, "Failed to load allocations");
+    return {
+        allocations: data.allocations ?? [],
+        availableBatches: data.availableBatches ?? [],
+    };
+}
+
 // ─── Consolidation Approval ──────────────────────────────────────────────────
 
 export async function fetchApprovalQueue(params: {

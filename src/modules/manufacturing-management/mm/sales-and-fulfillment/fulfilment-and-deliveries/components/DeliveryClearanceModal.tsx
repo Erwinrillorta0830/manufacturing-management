@@ -369,7 +369,7 @@ export default function DeliveryClearanceModal({
                 }
                 if (item.returned_quantity > 0 && item.reservations && item.reservations.length > 0) {
                     const physicalDispatched = item.reservations.reduce(
-                        (sum, r) => sum + (Number(r.picked_quantity) || 0),
+                        (sum, r) => sum + (Number(r.picked_quantity || r.reserved_quantity) || 0),
                         0
                     );
                     const targetReturn = physicalDispatched > 0 ? Math.min(item.returned_quantity, physicalDispatched) : item.returned_quantity;
@@ -439,52 +439,72 @@ export default function DeliveryClearanceModal({
                 // All items returned to hub: received is 0, returned equals physical dispatch (picked/invoiced) or existing received
                 updatedItems = (ord.items || []).map((item) => {
                     const physicalDispatched = (item.reservations || []).reduce(
-                        (sum, r) => sum + (Number(r.picked_quantity) || 0),
+                        (sum, r) => sum + (Number(r.picked_quantity || r.reserved_quantity) || 0),
                         0
                     );
+                    const itemBaseline = item.invoiced_quantity !== undefined && item.invoiced_quantity !== null
+                        ? item.invoiced_quantity
+                        : item.ordered_quantity;
                     const returnQty = physicalDispatched > 0
-                        ? physicalDispatched
-                        : (typeof item.received_quantity === "number" && item.received_quantity > 0 ? item.received_quantity : 0);
+                        ? Math.min(physicalDispatched, itemBaseline)
+                        : (typeof item.received_quantity === "number" && item.received_quantity > 0 ? item.received_quantity : itemBaseline);
+
+                    const updatedReservations = (item.reservations || []).map((r) => ({
+                        ...r,
+                        returned_quantity: Number(r.picked_quantity || r.reserved_quantity || 0),
+                    }));
+
                     return {
                         ...item,
                         received_quantity: 0,
                         returned_quantity: returnQty,
                         has_concern: false,
                         line_status: "Unfulfilled / Returns" as LineStatus,
+                        reservations: updatedReservations,
                     };
                 });
             } else if (preset === "Fulfilled") {
                 updatedItems = (ord.items || []).map((item) => {
                     const physicalDispatched = (item.reservations || []).reduce(
-                        (sum, r) => sum + (Number(r.picked_quantity) || 0),
+                        (sum, r) => sum + (Number(r.picked_quantity || r.reserved_quantity) || 0),
                         0
                     );
                     const targetQty = physicalDispatched > 0
                         ? Math.min(item.ordered_quantity, physicalDispatched)
                         : (typeof item.received_quantity === "number" ? item.received_quantity : 0);
+                    const updatedReservations = (item.reservations || []).map((r) => ({
+                        ...r,
+                        returned_quantity: 0,
+                    }));
                     return {
                         ...item,
                         received_quantity: targetQty,
                         returned_quantity: 0,
                         has_concern: false,
                         line_status: "Fulfilled" as LineStatus,
+                        reservations: updatedReservations,
                     };
                 });
             } else if (preset === "Fulfilled with Concerns") {
                 updatedItems = (ord.items || []).map((item) => {
                     const physicalDispatched = (item.reservations || []).reduce(
-                        (sum, r) => sum + (Number(r.picked_quantity) || 0),
+                        (sum, r) => sum + (Number(r.picked_quantity || r.reserved_quantity) || 0),
                         0
                     );
                     const targetQty = physicalDispatched > 0
                         ? Math.min(item.ordered_quantity, physicalDispatched)
                         : (typeof item.received_quantity === "number" ? item.received_quantity : 0);
+                    const updatedReservations = (item.reservations || []).map((r) => ({
+                        ...r,
+                        returned_quantity: 0,
+                    }));
                     return {
                         ...item,
                         received_quantity: targetQty,
                         returned_quantity: 0,
                         has_concern: true,
                         line_status: "Fulfilled with Concerns" as LineStatus,
+                        reservations: updatedReservations,
                     };
                 });
             } else if (preset === "Fulfilled with Returns") {

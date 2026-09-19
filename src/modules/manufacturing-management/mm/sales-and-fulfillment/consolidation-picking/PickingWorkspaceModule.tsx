@@ -7,7 +7,7 @@ import type { InvoiceConsolidation, PickingSavePayload } from "../shared/consoli
 import { fetchConsolidationByNo, savePickedQuantities, completePicking } from "../shared/consolidation-api";
 import { usePickingModal } from "./hooks/usePickingModal";
 import {
-    Package, Minus, Plus, Save, SquarePen, AlertTriangle, Loader2, Keyboard, ArrowLeft
+    Package, Minus, Plus, Save, SquarePen, AlertTriangle, Loader2, Keyboard, ArrowLeft, Printer
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -15,6 +15,8 @@ import {
     ConsolidationShell,
     ConsolidationStatusBadge,
 } from "../shared/consolidation-ui";
+import { fetchAllocationsWithBatches } from "../shared/consolidation-api";
+import { generateConsolidationPDF } from "../consolidation-planning/utils/ConsolidationSummaryPrint";
 
 interface PickingWorkspaceModuleProps {
     batchNo: string;
@@ -25,6 +27,7 @@ export default function PickingWorkspaceModule({ batchNo }: PickingWorkspaceModu
     const [consolidation, setConsolidation] = useState<InvoiceConsolidation | null>(null);
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
+    const [printing, setPrinting] = useState(false);
 
     useEffect(() => {
         if (!batchNo) return;
@@ -74,6 +77,82 @@ export default function PickingWorkspaceModule({ batchNo }: PickingWorkspaceModu
     const handleClose = useCallback(() => {
         router.push("/mm/sales-and-fulfillment/consolidation-picking");
     }, [router]);
+
+    const handlePrint = async () => {
+        if (!consolidation) return;
+        setPrinting(true);
+        try {
+            toast.info(`Generating Pick List for ${consolidation.consolidatorNo}...`);
+            const allocResult = await fetchAllocationsWithBatches(consolidation.id).catch(() => ({ allocations: [], availableBatches: [] }));
+            const printAllocations = allocResult.allocations || [];
+
+            const detailMap = new Map<number, {
+                productId: number;
+                productCode: string;
+                productName: string;
+                brand: string;
+                category: string;
+                unit: string;
+                orderedQuantity: number;
+                pickedQuantity: number;
+            }>();
+
+            for (const d of consolidation.details || []) {
+                const existing = detailMap.get(d.productId);
+                const currentPicked = Number(localItems[d.id] ?? d.pickedQuantity ?? 0);
+                if (existing) {
+                    existing.orderedQuantity += d.orderedQuantity;
+                    existing.pickedQuantity += currentPicked;
+                } else {
+                    detailMap.set(d.productId, {
+                        productId: d.productId,
+                        productCode: d.productCode,
+                        productName: d.productName,
+                        brand: d.brand || "Unbranded",
+                        category: d.category || "Uncategorized",
+                        unit: d.unit || "-",
+                        orderedQuantity: d.orderedQuantity,
+                        pickedQuantity: currentPicked,
+                    });
+                }
+            }
+
+            await generateConsolidationPDF({
+                consolidatorNo: consolidation.consolidatorNo,
+                branchName: consolidation.branchName || `Branch #${consolidation.branchId}`,
+                status: consolidation.status,
+                createdAt: consolidation.createdAt,
+                details: Array.from(detailMap.values()),
+                invoices: (consolidation.invoices || []).map((inv) => ({
+                    invoiceNo: inv.invoiceNo,
+                    customerName: inv.customerName,
+                    products: (inv.products || []).map((p) => ({
+                        productName: p.productName,
+                        productCode: p.productCode,
+                        quantity: p.quantity,
+                    })),
+                })),
+                totalInvoices: consolidation.invoices?.length || 0,
+                allocations: printAllocations.map((a) => ({
+                    productId: a.productId,
+                    productName: a.productName,
+                    lotName: a.lotName || `Lot #${a.lotId}`,
+                    batchNo: a.batchNo || "N/A",
+                    manufacturingDate: a.manufacturingDate || null,
+                    expiryDate: a.expiryDate || null,
+                    quantity: Number(a.quantity || 0),
+                })),
+            });
+
+            toast.success(`Pick List generated for ${consolidation.consolidatorNo}`);
+        } catch (err: unknown) {
+            console.error("Failed to print pick list:", err);
+            const message = err instanceof Error ? err.message : "Failed to print pick list";
+            toast.error(message);
+        } finally {
+            setPrinting(false);
+        }
+    };
 
     const {
         localItems, hasChanges, editingDetailId, editValue,
@@ -157,6 +236,20 @@ export default function PickingWorkspaceModule({ batchNo }: PickingWorkspaceModu
                                 {consolidation.consolidatorNo}
                             </h1>
                             <ConsolidationStatusBadge status="Picking" />
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={handlePrint}
+                                disabled={printing}
+                                className="h-7 rounded-lg text-xs font-bold border-border/80 hover:bg-primary/5 hover:border-primary/40 cursor-pointer ml-1"
+                            >
+                                {printing ? (
+                                    <Loader2 className="h-3 w-3 mr-1 animate-spin text-primary" />
+                                ) : (
+                                    <Printer className="h-3 w-3 mr-1 text-primary" />
+                                )}
+                                Print Pick List
+                            </Button>
                         </div>
                         <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mt-0.5">
                             {consolidation.branchName || `Branch #${consolidation.branchId}`}
@@ -274,10 +367,10 @@ export default function PickingWorkspaceModule({ batchNo }: PickingWorkspaceModu
                                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                                     <div className="flex-1 min-w-0">
                                         <h3 className={`text-sm font-bold leading-tight truncate ${isComplete ? "line-through text-muted-foreground" : "text-foreground"}`}>
-                                            {item.productName || `Product #${item.productId}`}
+                                            {item.productName || `Unknown Product`}
                                         </h3>
                                         <p className="text-[10px] font-mono text-muted-foreground mt-0.5">
-                                            {item.productCode || `ID: ${item.productId}`}
+                                            {item.productCode || `Unknown Product Code`}
                                         </p>
                                         {hasStockError && (
                                             <p className="text-[9px] font-bold text-red-500 mt-1 flex items-center gap-1">
@@ -399,6 +492,20 @@ export default function PickingWorkspaceModule({ batchNo }: PickingWorkspaceModu
                     </span>
                 </div>
                 <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
+                    <Button
+                        variant="outline"
+                        onClick={handlePrint}
+                        disabled={printing}
+                        className="flex items-center gap-1.5 text-xs font-bold"
+                        suppressHydrationWarning
+                    >
+                        {printing ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                        ) : (
+                            <Printer className="h-3.5 w-3.5 text-primary" />
+                        )}
+                        Print Pick List
+                    </Button>
                     <Button
                         id="picking-save-btn"
                         variant="outline"

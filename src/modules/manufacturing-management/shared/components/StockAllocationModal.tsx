@@ -38,6 +38,7 @@ import {
   BatchAllocationResult,
   AllocationStrategy,
   QAStatus,
+  ProductClassification,
 } from '../types/lot-tracking.types';
 import { fetchBatchOnhand, fetchLotsByBranch, fetchInventoryLots, isBadStockLot } from '../services/lot-tracking.service';
 import { allocateStockSync } from '../services/stock-allocation.engine';
@@ -47,7 +48,7 @@ export interface StockAllocationModalProps {
   onOpenChange: (open: boolean) => void;
   productId: number;
   productName?: string;
-  productClassification?: 'RM' | 'PKG' | 'FG';
+  productClassification?: ProductClassification;
   branchId: number;
   targetBranchId?: number | null;
   targetBranchName?: string;

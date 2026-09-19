@@ -175,10 +175,10 @@ export default function AuditWorkspaceModule({ batchNo }: AuditWorkspaceModulePr
                                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                                     <div className="flex-1 min-w-0">
                                         <h3 className={`text-sm font-bold leading-tight truncate ${isAudited ? "line-through text-muted-foreground" : "text-foreground"}`}>
-                                            {d.productName || `Product #${d.productId}`}
+                                            {d.productName  }
                                         </h3>
                                         <p className="text-[10px] font-mono text-muted-foreground mt-0.5">
-                                            {d.productCode || `ID: ${d.productId}`}
+                                            {d.productCode }
                                         </p>
                                     </div>
 

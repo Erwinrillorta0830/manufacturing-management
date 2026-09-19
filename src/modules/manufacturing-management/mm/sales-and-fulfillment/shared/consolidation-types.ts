@@ -149,6 +149,19 @@ export interface LotPickedItem {
     inventoryLotId?: number;
 }
 
+export interface AvailableLotBatchItem {
+    productId: number;
+    productName: string;
+    productCode?: string;
+    inventoryLotId: number;
+    lotId: number;
+    lotName: string;
+    batchNo: string;
+    expiryDate: string | null;
+    availableQuantity: number;
+    inventoryCondition?: string;
+}
+
 export interface PickingSavePayload {
     batchId: number;
     quantities: { detailId: number; pickedQuantity: number }[];
