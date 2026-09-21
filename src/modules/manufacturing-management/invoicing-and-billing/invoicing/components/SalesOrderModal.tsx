@@ -170,7 +170,7 @@ export const SalesOrderModal: React.FC<SalesOrderModalProps> = ({ order, open, o
 
 
     const timelineData = [
-        { label: "Creation (Sales Order)", date: order.created_date, icon: Clock },
+        { label: "Creation", date: order.created_date, icon: Clock },
         { label: "Consolidation", date: order.for_consolidation_at, icon: PackageSearch },
         { label: "Picking", date: order.for_picking_at, icon: Briefcase },
         { label: "Approval", date: order.for_approval_at, icon: ClipboardList },

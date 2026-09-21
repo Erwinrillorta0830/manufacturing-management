@@ -607,6 +607,14 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                 printAllocations = allocResult.allocations || [];
             }
 
+            // Group by product to replicate the per-product idx used when building lotPickedQtys keys
+            const printAllocByProduct = new Map<number, LotAllocation[]>();
+            for (const a of printAllocations) {
+                const list = printAllocByProduct.get(a.productId) || [];
+                list.push(a);
+                printAllocByProduct.set(a.productId, list);
+            }
+
             await generateConsolidationPDF({
                 consolidatorNo: activeBatch.consolidatorNo,
                 branchName: activeBatch.branchName || `Branch #${activeBatch.branchId}`,
@@ -623,15 +631,21 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                     })),
                 })),
                 totalInvoices: activeBatch.invoices?.length || 0,
-                allocations: printAllocations.map((a) => ({
-                    productId: a.productId,
-                    productName: a.productName,
-                    lotName: a.lotName || `Lot #${a.lotId}`,
-                    batchNo: a.batchNo || "N/A",
-                    manufacturingDate: a.manufacturingDate || null,
-                    expiryDate: a.expiryDate || null,
-                    quantity: Number(a.quantity || 0),
-                })),
+                allocations: printAllocations.map((a) => {
+                    const prodAllocs = printAllocByProduct.get(a.productId) || [];
+                    const perProductIdx = prodAllocs.indexOf(a);
+                    const lotKey = getLotKey(a.productId, a, perProductIdx);
+                    const pickedQtyForLot = Number(lotPickedQtys[lotKey] ?? 0);
+                    return {
+                        productId: a.productId,
+                        productName: a.productName,
+                        lotName: a.lotName || `Lot #${a.lotId}`,
+                        batchNo: a.batchNo || "N/A",
+                        manufacturingDate: a.manufacturingDate || null,
+                        expiryDate: a.expiryDate || null,
+                        quantity: pickedQtyForLot,
+                    };
+                }),
             });
 
             toast.success("Warehouse Pick List generated successfully");
@@ -688,22 +702,6 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={handlePrint}
-                                disabled={printing}
-                                className="h-8 rounded-xl text-xs font-bold border-border/80 hover:bg-primary/5 hover:border-primary/40 cursor-pointer"
-                            >
-                                {printing ? (
-                                    <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin text-primary" />
-                                ) : (
-                                    <Printer className="h-3.5 w-3.5 mr-1.5 text-primary" />
-                                )}
-                                Print Pick List
-                            </Button>
-                        </div>
                     </div>
 
                     {/* Progress Bar & Summary Metric Cards */}
@@ -971,7 +969,7 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                                                                     <Input
                                                                         type="number"
                                                                         min={0}
-                                                                        max={lotCapacity}
+                                                                        max={isFloorLot ? undefined : lotCapacity}
                                                                         value={currentLotPicked === 0 ? "" : currentLotPicked}
                                                                         placeholder="0"
                                                                         onFocus={(e) => e.currentTarget.select()}
@@ -994,9 +992,11 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                                                                                 : "border-border bg-background/90"
                                                                         }`}
                                                                     />
-                                                                    <span className="text-xs font-mono font-bold text-muted-foreground whitespace-nowrap">
-                                                                        / {lotCapacity} units
-                                                                    </span>
+                                                                    {!isFloorLot && (
+                                                                        <span className="text-xs font-mono font-bold text-muted-foreground whitespace-nowrap">
+                                                                            / {lotCapacity} units
+                                                                        </span>
+                                                                    )}
                                                                 </div>
                                                                 <Button
                                                                     type="button"

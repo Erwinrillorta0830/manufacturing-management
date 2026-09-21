@@ -17,6 +17,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const COOKIE_NAME = "vos_access_token";
+export const metadata = {
+    title: "Consolidation Planning | MM",
+    description: "Consolidation Approval"
+};
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
     try {

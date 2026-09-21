@@ -1,3 +1,8 @@
+import React from "react";
+import { cookies } from "next/headers";
+import { SidebarTrigger } from "@/components/ui/sidebar";
+import { Separator } from "@/components/ui/separator";
+import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import {
     Breadcrumb,
     BreadcrumbItem,
@@ -6,15 +11,15 @@ import {
     BreadcrumbPage,
     BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { Separator } from "@/components/ui/separator";
-import { SidebarTrigger } from "@/components/ui/sidebar";
-import { NavUser } from "@/components/shared/app-sidebar/nav-user";
-import { cookies } from "next/headers";
+import FixedAssetsDepreciationScheduleModule from "@/modules/business-intelligence-and-analytics/financial-management/fixed-assets-depreciation-schedule/FixedAssetsDepreciationScheduleModule";
 
-import InvoiceConsolidationModule from "@/modules/manufacturing-management/mm/sales-and-fulfillment/consolidation-planning/InvoiceConsolidationModule";
-
-export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+export const metadata = {
+    title: "Fixed Asset Depreciation Schedule | VOS ERP",
+    description:
+        "Tracks asset acquisition cost, salvage value, accumulated depreciation, and net book value for balance sheet carrying amounts and audit reporting."
+};
 
 const COOKIE_NAME = "vos_access_token";
 
@@ -22,9 +27,11 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
     try {
         const parts = token.split(".");
         if (parts.length < 2) return null;
+
         const p = parts[1];
         const b64 = p.replace(/-/g, "+").replace(/_/g, "/");
         const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+
         const json = Buffer.from(padded, "base64").toString("utf8");
         return JSON.parse(json);
     } catch {
@@ -42,42 +49,63 @@ function pickString(obj: Record<string, unknown> | null | undefined, keys: strin
 
 function buildHeaderUserFromToken(token: string | null | undefined) {
     const payload = token ? decodeJwtPayload(token) : null;
-    const first = pickString(payload, ["Firstname", "FirstName", "firstName", "firstname", "first_name"]);
-    const last = pickString(payload, ["LastName", "Lastname", "lastName", "lastname", "last_name"]);
-    const email = pickString(payload, ["email", "Email"]);
-    const name = [first, last].filter(Boolean).join(" ") || email || "User";
-    return { name, email: email || "", avatar: "/vertex_logo_black.png" };
-}
-export const metadata = {
-    title: "Consolidation Planning | MM",
-    description: "Consolidate shipments for better delivery efficiency."
-};
 
-export default async function ConsolidationPlanningPage() {
+    const first = pickString(payload, [
+        "Firstname",
+        "FirstName",
+        "firstName",
+        "firstname",
+        "first_name",
+    ]);
+    const last = pickString(payload, [
+        "LastName",
+        "Lastname",
+        "lastName",
+        "lastname",
+        "last_name",
+    ]);
+    const email = pickString(payload, ["email", "Email"]);
+
+    const name = [first, last].filter(Boolean).join(" ") || email || "User";
+
+    return {
+        name,
+        email: email || "",
+        avatar: "/avatars/shadcn.jpg",
+    };
+}
+
+export default async function FixedAssetsDepreciationSchedulePage() {
     const cookieStore = await cookies();
     const token = cookieStore.get(COOKIE_NAME)?.value ?? null;
     const headerUser = buildHeaderUserFromToken(token);
 
     return (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            {/* Topbar */}
             <header className="relative z-10 flex h-14 shrink-0 items-center justify-between border-b shadow-sm bg-background sm:h-16 overflow-hidden">
                 <div className="flex h-full min-w-0 items-center gap-2 px-3 sm:px-4 overflow-hidden">
                     <SidebarTrigger className="-ml-1 shrink-0" />
-                    <Separator orientation="vertical" className="hidden sm:block mr-2 data-[orientation=vertical]:h-4 shrink-0" />
+                    <Separator
+                        orientation="vertical"
+                        className="hidden sm:block mr-2 data-[orientation=vertical]:h-4 shrink-0"
+                    />
                     <div className="min-w-0 overflow-hidden">
                         <Breadcrumb>
                             <BreadcrumbList className="min-w-0 overflow-hidden">
                                 <BreadcrumbItem className="hidden md:block shrink-0">
-                                    <BreadcrumbLink href="#">Manufacturing</BreadcrumbLink>
+                                    <BreadcrumbLink href="/bia">Business Intelligence and Analytics</BreadcrumbLink>
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
-                                <BreadcrumbItem className="hidden md:block shrink-0">
-                                    <BreadcrumbLink href="/mm/sales-and-fulfillment/consolidation-planning">Sales & Fulfillment</BreadcrumbLink>
+                                <BreadcrumbItem className="hidden sm:block shrink-0">
+                                    <BreadcrumbLink href="/bia/financial-management">
+                                        Financial Management
+                                    </BreadcrumbLink>
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
                                 <BreadcrumbItem className="min-w-0 overflow-hidden">
                                     <BreadcrumbPage className="truncate max-w-[56vw] sm:max-w-[60vw] md:max-w-none">
-                                        Consolidation Planning
+                                        Fixed Asset Depreciation Schedule
                                     </BreadcrumbPage>
                                 </BreadcrumbItem>
                             </BreadcrumbList>
@@ -88,8 +116,10 @@ export default async function ConsolidationPlanningPage() {
                     <NavUser user={headerUser} />
                 </div>
             </header>
-            <main className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-background flex flex-col">
-                <InvoiceConsolidationModule />
+
+            {/* Scrollable Content Container */}
+            <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6 bg-background space-y-4">
+                <FixedAssetsDepreciationScheduleModule />
             </main>
         </div>
     );

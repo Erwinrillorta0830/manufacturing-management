@@ -10,6 +10,7 @@ import {
     ConsolidatedSalesOrderRecord,
     ConsolidatedClearanceSubmissionPayload,
     ClearanceLineItem,
+    LineItemReservation,
     FulfillmentStatus,
     LineStatus,
     LinkedSalesReturn,
@@ -71,6 +72,13 @@ interface SavedDeliveryDraft {
         }>;
     }>;
 }
+
+const getReservationPickedQty = (r: LineItemReservation): number => {
+    if (r.picked_quantity !== undefined && r.picked_quantity !== null && !isNaN(Number(r.picked_quantity))) {
+        return Number(r.picked_quantity);
+    }
+    return Number(r.reserved_quantity || 0);
+};
 
 function loadLocalDraft(consolidatorId: number): SavedDeliveryDraft | null {
     if (typeof window === "undefined" || !consolidatorId) return null;
@@ -369,7 +377,7 @@ export default function DeliveryClearanceModal({
                 }
                 if (item.returned_quantity > 0 && item.reservations && item.reservations.length > 0) {
                     const physicalDispatched = item.reservations.reduce(
-                        (sum, r) => sum + (Number(r.picked_quantity || r.reserved_quantity) || 0),
+                        (sum, r) => sum + getReservationPickedQty(r),
                         0
                     );
                     const targetReturn = physicalDispatched > 0 ? Math.min(item.returned_quantity, physicalDispatched) : item.returned_quantity;
@@ -439,7 +447,7 @@ export default function DeliveryClearanceModal({
                 // All items returned to hub: received is 0, returned equals physical dispatch (picked/invoiced) or existing received
                 updatedItems = (ord.items || []).map((item) => {
                     const physicalDispatched = (item.reservations || []).reduce(
-                        (sum, r) => sum + (Number(r.picked_quantity || r.reserved_quantity) || 0),
+                        (sum, r) => sum + getReservationPickedQty(r),
                         0
                     );
                     const itemBaseline = item.invoiced_quantity !== undefined && item.invoiced_quantity !== null
@@ -451,7 +459,7 @@ export default function DeliveryClearanceModal({
 
                     const updatedReservations = (item.reservations || []).map((r) => ({
                         ...r,
-                        returned_quantity: Number(r.picked_quantity || r.reserved_quantity || 0),
+                        returned_quantity: getReservationPickedQty(r),
                     }));
 
                     return {
@@ -466,7 +474,7 @@ export default function DeliveryClearanceModal({
             } else if (preset === "Fulfilled") {
                 updatedItems = (ord.items || []).map((item) => {
                     const physicalDispatched = (item.reservations || []).reduce(
-                        (sum, r) => sum + (Number(r.picked_quantity || r.reserved_quantity) || 0),
+                        (sum, r) => sum + getReservationPickedQty(r),
                         0
                     );
                     const targetQty = physicalDispatched > 0
@@ -488,7 +496,7 @@ export default function DeliveryClearanceModal({
             } else if (preset === "Fulfilled with Concerns") {
                 updatedItems = (ord.items || []).map((item) => {
                     const physicalDispatched = (item.reservations || []).reduce(
-                        (sum, r) => sum + (Number(r.picked_quantity || r.reserved_quantity) || 0),
+                        (sum, r) => sum + getReservationPickedQty(r),
                         0
                     );
                     const targetQty = physicalDispatched > 0

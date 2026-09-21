@@ -58,7 +58,7 @@ export async function generateConsolidationPDF(data: PrintData) {
     doc.text("WAREHOUSE PICK LIST", pageWidth / 2, 10, { align: "center" });
 
     doc.setFontSize(7).setFont("helvetica", "normal");
-    doc.text("Vertex Terminal - Manufacturing", pageWidth / 2, 14, { align: "center" });
+    doc.text("Manufacturing", pageWidth / 2, 14, { align: "center" });
 
     // ── Batch Info Block ──
     doc.setFontSize(8).setFont("helvetica", "bold");
@@ -108,7 +108,7 @@ export async function generateConsolidationPDF(data: PrintData) {
         return [
             detail?.productCode || "-",
             detail?.productName || allocation.productName,
-            `${detail?.brand || "Unbranded"}\n${detail?.category || "Uncategorized"}`,
+            `${detail?.brand || "-"}`,
             allocation.lotName,
             allocation.batchNo,
             allocation.expiryDate || "-",
@@ -121,7 +121,7 @@ export async function generateConsolidationPDF(data: PrintData) {
     autoTable(doc, {
         startY: 32,
         margin: { left: 10, right: 10 },
-        head: [["CODE", "PRODUCT", "BRAND / CATEGORY", "LOT / RACK", "BATCH", "EXPIRY", "UOM", "PLAN QTY", "ACTUAL"]],
+        head: [["CODE", "PRODUCT", "BRAND / CATEGORY", "LOT / RACK", "BATCH", "EXPIRY", "UOM", "PICKED QTY", "ACTUAL"]],
         body: bodyRows,
         theme: "grid",
         headStyles: {
