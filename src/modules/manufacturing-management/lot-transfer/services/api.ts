@@ -323,12 +323,29 @@ export async function fetchProducts(): Promise<ProductOption[]> {
     const payload = await requestJson<unknown>("/api/manufacturing/lots/products");
     const rows = Array.isArray(payload) ? payload : unwrap<ProductOption[]>(payload as ApiEnvelope<ProductOption[]>);
     return (Array.isArray(rows) ? rows : [])
-        .map((row) => ({
-            productId: numberValue((row as ProductOption).productId ?? (row as unknown as Record<string, unknown>).product_id),
-            productName: stringValue((row as ProductOption).productName ?? (row as unknown as Record<string, unknown>).product_name),
-            skuCode: stringValue((row as ProductOption).skuCode ?? (row as unknown as Record<string, unknown>).sku_code),
-            unitCost: numberValue((row as ProductOption).unitCost ?? (row as unknown as Record<string, unknown>).unit_cost)
-        }))
+        .map((row) => {
+            const raw = row as unknown as Record<string, unknown>;
+            const rawUom = raw.unit_of_measurement;
+            const uom = typeof rawUom === "object" && rawUom !== null
+                ? rawUom as Record<string, unknown>
+                : null;
+            const uomId = numberValue(
+                (row as ProductOption).uomId
+                ?? raw.uom_id
+                ?? uom?.unit_id
+                ?? uom?.id
+                ?? rawUom
+            ) || null;
+            return {
+                productId: numberValue((row as ProductOption).productId ?? raw.product_id),
+                productName: stringValue((row as ProductOption).productName ?? raw.product_name),
+                skuCode: stringValue((row as ProductOption).skuCode ?? raw.sku_code),
+                unitCost: numberValue((row as ProductOption).unitCost ?? raw.unit_cost),
+                uomId,
+                uomName: stringValue((row as ProductOption).uomName ?? raw.uom_name ?? uom?.unit_name),
+                uomShortcut: stringValue((row as ProductOption).uomShortcut ?? raw.uom_shortcut ?? uom?.unit_shortcut)
+            };
+        })
         .filter((row) => row.productId > 0);
 }
 
@@ -352,8 +369,10 @@ export async function fetchLots(branchId?: number): Promise<LotOption[]> {
         .filter((row) => row.lotId > 0);
 }
 
-export async function fetchBatches(lotId: number): Promise<BatchOption[]> {
-    const payload = await requestJson<unknown>(`/api/manufacturing/lots/batches?lotId=${encodeURIComponent(String(lotId))}&source=lot-transfer`);
+export async function fetchBatches(lotId?: number): Promise<BatchOption[]> {
+    const params = new URLSearchParams({ source: "lot-transfer" });
+    if (lotId && lotId > 0) params.set("lotId", String(lotId));
+    const payload = await requestJson<unknown>(`/api/manufacturing/lots/batches?${params.toString()}`);
     const rows = Array.isArray(payload) ? payload : unwrap<BatchOption[]>(payload as ApiEnvelope<BatchOption[]>);
     return (Array.isArray(rows) ? rows : [])
         .map((row) => {

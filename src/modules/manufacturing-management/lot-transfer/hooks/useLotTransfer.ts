@@ -140,6 +140,10 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     const [users, setUsers] = useState<UserOption[]>([]);
     const [batchesByLot, setBatchesByLot] = useState<Record<number, BatchOption[]>>({});
     const [batchesLoadingLotId, setBatchesLoadingLotId] = useState<number | null>(null);
+    const [batchesLoading, setBatchesLoading] = useState(false);
+    const [allBatchesLoaded, setAllBatchesLoaded] = useState(false);
+    const [allBatchesLoadAttempted, setAllBatchesLoadAttempted] = useState(false);
+    const [batchesLoadError, setBatchesLoadError] = useState<string | null>(null);
     const [reportFilters, setReportFilters] = useState<LotTransferReportFilters>(() => ({
         ...DEFAULT_LOT_TRANSFER_REPORT_FILTERS,
         statuses: [...DEFAULT_LOT_TRANSFER_REPORT_FILTERS.statuses]
@@ -293,6 +297,71 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         }
     }, [batchesByLot]);
 
+    const loadAllBatches = useCallback(async (opts?: { silent?: boolean }): Promise<BatchOption[] | null> => {
+        if (allBatchesLoaded) return Object.values(batchesByLot).flat();
+        if (batchesLoading) return null;
+        if (allBatchesLoadAttempted && batchesLoadError) return null;
+        setAllBatchesLoadAttempted(true);
+        setBatchesLoadError(null);
+        setBatchesLoading(true);
+        try {
+            const rows = await fetchBatches();
+            const grouped = rows.reduce<Record<number, BatchOption[]>>((result, row) => {
+                const lotId = Number(row.lotId) || 0;
+                if (lotId <= 0) return result;
+                (result[lotId] ||= []).push(row);
+                return result;
+            }, {});
+            setBatchesByLot((current) => ({ ...current, ...grouped }));
+            setAllBatchesLoaded(true);
+            setBatchesLoadError(null);
+            return rows;
+        } catch (loadError) {
+            const message = loadError instanceof Error ? loadError.message : "Unable to load lot occupancy.";
+            setBatchesLoadError(message);
+            if (!opts?.silent) setError(message);
+            return null;
+        } finally {
+            setBatchesLoading(false);
+        }
+    }, [allBatchesLoadAttempted, allBatchesLoaded, batchesByLot, batchesLoadError, batchesLoading]);
+
+    useEffect(() => {
+        const sourceLotId = Number(form.sourceLotId) || 0;
+        if (sourceLotId <= 0 || !Object.prototype.hasOwnProperty.call(batchesByLot, sourceLotId)) return;
+        const sourceLot = lots.find((lot) => Number(lot.lotId) === sourceLotId);
+        const sourceBatches = batchesByLot[sourceLotId] || [];
+        const compatibleProductIds = new Set(
+            sourceBatches
+                .filter((batch) => batch.quantity > 0 && batch.status.toUpperCase() === "ACTIVE")
+                .map((batch) => products.find((product) => Number(product.productId) === Number(batch.productId)))
+                .filter((product): product is ProductOption => Boolean(
+                    product
+                    && sourceLot
+                    && sourceLot.uomId !== null
+                    && product.uomId !== null
+                    && product.uomId === sourceLot.uomId
+                ))
+                .map((product) => Number(product.productId))
+        );
+        const hasIncompatibleSelection = form.details.some((detail) => {
+            const productId = Number(detail.productId) || 0;
+            return productId > 0 && !compatibleProductIds.has(productId);
+        });
+        if (!hasIncompatibleSelection) return;
+        markDraftValidationStale();
+        setForm((current) => ({
+            ...current,
+            details: current.details.map((detail) => {
+                const productId = Number(detail.productId) || 0;
+                return productId > 0 && !compatibleProductIds.has(productId)
+                    ? { ...detail, productId: "", sourceInventoryLotId: "", sourceBatchNo: "", targetInventoryLotId: "", targetBatchNo: "" }
+                    : detail;
+            })
+        }));
+        setError("One or more products were cleared because their UOM does not match the selected source lot.");
+    }, [batchesByLot, form.details, form.sourceLotId, lots, markDraftValidationStale, products]);
+
     const setField = useCallback(<K extends keyof LotTransferForm>(field: K, value: LotTransferForm[K]) => {
         updateForm((current) => ({ ...current, [field]: value }));
     }, [updateForm]);
@@ -385,6 +454,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         updateForm((current) => ({
             ...current,
             sourceLotId: lotId,
+            targetLotId: current.sourceLotId === lotId ? current.targetLotId : "",
             details: current.details.map((detail) => ({
                 ...detail,
                 sourceInventoryLotId: "",
@@ -476,6 +546,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
             targetInventoryLotId: "",
             targetBatchNo: ""
         });
+        setError(null);
     }, [updateDetail]);
 
     const handleBatchChange = useCallback((index: number, side: "source" | "target", inventoryLotId: string) => {
@@ -720,7 +791,11 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         users,
         batchesByLot,
         batchesLoadingLotId,
+        batchesLoading,
+        allBatchesLoaded,
+        batchesLoadError,
         loadBatchesForLot,
+        loadAllBatches,
         sourceBatches,
         targetBatches,
         draftValidationStatus,

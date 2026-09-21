@@ -276,7 +276,7 @@ export default function InventoryMovementTable({
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {paginatedMovements.map((m) => {
+                            {paginatedMovements.map((m, idx) => {
                                 const isDirectionIn = (m.movementDirection || "").toUpperCase() === "IN";
                                 const rawInvId = m.inventoryLotId ?? m.inventory_lot_id;
                                 const hasInvId = rawInvId !== null && rawInvId !== undefined && Number(rawInvId) > 0;
@@ -285,9 +285,14 @@ export default function InventoryMovementTable({
                                 const matchedLot = lots.find((l) => Number(l.lotId) === Number(effectiveLotId));
                                 const resolvedLotName = matchedLot?.lotName || (Number(effectiveLotId) === 0 ? "Unassigned / Pending Storage Rack (Ghost Rack)" : (m.lotName || `Lot #${effectiveLotId}`));
                                 const qty = isDirectionIn ? Number(m.quantityIn || 0) : Number(m.quantityOut || 0);
+                                const movementId = m.movementId ?? m.movement_id;
+                                const movementKey = m.movementKey ?? m.movement_key;
+                                const rowKey = movementId !== null && movementId !== undefined && movementId > 0
+                                    ? `movement-${movementId}`
+                                    : `${movementKey || "movement"}-${m.displayNumber ?? idx}`;
 
                                 return (
-                                    <TableRow key={m.movementKey || m.displayNumber}>
+                                    <TableRow key={rowKey}>
                                         <TableCell className="text-xs text-muted-foreground font-medium">{m.displayNumber}</TableCell>
                                         <TableCell>
                                             <div className="flex flex-col min-w-[130px]">
