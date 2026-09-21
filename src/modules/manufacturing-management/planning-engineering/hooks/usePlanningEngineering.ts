@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
+import { isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "../../job-order-status";
 import { Branch, SalesOrder, SalesOrderDetail, NetRequirementItem } from "../types";
 import { fetchBranches, fetchSalesOrders, fetchNetRequirementsRaw, releaseJobOrder, releaseMultipleJobOrders, directAllocate } from "../services/planning-api";
 import { buildSalesOrderDemandGroups, buildSalesOrderReleaseGroups, isSchedulableSalesOrderLine, remainingQuantity } from "../utils/demand-groups";
@@ -29,12 +29,11 @@ function parseValidBranchId(value: unknown): number | null {
 
 function splitJobOrderQueues(data: any[]) {
     return {
-        queuedJobs: data.filter((jobOrder: any) => isJobOrderStatus(
-            jobOrder.status,
-            JOB_ORDER_STATUS.DRAFT,
-            JOB_ORDER_STATUS.FOR_PICKING,
-            JOB_ORDER_STATUS.PICKED
-        )),
+        queuedJobs: data.filter((jobOrder: any) => normalizeJobOrderStatus(jobOrder.status) !== null
+            && !isJobOrderStatus(
+                jobOrder.status,
+                JOB_ORDER_STATUS.CANCELLED
+            )),
         cancelledJobs: data.filter((jobOrder: any) => isJobOrderStatus(
             jobOrder.status,
             JOB_ORDER_STATUS.CANCELLED
@@ -294,7 +293,7 @@ export function usePlanningEngineering() {
                 setDeepLinkNotice(`Job Order ${pendingDeepLinkJo} has no active target branch and cannot be opened in a branch-scoped planning view.`);
             }
         } else {
-            setDeepLinkNotice(`Job Order ${pendingDeepLinkJo} is not in the planning queue. It may already be released or in production, belongs to another branch, or does not exist.`);
+            setDeepLinkNotice(`Job Order ${pendingDeepLinkJo} is not in the planning queue. It may be cancelled, belong to another branch, or does not exist.`);
         }
         setPendingDeepLinkJo(null);
     }, [pendingDeepLinkJo, rawUnreleasedJobs, loadingJobs, loadingBranches, branches]);
