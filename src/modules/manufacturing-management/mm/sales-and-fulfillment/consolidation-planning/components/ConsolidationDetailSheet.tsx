@@ -12,6 +12,7 @@ import {
     Clock,
     FileText,
     Layers,
+    Loader2,
     Package,
     PackageCheck,
     Play,
@@ -113,44 +114,18 @@ export default function ConsolidationDetailSheet({
         error: string | null;
     } | null>(null);
 
+    const loadingAllocations = Boolean(consolidation && allocationState?.batchId !== consolidation.id);
+
     useEffect(() => {
-        if (!consolidation) return;
+        if (!consolidation) {
+            return;
+        }
         const batchId = consolidation.id;
         let active = true;
-
-        // console.log("[ConsolidationDetail] OPENED batch:", {
-        //     id: consolidation.id,
-        //     consolidatorNo: consolidation.consolidatorNo,
-        //     status: consolidation.status,
-        //     branchId: consolidation.branchId,
-        //     branchName: consolidation.branchName,
-        //     invoices: consolidation.invoices?.map((inv) => ({
-        //         invoiceId: inv.invoiceId,
-        //         invoiceNo: inv.invoiceNo,
-        //     })),
-        //     details: consolidation.details?.map((d) => ({
-        //         productId: d.productId,
-        //         productName: d.productName,
-        //         orderedQuantity: d.orderedQuantity,
-        //         pickedQuantity: d.pickedQuantity,
-        //     })),
-        // });
 
         fetchAllocations(batchId)
             .then((allocations) => {
                 if (active) {
-                    // console.log(`[ConsolidationDetail] fetchAllocations result for batchId=${batchId} (${allocations.length} rows):`);
-                    // console.log(JSON.stringify(allocations.map((a) => ({
-                    //     productId: a.productId,
-                    //     productName: a.productName,
-                    //     inventoryLotId: a.inventoryLotId,
-                    //     lotId: a.lotId,
-                    //     lotName: a.lotName,
-                    //     batchNo: a.batchNo,
-                    //     quantity: a.quantity,
-                    //     pickedQuantity: a.pickedQuantity,
-                    //     status: a.status,
-                    // })), null, 2));
                     setAllocationState({ batchId, allocations, error: null });
                 }
             })
@@ -452,9 +427,18 @@ export default function ConsolidationDetailSheet({
                                     <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-foreground/90">
                                         Consolidated Demand & Allocated Lots
                                     </h3>
-                                    <p className="text-[10px] text-muted-foreground font-bold">
-                                        Showing {filteredDetails.length} unique product{filteredDetails.length === 1 ? "" : "s"}
-                                    </p>
+                                    <div className="text-[10px] text-muted-foreground font-bold flex items-center gap-1.5">
+                                        {loadingAllocations ? (
+                                            <>
+                                                <Loader2 className="h-3 w-3 animate-spin text-primary" />
+                                                <span className="text-primary animate-pulse">Loading batch allocations...</span>
+                                            </>
+                                        ) : (
+                                            <span>
+                                                Showing {filteredDetails.length} unique product{filteredDetails.length === 1 ? "" : "s"}
+                                            </span>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
 
@@ -537,21 +521,28 @@ export default function ConsolidationDetailSheet({
                                                         <span className="text-[10px] font-bold text-muted-foreground uppercase mr-1">
                                                             {isPickedOrAudited ? "Picked:" : "Allocated:"}
                                                         </span>
-                                                        <span
-                                                            className={`text-sm font-black ${totalAllocatedForProduct >= detail.orderedQuantity
-                                                                    ? "text-emerald-500"
-                                                                    : "text-amber-500"
-                                                                }`}
-                                                        >
-                                                            {isPickedOrAudited
-                                                                ? detail.pickedQuantity
-                                                                : totalAllocatedForProduct}
-                                                        </span>
+                                                        {loadingAllocations ? (
+                                                            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                                                                <Loader2 className="h-3 w-3 animate-spin text-primary" />
+                                                                <span className="animate-pulse">Loading...</span>
+                                                            </span>
+                                                        ) : (
+                                                            <span
+                                                                className={`text-sm font-black ${totalAllocatedForProduct >= detail.orderedQuantity
+                                                                        ? "text-emerald-500"
+                                                                        : "text-amber-500"
+                                                                    }`}
+                                                            >
+                                                                {isPickedOrAudited
+                                                                    ? detail.pickedQuantity
+                                                                    : totalAllocatedForProduct}
+                                                            </span>
+                                                        )}
                                                         <span className="text-xs font-bold text-muted-foreground">
                                                             / {detail.orderedQuantity} {detail.unit || "pcs"}
                                                         </span>
                                                     </div>
-                                                    {shortage && (
+                                                    {!loadingAllocations && shortage && (
                                                         <span className="text-[9px] font-bold text-amber-500 flex items-center gap-1 mt-0.5">
                                                             Shortage: {detail.orderedQuantity - totalAllocatedForProduct} pcs
                                                         </span>
@@ -563,13 +554,17 @@ export default function ConsolidationDetailSheet({
                                             <div className="space-y-1">
                                                 <div className="flex justify-between text-[9px] font-bold text-muted-foreground">
                                                     <span>{isPickedOrAudited ? "Pick Progress" : "Allocation Progress"}</span>
-                                                    <span>{currentProgress.toFixed(0)}%</span>
+                                                    {loadingAllocations ? (
+                                                        <span className="animate-pulse text-muted-foreground">Loading...</span>
+                                                    ) : (
+                                                        <span>{currentProgress.toFixed(0)}%</span>
+                                                    )}
                                                 </div>
                                                 <div className="h-1.5 w-full rounded-full bg-muted/60 overflow-hidden">
                                                     <div
                                                         className={`h-full transition-all duration-300 ${currentProgress >= 100 ? "bg-emerald-500" : "bg-primary"
                                                             }`}
-                                                        style={{ width: `${Math.min(100, currentProgress)}%` }}
+                                                        style={{ width: loadingAllocations ? "0%" : `${Math.min(100, currentProgress)}%` }}
                                                     />
                                                 </div>
                                             </div>
@@ -578,11 +573,18 @@ export default function ConsolidationDetailSheet({
                                             <div className="space-y-2 pt-1 border-t border-border/40">
                                                 <div className="flex items-center justify-between">
                                                     <span className="text-[9px] font-black uppercase tracking-wider text-muted-foreground">
-                                                        Allocated Batches & Lots ({productLots.length})
+                                                        Allocated Batches & Lots ({loadingAllocations ? "..." : productLots.length})
                                                     </span>
                                                 </div>
 
-                                                {productLots.length === 0 ? (
+                                                {loadingAllocations ? (
+                                                    <div className="rounded-xl border border-dashed border-border/60 bg-muted/10 p-4 flex items-center justify-center gap-2">
+                                                        <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                                                        <span className="text-[11px] font-medium text-muted-foreground animate-pulse">
+                                                            Loading batch allocations...
+                                                        </span>
+                                                    </div>
+                                                ) : productLots.length === 0 ? (
                                                     <div className="rounded-xl border border-dashed border-border/60 bg-muted/20 p-3 text-center text-[10px] italic text-muted-foreground">
                                                         No batch allocations recorded for this SKU.
                                                     </div>

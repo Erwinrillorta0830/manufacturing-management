@@ -1,169 +1,822 @@
 "use client";
 
-import { ChangeEvent, MouseEvent, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import Image from "next/image";
-import { Loader2, Move, Save, Upload, X } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ORTemplate, ORFieldConfig } from "../types";
+import { Upload, Move, Type, Trash2, Maximize2, AlertTriangle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { normalizeReceiptTemplate } from "../receipt-template";
-import { receiptBackgroundUrl, saveReceiptTemplate, uploadReceiptBackground } from "../services/invoicing-api";
-import { ORFieldConfig, ORTemplate, PrintableInvoice } from "../types";
-import { ReceiptPreview } from "./ReceiptPreview";
+import Barcode from "react-barcode";
+import { InvoicingService } from "../services/InvoicingService";
 
-export default function ReceiptTemplateEditor({ receiptTypeId, initialTemplate, invoice, onClose, onSave }: { receiptTypeId: number; initialTemplate: ORTemplate; invoice?: PrintableInvoice; onClose: () => void; onSave: (template: ORTemplate) => void }) {
-    const [template, setTemplate] = useState(() => normalizeReceiptTemplate(initialTemplate));
-    const [selected, setSelected] = useState("customer_name");
-    const [zoom, setZoom] = useState(0.8);
-    const [saving, setSaving] = useState(false);
-    const [uploading, setUploading] = useState(false);
-    const [bgImageError, setBgImageError] = useState(false);
-    const canvas = useRef<HTMLDivElement>(null);
+interface Props {
+    isOpen: boolean;
+    onClose: () => void;
+    onSave: (template: ORTemplate) => void;
+    initialTemplate?: ORTemplate;
+}
 
+export const DEFAULT_TEMPLATE: ORTemplate = {
+    id: 'default-or',
+    name: 'Default Official Receipt',
+    width: 210,
+    height: 265,
+    fields: {
+        customer_name: { x: 33, y: 30, fontSize: 11, fontFamily: 'courier', fontWeight: 'normal', label: 'Customer Name' },
+        date: { x: 180, y: 30, fontSize: 11, fontFamily: 'courier', fontWeight: 'normal', label: 'Date' },
+        store_name: { x: 45, y: 38, fontSize: 11, fontFamily: 'courier', fontWeight: 'normal', label: 'Store Name' },
+        payment_name: { x: 180, y: 38, fontSize: 11, fontFamily: 'courier', fontWeight: 'normal', label: 'Terms' },
+        customer_tin: { x: 20, y: 46, fontSize: 11, fontFamily: 'courier', fontWeight: 'normal', label: 'TIN' },
+        address: { x: 33, y: 55, fontSize: 11, fontFamily: 'courier', fontWeight: 'normal', label: 'Address' },
+        vatable_sales: { x: 180, y: 145, fontSize: 10, fontFamily: 'courier', fontWeight: 'normal', label: 'Vatable Sales' },
+        vat_amount: { x: 180, y: 151, fontSize: 10, fontFamily: 'courier', fontWeight: 'normal', label: 'VAT Amount' },
+        gross_total: { x: 180, y: 157, fontSize: 11, fontFamily: 'courier', fontWeight: 'normal', label: 'Gross Total' },
+        discount_total: { x: 180, y: 163, fontSize: 10, fontFamily: 'courier', fontWeight: 'normal', label: 'Discount Total' },
+        net_total: { x: 180, y: 175, fontSize: 12, fontFamily: 'courier', fontWeight: 'normal', label: 'Net Total' },
+        po_no: { x: 10, y: 185, fontSize: 10, fontFamily: 'courier', fontWeight: 'normal', label: 'PO Number' },
+        salesman: { x: 10, y: 191, fontSize: 10, fontFamily: 'courier', fontWeight: 'normal', label: 'Salesman Name' },
+        total_amount_due: { x: 180, y: 200, fontSize: 12, fontFamily: 'courier', fontWeight: 'normal', label: 'Total Amount Due' },
+        barcode: { x: 170, y: 5, fontSize: 12, fontFamily: 'courier', fontWeight: 'normal', label: 'Barcode' },
+    },
+    tableSettings: {
+        startY: 65,
+        rowHeight: 12.2,
+        fontSize: 10,
+        product_name_width: 85, // Default width in mm
+        columns: {
+            barcode: { x: 10 },
+            product_name: { x: 35 },
+            quantity: { x: 105 },
+            unit_price: { x: 126 },
+            discount: { x: 153 },
+            net_amount: { x: 184 }
+        }
+    }
+};
+
+export const MARIKINA_TEMPLATE: ORTemplate = {
+    id: 'marikina-or',
+    name: 'Marikina Official Receipt',
+    width: 205,
+    height: 258,
+    fields: {
+        customer_name: { x: 40, y: 35, fontSize: 11, fontFamily: 'courier', fontWeight: 'bold', label: 'Customer Name' },
+        date: { x: 170, y: 35, fontSize: 11, fontFamily: 'courier', fontWeight: 'bold', label: 'Date' },
+        store_name: { x: 50, y: 43, fontSize: 11, fontFamily: 'courier', fontWeight: 'bold', label: 'Store Name' },
+        payment_name: { x: 170, y: 43, fontSize: 11, fontFamily: 'courier', fontWeight: 'bold', label: 'Terms' },
+        customer_tin: { x: 25, y: 52, fontSize: 11, fontFamily: 'courier', fontWeight: 'bold', label: 'TIN' },
+        address: { x: 45, y: 60, fontSize: 11, fontFamily: 'courier', fontWeight: 'bold', label: 'Address' },
+        vatable_sales: { x: 160, y: 220, fontSize: 10, fontFamily: 'courier', fontWeight: 'normal', label: 'Vatable Sales' },
+        vat_amount: { x: 160, y: 226, fontSize: 10, fontFamily: 'courier', fontWeight: 'normal', label: 'VAT Amount' },
+        gross_total: { x: 160, y: 232, fontSize: 11, fontFamily: 'courier', fontWeight: 'normal', label: 'Gross Total' },
+        discount_total: { x: 160, y: 238, fontSize: 10, fontFamily: 'courier', fontWeight: 'normal', label: 'Discount Total' },
+        net_total: { x: 160, y: 250, fontSize: 12, fontFamily: 'courier', fontWeight: 'bold', label: 'Net Total' },
+        po_no: { x: 10, y: 220, fontSize: 10, fontFamily: 'courier', fontWeight: 'normal', label: 'PO Number', hidden: true },
+        salesman: { x: 10, y: 226, fontSize: 10, fontFamily: 'courier', fontWeight: 'normal', label: 'Salesman Name', hidden: true },
+        total_amount_due: { x: 160, y: 260, fontSize: 12, fontFamily: 'courier', fontWeight: 'bold', label: 'Total Amount Due', hidden: true },
+        barcode: { x: 160, y: 5, fontSize: 12, fontFamily: 'courier', fontWeight: 'normal', label: 'Barcode', hidden: true },
+    },
+    tableSettings: {
+        startY: 75,
+        rowHeight: 12.2,
+        fontSize: 10,
+        product_name_width: 60,
+        columns: {
+            barcode: { x: 10 },
+            product_name: { x: 45 },
+            quantity: { x: 110 },
+            unit_price: { x: 135 },
+            discount: { x: 160 },
+            net_amount: { x: 185 }
+        }
+    }
+};
+
+export const ReceiptTemplateEditor: React.FC<Props> = ({ isOpen, onClose, onSave, initialTemplate }) => {
+    const [template, setTemplate] = useState<ORTemplate>(DEFAULT_TEMPLATE);
+    const [activeField, setActiveField] = useState<string | null>(null);
+    const [zoom, setZoom] = useState(1);
+    const [isUploading, setIsUploading] = useState(false);
+    const canvasRef = useRef<HTMLDivElement>(null);
+    const scrollRef = useRef<HTMLDivElement>(null);
+
+    // Sync state when initialTemplate changes or modal opens
     useEffect(() => {
-        setBgImageError(false);
-    }, [template.backgroundImage]);
+        if (isOpen && initialTemplate) {
+            const fallbackTemplate = initialTemplate.id === 'marikina-or' ? MARIKINA_TEMPLATE : DEFAULT_TEMPLATE;
+            
+            // Auto-inject barcode column for old legacy templates in the DB that missed it.
+            // However, if the initialTemplate explicitly has columns defined but WITHOUT barcode,
+            // respect that — it was deliberately stripped (e.g. MEN2-Dagupan).
+            const initialColumnsExist = !!initialTemplate.tableSettings?.columns;
+            const initialHasBarcode = initialColumnsExist && 'barcode' in (initialTemplate.tableSettings!.columns!);
 
-    useEffect(() => {
-        let cancelled = false;
-        queueMicrotask(() => {
-            if (!cancelled) setTemplate(normalizeReceiptTemplate(initialTemplate));
-        });
-        return () => { cancelled = true; };
-    }, [initialTemplate]);
+            const mergedColumns = {
+                ...fallbackTemplate.tableSettings.columns,
+                ...(initialTemplate.tableSettings?.columns || {})
+            };
 
-    useEffect(() => {
-        const previous = document.body.style.overflow;
-        document.body.style.overflow = "hidden";
-        return () => { document.body.style.overflow = previous; };
-    }, []);
+            if (initialColumnsExist && !initialHasBarcode) {
+                // Deliberately excluded — strip it from the merged result too
+                delete mergedColumns.barcode;
+            } else if (!mergedColumns.barcode) {
+                // True legacy template with no columns at all — inject it
+                mergedColumns.barcode = { x: 10 };
+            }
 
-    const updateField = (key: string, patch: Partial<ORFieldConfig>) => setTemplate(current => ({ ...current, fields: { ...current.fields, [key]: { ...current.fields[key], ...patch } } }));
+            setTemplate({
+                ...initialTemplate,
+                fields: {
+                    ...fallbackTemplate.fields,
+                    ...(initialTemplate.fields || {})
+                },
+                tableSettings: {
+                    ...fallbackTemplate.tableSettings,
+                    ...(initialTemplate.tableSettings || {}),
+                    columns: mergedColumns
+                }
+            });
+        } else if (isOpen && !initialTemplate) {
+            setTemplate(DEFAULT_TEMPLATE);
+        }
+    }, [isOpen, initialTemplate]);
 
-    const drag = (key: string, event: MouseEvent) => {
-        if (!canvas.current) return;
-        event.preventDefault();
-        setSelected(key);
-        const box = canvas.current.getBoundingClientRect();
-        const startX = event.clientX;
-        const startY = event.clientY;
-        const start = template.fields[key];
-        const move = (next: globalThis.MouseEvent) => updateField(key, {
-            x: Math.max(0, Math.min(template.width, start.x + (next.clientX - startX) * template.width / box.width)),
-            y: Math.max(0, Math.min(template.height, start.y + (next.clientY - startY) * template.height / box.height)),
-        });
-        const up = () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); };
-        document.addEventListener("mousemove", move);
-        document.addEventListener("mouseup", up);
-    };
-
-    const upload = async (event: ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0];
+    const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
         if (!file) return;
-        setUploading(true);
+
+        // Still show a quick preview with base64 for UX if you want, 
+        // but better to just upload immediately to solve the size issue.
+        setIsUploading(true);
         try {
-            const id = await uploadReceiptBackground(file);
-            setTemplate(current => ({ ...current, backgroundImage: id }));
-            toast.success("Receipt background uploaded");
-        } catch (error) {
-            toast.error(error instanceof Error ? error.message : "Upload failed");
+            const fileId = await InvoicingService.uploadFile(file);
+            setTemplate(prev => ({ ...prev, backgroundImage: fileId }));
+            toast.success("Background image uploaded successfully");
+        } catch (err) {
+            console.error("Upload failed:", err);
+            const errorMsg = err instanceof Error ? err.message : "Failed to upload image";
+            toast.error(errorMsg);
         } finally {
-            setUploading(false);
+            setIsUploading(false);
         }
     };
 
-    const save = async () => {
-        setSaving(true);
-        try {
-            const saved = await saveReceiptTemplate(receiptTypeId, template);
-            onSave(normalizeReceiptTemplate(saved));
-            toast.success("Receipt layout saved");
-        } catch (error) {
-            toast.error(error instanceof Error ? error.message : "Save failed");
-        } finally {
-            setSaving(false);
-        }
+    const updateField = (key: string, updates: Partial<ORFieldConfig>) => {
+        setTemplate(prev => ({
+            ...prev,
+            fields: {
+                ...prev.fields,
+                [key]: { ...prev.fields[key], ...updates }
+            }
+        }));
     };
 
-    const active = template.fields[selected];
-    return createPortal(<div className="fixed inset-0 z-[9999] flex flex-col bg-background">
-        <header className="flex items-center justify-between border-b px-5 py-3"><div><h2 className="text-sm font-black uppercase">Receipt Layout Editor</h2><p className="text-[10px] text-muted-foreground">Coordinates and dimensions are stored in millimetres.</p></div><div className="flex gap-2"><button onClick={() => setZoom(value => Math.max(0.3, value - 0.1))} className="rounded-lg border px-3 py-1 text-xs">-</button><span className="self-center text-xs font-bold">{Math.round(zoom * 100)}%</span><button onClick={() => setZoom(value => Math.min(1.5, value + 0.1))} className="rounded-lg border px-3 py-1 text-xs">+</button><button onClick={save} disabled={saving} className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-xs font-bold text-primary-foreground">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}Save</button><button onClick={onClose} aria-label="Close editor" className="rounded-lg border p-2"><X className="h-4 w-4" /></button></div></header>
-        <div className="flex min-h-0 flex-1">
-            <aside className="w-80 shrink-0 space-y-5 overflow-y-auto border-r p-4 text-xs">
-                <section className="space-y-2"><h3 className="font-black uppercase">Page</h3><div className="grid grid-cols-2 gap-2"><NumberInput label="Width" value={template.width} onChange={width => setTemplate(current => ({ ...current, width }))} /><NumberInput label="Height" value={template.height} onChange={height => setTemplate(current => ({ ...current, height }))} /></div><div className="flex gap-2"><button onClick={() => setTemplate(current => ({ ...current, width: 215.9, height: 279.4 }))} className="flex-1 rounded border py-1">Letter</button><button onClick={() => setTemplate(current => ({ ...current, width: 210, height: 297 }))} className="flex-1 rounded border py-1">A4</button></div><label className="flex cursor-pointer items-center justify-center gap-2 rounded border py-2">{uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}Upload form scan<input type="file" accept="image/jpeg,image/png,image/webp" onChange={upload} className="hidden" /></label>{template.backgroundImage ? <button onClick={() => setTemplate(current => ({ ...current, backgroundImage: undefined }))} className="w-full rounded border border-destructive/40 py-1 text-destructive">Remove background</button> : null}</section>
-                <section className="space-y-2"><h3 className="font-black uppercase">Fields</h3>{Object.entries(template.fields).map(([key, field]) => <button key={key} onClick={() => setSelected(key)} className={`flex w-full items-center justify-between rounded border px-2 py-1.5 text-left ${selected === key ? "border-primary bg-primary/10" : ""}`}><span>{field.label || key}</span><Move className="h-3 w-3" /></button>)}</section>
-                {active ? <section className="space-y-2"><h3 className="font-black uppercase">Selected Field</h3><div className="grid grid-cols-2 gap-2"><NumberInput label="X" value={active.x} onChange={x => updateField(selected, { x })} /><NumberInput label="Y" value={active.y} onChange={y => updateField(selected, { y })} /><NumberInput label="Font" value={active.fontSize || 10} onChange={fontSize => updateField(selected, { fontSize })} /><NumberInput label="Max width" value={active.maxWidth || 0} onChange={maxWidth => updateField(selected, { maxWidth: maxWidth || undefined })} /></div><label className="flex gap-2"><input type="checkbox" checked={!!active.hidden} onChange={event => updateField(selected, { hidden: event.target.checked })} />Hidden</label></section> : null}
-                <section className="space-y-2"><h3 className="font-black uppercase">Table</h3><div className="grid grid-cols-2 gap-2"><NumberInput label="Start Y" value={template.tableSettings.startY} onChange={startY => setTemplate(current => ({ ...current, tableSettings: { ...current.tableSettings, startY } }))} /><NumberInput label="Row height" value={template.tableSettings.rowHeight} onChange={rowHeight => setTemplate(current => ({ ...current, tableSettings: { ...current.tableSettings, rowHeight } }))} /><NumberInput label="Font" value={template.tableSettings.fontSize} onChange={fontSize => setTemplate(current => ({ ...current, tableSettings: { ...current.tableSettings, fontSize } }))} /><NumberInput label="Description width" value={template.tableSettings.product_name_width || 65} onChange={product_name_width => setTemplate(current => ({ ...current, tableSettings: { ...current.tableSettings, product_name_width } }))} /></div>{Object.entries(template.tableSettings.columns || {}).map(([key, column]) => <NumberInput key={key} label={`${key} X`} value={column?.x || 0} onChange={x => setTemplate(current => ({ ...current, tableSettings: { ...current.tableSettings, columns: { ...current.tableSettings.columns, [key]: { x } } } }))} />)}</section>
-            </aside>
-            <main className="flex-1 overflow-auto bg-muted/50 p-12">
-                <div className="mx-auto origin-top" style={{ width: `${template.width * zoom}mm`, height: `${template.height * zoom}mm` }}>
-                    <div ref={canvas} className="relative overflow-hidden bg-white text-black shadow-2xl border-2 border-black" style={{ width: `${template.width}mm`, height: `${template.height}mm`, transform: `scale(${zoom})`, transformOrigin: "top left" }}>
-                        {template.backgroundImage && !bgImageError ? (
-                            <Image
-                                src={receiptBackgroundUrl(template.backgroundImage)}
-                                alt="Receipt form"
-                                fill
-                                unoptimized
-                                onError={() => setBgImageError(true)}
-                                className="pointer-events-none object-fill opacity-70"
-                            />
-                        ) : invoice ? (
-                            <div className="pointer-events-none absolute inset-0">
-                                <ReceiptPreview invoice={invoice} scale={1} />
+    const handleDrag = (key: string, e: React.MouseEvent) => {
+        if (!canvasRef.current) return;
+        
+        const rect = canvasRef.current.getBoundingClientRect();
+        const startX = e.clientX;
+        const startY = e.clientY;
+        const initialX = template.fields[key].x;
+        const initialY = template.fields[key].y;
+
+        const onMouseMove = (moveEvent: MouseEvent) => {
+            const dx = (moveEvent.clientX - startX) * (template.width / rect.width);
+            const dy = (moveEvent.clientY - startY) * (template.height / rect.height);
+            
+            updateField(key, {
+                x: Math.max(0, Math.min(template.width, initialX + dx)),
+                y: Math.max(0, Math.min(template.height, initialY + dy))
+            });
+        };
+
+        const onMouseUp = () => {
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+        };
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+    };
+
+    const handleTableDrag = (e: React.MouseEvent) => {
+        if (!canvasRef.current) return;
+        const rect = canvasRef.current.getBoundingClientRect();
+        const startY = e.clientY;
+        const initialStartY = template.tableSettings.startY;
+
+        const onMouseMove = (moveEvent: MouseEvent) => {
+            const dy = (moveEvent.clientY - startY) * (template.height / rect.height);
+            setTemplate(prev => ({
+                ...prev,
+                tableSettings: {
+                    ...prev.tableSettings,
+                    startY: Math.max(0, Math.min(template.height, initialStartY + dy))
+                }
+            }));
+        };
+
+        const onMouseUp = () => {
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+        };
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+    };
+
+    const handleColumnDrag = (colKey: string, e: React.MouseEvent) => {
+        if (!canvasRef.current) return;
+        const rect = canvasRef.current.getBoundingClientRect();
+        const startX = e.clientX;
+        // @ts-expect-error - columns can be indexing by dynamic key
+        const initialX = template.tableSettings.columns?.[colKey]?.x || 0;
+
+        const onMouseMove = (moveEvent: MouseEvent) => {
+            const dx = (moveEvent.clientX - startX) * (template.width / rect.width);
+            setTemplate(prev => ({
+                ...prev,
+                tableSettings: {
+                    ...prev.tableSettings,
+                    columns: {
+                        ...prev.tableSettings.columns,
+                        [colKey]: { x: Math.max(0, Math.min(template.width, initialX + dx)) }
+                    }
+                }
+            }));
+        };
+
+        const onMouseUp = () => {
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+        };
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+    };
+    
+    const handleRowHeightDrag = (e: React.MouseEvent) => {
+        if (!canvasRef.current) return;
+        const rect = canvasRef.current.getBoundingClientRect();
+        const startY = e.clientY;
+        const initialRowHeight = template.tableSettings.rowHeight;
+
+        const onMouseMove = (moveEvent: MouseEvent) => {
+            const dy = (moveEvent.clientY - startY) * (template.height / rect.height);
+            setTemplate(prev => ({
+                ...prev,
+                tableSettings: {
+                    ...prev.tableSettings,
+                    rowHeight: Math.max(1, initialRowHeight + dy)
+                }
+            }));
+        };
+
+        const onMouseUp = () => {
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+        };
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+    };
+
+    const fitToWidth = useCallback(() => {
+        if (!canvasRef.current || !scrollRef.current) return;
+        const availableWidth = scrollRef.current.clientWidth - 100; // padding
+        const templateWidthPx = template.width * 3.7795275591; // mm to px approx
+        setZoom(Math.max(0.1, Math.min(2, availableWidth / templateWidthPx)));
+    }, [template.width]);
+
+    useEffect(() => {
+        if (isOpen) {
+            setTimeout(fitToWidth, 100);
+        }
+    }, [isOpen, fitToWidth]);
+
+    return (
+        <Dialog open={isOpen} onOpenChange={onClose}>
+            <DialogContent className="!fixed !inset-0 !z-50 !w-screen !h-screen !max-w-none !translate-x-0 !translate-y-0 !m-0 !rounded-none flex flex-col p-0 overflow-hidden border-none shadow-none bg-background !top-0 !left-0">
+                <DialogHeader className="p-4 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 shrink-0">
+                    <DialogTitle className="flex items-center justify-between text-zinc-900 dark:text-zinc-100">
+                        <div className="flex items-center gap-2">
+                            <div className="p-1.5 bg-primary/10 rounded-lg">
+                                <Type className="w-5 h-5 text-primary" />
                             </div>
-                        ) : (
-                            /* Default BIR Charge Invoice Grid Background */
-                            <div className="pointer-events-none absolute inset-0 p-4 opacity-40 flex flex-col justify-between border-2 border-black text-xs font-sans">
-                                <div className="space-y-2">
-                                    <div className="text-center">
-                                        <div className="font-black text-sm uppercase">MEN2 MARKETING & DISTRIBUTION ENTERPRISE CORPORATION</div>
-                                        <div className="text-[9px]">VAT REG. TIN: 009-553-391-00000</div>
-                                        <div className="text-[9px]">Gonzales, Bonuan Boquig, Dagupan City, Pangasinan</div>
-                                    </div>
-                                    <div className="flex justify-between border-b border-black pb-1 font-bold text-xs">
-                                        <span>CHARGE INVOICE</span>
-                                        <span className="text-red-600 font-black">2281</span>
-                                    </div>
-                                    <div className="border border-black p-2 text-[10px] space-y-1">
-                                        <div>SOLD TO: _______________________________ Date: ___________</div>
-                                        <div>Registered Name: _______________________ Terms: ___________</div>
-                                        <div>TIN: ___________________________________</div>
-                                        <div>Business Address: ______________________________________</div>
-                                    </div>
-                                    <div className="border border-black h-36">
-                                        <div className="grid grid-cols-4 border-b border-black font-bold text-[9px] p-1 text-center bg-gray-100">
-                                            <span className="col-span-2 text-left">Item Description / Nature of Service</span>
-                                            <span>Quantity</span>
-                                            <span>Amount</span>
+                            Official Receipt Template Designer
+                        </div>
+                        <div className="flex items-center gap-4 mr-8">
+                            <div className="flex items-center gap-2 bg-muted rounded-lg p-1">
+                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setZoom(z => Math.max(0.1, z - 0.1))}>
+                                    <span className="text-lg">-</span>
+                                </Button>
+                                <span 
+                                    className="text-xs font-mono min-w-[3rem] text-center cursor-pointer hover:bg-background rounded"
+                                    onClick={fitToWidth}
+                                    title="Click to Fit to Width"
+                                >
+                                    {Math.round(zoom * 100)}%
+                                </span>
+                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setZoom(z => Math.min(3, z + 0.1))}>
+                                    <span className="text-lg">+</span>
+                                </Button>
+                            </div>
+                            <Button variant="outline" size="sm" onClick={fitToWidth} className="h-8 text-[10px] uppercase font-bold">
+                                <Maximize2 className="w-3 h-3 mr-1" />
+                                Fit to Screen
+                            </Button>
+                            <div className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded">
+                                {template.width}mm × {template.height}mm
+                            </div>
+                        </div>
+                    </DialogTitle>
+                </DialogHeader>
+
+                <div className="flex-1 flex overflow-hidden bg-zinc-100 dark:bg-zinc-950">
+                    {/* Sidebar / Tools */}
+                    <div className="w-96 border-r border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/50 p-4 space-y-6 overflow-y-auto">
+                        <section className="space-y-3">
+                            <Label className="text-xs font-bold uppercase text-muted-foreground">Page Setup</Label>
+                            <div className="grid grid-cols-2 gap-2">
+                                <div className="space-y-1">
+                                    <Label>Width (mm)</Label>
+                                    <Input 
+                                        type="number" 
+                                        value={template.width} 
+                                        onChange={e => setTemplate(prev => ({ ...prev, width: Number(e.target.value) }))} 
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <Label>Height (mm)</Label>
+                                    <Input 
+                                        type="number" 
+                                        value={template.height} 
+                                        onChange={e => setTemplate(prev => ({ ...prev, height: Number(e.target.value) }))} 
+                                    />
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                                <Button 
+                                    variant="outline" 
+                                    size="sm" 
+                                    className="text-[10px] h-7"
+                                    onClick={() => setTemplate(prev => ({ ...prev, width: 215.9, height: 279.4 }))}
+                                >
+                                    Letter (8.5x11)
+                                </Button>
+                                <Button 
+                                    variant="outline" 
+                                    size="sm" 
+                                    className="text-[10px] h-7"
+                                    onClick={() => setTemplate(prev => ({ ...prev, width: 210, height: 297 }))}
+                                >
+                                    A4 size
+                                </Button>
+                            </div>
+                            <div className="space-y-2">
+                                <Label>Background Image (Form Scan)</Label>
+                                <div className="flex items-center gap-2">
+                                    <Button variant="outline" size="sm" className="w-full relative overflow-hidden" disabled={isUploading}>
+                                        {isUploading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Upload className="w-4 h-4 mr-2" />}
+                                        {isUploading ? "Uploading..." : "Upload Image"}
+                                        <input 
+                                            type="file" 
+                                            className="absolute inset-0 opacity-0 cursor-pointer" 
+                                            accept="image/*"
+                                            onChange={handleImageUpload}
+                                        />
+                                    </Button>
+                                    {template.backgroundImage && (
+                                        <Button 
+                                            variant="ghost" 
+                                            size="icon" 
+                                            onClick={() => setTemplate(prev => ({ ...prev, backgroundImage: undefined }))}
+                                        >
+                                            <Trash2 className="w-4 h-4 text-destructive" />
+                                        </Button>
+                                    )}
+                                </div>
+                            </div>
+                            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-2">
+                                <div className="flex items-center gap-2 text-amber-800">
+                                    <AlertTriangle className="w-4 h-4" />
+                                    <span className="text-[10px] font-bold uppercase">Printing Tip</span>
+                                </div>
+                                <p className="text-[10px] text-amber-700 leading-tight">
+                                    Para sa 100% alignment, siguraduhin na ang <b>Scale</b> sa Print Dialog ay naka-set sa <b>&quot;100%&quot;</b> o <b>&quot;Actual Size&quot;</b> (hindi Default).
+                                </p>
+                            </div>
+                        </section>
+
+                        <section className="space-y-3">
+                            <Label className="text-xs font-bold uppercase text-muted-foreground">Fields Configuration</Label>
+                            <div className="space-y-2">
+                                {Object.entries(template.fields).map(([key, config]) => (
+                                    <div 
+                                        key={key}
+                                        className={`p-2 rounded-lg border cursor-pointer transition-colors ${activeField === key ? 'bg-primary/10 border-primary ring-1 ring-primary/20' : 'bg-zinc-50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 hover:border-primary/50'}`}
+                                        onClick={() => setActiveField(key)}
+                                    >
+                                        <div className="flex justify-between items-center mb-2">
+                                            <span className="text-xs font-medium uppercase">{config.label}</span>
+                                            <Move className="w-3 h-3 text-muted-foreground" />
                                         </div>
+                                        {activeField === key && (
+                                            <div className="grid grid-cols-2 gap-2 mt-2">
+                                                {key === 'barcode' ? (
+                                                    // SPECIALIZED BARCODE SETTINGS
+                                                    <>
+                                                        <div className="space-y-1">
+                                                            <Label className="text-[10px]">Font Size (pt)</Label>
+                                                            <Input 
+                                                                type="number" 
+                                                                value={config.fontSize} 
+                                                                onChange={e => updateField(key, { fontSize: Number(e.target.value) })} 
+                                                                className="h-8 text-xs font-mono"
+                                                            />
+                                                        </div>
+                                                        <div className="space-y-1">
+                                                            <Label className="text-[10px]">Text Weight</Label>
+                                                            <Select 
+                                                                value={config.fontWeight} 
+                                                                onValueChange={v => updateField(key, { fontWeight: v as "normal" | "bold" })}
+                                                            >
+                                                                <SelectTrigger className="h-8 text-xs">
+                                                                    <SelectValue />
+                                                                </SelectTrigger>
+                                                                <SelectContent>
+                                                                    <SelectItem value="normal">Normal</SelectItem>
+                                                                    <SelectItem value="bold">Bold</SelectItem>
+                                                                </SelectContent>
+                                                            </Select>
+                                                        </div>
+                                                        <div className="space-y-1">
+                                                            <Label className="text-[10px]">Bar Height (mm)</Label>
+                                                            <Input 
+                                                                type="number" 
+                                                                step="0.5"
+                                                                value={config.barcodeHeight ?? 9} 
+                                                                onChange={e => updateField(key, { barcodeHeight: Number(e.target.value) })} 
+                                                                className="h-8 text-xs font-mono"
+                                                            />
+                                                        </div>
+                                                        <div className="space-y-1">
+                                                            <Label className="text-[10px]">Bar Thickness (mm)</Label>
+                                                            <Input 
+                                                                type="number" 
+                                                                step="0.01"
+                                                                value={config.barcodeModuleWidth ?? 0.35} 
+                                                                onChange={e => updateField(key, { barcodeModuleWidth: Number(e.target.value) })} 
+                                                                className="h-8 text-xs font-mono"
+                                                            />
+                                                        </div>
+                                                        <div className="col-span-2 space-y-2 py-1">
+                                                            <div className="flex items-center gap-2">
+                                                                <input 
+                                                                    type="checkbox" 
+                                                                    id={`hide-field-${key}`}
+                                                                    checked={config.hidden ?? false}
+                                                                    onChange={e => updateField(key, { hidden: e.target.checked })}
+                                                                    className="w-3 h-3 rounded border-zinc-300 pointer-events-auto"
+                                                                />
+                                                                <Label htmlFor={`hide-field-${key}`} className="text-[10px] cursor-pointer font-bold text-red-600">Hide Barcode Lines</Label>
+                                                            </div>
+                                                            <div className="flex items-center gap-2">
+                                                                <input 
+                                                                    type="checkbox" 
+                                                                    id={`hide-text-${key}`}
+                                                                    checked={config.hideBarcodeText ?? false}
+                                                                    onChange={e => updateField(key, { hideBarcodeText: e.target.checked })}
+                                                                    className="w-3 h-3 rounded border-zinc-300 pointer-events-auto"
+                                                                />
+                                                                <Label htmlFor={`hide-text-${key}`} className="text-[10px] cursor-pointer">Hide Text Below</Label>
+                                                            </div>
+                                                        </div>
+                                                    </>
+                                                ) : (
+                                                    // NORMAL FIELD SETTINGS
+                                                    <>
+                                                        <div className="space-y-1">
+                                                            <Label className="text-[10px]">Font Size</Label>
+                                                            <Input 
+                                                                type="number" 
+                                                                bs-size="sm"
+                                                                value={config.fontSize} 
+                                                                onChange={e => updateField(key, { fontSize: Number(e.target.value) })} 
+                                                            />
+                                                        </div>
+                                                        <div className="space-y-1">
+                                                            <Label className="text-[10px]">Weight</Label>
+                                                            <Select 
+                                                                value={config.fontWeight} 
+                                                                onValueChange={v => updateField(key, { fontWeight: v as "normal" | "bold" })}
+                                                            >
+                                                                <SelectTrigger className="h-8">
+                                                                    <SelectValue />
+                                                                </SelectTrigger>
+                                                                <SelectContent>
+                                                                    <SelectItem value="normal">Normal</SelectItem>
+                                                                    <SelectItem value="bold">Bold</SelectItem>
+                                                                </SelectContent>
+                                                            </Select>
+                                                        </div>
+                                                        <div className="space-y-1">
+                                                            <Label className="text-[10px]">Max Width (mm)</Label>
+                                                            <Input 
+                                                                type="number" 
+                                                                value={config.maxWidth ?? ""} 
+                                                                placeholder="Auto"
+                                                                onChange={e => updateField(key, { maxWidth: e.target.value === "" ? undefined : Number(e.target.value) })} 
+                                                                className="h-8 text-xs font-mono"
+                                                            />
+                                                        </div>
+                                                        <div className="space-y-1">
+                                                            <Label className="text-[10px]">Line Height</Label>
+                                                            <Input 
+                                                                type="number" 
+                                                                step="0.1"
+                                                                value={config.lineHeight ?? 1.2} 
+                                                                onChange={e => updateField(key, { lineHeight: Number(e.target.value) })} 
+                                                                className="h-8 text-xs font-mono"
+                                                            />
+                                                        </div>
+                                                        <div className="space-y-1">
+                                                            <Label className="text-[10px]">Spacing</Label>
+                                                            <Input 
+                                                                type="number" 
+                                                                step="0.1"
+                                                                value={config.charSpacing ?? 0} 
+                                                                onChange={e => updateField(key, { charSpacing: Number(e.target.value) })} 
+                                                                className="h-8 text-xs"
+                                                            />
+                                                        </div>
+                                                        <div className="space-y-1">
+                                                            <Label className="text-[10px]">ScaleX</Label>
+                                                            <Input 
+                                                                type="number" 
+                                                                step="0.05"
+                                                                value={config.scaleX ?? 1} 
+                                                                onChange={e => updateField(key, { scaleX: Number(e.target.value) })} 
+                                                                className="h-8 text-xs"
+                                                            />
+                                                        </div>
+                                                    </>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
-                                    <div className="border border-black grid grid-cols-2 text-[9px] p-1 h-20">
-                                        <div className="border-r border-black pr-1 space-y-0.5">
-                                            <div>VATable Sales</div>
-                                            <div>VAT</div>
-                                            <div>PO NO. :</div>
-                                        </div>
-                                        <div className="pl-1 space-y-0.5">
-                                            <div>Total Sales (VAT Inclusive)</div>
-                                            <div>Amount: Net of VAT</div>
-                                            <div className="font-bold">TOTAL AMOUNT DUE</div>
+                                ))}
+                            </div>
+                        </section>
+
+                        <section className="space-y-3">
+                            <Label className="text-xs font-bold uppercase text-muted-foreground">Table Settings</Label>
+                            <div className="p-3 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 space-y-3">
+                                <div className="space-y-1">
+                                    <Label className="text-[10px]">Table Font Size (pt)</Label>
+                                    <Input 
+                                        type="number" 
+                                        value={template.tableSettings.fontSize} 
+                                        onChange={e => setTemplate(prev => ({
+                                            ...prev,
+                                            tableSettings: { ...prev.tableSettings, fontSize: Number(e.target.value) }
+                                        }))}
+                                        className="h-8 text-xs font-mono"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-[10px]">Row Height (mm)</Label>
+                                    <div className="flex gap-2">
+                                        <Input 
+                                            type="number" 
+                                            step="0.1"
+                                            value={template.tableSettings.rowHeight} 
+                                            onChange={e => setTemplate(prev => ({
+                                                ...prev,
+                                                tableSettings: { ...prev.tableSettings, rowHeight: Number(e.target.value) }
+                                            }))}
+                                            className="h-8 text-xs font-mono"
+                                        />
+                                        <div className="flex flex-col gap-0.5">
+                                            <Button variant="outline" size="icon" className="h-4 w-7" onClick={() => setTemplate(prev => ({ ...prev, tableSettings: { ...prev.tableSettings, rowHeight: Number((prev.tableSettings.rowHeight + 0.1).toFixed(2)) } }))}>+</Button>
+                                            <Button variant="outline" size="icon" className="h-4 w-7" onClick={() => setTemplate(prev => ({ ...prev, tableSettings: { ...prev.tableSettings, rowHeight: Math.max(0, Number((prev.tableSettings.rowHeight - 0.1).toFixed(2))) } }))}>-</Button>
                                         </div>
                                     </div>
                                 </div>
-                                <div className="flex justify-between text-[8px] border-t pt-1">
-                                    <div>BIR Auth. No. OCN: 004AU20250000005735</div>
-                                    <div className="font-bold">Cashier / Authorized Representative</div>
+                                <div className="space-y-1">
+                                    <Label className="text-[10px]">Desc. Width (mm / chars)</Label>
+                                    <div className="flex gap-2">
+                                        <Input 
+                                            type="number" 
+                                            step="1"
+                                            value={template.tableSettings.product_name_width ?? 85} 
+                                            onChange={e => setTemplate(prev => ({
+                                                ...prev,
+                                                tableSettings: { ...prev.tableSettings, product_name_width: Number(e.target.value) }
+                                            }))}
+                                            className="h-8 text-xs font-mono"
+                                        />
+                                        <div className="flex flex-col gap-0.5">
+                                            <Button variant="outline" size="icon" className="h-4 w-7" onClick={() => setTemplate(prev => ({ ...prev, tableSettings: { ...prev.tableSettings, product_name_width: (prev.tableSettings.product_name_width ?? 85) + 1 } }))}>+</Button>
+                                            <Button variant="outline" size="icon" className="h-4 w-7" onClick={() => setTemplate(prev => ({ ...prev, tableSettings: { ...prev.tableSettings, product_name_width: Math.max(0, (prev.tableSettings.product_name_width ?? 85) - 1) } }))}>-</Button>
+                                        </div>
+                                    </div>
+                                    <p className="text-[8px] text-muted-foreground mt-1">
+                                        * Approx {Math.floor((template.tableSettings.product_name_width ?? 85) / 1.8)} characters (monospace).
+                                    </p>
                                 </div>
+                                <p className="text-[9px] italic text-muted-foreground">* You can also drag the handle on the 2nd row to adjust height.</p>
                             </div>
-                        )}
-                        {Object.entries(template.fields).map(([key, field]) => field.hidden ? null : <button key={key} onMouseDown={event => drag(key, event)} className={`absolute cursor-move whitespace-nowrap border border-dashed px-0.5 font-mono ${selected === key ? "border-primary bg-primary/10" : "border-zinc-400 bg-white/70"}`} style={{ left: `${field.x}mm`, top: `${field.y}mm`, fontSize: `${field.fontSize || 10}pt` }}>{field.label || key}</button>)}
-                        <div className="absolute left-0 right-0 border-t-2 border-dashed border-red-500" style={{ top: `${template.tableSettings.startY}mm` }}><span className="bg-red-500 px-1 text-[8px] text-white">TABLE START</span></div>
+                        </section>
+                    </div>
+
+                    {/* Canvas Area */}
+                    <div ref={scrollRef} className="flex-1 bg-zinc-200 dark:bg-zinc-950 flex items-start justify-center overflow-auto relative p-12">
+                        <div 
+                            ref={canvasRef}
+                            className="bg-white shadow-[0_20px_60px_rgba(0,0,0,0.3)] dark:shadow-[0_20px_60px_rgba(0,0,0,0.6)] relative overflow-hidden ring-1 ring-zinc-300 dark:ring-white/10 transition-transform origin-top"
+                            style={{
+                                width: `${template.width}mm`,
+                                height: `${template.height}mm`,
+                                minWidth: `${template.width}mm`,
+                                transform: `scale(${zoom})`,
+                            }}
+                        >
+                            {template.backgroundImage && (
+                                <Image 
+                                    src={InvoicingService.getImageUrl(template.backgroundImage)} 
+                                    className="absolute inset-0 w-full h-full object-fill opacity-70 select-none pointer-events-none"
+                                    alt="Background"
+                                    fill
+                                    unoptimized
+                                />
+                            )}
+
+                            {Object.entries(template.fields).map(([key, config]) => {
+                                // Special rule for barcode: hidden only hides sticks, not the element itself (unless text is also hidden)
+                                if (config.hidden && key !== 'barcode') return null;
+                                if (key === 'barcode' && config.hidden && config.hideBarcodeText) return null;
+                                
+                                return (
+                                <div
+                                    key={key}
+                                    onMouseDown={(e) => {
+                                        setActiveField(key);
+                                        handleDrag(key, e);
+                                    }}
+                                    className={`absolute cursor-move border border-dashed p-0.5 select-none transition-shadow text-zinc-900 ${
+                                        activeField === key ? 'border-primary ring-1 ring-primary z-50' : 'border-slate-300 z-10'
+                                    } ${config.maxWidth ? 'whitespace-pre-wrap' : 'whitespace-nowrap'}`}
+                                    style={{
+                                        left: `${config.x}mm`,
+                                        top: `${config.y}mm`,
+                                        width: config.maxWidth ? `${config.maxWidth}mm` : 'auto',
+                                        fontSize: `${config.fontSize}pt`,
+                                        fontFamily: config.fontFamily === 'courier' ? 'monospace' : config.fontFamily,
+                                        fontWeight: config.fontWeight,
+                                        lineHeight: config.lineHeight ?? 1.2,
+                                        letterSpacing: `${config.charSpacing ?? 0}pt`,
+                                        transform: `scaleX(${config.scaleX ?? 1})`,
+                                        transformOrigin: 'left center',
+                                        backgroundColor: activeField === key ? 'rgba(59, 130, 246, 0.1)' : 'rgba(255,255,255,0.7)'
+                                    }}
+                                >
+                                    {key === 'barcode' ? (
+                                        <div className="flex flex-col items-center">
+                                            {!config.hidden ? (
+                                                <Barcode 
+                                                    value="12345678"
+                                                    height={(config.barcodeHeight ?? 9) * 3.78} 
+                                                    width={(config.barcodeModuleWidth ?? 0.35) * 3.78} 
+                                                    fontSize={config.fontSize}
+                                                    displayValue={!config.hideBarcodeText}
+                                                    fontOptions={config.fontWeight}
+                                                    margin={0}
+                                                    background="transparent"
+                                                    renderer="canvas"
+                                                />
+                                            ) : (
+                                                <div className="text-center w-full">
+                                                    {!config.hideBarcodeText && "12345678"}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        config.label
+                                    )}
+                                </div>
+                                );
+                            })}
+
+                            {/* Table Start Visualization (Draggable) */}
+                            <div 
+                                className="absolute left-0 right-0 border-t-2 border-red-400 border-dashed z-40 flex items-center justify-center cursor-ns-resize hover:bg-red-400/10 group"
+                                style={{ top: `${template.tableSettings.startY}mm`, height: '4mm', marginTop: '-2mm' }}
+                                onMouseDown={handleTableDrag}
+                            >
+                                <span className="bg-red-400 text-white text-[10px] px-1 rounded-sm select-none opacity-50 group-hover:opacity-100 transition-opacity">
+                                    TABLE START (Drag to move)
+                                </span>
+                            </div>
+
+                            {/* Row Height Handle (Draggable handle on the 2nd row's top) */}
+                            <div 
+                                className="absolute left-0 right-0 border-t border-red-300/30 border-dashed z-40 flex items-center justify-end cursor-ns-resize hover:bg-zinc-400/10 group"
+                                style={{ 
+                                    top: `${template.tableSettings.startY + template.tableSettings.rowHeight}mm`, 
+                                    height: '4mm', 
+                                    marginTop: '-2mm' 
+                                }}
+                                onMouseDown={handleRowHeightDrag}
+                            >
+                                <span className="mr-8 bg-zinc-800 text-white text-[8px] px-1 rounded-sm select-none opacity-0 group-hover:opacity-100 transition-opacity">
+                                    Row Height: {template.tableSettings.rowHeight}mm (Drag to adjust)
+                                </span>
+                            </div>
+
+                            {/* Sample Data Rows for Alignment */}
+                            {(() => {
+                                const cols = template.tableSettings.columns;
+                                if (!cols) return null;
+                                
+                                // Standardized widths to match Preview logic
+                                const w = {
+                                    barcode: 30,
+                                    product_name: 85,
+                                    quantity: 22,
+                                    unit_price: 28,
+                                    discount: 25,
+                                    net_amount: 30
+                                };
+
+                                return [
+                                    { barcode: '4800012345', product_name: 'SAMPLE PRODUCT NAME 48X180G', quantity: '90 BOX', unit_price: 'P2,208.00', discount: 'L4', net_amount: 'P190,771.20' },
+                                    { barcode: '4800067890', product_name: 'ANOTHER SAMPLE ITEM 50X100G', quantity: '120 BOX', unit_price: 'P996.00', discount: 'L3', net_amount: 'P114,739.20' }
+                                ].map((item, idx) => (
+                                    <div 
+                                        key={`sample-row-${idx}`}
+                                    className="absolute w-full flex items-center pointer-events-none opacity-40 select-none grayscale text-zinc-900"
+                                        style={{ 
+                                            top: `${template.tableSettings.startY + (idx * template.tableSettings.rowHeight)}mm`,
+                                            height: `${template.tableSettings.rowHeight}mm`,
+                                            fontFamily: 'monospace',
+                                            fontSize: `${template.tableSettings.fontSize}pt`,
+                                            fontWeight: 'bold'
+                                        }}
+                                    >
+                                        {cols.barcode && (
+                                            <div className="absolute truncate" style={{ left: `${cols.barcode.x}mm`, width: `${w.barcode}mm` }}>{item.barcode}</div>
+                                        )}
+                                        <div className="absolute truncate" style={{ left: `${cols.product_name?.x || 10}mm`, width: `${template.tableSettings.product_name_width || w.product_name}mm` }}>{item.product_name}</div>
+                                        <div className="absolute text-center" style={{ left: `${(cols.quantity?.x || 105) - (w.quantity / 2)}mm`, width: `${w.quantity}mm` }}>{item.quantity}</div>
+                                        <div className="absolute text-right" style={{ left: `${(cols.unit_price?.x || 126) - w.unit_price}mm`, width: `${w.unit_price}mm` }}>{item.unit_price}</div>
+                                        <div className="absolute text-right" style={{ left: `${(cols.discount?.x || 153) - w.discount}mm`, width: `${w.discount}mm` }}>{item.discount}</div>
+                                        <div className="absolute text-right" style={{ left: `${(cols.net_amount?.x || 184) - w.net_amount}mm`, width: `${w.net_amount}mm` }}>{item.net_amount}</div>
+                                    </div>
+                                ));
+                            })()}
+
+                            {/* Table Columns Visualization (Draggable) */}
+                            {template.tableSettings.columns && Object.entries(template.tableSettings.columns).map(([colKey, colConfig]) => (
+                                <div
+                                    key={`col-${colKey}`}
+                                    className="absolute border-l-2 border-blue-500 border-dashed z-30 flex flex-col items-start cursor-ew-resize hover:bg-blue-500/10 group"
+                                    style={{ 
+                                        left: `${colConfig.x}mm`, 
+                                        top: `${template.tableSettings.startY}mm`,
+                                        height: `${template.tableSettings.rowHeight * 4}mm`, // Show 4 rows high
+                                        width: '6mm',
+                                        marginLeft: '-3mm'
+                                    }}
+                                    onMouseDown={(e) => handleColumnDrag(colKey, e)}
+                                >
+                                    <span className="bg-blue-600 text-white text-[9px] px-1.5 py-0.5 rounded-sm whitespace-nowrap select-none shadow-sm opacity-80 group-hover:opacity-100 transition-opacity transform -rotate-90 origin-left mt-6 font-bold">
+                                        {colKey.replace('_', ' ').toUpperCase()}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
                     </div>
                 </div>
-            </main>
-        </div>
-    </div>, document.body);
-}
 
-function NumberInput({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) {
-    return <label className="block space-y-1"><span className="text-[9px] font-bold uppercase text-muted-foreground">{label}</span><input type="number" step="0.1" value={Number(value.toFixed(2))} onChange={event => onChange(Number(event.target.value))} className="w-full rounded border bg-background px-2 py-1" /></label>;
-}
+                <DialogFooter className="p-4 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 flex justify-between sm:justify-between items-center shrink-0">
+                    <div className="text-[10px] text-muted-foreground italic font-medium">
+                        * Drag items to align. Coordinates are in Millimeters (mm).
+                    </div>
+                    <div className="flex gap-2">
+                        <Button variant="outline" className="h-10 px-6 rounded-xl font-bold text-xs uppercase tracking-widest border-zinc-200 dark:border-zinc-800" onClick={onClose}>Cancel</Button>
+
+                        <Button className="h-10 px-8 rounded-xl font-black text-xs uppercase tracking-[0.15em] shadow-lg shadow-primary/20" onClick={() => onSave(template)}>
+                            <Maximize2 className="w-4 h-4 mr-2" />
+                            Save Template
+                        </Button>
+                    </div>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+    );
+};

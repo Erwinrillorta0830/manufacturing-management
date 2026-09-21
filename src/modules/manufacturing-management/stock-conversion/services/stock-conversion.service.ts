@@ -17,6 +17,7 @@ interface DirectusProduct {
   price_per_unit?: string | number | null;
   product_brand?: string | number | { brand_id: string | number } | null;
   product_category?: string | number | { category_id: string | number } | null;
+  product_type?: string | number | { id?: number; name?: string } | null;
   description?: string | null;
   product_per_supplier?: Array<{ supplier_id?: number | { id?: number; supplier_id?: number; supplier_name?: string; supplier_shortcut?: string } }>;
   product_supplier?: number | { id?: number; supplier_id?: number; supplier_name?: string; supplier_shortcut?: string };
@@ -38,7 +39,7 @@ interface DirectusLookup {
 
 export const stockConversionService = {
   async getStockList(limit: number, offset: number, branchId?: number, hasStock?: boolean, extraFilters?: Record<string, string>, token?: string) {
-    let preFetchedInventory: Record<number, number> | null = null;
+    let preFetchedInventory: Record<string, number> | null = null;
 
     // 1. Resolve filter IDs first to avoid relational Forbidden joins
     const allOptions = await stockConversionRepo.fetchFilterOptions();
@@ -205,9 +206,9 @@ export const stockConversionService = {
     const productNamesToFetch = [...new Set(products.map((p: DirectusProduct) => String(p.product_name)))].filter(name => name && name !== "undefined") as (string)[];
 
     const [familyByParent, familyBySelf, familyByName] = await Promise.all([
-      stockConversionRepo.fetchItemsInChunks<DirectusProduct>("products", "parent_id", allPotentialParentIds, "product_id,product_name,description,parent_id,unit_of_measurement,unit_of_measurement_count,product_code,cost_per_unit,price_per_unit,product_per_supplier.supplier_id.id,product_per_supplier.supplier_id.supplier_name,product_per_supplier.supplier_id.supplier_shortcut"),
-      stockConversionRepo.fetchItemsInChunks<DirectusProduct>("products", "product_id", currentParentIds as (number | string)[], "product_id,product_name,description,parent_id,unit_of_measurement,unit_of_measurement_count,product_code,cost_per_unit,price_per_unit,product_per_supplier.supplier_id.id,product_per_supplier.supplier_id.supplier_name,product_per_supplier.supplier_id.supplier_shortcut"),
-      stockConversionRepo.fetchItemsInChunks<DirectusProduct>("products", "product_name", productNamesToFetch, "product_id,product_name,description,parent_id,unit_of_measurement,unit_of_measurement_count,product_code,cost_per_unit,price_per_unit,product_per_supplier.supplier_id.id,product_per_supplier.supplier_id.supplier_name,product_per_supplier.supplier_id.supplier_shortcut")
+      stockConversionRepo.fetchItemsInChunks<DirectusProduct>("products", "parent_id", allPotentialParentIds, "product_id,product_name,description,parent_id,unit_of_measurement,unit_of_measurement_count,product_code,cost_per_unit,price_per_unit,product_type,product_per_supplier.supplier_id.id,product_per_supplier.supplier_id.supplier_name,product_per_supplier.supplier_id.supplier_shortcut"),
+      stockConversionRepo.fetchItemsInChunks<DirectusProduct>("products", "product_id", currentParentIds as (number | string)[], "product_id,product_name,description,parent_id,unit_of_measurement,unit_of_measurement_count,product_code,cost_per_unit,price_per_unit,product_type,product_per_supplier.supplier_id.id,product_per_supplier.supplier_id.supplier_name,product_per_supplier.supplier_id.supplier_shortcut"),
+      stockConversionRepo.fetchItemsInChunks<DirectusProduct>("products", "product_name", productNamesToFetch, "product_id,product_name,description,parent_id,unit_of_measurement,unit_of_measurement_count,product_code,cost_per_unit,price_per_unit,product_type,product_per_supplier.supplier_id.id,product_per_supplier.supplier_id.supplier_name,product_per_supplier.supplier_id.supplier_shortcut")
     ]);
 
     const familyProducts = [...products, ...familyByParent, ...familyBySelf, ...familyByName];
@@ -338,7 +339,7 @@ export const stockConversionService = {
       const dbFactor = Number(p.unit_of_measurement_count ?? p.unit_count) || 1;
       const sourceFactor = (currentUnitName.toLowerCase().includes("piece") || currentUnitName.toLowerCase() === "pcs") ? 1 : dbFactor;
       
-      const rawQuantity = inventory[pId] || 0;
+      const rawQuantity = inventory[`${pId}:${unitId}`] ?? inventory[pId] ?? 0;
       const finalQuantity = rawQuantity;
 
 
@@ -362,6 +363,7 @@ export const stockConversionService = {
         pricePerUnit: Number(p.cost_per_unit || p.price_per_unit || 0),
         totalAmount: Number((finalQuantity * Number(p.cost_per_unit || p.price_per_unit || 0)).toFixed(2)),
         conversionFactor: sourceFactor,
+        productType: p.product_type ?? null,
         inventoryLoaded: false,
         availableUnits,
       };
@@ -434,8 +436,12 @@ export const stockConversionService = {
     }
 
     // 2. FETCH LATEST INVENTORY - Final server-side check to prevent over-drawing
-    const inventory = await stockConversionRepo.fetchInventory(token, payload.branchId, `product_id=${payload.productId}`);
-    const rawStock = inventory[payload.productId] || 0;
+    const invQueryParams = payload.sourceUnitId
+      ? `product=${payload.productId}&unit=${payload.sourceUnitId}`
+      : `product=${payload.productId}`;
+    const inventory = await stockConversionRepo.fetchInventory(token, payload.branchId, invQueryParams);
+    const unitKey = `${payload.productId}:${payload.sourceUnitId}`;
+    const rawStock = inventory[unitKey] !== undefined ? inventory[unitKey] : (inventory[payload.productId] || 0);
     const availableSourceUnits = rawStock;
 
     if (payload.quantityToConvert > availableSourceUnits) {

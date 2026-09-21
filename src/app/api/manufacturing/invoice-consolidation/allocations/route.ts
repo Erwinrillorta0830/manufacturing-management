@@ -284,12 +284,15 @@ export async function GET(req: NextRequest) {
             }
 
             type BatchMeta = {
+                inventoryLotId: number;
                 lotId: number;
                 lotName: string;
                 batchNo: string;
                 expiryDate: string | null;
                 manufacturingDate: string | null;
                 productId: number;
+                quantity: number;
+                inventoryCondition: string;
             };
 
             const invLotMap = new Map<number, BatchMeta>();
@@ -310,14 +313,19 @@ export async function GET(req: NextRequest) {
                     const batchNo = String(row.batch_no || row.lot_number || "LOT-N/A");
                     const expiryDate = (row.expiry_date || row.expiration_date || null) as string | null;
                     const manufacturingDate = (row.manufacturing_date || null) as string | null;
+                    const qty = Number(row.quantity ?? row.available_quantity ?? 0);
+                    const cond = String(row.inventory_condition || "GOOD");
 
                     const meta: BatchMeta = {
+                        inventoryLotId: invId,
                         lotId,
                         lotName: resolvedLotName,
                         batchNo,
                         expiryDate,
                         manufacturingDate,
                         productId: pId,
+                        quantity: qty,
+                        inventoryCondition: cond,
                     };
 
                     if (invId) invLotMap.set(invId, meta);
@@ -344,23 +352,31 @@ export async function GET(req: NextRequest) {
                         const sbBatchNo = String(sb.batchNo ?? sb.batch_no ?? "LOT-N/A");
                         const sbExp = (sb.expirationDate || sb.expiration_date || sb.expiryDate || sb.expiry_date || null) as string | null;
                         const sbMfg = (sb.manufacturingDate || sb.manufacturing_date || null) as string | null;
+                        const sbQty = Number(sb.availableQuantity ?? sb.available_quantity ?? sb.onhandQuantity ?? sb.onhand_quantity ?? sb.quantity ?? 0);
+                        const sbCond = String(sb.inventoryCondition || sb.inventory_condition || "GOOD");
 
                         const meta: BatchMeta = {
+                            inventoryLotId: sbInvId,
                             lotId: sbLotId,
                             lotName: lotNameMap.get(sbLotId) || (sbLotId ? lotNameMap.get(sbLotId) : undefined) || "Unknown",
                             batchNo: sbBatchNo,
                             expiryDate: sbExp,
                             manufacturingDate: sbMfg,
                             productId: sbPId,
+                            quantity: sbQty,
+                            inventoryCondition: sbCond,
                         };
 
                         if (sbInvId && !invLotMap.has(sbInvId)) invLotMap.set(sbInvId, meta);
                         if (sbPId) {
                             const list = productBatchMap.get(sbPId) || [];
-                            if (!list.some((b) => b.batchNo === sbBatchNo && b.lotId === sbLotId)) {
+                            const existingIdx = list.findIndex((b) => b.batchNo === sbBatchNo && b.lotId === sbLotId);
+                            if (existingIdx === -1) {
                                 list.push(meta);
-                                productBatchMap.set(sbPId, list);
+                            } else if (sbQty > 0) {
+                                list[existingIdx].quantity = sbQty;
                             }
+                            productBatchMap.set(sbPId, list);
                         }
                     }
                 } catch (err) {
@@ -454,8 +470,42 @@ export async function GET(req: NextRequest) {
                     console.log(`[allocations GET batchId=${batchId}] lotNameMap entries:`, Object.fromEntries(lotNameMap));
                     console.log(`[allocations GET batchId=${batchId}] returning allocations:`, JSON.stringify(allocations, null, 2));
 
+                    const availableBatches: Array<{
+                        productId: number;
+                        productName: string;
+                        inventoryLotId: number;
+                        lotId: number;
+                        lotName: string;
+                        batchNo: string;
+                        expiryDate: string | null;
+                        availableQuantity: number;
+                        inventoryCondition: string;
+                    }> = [];
+
+                    const seenBatchKeys = new Set<string>();
+                    for (const pId of productIds) {
+                        const list = productBatchMap.get(pId) || [];
+                        for (const b of list) {
+                            if (Number(b.quantity || 0) <= 0) continue;
+                            const key = `${pId}:${b.inventoryLotId || 0}:${b.batchNo}:${b.lotId}`;
+                            if (seenBatchKeys.has(key)) continue;
+                            seenBatchKeys.add(key);
+                            availableBatches.push({
+                                productId: pId,
+                                productName: productNameMap.get(pId) || `Product #${pId}`,
+                                inventoryLotId: b.inventoryLotId || 0,
+                                lotId: b.lotId,
+                                lotName: b.lotName,
+                                batchNo: b.batchNo,
+                                expiryDate: b.expiryDate,
+                                availableQuantity: b.quantity || 0,
+                                inventoryCondition: b.inventoryCondition || "GOOD",
+                            });
+                        }
+                    }
+
                     if (allocations.length > 0) {
-                        return NextResponse.json({ allocations });
+                        return NextResponse.json({ allocations, availableBatches });
                     }
         }
 

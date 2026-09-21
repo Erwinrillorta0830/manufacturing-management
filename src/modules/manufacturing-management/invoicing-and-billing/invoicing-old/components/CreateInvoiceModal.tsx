@@ -1,0 +1,1381 @@
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { AlertTriangle, Boxes, Building2, Calendar, FileCheck2, FileText, Layers, Loader2, Package, Printer, RefreshCw, ShieldCheck, Users, X } from "lucide-react";
+import { toast } from "sonner";
+import { archiveInvoiceDocument, fetchCompanyInfo, fetchPrintableInvoice, fetchReceiptTemplate, fetchReceiptTypes, fetchSalesOrderAvailability } from "../services/invoicing-api";
+import { CompanyInfo, CreateInvoicePayload, CreatedInvoiceResult, InvoicingCandidate, LineAllocationPayload, LineBatchAllocation, LineAvailability, ORTemplate, PrintableInvoice, ReceiptType, SalesOrderAvailability, SiblingConsolidatedOrder } from "../types";
+import { generateInvoiceReceiptPdf } from "../utils/generateInvoiceReceiptPdf";
+import { DEFAULT_RECEIPT_TEMPLATE, normalizeReceiptTemplate } from "../receipt-template";
+import { ReceiptPreview } from "./ReceiptPreview";
+import ReceiptTemplateEditor from "./ReceiptTemplateEditor";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
+interface Props {
+    candidate: InvoicingCandidate;
+    submitting: boolean;
+    onClose: () => void;
+    onSubmit: (payload: CreateInvoicePayload) => Promise<CreatedInvoiceResult | null>;
+}
+
+function getLocalPHDateString(d = new Date()): string {
+    try {
+        const parts = new Intl.DateTimeFormat("en-US", {
+            timeZone: "Asia/Manila",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+        }).formatToParts(d);
+        const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+        return `${map.year}-${map.month}-${map.day}`;
+    } catch {
+        return d.toISOString().slice(0, 10);
+    }
+}
+
+function getLocalPHDueDateString(days = 30): string {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    return getLocalPHDateString(d);
+}
+
+function getLineMaxInvoiceable(
+    detail: { ordered_quantity?: number },
+    lineAvail?: LineAvailability
+): number {
+    const orderedQty = Number(detail.ordered_quantity || 0);
+    if (!lineAvail) return orderedQty;
+
+    if (lineAvail.isConsolidated) {
+        const remainingOrder = lineAvail.remainingOrderQuantity ?? orderedQty;
+        const remainingPool = lineAvail.remainingBatchPool ?? 0;
+        return Math.max(0, Math.min(remainingOrder, remainingPool));
+    }
+
+    const batchPickedTotal = lineAvail.batches && lineAvail.batches.length > 0
+        ? lineAvail.batches.reduce((sum, b) => {
+            const q = Number(b.pickedQuantity !== undefined ? b.pickedQuantity : (b.onhandQuantity || 0));
+            return sum + (isNaN(q) ? 0 : q);
+        }, 0)
+        : undefined;
+
+    let availPool = lineAvail.totalPoolQuantity !== undefined
+        ? lineAvail.totalPoolQuantity
+        : (lineAvail.pickedQuantity ?? orderedQty);
+
+    if (batchPickedTotal !== undefined) {
+        availPool = Math.min(availPool, batchPickedTotal);
+    }
+
+    return Math.min(orderedQty, Math.max(0, availPool));
+}
+
+export default function CreateInvoiceModal({ candidate, submitting, onClose, onSubmit }: Props) {
+    const isReInvoice = Boolean(candidate.existingInvoice);
+    const [invoiceNo, setInvoiceNo] = useState(
+        candidate.existingInvoice?.invoiceNo ?? `INV-${candidate.order_no.replace(/^SO-/, "")}`
+    );
+    const [invoiceDate, setInvoiceDate] = useState(() => {
+        if (candidate.existingInvoice?.invoiceDate) {
+            const d = candidate.existingInvoice.invoiceDate.slice(0, 10);
+            return d || getLocalPHDateString();
+        }
+        return getLocalPHDateString();
+    });
+    const [dueDate, setDueDate] = useState(() => {
+        if (candidate.existingInvoice?.dueDate) {
+            const d = candidate.existingInvoice.dueDate.slice(0, 10);
+            return d || getLocalPHDueDateString(30);
+        }
+        return getLocalPHDueDateString(30);
+    });
+    const [remarks, setRemarks] = useState(candidate.existingInvoice?.remarks ?? "");
+    const [receiptTypes, setReceiptTypes] = useState<ReceiptType[]>([]);
+    const [invoiceTypeId, setInvoiceTypeId] = useState(candidate.existingInvoice?.invoiceTypeId ?? 0);
+
+    const [createdResult, setCreatedResult] = useState<CreatedInvoiceResult | null>(null);
+    const [printable, setPrintable] = useState<PrintableInvoice | null>(null);
+    const [previewUrl, setPreviewUrl] = useState("");
+    const [loadingPrint, setLoadingPrint] = useState(false);
+    const [generatingPdf, setGeneratingPdf] = useState(false);
+    const [pdfError, setPdfError] = useState("");
+    const [printError, setPrintError] = useState("");
+    const [archiveStatus, setArchiveStatus] = useState<"idle" | "saved" | "failed">("idle");
+    const [availability, setAvailability] = useState<SalesOrderAvailability | null>(null);
+    const [loadingAvailability, setLoadingAvailability] = useState(true);
+    const [previewingBeforeCreate, setPreviewingBeforeCreate] = useState(false);
+    const [downloadingProvisional, setDownloadingProvisional] = useState(false);
+    const [editingTemplate, setEditingTemplate] = useState(false);
+    const [template, setTemplate] = useState<ORTemplate>(DEFAULT_RECEIPT_TEMPLATE);
+    const [loadingTemplate, setLoadingTemplate] = useState(false);
+    const [printingDirectly, setPrintingDirectly] = useState(false);
+    const [showConfirmModal, setShowConfirmModal] = useState(false);
+    const [showConsolidationSummary, setShowConsolidationSummary] = useState(false);
+    const [confirmationNotes, setConfirmationNotes] = useState("");
+    const [lineInvoiceQtys, setLineInvoiceQtys] = useState<Record<number, number | string>>({});
+    const pdfBlobRef = useRef<Blob | null>(null);
+    const prevPreviewUrlRef = useRef("");
+    const printingDirectlyRef = useRef(false);
+    const onCloseRef = useRef(onClose);
+    useEffect(() => {
+        onCloseRef.current = onClose;
+    }, [onClose]);
+    const selectedType = receiptTypes.find((type) => type.id === invoiceTypeId);
+
+    const getLineInvoiceQty = useCallback((productId: number, fallback: number): number => {
+        const val = lineInvoiceQtys[productId];
+        if (val === undefined || val === "") return fallback;
+        return Number(val) || 0;
+    }, [lineInvoiceQtys]);
+
+    const handleLineInvoiceQtyChange = (productId: number, rawVal: string, maxQty: number) => {
+        if (rawVal === "") {
+            setLineInvoiceQtys((prev) => ({ ...prev, [productId]: "" }));
+            return;
+        }
+        const num = Number(rawVal);
+        if (!isNaN(num)) {
+            const clamped = Math.max(0, Math.min(num, maxQty));
+            setLineInvoiceQtys((prev) => ({ ...prev, [productId]: clamped }));
+        }
+    };
+
+    const handleLineInvoiceQtyBlur = (productId: number, fallback: number) => {
+        const val = lineInvoiceQtys[productId];
+        if (val === "" || val === undefined || isNaN(Number(val))) {
+            setLineInvoiceQtys((prev) => ({ ...prev, [productId]: fallback }));
+        }
+    };
+
+    const lineTotals = useMemo(() => {
+        const lineQtyMap = new Map<number, number>();
+        let subtotal = 0;
+
+        for (const detail of candidate.details) {
+            const pId = typeof detail.product_id === "object" ? Number(detail.product_id?.product_id) : Number(detail.product_id);
+            const lineAvail = availability?.lines.find((l) => l.productId === pId);
+            const maxInvoiceable = getLineMaxInvoiceable(detail, lineAvail);
+            const invoiceQty = Math.min(maxInvoiceable, getLineInvoiceQty(pId, maxInvoiceable));
+
+            lineQtyMap.set(pId, invoiceQty);
+
+            const unitPrice = Number(detail.unit_price || 0);
+            subtotal += invoiceQty * unitPrice;
+        }
+
+        const discount = 0;
+        const grandTotal = Math.max(0, subtotal - discount);
+
+        return {
+            subtotal,
+            discount,
+            grandTotal,
+            lineQtyMap,
+        };
+    }, [candidate, availability, getLineInvoiceQty]);
+
+    const shortfallLines = useMemo(() => {
+        if (!availability) return [];
+        const list: Array<{
+            productId: number;
+            productName: string;
+            uomStr: string;
+            currentInvoiceQty: number;
+            totalConsolidatedPool: number;
+            remainingForSiblings: number;
+            siblingDemand: number;
+            siblingShortfall: number;
+            unInvoicedSiblings: SiblingConsolidatedOrder[];
+        }> = [];
+
+        for (const detail of candidate.details) {
+            const product = typeof detail.product_id === "object" ? detail.product_id : null;
+            const pId = product ? Number(product.product_id) : Number(detail.product_id);
+            const displayName = product?.description || product?.product_name || "Item";
+            const uomStr = product?.uom || "PCS";
+            // const orderedQty = Number(detail.ordered_quantity || 0);
+
+            const lineAvail = availability.lines.find((l) => l.productId === pId);
+            const maxInvoiceable = getLineMaxInvoiceable(detail, lineAvail);
+            const invoiceQty = Math.min(maxInvoiceable, getLineInvoiceQty(pId, maxInvoiceable));
+
+            const siblingOrders = lineAvail?.siblingOrders || [];
+            const unInvoicedSiblings = siblingOrders.filter((s) => !s.isInvoiced);
+            const siblingDemand = unInvoicedSiblings.reduce((sum, s) => sum + Number(s.orderedQuantity || 0), 0);
+            const detailReservations = (availability.rawReservations || []).filter(
+                (r) => Number(r.sales_order_detail_id) === Number(detail.detail_id)
+            );
+            const rawDetailPickedQty = detailReservations.length > 0
+                ? detailReservations.reduce((sum, r) => sum + Number(r.picked_quantity || 0), 0)
+                : Number(lineAvail?.pickedQuantity ?? 0);
+            const fallbackBatchPool = (lineAvail?.batches || []).reduce(
+                (sum, b) => sum + Number(b.totalBatchPickedPool || b.pickedQuantity || b.onhandQuantity || 0),
+                0
+            ) || rawDetailPickedQty;
+
+            const totalConsolidatedPool = lineAvail?.isConsolidated
+                ? Number(lineAvail.remainingBatchPool ?? 0)
+                : ((lineAvail?.totalPoolQuantity !== undefined && lineAvail.totalPoolQuantity > 0)
+                    ? lineAvail.totalPoolQuantity
+                    : fallbackBatchPool);
+
+            const remainingForSiblings = Math.max(0, totalConsolidatedPool - invoiceQty);
+            const siblingShortfall = Math.max(0, siblingDemand - remainingForSiblings);
+
+            if (siblingDemand > 0 && siblingShortfall > 0) {
+                list.push({
+                    productId: pId,
+                    productName: displayName,
+                    uomStr,
+                    currentInvoiceQty: invoiceQty,
+                    totalConsolidatedPool,
+                    remainingForSiblings,
+                    siblingDemand,
+                    siblingShortfall,
+                    unInvoicedSiblings,
+                });
+            }
+        }
+        return list;
+    }, [availability, candidate.details, getLineInvoiceQty]);
+
+    const downloadReceipt = async (invoice: PrintableInvoice) => {
+        const doc = await generateInvoiceReceiptPdf(invoice, { includeBackground: false });
+        const blob = doc.output("blob");
+        const a = document.createElement("a");
+        const url = URL.createObjectURL(blob);
+        a.href = url;
+        a.download = `${invoice.invoiceNo}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
+    const handlePrintProvisional = async () => {
+        setDownloadingProvisional(true);
+        try {
+            await downloadReceipt(provisional);
+            toast.success("Receipt downloaded");
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Failed to generate receipt PDF");
+        } finally {
+            setDownloadingProvisional(false);
+        }
+    };
+
+    const [companyInfo, setCompanyInfo] = useState<CompanyInfo | undefined>(undefined);
+
+    useEffect(() => {
+        void fetchReceiptTypes().then((types) => {
+            setReceiptTypes(types);
+            setInvoiceTypeId(types[0]?.id || 0);
+        });
+        void fetchCompanyInfo(2).then((info) => {
+            if (info) setCompanyInfo(info);
+        });
+    }, []);
+
+    useEffect(() => {
+        if (!invoiceTypeId) return;
+        let cancelled = false;
+        queueMicrotask(() => {
+            if (!cancelled) setLoadingTemplate(true);
+        });
+        void fetchReceiptTemplate(invoiceTypeId).then(result => {
+            if (!cancelled) setTemplate(normalizeReceiptTemplate(result));
+        }).finally(() => {
+            if (!cancelled) setLoadingTemplate(false);
+        });
+        return () => { cancelled = true; };
+    }, [invoiceTypeId]);
+
+    useEffect(() => {
+        let cancelled = false;
+        queueMicrotask(() => {
+            if (!cancelled) setLoadingAvailability(true);
+        });
+        void fetchSalesOrderAvailability(candidate.order_id).then(data => {
+            if (!cancelled) {
+                console.group(`[Invoicing Debug] Availability & Picked Quantities for Order #${candidate.order_no} (ID: ${candidate.order_id})`);
+                // console.log("Consolidator Batch:", data?.consolidatorNo || "None (Standalone)");
+                // console.log("Raw Availability Payload:", data);
+                if (data?.rawDetails && data.rawDetails.length > 0) {
+                    console.group("Raw sales_order_details");
+                    console.table(data.rawDetails);
+                    console.groupEnd();
+                }
+                if (data?.rawReservations && data.rawReservations.length > 0) {
+                    console.group("Raw sales_order_reservation");
+                    console.table(data.rawReservations);
+                    console.groupEnd();
+                }
+                if (data?.lines) {
+                    console.table(data.lines.map((l) => ({
+                        "Product ID": l.productId,
+                        "Product Name": l.productName,
+                        "Ordered Qty": l.requiredQuantity,
+                        "Picked Qty": l.pickedQuantity,
+                        "Consolidation Pool Qty": l.totalPoolQuantity,
+                        "On-Hand Qty": l.onhandQuantity,
+                        "Batches Count": l.batches?.length || 0,
+                    })));
+                    for (const l of data.lines) {
+                        if (l.batches && l.batches.length > 0) {
+                            console.group(`Batches for ${l.productName} (ID: ${l.productId})`);
+                            console.table(l.batches.map((b) => ({
+                                "Batch No": b.batchNo,
+                                "Lot Name": b.lotName || `Lot #${b.lotId}`,
+                                "Picked Qty (This Order)": b.pickedQuantity,
+                                "Reserved (This Order)": b.thisOrderReserved,
+                                "Total Batch Picked Pool": b.totalBatchPickedPool,
+                                "Condition": b.inventoryCondition,
+                                "Expiry": b.expirationDate,
+                                "Shared Siblings": b.siblingOrders?.length || 0,
+                            })));
+                            console.groupEnd();
+                        }
+                    }
+                }
+                console.groupEnd();
+
+                setAvailability(data);
+                const initialMap: Record<number, number | string> = {};
+                for (const detail of candidate.details) {
+                    const pId = typeof detail.product_id === "object" ? Number(detail.product_id?.product_id) : Number(detail.product_id);
+                    const lineAvail = data.lines?.find((l: LineAvailability) => l.productId === pId);
+                    const maxInv = getLineMaxInvoiceable(detail, lineAvail);
+                    initialMap[pId] = maxInv;
+                }
+                setLineInvoiceQtys(initialMap);
+            }
+        }).finally(() => {
+            if (!cancelled) setLoadingAvailability(false);
+        });
+        return () => { cancelled = true; };
+    }, [candidate.order_id, candidate.order_no, candidate.details]);
+
+    useEffect(() => {
+        return () => {
+            if (prevPreviewUrlRef.current) URL.revokeObjectURL(prevPreviewUrlRef.current);
+        };
+    }, []);
+
+    const handleSubmit = (e: FormEvent) => {
+        e.preventDefault();
+        setShowConfirmModal(true);
+    };
+
+    const create = async (customRemarks?: string) => {
+        const lineAllocations: LineAllocationPayload[] = candidate.details.map((detail) => {
+            const pId = typeof detail.product_id === "object" ? Number(detail.product_id?.product_id) : Number(detail.product_id);
+            const lineAvail = availability?.lines.find((l) => l.productId === pId);
+            const maxInvoiceable = getLineMaxInvoiceable(detail, lineAvail);
+            const targetInvoiceQty = Math.min(maxInvoiceable, getLineInvoiceQty(pId, maxInvoiceable));
+
+            let remainingToAlloc = targetInvoiceQty;
+            const batchAllocations: LineBatchAllocation[] = (lineAvail?.batches || []).map((b) => {
+                const batchCap = Number(b.pickedQuantity !== undefined ? b.pickedQuantity : (b.onhandQuantity || 0));
+                const alloc = Math.min(remainingToAlloc, batchCap);
+                remainingToAlloc = Math.max(0, remainingToAlloc - alloc);
+                return {
+                    inventoryLotId: b.inventoryLotId,
+                    lotId: b.lotId,
+                    batchNo: b.batchNo,
+                    quantity: alloc,
+                };
+            });
+
+            return {
+                productId: pId,
+                quantity: targetInvoiceQty,
+                batchAllocations,
+            };
+        });
+
+        const payload: CreateInvoicePayload = {
+            salesOrderId: candidate.order_id,
+            invoiceNo: invoiceNo.trim(),
+            invoiceDate,
+            dueDate,
+            remarks: customRemarks ?? remarks,
+            invoiceTypeId,
+            lineAllocations,
+            ...(isReInvoice && candidate.existingInvoice ? { existingInvoiceId: candidate.existingInvoice.invoiceId } : {}),
+        };
+
+        const result = await onSubmit(payload);
+        if (!result) return;
+        setCreatedResult(result);
+        await loadInvoicePrint(result);
+    };
+
+    const loadInvoicePrint = async (created: CreatedInvoiceResult) => {
+        setLoadingPrint(true);
+        setPrintError("");
+        setPdfError("");
+        try {
+            const data = await fetchPrintableInvoice(created.invoiceId);
+            setPrintable(data);
+            await createPdfPreview(data);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to load printable invoice";
+            setPrintError(message);
+            toast.error(message);
+        } finally {
+            setLoadingPrint(false);
+        }
+    };
+
+    const createPdfPreview = async (invoice: PrintableInvoice) => {
+        setGeneratingPdf(true);
+        setPdfError("");
+        setArchiveStatus("idle");
+        try {
+            const doc = await generateInvoiceReceiptPdf(invoice, { includeBackground: false });
+            const blob = doc.output("blob");
+            pdfBlobRef.current = blob;
+            if (prevPreviewUrlRef.current) URL.revokeObjectURL(prevPreviewUrlRef.current);
+            const url = URL.createObjectURL(blob);
+            prevPreviewUrlRef.current = url;
+            setPreviewUrl(url);
+
+            if (printingDirectlyRef.current) {
+                await downloadReceipt(invoice);
+                toast.success("Receipt downloaded");
+                onCloseRef.current();
+                return;
+            }
+
+            try {
+                await archiveInvoiceDocument(invoice.invoiceId, blob, invoice.invoiceNo, invoice.templateConfig?.width || 210, invoice.templateConfig?.height || 265);
+                setArchiveStatus("saved");
+            } catch {
+                setArchiveStatus("failed");
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to generate receipt PDF";
+            setPdfError(message);
+            toast.error(message);
+        } finally {
+            setGeneratingPdf(false);
+        }
+    };
+
+    const print = async () => {
+        if (!printable) return;
+        if (pdfBlobRef.current) {
+            const a = document.createElement("a");
+            const url = URL.createObjectURL(pdfBlobRef.current);
+            a.href = url;
+            a.download = `${printable.invoiceNo}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            toast.success("Receipt downloaded");
+            onClose();
+            return;
+        }
+        await downloadReceipt(printable);
+        toast.success("Receipt downloaded");
+        onClose();
+    };
+
+    const retryPdf = async () => {
+        if (!printable) return;
+        setGeneratingPdf(true);
+        setPdfError("");
+        try {
+            const doc = await generateInvoiceReceiptPdf(printable, { includeBackground: false });
+            const blob = doc.output("blob");
+            pdfBlobRef.current = blob;
+            if (prevPreviewUrlRef.current) URL.revokeObjectURL(prevPreviewUrlRef.current);
+            const url = URL.createObjectURL(blob);
+            prevPreviewUrlRef.current = url;
+            setPreviewUrl(url);
+            try {
+                await archiveInvoiceDocument(printable.invoiceId, blob, printable.invoiceNo, printable.templateConfig?.width || 210, printable.templateConfig?.height || 265);
+                setArchiveStatus("saved");
+            } catch {
+                setArchiveStatus("failed");
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to generate receipt PDF";
+            setPdfError(message);
+            toast.error(message);
+        } finally {
+            setGeneratingPdf(false);
+        }
+    };
+
+    const provisional: PrintableInvoice = {
+        invoiceId: 0,
+        invoiceNo: invoiceNo.trim() || "PREVIEW",
+        invoiceDate,
+        dueDate,
+        transactionStatus: "Preview",
+        receiptType: selectedType || { id: invoiceTypeId, type: "Sales Invoice", isOfficial: true, maxLength: 0 },
+        orderNo: candidate.order_no,
+        poNo: candidate.po_no,
+        customerName: candidate.customer_name,
+        storeName: candidate.customer_name,
+        customerTin: candidate.customer_tin || "N/A",
+        customerAddress: candidate.customer_address || "",
+        salesmanName: candidate.salesman_name || "N/A",
+        paymentTermName: candidate.payment_term_name || "N/A",
+        lines: candidate.details.map(line => {
+            const product = typeof line.product_id === "object" ? line.product_id : null;
+            const pId = product ? Number(product.product_id) : Number(line.product_id);
+            const orderedQty = Number(line.ordered_quantity || 0);
+            const invoiceQty = getLineInvoiceQty(pId, orderedQty);
+            const unitPrice = Number(line.unit_price || 0);
+            const lineGross = unitPrice * invoiceQty;
+            return {
+                detailId: line.detail_id,
+                productCode: product?.product_code || "",
+                productName: product?.description || product?.product_name || "Item",
+                quantity: invoiceQty,
+                unit: product?.uom || "PCS",
+                unitPrice: unitPrice,
+                discountAmount: 0,
+                grossAmount: lineGross,
+                netAmount: lineGross,
+            };
+        }),
+        totals: { gross: lineTotals.subtotal, discount: lineTotals.discount, vat: 0, net: lineTotals.grandTotal },
+        templateConfig: template,
+        companyInfo,
+    };
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-3 backdrop-blur-sm sm:p-5">
+            <motion.div 
+                initial={{ opacity: 0, scale: 0.96, y: 15 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.96, y: 15 }}
+                transition={{ duration: 0.22, ease: "easeOut" }}
+                className={`flex w-full flex-col overflow-hidden rounded-2xl border bg-card shadow-2xl ${
+                    printable || previewingBeforeCreate 
+                        ? "max-w-7xl h-[92dvh]" 
+                        : "max-w-5xl h-[90dvh] max-h-[92dvh]"
+                }`}
+            >
+                {/* Header */}
+                <div className="flex shrink-0 items-center justify-between border-b bg-muted/20 px-6 py-4">
+                    <div className="flex items-center gap-3">
+                        <div className={`rounded-xl border p-2.5 shadow-xs ${isReInvoice ? "border-amber-500/20 bg-amber-500/10 text-amber-600" : "border-primary/20 bg-primary/10 text-primary"}`}>
+                            <FileCheck2 className="h-5 w-5" />
+                        </div>
+                        <div>
+                            <h3 className="text-sm font-black uppercase tracking-wide">
+                                {printable
+                                    ? `${printable.receiptType.type} Ready`
+                                    : isReInvoice
+                                    ? "Re-Invoice & Receipt"
+                                    : "Create Invoice & Receipt"}
+                            </h3>
+                            <p className="mt-0.5 text-[11px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
+                                <span className="font-bold text-foreground">{candidate.order_no}</span>
+                                <span>•</span>
+                                <span>{candidate.customer_name}</span>
+                                <span>•</span>
+                                <span className="text-primary font-semibold">For Invoicing</span>
+                            </p>
+                        </div>
+                    </div>
+                    <button 
+                        type="button" 
+                        onClick={onClose} 
+                        aria-label="Close" 
+                        className="rounded-lg border bg-background p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors shadow-xs"
+                    >
+                        <X className="h-4 w-4" />
+                    </button>
+                </div>
+
+                {/* Re-Invoicing Notice Banner */}
+                {isReInvoice && !printable && (
+                    <div className="shrink-0 flex items-start gap-2.5 border-b border-amber-500/30 bg-amber-50 px-6 py-3 dark:bg-amber-950/20">
+                        <span className="mt-0.5 text-amber-600 shrink-0">⚠️</span>
+                        <div className="text-[11px] leading-relaxed text-amber-800 dark:text-amber-400">
+                            <span className="font-bold">Re-Invoicing — </span>
+                            This sales order was previously unfulfilled/returned. Invoice{" "}
+                            <span className="font-mono font-bold">{candidate.existingInvoice?.invoiceNo}</span>{" "}
+                            will be updated with the new quantities and dates. You may adjust the allocated quantities below.
+                        </div>
+                    </div>
+                )}
+
+                {/* KPI Top Cards */}
+                {!printable && !previewingBeforeCreate && (
+                    <div className="grid grid-cols-2 gap-3 border-b border-border/60 bg-muted/10 px-6 py-3 sm:grid-cols-3 shrink-0">
+                        <div className="rounded-xl border border-border/50 bg-background p-2.5 shadow-xs">
+                            <div className="flex items-center justify-between text-muted-foreground mb-0.5">
+                                <span className="text-[10px] font-extrabold uppercase tracking-wider">Sales Order</span>
+                                <FileText className="h-3.5 w-3.5 text-primary" />
+                            </div>
+                            <p className="text-xs font-black text-foreground truncate">{candidate.order_no}</p>
+                            <div className="flex items-center justify-between gap-1 text-[10px] text-muted-foreground mt-0.5">
+                                <span className="truncate">{candidate.customer_name}</span>
+                                {availability?.consolidatorNo ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowConsolidationSummary(true)}
+                                        className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[9px] font-bold text-primary border border-primary/20 hover:bg-primary/20 transition-colors"
+                                        title="Click to view Consolidation Summary"
+                                    >
+                                        {availability.consolidatorNo}
+                                    </button>
+                                ) : null}
+                            </div>
+                        </div>
+
+                        <div className="rounded-xl border border-border/50 bg-background p-2.5 shadow-xs">
+                            <div className="flex items-center justify-between text-muted-foreground mb-0.5">
+                                <span className="text-[10px] font-extrabold uppercase tracking-wider">Branch & PO</span>
+                                <Building2 className="h-3.5 w-3.5 text-blue-500" />
+                            </div>
+                            <p className="text-xs font-black text-foreground truncate">{candidate.branch_name || `Branch #${candidate.branch_id}`}</p>
+                            <p className="text-[10px] text-muted-foreground truncate">PO: {candidate.po_no || "—"}</p>
+                        </div>
+
+                        <div className="rounded-xl border border-border/50 bg-background p-2.5 shadow-xs">
+                            <div className="flex items-center justify-between text-muted-foreground mb-0.5">
+                                <span className="text-[10px] font-extrabold uppercase tracking-wider">Total Payable</span>
+                                <ShieldCheck className="h-3.5 w-3.5 text-violet-500" />
+                            </div>
+                            <p className="text-xs font-black text-primary truncate">₱{lineTotals.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                            <p className="text-[10px] text-muted-foreground">Net Invoice Total</p>
+                        </div>
+                    </div>
+                )}
+
+                {printingDirectly && createdResult ? (
+                    <div className="flex min-h-64 flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
+                        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                        <div>
+                            <p className="text-sm font-black uppercase">Preparing Receipt</p>
+                            <p className="mt-1 text-xs text-muted-foreground">The download will start automatically.</p>
+                        </div>
+                    </div>
+                ) : loadingPrint ? (
+                    <div className="flex min-h-80 flex-1 items-center justify-center">
+                        <div className="flex flex-col items-center gap-2">
+                            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                            <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Loading receipt...</p>
+                        </div>
+                    </div>
+                ) : previewingBeforeCreate ? (
+                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
+                        <div className="min-h-[65vh] flex-1 overflow-auto rounded-xl border bg-muted/50 p-6 flex justify-center">
+                            <div style={{ width: `${template.width * 0.72}mm`, height: `${template.height * 0.72}mm` }}>
+                                <ReceiptPreview invoice={provisional} template={template} scale={0.72} />
+                            </div>
+                        </div>
+                        <div className="flex items-center justify-end gap-3 border-t bg-muted/20 px-6 py-3 shrink-0 mt-3 rounded-xl">
+                            <button
+                                type="button"
+                                disabled={downloadingProvisional}
+                                onClick={handlePrintProvisional}
+                                className="flex items-center gap-2 rounded-xl border border-border bg-background px-4 py-2 text-xs font-black text-foreground hover:bg-muted transition-colors disabled:opacity-50 shadow-xs"
+                            >
+                                {downloadingProvisional ? (
+                                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                                ) : (
+                                    <Printer className="h-4 w-4 text-primary" />
+                                )}
+                                <span>Print Invoice Receipt</span>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setPreviewingBeforeCreate(false)}
+                                className="rounded-xl bg-primary px-5 py-2 text-xs font-black text-primary-foreground hover:bg-primary/90 transition-colors"
+                            >
+                                Back to Invoice Form
+                            </button>
+                        </div>
+                    </div>
+                ) : printable ? (
+                    pdfError ? (
+                        <div className="flex min-h-80 flex-1 flex-col items-center justify-center gap-4 p-6">
+                            <div className="rounded-xl border bg-emerald-500/5 p-4 text-center">
+                                <p className="text-[9px] font-black uppercase text-emerald-600">Invoice Created</p>
+                                <p className="mt-1 font-black">{printable.invoiceNo}</p>
+                                <p className="text-[10px] text-muted-foreground">Status: {printable.transactionStatus}</p>
+                            </div>
+                            <div className="rounded-xl border border-amber-300 bg-amber-500/10 px-4 py-3 text-center text-[10px] font-bold text-amber-700">{pdfError}</div>
+                            <button type="button" disabled={generatingPdf} onClick={retryPdf} className="flex w-full max-w-xs items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-black text-primary-foreground disabled:opacity-50">
+                                {generatingPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                                Retry Generate PDF
+                            </button>
+                        </div>
+                    ) : (
+                        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4 md:flex-row">
+                            <iframe title="Invoice receipt preview" src={previewUrl} className="min-h-[65vh] flex-1 rounded-xl border bg-white" />
+                            <div className="w-full space-y-3 md:w-64">
+                                <div className="rounded-xl border bg-emerald-500/5 p-4">
+                                    <p className="text-[9px] font-black uppercase text-emerald-600">Invoice Created</p>
+                                    <p className="mt-1 font-black">{printable.invoiceNo}</p>
+                                    <p className="text-[10px] text-muted-foreground">Status: {printable.transactionStatus}</p>
+                                    <p className={`mt-2 text-[9px] ${archiveStatus === "failed" ? "text-amber-600" : "text-muted-foreground"}`}>
+                                        {archiveStatus === "saved" ? "PDF archived" : archiveStatus === "failed" ? "PDF archive failed; printing is still available" : "Archiving PDF..."}
+                                    </p>
+                                </div>
+                                <button type="button" disabled={generatingPdf} onClick={print} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-black text-primary-foreground disabled:opacity-50 shadow-sm transition-all hover:bg-primary/90">
+                                    {generatingPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
+                                    {generatingPdf ? "Preparing PDF..." : "Print Receipt"}
+                                </button>
+                            </div>
+                        </div>
+                    )
+                ) : createdResult && printError ? (
+                    <div className="flex min-h-80 flex-1 flex-col items-center justify-center gap-4 p-6">
+                        <div className="rounded-xl border bg-emerald-500/5 p-4 text-center">
+                            <p className="text-[9px] font-black uppercase text-emerald-600">Invoice Created</p>
+                            <p className="mt-1 font-black">{createdResult.invoiceNo}</p>
+                            <p className="text-[10px] text-muted-foreground">Status: {createdResult.transactionStatus}</p>
+                        </div>
+                        <div className="rounded-xl border border-amber-300 bg-amber-500/10 px-4 py-3 text-center text-[10px] font-bold text-amber-700">
+                            {printError}
+                        </div>
+                        <button type="button" disabled={loadingPrint} onClick={() => loadInvoicePrint(createdResult)} className="flex w-full max-w-xs items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-black text-primary-foreground disabled:opacity-50">
+                            {loadingPrint ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                            Retry Load Receipt
+                        </button>
+                    </div>
+                ) : (
+                    <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                        {/* Main Body Grid */}
+                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start p-5 sm:p-6 overflow-y-auto flex-1">
+                            {/* Left Column: Order Items & Invoice Quantities (span 7) */}
+                            <div className="lg:col-span-7 space-y-4">
+                                {/* Sales Order Items & Invoicing Quantities Card */}
+                                <div className="overflow-hidden rounded-xl border bg-background shadow-xs">
+                                    <div className="flex items-center justify-between border-b bg-muted/30 px-4 py-2.5 text-[10px] font-extrabold uppercase text-muted-foreground">
+                                        <div className="flex items-center gap-1.5">
+                                            <Package className="h-3.5 w-3.5 text-primary" />
+                                            <span>Sales Order Items & Invoice Quantities</span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="rounded-full border bg-muted/60 px-2 py-0.5 font-bold">
+                                                {candidate.details.length} {candidate.details.length === 1 ? "Line" : "Lines"}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    {loadingAvailability && (
+                                        <div className="flex items-center justify-center gap-2 border-b bg-muted/10 py-2.5 text-[10px] font-medium text-muted-foreground">
+                                            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                                            <span>Verifying warehouse stock and picked quantities...</span>
+                                        </div>
+                                    )}
+
+                                    <div className="max-h-[55vh] divide-y overflow-y-auto">
+                                        {candidate.details.map(line => {
+                                            const product = typeof line.product_id === "object" ? line.product_id : null;
+                                            const pId = product ? Number(product.product_id) : Number(line.product_id);
+                                            const displayName = product?.description || product?.product_name || "Item";
+                                            const uomStr = product?.uom || "PCS";
+                                            const unitPrice = Number(line.unit_price || 0);
+                                            const orderedQty = Number(line.ordered_quantity || 0);
+                                            const lineAvail = availability?.lines.find((l) => l.productId === pId);
+                                            const maxInvoiceable = getLineMaxInvoiceable(line, lineAvail);
+                                            const defaultQty = maxInvoiceable;
+                                            const currentInvoiceQty = Math.min(maxInvoiceable, getLineInvoiceQty(pId, defaultQty));
+                                            const rawInputValue = lineInvoiceQtys[pId] !== undefined ? lineInvoiceQtys[pId] : defaultQty;
+                                            const lineBilledTotal = currentInvoiceQty * unitPrice;
+                                            const lineShortfall = shortfallLines.find((s) => s.productId === pId);
+
+                                            const hasSiblings = Boolean(lineAvail?.siblingOrders && lineAvail.siblingOrders.length > 0);
+                                            const siblingInvoicedQty = Number(lineAvail?.siblingInvoicedQuantity || 0);
+                                            const takenBySiblings = hasSiblings ? Math.min(siblingInvoicedQty, Math.max(0, orderedQty - maxInvoiceable)) : 0;
+                                            const unallocatedShortfall = Math.max(0, orderedQty - maxInvoiceable - takenBySiblings);
+
+                                            return (
+                                                <div key={line.detail_id} className="p-4 space-y-3 hover:bg-muted/5 transition-colors">
+                                                    {/* Top Row: Product Info & Line Total */}
+                                                    <div className="flex items-start justify-between gap-3">
+                                                        <div className="min-w-0 space-y-0.5">
+                                                            <p className="font-bold text-foreground text-xs leading-snug">{displayName}</p>
+                                                            <p className="text-[10px] text-muted-foreground font-mono">
+                                                                {product?.product_code ? `${product.product_code} · ` : ""}{line.bom_version_name || "Standard Version"} · ₱{unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })} / {uomStr}
+                                                            </p>
+                                                        </div>
+                                                        <div className="shrink-0 text-right">
+                                                            <span className="text-[9px] uppercase font-extrabold text-muted-foreground block">Line Total</span>
+                                                            <span className="font-mono text-xs font-black text-primary">
+                                                                ₱{lineBilledTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Middle Row: Demand Info Badge */}
+                                                    <div className="flex flex-wrap items-center gap-2 text-[10px]">
+                                                        <span className="rounded-md border bg-muted/40 px-2 py-0.5 font-medium text-foreground">
+                                                            Ordered: <strong>{orderedQty} {uomStr}</strong> / Picked Left: <strong>{maxInvoiceable} {uomStr}</strong>
+                                                        </span>
+                                                        {lineAvail?.isConsolidated ? (
+                                                            <>
+                                                                <span className="rounded-md border border-primary/20 bg-primary/5 px-2 py-0.5 font-medium text-primary flex items-center gap-1">
+                                                                    <Boxes className="h-3 w-3 shrink-0" />
+                                                                    Batch Pool: <strong>{lineAvail.remainingBatchPool ?? 0} {uomStr} remaining</strong> (of {lineAvail.totalBatchPicked ?? 0} {uomStr} picked, {lineAvail.alreadyInvoicedAcrossBatch ?? 0} {uomStr} billed by siblings)
+                                                                </span>
+                                                                {(lineAvail.shortfall || 0) > 0 ? (
+                                                                    <span className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 font-medium text-amber-700 dark:text-amber-300 flex items-center gap-1">
+                                                                        <AlertTriangle className="h-3 w-3 shrink-0" />
+                                                                        Shortfall: <strong>{lineAvail.shortfall} {uomStr}</strong> (capped by remaining batch supply)
+                                                                    </span>
+                                                                ) : null}
+                                                            </>
+                                                        ) : takenBySiblings > 0 ? (
+                                                            <span className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 font-medium text-amber-700 dark:text-amber-300 flex items-center gap-1">
+                                                                <AlertTriangle className="h-3 w-3 shrink-0" />
+                                                                Available to Invoice: <strong>{maxInvoiceable} {uomStr}</strong> ({takenBySiblings} {uomStr} taken by sibling sales order)
+                                                            </span>
+                                                        ) : unallocatedShortfall > 0 ? (
+                                                            <span className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 font-medium text-amber-700 dark:text-amber-300 flex items-center gap-1">
+                                                                <AlertTriangle className="h-3 w-3 shrink-0" />
+                                                                Available to Invoice: <strong>{maxInvoiceable} {uomStr}</strong> ({unallocatedShortfall} {uomStr} unallocated shortfall)
+                                                            </span>
+                                                        ) : null}
+                                                    </div>
+
+                                                    {/* Inline Allocated Batches Breakdown */}
+                                                    {lineAvail?.batches && lineAvail.batches.length > 0 && (
+                                                        <div className="rounded-lg border border-border/40 bg-muted/20 px-3 py-2 text-[10px] space-y-1.5">
+                                                            <div className="flex items-center justify-between text-[9px] font-extrabold uppercase text-muted-foreground">
+                                                                <span className="flex items-center gap-1">
+                                                                    <Boxes className="h-3 w-3 text-primary" />
+                                                                    Allocated Batches ({lineAvail.batches.length})
+                                                                </span>
+                                                                <span className="font-mono text-primary font-bold">
+                                                                    Total Picked: {maxInvoiceable} {uomStr}
+                                                                </span>
+                                                            </div>
+                                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-0.5">
+                                                                {lineAvail.batches.map((b, bIdx) => {
+                                                                    const bPicked = Number(b.pickedQuantity !== undefined ? b.pickedQuantity : (b.onhandQuantity || 0));
+                                                                    return (
+                                                                        <div key={bIdx} className="flex items-center justify-between rounded border border-border/30 bg-background/80 px-2.5 py-1 font-mono text-[10px]">
+                                                                            <span className="truncate text-foreground font-semibold">
+                                                                                {b.batchNo} <span className="text-muted-foreground font-normal">({b.lotName || `Lot #${b.lotId}`})</span>
+                                                                            </span>
+                                                                            <span className="shrink-0 font-bold text-primary ml-2">
+                                                                                Picked: {bPicked} {uomStr}
+                                                                            </span>
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    {/* Inline Shared Sibling Orders */}
+                                                    {lineAvail?.siblingOrders && lineAvail.siblingOrders.length > 0 && (
+                                                        <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border/30 bg-muted/20 px-2.5 py-1.5 text-[9px]">
+                                                            <Users className="h-3 w-3 text-muted-foreground shrink-0" />
+                                                            <span className="font-extrabold uppercase text-muted-foreground">Shared Sibling Orders:</span>
+                                                            {lineAvail.siblingOrders.map((sib) => (
+                                                                <span
+                                                                    key={sib.orderId}
+                                                                    className={`inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-[9px] font-semibold border ${sib.isInvoiced ? "bg-muted text-muted-foreground line-through border-border/40" : "bg-primary/10 text-primary border-primary/20"}`}
+                                                                >
+                                                                    {sib.orderNo} {sib.customerName ? `(${sib.customerName})` : ""}: {sib.orderedQuantity} {uomStr} {sib.isInvoiced ? "✓ Invoiced" : "Pending"}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    )}
+
+                                                    {/* Bottom Row: Sales Invoice Qty Controls */}
+                                                    <div className="flex items-center justify-between rounded-xl border bg-muted/20 p-2.5">
+                                                        <div className="space-y-0.5">
+                                                            <span className="text-[10px] font-extrabold uppercase text-foreground block">Sales Invoice Qty</span>
+                                                            <span className="text-[9px] text-muted-foreground">
+                                                                Billed quantity for this invoice (max: {maxInvoiceable} {uomStr})
+                                                            </span>
+                                                        </div>
+
+                                                        <div className="flex items-center gap-1.5 shrink-0">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleLineInvoiceQtyChange(pId, String(Math.max(0, currentInvoiceQty - 1)), maxInvoiceable)}
+                                                                disabled={currentInvoiceQty <= 0}
+                                                                className="h-8 w-8 rounded-lg border bg-background font-bold hover:bg-muted text-xs flex items-center justify-center disabled:opacity-30 transition-colors shadow-2xs"
+                                                                aria-label="Decrease quantity"
+                                                            >
+                                                                -
+                                                            </button>
+                                                            <input
+                                                                type="number"
+                                                                min={0}
+                                                                max={maxInvoiceable}
+                                                                value={rawInputValue}
+                                                                onChange={(e) => handleLineInvoiceQtyChange(pId, e.target.value, maxInvoiceable)}
+                                                                onBlur={() => handleLineInvoiceQtyBlur(pId, defaultQty)}
+                                                                onFocus={(e) => e.currentTarget.select()}
+                                                                onClick={(e) => e.currentTarget.select()}
+                                                                className="h-8 w-16 rounded-lg border bg-background text-center font-mono text-xs font-black focus:outline-none focus:ring-2 focus:ring-primary/20 shadow-2xs"
+                                                            />
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleLineInvoiceQtyChange(pId, String(Math.min(maxInvoiceable, currentInvoiceQty + 1)), maxInvoiceable)}
+                                                                disabled={currentInvoiceQty >= maxInvoiceable}
+                                                                className="h-8 w-8 rounded-lg border bg-background font-bold hover:bg-muted text-xs flex items-center justify-center disabled:opacity-30 transition-colors shadow-2xs"
+                                                                aria-label="Increase quantity"
+                                                            >
+                                                                +
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleLineInvoiceQtyChange(pId, String(maxInvoiceable), maxInvoiceable)}
+                                                                className="h-8 rounded-lg border bg-background px-2.5 text-[10px] font-bold text-muted-foreground hover:bg-muted hover:text-foreground transition-colors shadow-2xs"
+                                                            >
+                                                                Max
+                                                            </button>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Dynamic Sibling Allocation / Shortfall Warning Notice */}
+                                                    <AnimatePresence>
+                                                        {(takenBySiblings > 0 || unallocatedShortfall > 0 || lineShortfall) && (
+                                                            <motion.div
+                                                                initial={{ opacity: 0, height: 0 }}
+                                                                animate={{ opacity: 1, height: "auto" }}
+                                                                exit={{ opacity: 0, height: 0 }}
+                                                                transition={{ duration: 0.18 }}
+                                                                className="overflow-hidden"
+                                                            >
+                                                                <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-200">
+                                                                    <div className="flex items-start gap-2">
+                                                                        <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+                                                                        <div className="space-y-1">
+                                                                            <div className="font-bold flex items-center gap-1.5 flex-wrap">
+                                                                                <span>
+                                                                                    {takenBySiblings > 0
+                                                                                        ? "Consolidation & Sibling Allocation Notice"
+                                                                                        : "Consolidation Allocation Shortfall Notice"}
+                                                                                </span>
+                                                                                {takenBySiblings > 0 && (
+                                                                                    <span className="rounded bg-amber-500/20 px-1.5 py-0.2 font-mono text-[9px] font-bold text-amber-700 dark:text-amber-300">
+                                                                                        -{takenBySiblings} {uomStr} Taken by Sibling Orders
+                                                                                    </span>
+                                                                                )}
+                                                                                {unallocatedShortfall > 0 && (
+                                                                                    <span className="rounded bg-amber-500/20 px-1.5 py-0.2 font-mono text-[9px] font-bold text-amber-700 dark:text-amber-300">
+                                                                                        -{unallocatedShortfall} {uomStr} Shortfall
+                                                                                    </span>
+                                                                                )}
+                                                                                {lineShortfall && (
+                                                                                    <span className="rounded bg-amber-500/20 px-1.5 py-0.2 font-mono text-[9px] font-bold text-amber-700 dark:text-amber-300">
+                                                                                        -{lineShortfall.siblingShortfall} {uomStr} Deficit
+                                                                                    </span>
+                                                                                )}
+                                                                            </div>
+                                                                            <p className="text-[11px] leading-relaxed text-amber-900/90 dark:text-amber-200/90">
+                                                                                {takenBySiblings > 0 ? (
+                                                                                    <>
+                                                                                        Out of <strong>{orderedQty} {uomStr}</strong> originally requested for {candidate.order_no}, <strong>{takenBySiblings} {uomStr}</strong> was taken by linked sibling order(s) in this consolidation batch. Maximum available to invoice is strictly capped at <strong>{maxInvoiceable} {uomStr}</strong>.
+                                                                                    </>
+                                                                                ) : unallocatedShortfall > 0 ? (
+                                                                                    <>
+                                                                                        Out of <strong>{orderedQty} {uomStr}</strong> originally requested for {candidate.order_no}, only <strong>{maxInvoiceable} {uomStr}</strong> was allocated / picked in this consolidation batch ({unallocatedShortfall} {uomStr} unfulfilled shortfall). Maximum available to invoice is strictly capped at <strong>{maxInvoiceable} {uomStr}</strong>.
+                                                                                    </>
+                                                                                ) : null}
+                                                                                {lineShortfall && (
+                                                                                    <span className={`block ${takenBySiblings > 0 || unallocatedShortfall > 0 ? "mt-1 pt-1 border-t border-amber-500/20" : ""} font-medium`}>
+                                                                                        ⚠️ Invoicing <strong>{lineShortfall.currentInvoiceQty} {uomStr}</strong> leaves <strong>{lineShortfall.remainingForSiblings} {uomStr}</strong> in the shared pool for sibling order(s) ({lineShortfall.unInvoicedSiblings.map((s) => s.orderNo).join(", ")}), causing an unfulfilled deficit of {lineShortfall.siblingShortfall} {uomStr}.
+                                                                                    </span>
+                                                                                )}
+                                                                            </p>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            </motion.div>
+                                                        )}
+                                                    </AnimatePresence>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+
+                                    {/* Card Summary Footer */}
+                                    <div className="flex justify-between items-center border-t bg-muted/20 px-4 py-2.5 text-xs font-black">
+                                        <span className="text-muted-foreground uppercase text-[10px] font-extrabold">Original Demand Subtotal</span>
+                                        <span className="text-xs font-bold text-muted-foreground font-mono">
+                                            ₱{Number(candidate.net_amount || candidate.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between items-center border-t border-primary/20 bg-primary/5 px-4 py-2.5 text-xs font-black">
+                                        <span className="text-primary uppercase text-[10px] font-extrabold">Billed Invoice Subtotal</span>
+                                        <span className="text-sm font-black text-primary font-mono">
+                                            ₱{lineTotals.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Right Column: Invoice Setup Parameters (span 5) */}
+                            <div className="lg:col-span-5 space-y-4">
+                                {/* Real-time Billed Financial Summary Card */}
+                                <div className="rounded-xl border bg-card p-4 shadow-xs space-y-2.5">
+                                    <div className="flex items-center justify-between pb-1.5 border-b text-[10px] font-extrabold uppercase text-muted-foreground">
+                                        <div className="flex items-center gap-1.5">
+                                            <FileCheck2 className="h-3.5 w-3.5 text-primary" />
+                                            <span>Invoice Financial Summary</span>
+                                        </div>
+                                        <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[9px] font-bold text-primary font-mono">
+                                            Allocated Billing
+                                        </span>
+                                    </div>
+                                    <div className="space-y-1.5 text-xs">
+                                        <div className="flex justify-between text-muted-foreground">
+                                            <span>Original Demand:</span>
+                                            <span className="font-mono font-medium">
+                                                ₱{Number(candidate.net_amount || candidate.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                            </span>
+                                        </div>
+                                        <div className="flex justify-between font-bold text-foreground">
+                                            <span>Allocated Billed Subtotal:</span>
+                                            <span className="font-mono text-primary">
+                                                ₱{lineTotals.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                            </span>
+                                        </div>
+                                        <div className="flex justify-between text-muted-foreground">
+                                            <span>Discount:</span>
+                                            <span className="font-mono">₱0.00</span>
+                                        </div>
+                                        <div className="flex justify-between border-t pt-2 text-sm font-black text-foreground">
+                                            <span>Net Invoice Payable:</span>
+                                            <span className="font-mono text-primary">
+                                                ₱{lineTotals.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-3.5 rounded-xl border bg-muted/10 p-4 shadow-xs">
+                                    <div className="flex items-center gap-1.5 pb-1 border-b text-[10px] font-extrabold uppercase text-muted-foreground">
+                                        <FileText className="h-3.5 w-3.5 text-primary" />
+                                        <span>Invoice & Receipt Parameters</span>
+                                    </div>
+
+                                    <div className="space-y-1">
+                                        <span className="text-[10px] font-extrabold uppercase text-muted-foreground">
+                                            Receipt Type <span className="text-red-500 font-bold">*</span>
+                                        </span>
+                                        <Select
+                                            value={invoiceTypeId ? String(invoiceTypeId) : ""}
+                                            onValueChange={(val) => setInvoiceTypeId(Number(val))}
+                                        >
+                                            <SelectTrigger className="w-full h-9 rounded-xl border bg-background px-3.5 text-xs font-semibold shadow-none focus:ring-2 focus:ring-primary/20">
+                                                <SelectValue placeholder="Select receipt type" />
+                                            </SelectTrigger>
+                                            <SelectContent className="rounded-xl">
+                                                {receiptTypes.map(type => (
+                                                    <SelectItem key={type.id} value={String(type.id)} className="text-xs font-medium">
+                                                        {type.type}
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+
+                                    <label className="block space-y-1">
+                                        <span className="text-[10px] font-extrabold uppercase text-muted-foreground">Invoice / Receipt Number</span>
+                                        <div className="relative">
+                                            <FileText className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                                            <input 
+                                                required 
+                                                maxLength={selectedType?.maxLength || undefined} 
+                                                value={invoiceNo} 
+                                                onChange={e => setInvoiceNo(e.target.value)} 
+                                                className="w-full rounded-xl border bg-background py-2 pl-9 pr-3.5 text-xs font-mono outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" 
+                                            />
+                                        </div>
+                                    </label>
+
+                                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                        <label className="space-y-1">
+                                            <span className="text-[10px] font-extrabold uppercase text-muted-foreground">Invoice Date</span>
+                                            <div className="relative">
+                                                <Calendar className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                                                <input 
+                                                    required 
+                                                    type="date" 
+                                                    value={invoiceDate} 
+                                                    onChange={e => setInvoiceDate(e.target.value)} 
+                                                    className="w-full rounded-xl border bg-background py-2 pl-9 pr-3.5 text-xs outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" 
+                                                />
+                                            </div>
+                                        </label>
+                                        <label className="space-y-1">
+                                            <span className="text-[10px] font-extrabold uppercase text-muted-foreground">Payment Due Date</span>
+                                            <div className="relative">
+                                                <Calendar className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                                                <input 
+                                                    required 
+                                                    type="date" 
+                                                    value={dueDate} 
+                                                    onChange={e => setDueDate(e.target.value)} 
+                                                    className="w-full rounded-xl border bg-background py-2 pl-9 pr-3.5 text-xs outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" 
+                                                />
+                                            </div>
+                                        </label>
+                                    </div>
+
+                                    <label className="block space-y-1">
+                                        <span className="text-[10px] font-extrabold uppercase text-muted-foreground">Remarks / Billing Notes</span>
+                                        <textarea 
+                                            rows={3} 
+                                            value={remarks} 
+                                            placeholder="Add Remarks"
+                                            onChange={e => setRemarks(e.target.value)} 
+                                            className="w-full resize-none rounded-xl border bg-background px-3.5 py-2 text-xs outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" 
+                                        />
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Sticky Action Footer */}
+                        <div className="flex items-center justify-end border-t bg-muted/20 px-6 py-3.5 shrink-0">
+ 
+                            <div className="flex items-center gap-3">
+                                <button 
+                                    type="button" 
+                                    disabled={!invoiceTypeId || loadingTemplate} 
+                                    onClick={() => setPreviewingBeforeCreate(true)} 
+                                    className="rounded-xl border bg-background px-4 py-2 text-xs font-bold shadow-xs hover:bg-muted disabled:opacity-50 transition-colors"
+                                >
+                                    Preview Receipt
+                                </button>
+                                <button 
+                                    type="submit"
+                                    disabled={submitting || !invoiceTypeId || loadingAvailability || loadingTemplate} 
+                                    className="flex items-center justify-center gap-2 rounded-xl bg-primary px-5 py-2 text-xs font-black text-primary-foreground shadow-sm transition-all hover:bg-primary/90 hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50"
+                                >
+                                    {submitting ? (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                        <Printer className="h-4 w-4" />
+                                    )}
+                                    {submitting ? "Preparing Receipt..." : loadingTemplate ? "Loading Layout..." : "Print & Create Invoice"}
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                )}
+            </motion.div>
+        <AnimatePresence>
+            {showConfirmModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-3 backdrop-blur-sm sm:p-4">
+                    <motion.div 
+                        initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                        transition={{ duration: 0.18 }}
+                        className="flex w-full max-w-md flex-col overflow-hidden rounded-2xl border bg-card p-4 shadow-2xl space-y-3.5 sm:p-5"
+                    >
+                        <div className="flex items-center justify-between border-b pb-3">
+                            <div className="flex items-center gap-2.5">
+                                <div className="rounded-xl border border-primary/20 bg-primary/10 p-2 text-primary">
+                                    <FileCheck2 className="h-5 w-5" />
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-black uppercase tracking-wide">Confirm Invoice Creation</h3>
+                                    <p className="text-[10px] text-muted-foreground">{candidate.order_no} · {candidate.customer_name} · Will advance to For Dispatched</p>
+                                </div>
+                            </div>
+                            <button type="button" onClick={() => setShowConfirmModal(false)} aria-label="Close confirmation" className="rounded-lg p-1 text-muted-foreground hover:bg-muted">
+                                <X className="h-4 w-4" />
+                            </button>
+                        </div>
+
+                        <div className="space-y-3 text-xs">
+                            <div className="grid grid-cols-2 gap-2.5 rounded-xl border bg-muted/20 p-3">
+                                <div>
+                                    <span className="text-[9px] font-extrabold uppercase text-muted-foreground">Invoice No</span>
+                                    <p className="font-bold text-foreground">{invoiceNo.trim()}</p>
+                                </div>
+                                <div>
+                                    <span className="text-[9px] font-extrabold uppercase text-muted-foreground">Receipt Type</span>
+                                    <p className="font-bold text-foreground">{selectedType?.type || "Sales Invoice"}</p>
+                                </div>
+                                <div>
+                                    <span className="text-[9px] font-extrabold uppercase text-muted-foreground">Customer</span>
+                                    <p className="truncate font-bold text-foreground">{candidate.customer_name}</p>
+                                </div>
+                                <div>
+                                    <span className="text-[9px] font-extrabold uppercase text-muted-foreground">Total Amount</span>
+                                    <p className="font-black text-primary">₱{lineTotals.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                                </div>
+                                <div>
+                                    <span className="text-[9px] font-extrabold uppercase text-muted-foreground">Invoice Date</span>
+                                    <p className="font-bold text-foreground">{invoiceDate}</p>
+                                </div>
+                                <div>
+                                    <span className="text-[9px] font-extrabold uppercase text-muted-foreground">Due Date</span>
+                                    <p className="font-bold text-foreground">{dueDate}</p>
+                                </div>
+                            </div>
+
+                            {shortfallLines.length > 0 && (
+                                <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-200 space-y-1.5">
+                                    <div className="flex items-center gap-1.5 font-bold text-amber-800 dark:text-amber-300">
+                                        <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                                        <span>Consolidation Shortfall Notice</span>
+                                    </div>
+                                    <p className="text-[11px] leading-relaxed text-amber-900/90 dark:text-amber-200/90">
+                                        Invoicing these quantities will leave an unfulfilled deficit for other linked order(s) in this consolidation:
+                                    </p>
+                                    <ul className="list-disc list-inside space-y-1 text-[11px] font-medium">
+                                        {shortfallLines.map((s, idx) => (
+                                            <li key={idx}>
+                                                <strong>{s.productName}</strong>: -{s.siblingShortfall} {s.uomStr} deficit for {s.unInvoicedSiblings.map((sib) => sib.orderNo).join(", ")}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+
+                            <label className="block space-y-1.5">
+                                <span className="text-[10px] font-extrabold uppercase text-muted-foreground">Confirmation Notes / Remarks</span>
+                                <textarea
+                                    rows={3}
+                                    value={confirmationNotes}
+                                    onChange={e => setConfirmationNotes(e.target.value)}
+                                    placeholder="Add notes or remarks to include with this confirmation..."
+                                    className="w-full resize-none rounded-xl border bg-background px-3.5 py-2 text-xs outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                                />
+                            </label>
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2 border-t pt-3">
+                            <button
+                                type="button"
+                                onClick={() => setShowConfirmModal(false)}
+                                className="rounded-xl border px-4 py-2 text-xs font-bold hover:bg-muted transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setShowConfirmModal(false);
+                                    setRemarks(confirmationNotes);
+                                    printingDirectlyRef.current = true;
+                                    setPrintingDirectly(true);
+                                    void create(confirmationNotes);
+                                }}
+                                className="flex items-center gap-2 rounded-xl bg-primary px-5 py-2 text-xs font-black text-primary-foreground hover:bg-primary/90 transition-colors"
+                            >
+                                <Printer className="h-4 w-4" />
+                                Confirm & Create Invoice
+                            </button>
+                        </div>
+                    </motion.div>
+                </div>
+            )}
+        </AnimatePresence>
+        <AnimatePresence>
+            {showConsolidationSummary && availability?.consolidatorNo && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-3 backdrop-blur-sm sm:p-4">
+                    <motion.div
+                        initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                        transition={{ duration: 0.18 }}
+                        className="flex w-full max-w-lg flex-col overflow-hidden rounded-2xl border bg-card p-5 shadow-2xl space-y-4 max-h-[85dvh]"
+                    >
+                        {/* Header */}
+                        <div className="flex items-center justify-between border-b pb-3">
+                            <div className="flex items-center gap-2.5">
+                                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-2 text-emerald-600 dark:text-emerald-400">
+                                    <Layers className="h-5 w-5" />
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-black uppercase tracking-wide flex items-center gap-2">
+                                        <span>Consolidation Summary</span>
+                                        <span className="rounded bg-emerald-500/10 px-2 py-0.5 font-mono text-xs font-bold text-emerald-600 border border-emerald-500/30">
+                                            {availability.consolidatorNo}
+                                        </span>
+                                    </h3>
+                                    <p className="text-[10px] text-muted-foreground">Warehouse Fulfillment & Picked Stock Allocations</p>
+                                </div>
+                            </div>
+                            <button type="button" onClick={() => setShowConsolidationSummary(false)} aria-label="Close consolidation summary" className="rounded-lg p-1 text-muted-foreground hover:bg-muted">
+                                <X className="h-4 w-4" />
+                            </button>
+                        </div>
+
+                        {/* Body Content */}
+                        <div className="space-y-4 text-xs overflow-y-auto pr-1 flex-1">
+                            {/* Linked Orders */}
+                            <div className="rounded-xl border bg-muted/20 p-3 space-y-2">
+                                <span className="text-[10px] font-extrabold uppercase text-muted-foreground block">
+                                    Consolidated Sales Orders ({1 + (availability.siblingOrders?.length || 0)})
+                                </span>
+                                <div className="flex flex-wrap gap-2 text-[11px]">
+                                    <span className="rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1 font-bold text-primary flex items-center gap-1">
+                                        {candidate.order_no} (Current)
+                                    </span>
+                                    {availability.siblingOrders?.map((sib) => (
+                                        <span key={sib.orderId} className={`rounded-lg border px-2.5 py-1 font-medium ${sib.isInvoiced ? "bg-muted text-muted-foreground line-through" : "bg-background text-foreground"}`}>
+                                            {sib.orderNo} ({sib.customerName || "Customer"}) {sib.isInvoiced ? "✓ Invoiced" : ""}
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Consolidated Items & Picked Pools */}
+                            <div className="space-y-2">
+                                <span className="text-[10px] font-extrabold uppercase text-muted-foreground block">
+                                    Consolidated Products & Picked Batches
+                                </span>
+                                <div className="divide-y rounded-xl border bg-background overflow-hidden">
+                                    {availability.lines.map((line) => (
+                                        <div key={line.productId} className="p-3 space-y-1.5">
+                                            <div className="flex items-center justify-between font-bold">
+                                                <span className="text-foreground">{line.productName}</span>
+                                                <span className="font-mono text-xs text-primary">
+                                                    Total Picked: {line.totalPoolQuantity ?? line.pickedQuantity ?? line.requiredQuantity} PCS
+                                                </span>
+                                            </div>
+                                            <div className="text-[10px] text-muted-foreground flex justify-between">
+                                                <span>Required for {candidate.order_no}: {line.requiredQuantity} PCS</span>
+                                                <span>Batches Allocated: {line.batches?.length || 0}</span>
+                                            </div>
+                                            {line.batches && line.batches.length > 0 && (
+                                                <div className="mt-1 space-y-1 pl-2 border-l-2 border-primary/20 text-[10px] font-mono">
+                                                    {line.batches.map((b, bIdx) => (
+                                                        <div key={bIdx} className="flex items-center justify-between text-muted-foreground">
+                                                            <span>Batch: {b.batchNo} ({b.lotName || `Lot #${b.lotId}`})</span>
+                                                            <span>Picked Left: {b.pickedQuantity || b.onhandQuantity} PCS</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Footer */}
+                        <div className="flex items-center justify-end border-t pt-3">
+                            <button
+                                type="button"
+                                onClick={() => setShowConsolidationSummary(false)}
+                                className="rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground hover:bg-primary/90 transition-colors"
+                            >
+                                Close Summary
+                            </button>
+                        </div>
+                    </motion.div>
+                </div>
+            )}
+        </AnimatePresence>
+        {editingTemplate ? <ReceiptTemplateEditor receiptTypeId={invoiceTypeId} initialTemplate={template} invoice={provisional} onClose={() => setEditingTemplate(false)} onSave={saved => { setTemplate(saved); setEditingTemplate(false); }} /> : null}
+        </div>
+    );
+}

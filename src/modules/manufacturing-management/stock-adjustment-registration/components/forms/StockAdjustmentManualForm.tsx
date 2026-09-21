@@ -227,6 +227,8 @@ const ProductTableRow = React.memo(function ProductTableRow({
 }: ProductTableRowProps) {
   const product_name = useWatch({ control, name: `items.${index}.product_name` });
   const product_code = useWatch({ control, name: `items.${index}.product_code` });
+  const productType = useWatch({ control, name: `items.${index}.product_type` });
+  const productCategory = useWatch({ control, name: `items.${index}.product_category` });
   const unitName = useWatch({ control, name: `items.${index}.unit_name` });
   const quantity = useWatch({ control, name: `items.${index}.quantity` });
   const costPerUnit = useWatch({ control, name: `items.${index}.cost_per_unit` });
@@ -243,6 +245,12 @@ const ProductTableRow = React.memo(function ProductTableRow({
     : undefined;
 
   const totalCost = Number(quantity || 0) * Number(costPerUnit || 0);
+
+  const productClassification = useMemo(() => {
+    return resolveProductClassification(productType, productCategory).code;
+  }, [productType, productCategory]);
+
+  const allocationPolicy = productClassification === 'PKG' ? 'FIFO' : 'FEFO';
 
   const handleQuantityChange = useCallback((newQty: number) => {
     const safeQty = Math.max(0, newQty);
@@ -347,11 +355,11 @@ const ProductTableRow = React.memo(function ProductTableRow({
                 <Badge
                   variant="outline"
                   onClick={() => onOpenLotBatch?.(index)}
-                  title={batches.length > 0 ? `Allocated Batches:\n${batches.join("\n")}` : "Automatic FEFO Allocation"}
+                  title={batches.length > 0 ? `Allocated Batches (${allocationPolicy}):\n${batches.join("\n")}` : `Automatic ${allocationPolicy} Allocation`}
                   className="text-[10px] py-0 h-4 px-1.5 font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 gap-1 cursor-pointer hover:bg-emerald-500/20 transition-colors"
                 >
                   <Layers className="w-2.5 h-2.5 text-emerald-600" />
-                  AUTO — FEFO {batchLabel}
+                  AUTO — {allocationPolicy} {batchLabel}
                 </Badge>
                 {qaStatus && (
                   <Badge
@@ -1538,7 +1546,16 @@ export function StockAdjustmentManualForm({
             await updateAdjustment(id, values);
             toast.success("Adjustment Saved Successfully");
           } else {
-            await createAdjustment(values);
+            let finalValues = values;
+            const expectedPrefix = values.type === "OUT" ? "SAOUT" : "SAIN";
+            if (!values.doc_no || !values.doc_no.startsWith(expectedPrefix)) {
+              const correctDocNo = await fetchNextDocNo(values.type);
+              if (correctDocNo) {
+                finalValues = { ...values, doc_no: correctDocNo };
+                form.setValue("doc_no", correctDocNo);
+              }
+            }
+            await createAdjustment(finalValues);
             toast.success("Adjustment Created Successfully");
           }
           initialValuesRef.current = JSON.stringify(values);
@@ -1560,7 +1577,7 @@ export function StockAdjustmentManualForm({
       },
       onInvalid
     )();
-  }, [id, createAdjustment, updateAdjustment, router, form, pendingExitAction]);
+  }, [id, createAdjustment, updateAdjustment, router, form, pendingExitAction, fetchNextDocNo]);
 
   // ——————————————————————————————————————————————————————————————————————————————
   const onSubmit = useCallback(
@@ -1619,7 +1636,16 @@ export function StockAdjustmentManualForm({
           initialValuesRef.current = JSON.stringify(values);
           onSuccess?.();
         } else {
-          await createAdjustment(values);
+          let finalValues = values;
+          const expectedPrefix = values.type === "OUT" ? "SAOUT" : "SAIN";
+          if (!values.doc_no || !values.doc_no.startsWith(expectedPrefix)) {
+            const correctDocNo = await fetchNextDocNo(values.type);
+            if (correctDocNo) {
+              finalValues = { ...values, doc_no: correctDocNo };
+              form.setValue("doc_no", correctDocNo);
+            }
+          }
+          await createAdjustment(finalValues);
           toast.success("Adjustment Created Successfully");
           await handleClearForm();
         }
@@ -1630,7 +1656,7 @@ export function StockAdjustmentManualForm({
         setLoading(false);
       }
     },
-    [id, createAdjustment, updateAdjustment, onSuccess, handleClearForm]
+    [id, createAdjustment, updateAdjustment, onSuccess, handleClearForm, fetchNextDocNo, form]
   );
 
   // ——————————————————————————————————————————————————————————————————————————————
@@ -1862,6 +1888,7 @@ export function StockAdjustmentManualForm({
                   <Input
                     id="doc_no"
                     {...form.register("doc_no")}
+                    value={watchedDocNo || ""}
                     readOnly
                     className="bg-muted/50 border-input h-11 text-xs font-semibold"
                   />
@@ -2150,7 +2177,16 @@ export function StockAdjustmentManualForm({
               </Label>
               <RadioGroup
                 value={watchedType}
-                onValueChange={(v) => form.setValue("type", v as "IN" | "OUT")}
+                onValueChange={async (v) => {
+                  const newType = v as "IN" | "OUT";
+                  form.setValue("type", newType, { shouldValidate: true, shouldDirty: true });
+                  if (!id) {
+                    const nextDoc = await fetchNextDocNo(newType);
+                    if (nextDoc) {
+                      form.setValue("doc_no", nextDoc, { shouldValidate: true, shouldDirty: true });
+                    }
+                  }
+                }}
                 className="flex gap-4 pt-1"
                 disabled={isReadOnly || !!id}
               >
@@ -2463,6 +2499,7 @@ export function StockAdjustmentManualForm({
               onOpenChange={setLotBatchModalOpen}
               productId={Number(activeItem.product_id) || 0}
               productName={String(activeItem.product_name || '')}
+              productClassification={resolveProductClassification(activeItem.product_type, activeItem.product_category).code}
               branchId={Number(watchedBranchId) || 0}
               requestedQuantity={Number(activeItem.quantity) || 0}
               uomName={String(activeItem.unit_name || 'units')}

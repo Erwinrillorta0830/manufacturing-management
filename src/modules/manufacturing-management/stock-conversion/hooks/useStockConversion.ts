@@ -71,15 +71,20 @@ export function useStockConversion() {
         throw new Error(`Spring Boot error HTTP ${res.status}: ${JSON.stringify(errData)}`);
       }
 
-      const onhandList: Array<{ productId: number; branchId: number; onhandQuantity: number; totalQuantityIn: number; totalQuantityOut: number }> = await res.json();
+      const onhandList: Array<{ productId: number; branchId: number; onhandQuantity: number; totalQuantityIn: number; totalQuantityOut: number; unitId?: number }> = await res.json();
       console.group(`📦 [ProductOnhand] /api/manufacturing/product-onhand (Branch: ${activeBranchId || 'ALL'})`);
       // console.log(`📌 Raw API response:`, onhandList);
       console.groupEnd();
 
+      const unitInvMap: Record<string, number> = {};
       onhandList.forEach((item) => {
         const pId = Number(item.productId);
+        const uId = Number(item.unitId || (item as unknown as { unit_id?: number }).unit_id || 0);
         const qty = Math.max(0, Number(item.onhandQuantity ?? 0));
         if (pId > 0) {
+          if (uId > 0) {
+            unitInvMap[`${pId}:${uId}`] = (unitInvMap[`${pId}:${uId}`] || 0) + qty;
+          }
           invMap[pId] = (invMap[pId] || 0) + qty;
         }
       });
@@ -87,8 +92,8 @@ export function useStockConversion() {
       setData(prev => {
         return prev.map(p => {
           if (!fetchableIds.includes(p.productId)) return p;
-          const finalQty = invMap[p.productId] ?? 0;
-          // console.log(`[ProductOnhand] "${p.productName}" (ID: ${p.productId}) → ${finalQty} ${p.currentUnit}`);
+          const unitKey = `${p.productId}:${p.currentUnitId}`;
+          const finalQty = unitInvMap[unitKey] !== undefined ? unitInvMap[unitKey] : (invMap[p.productId] ?? 0);
           return {
             ...p,
             quantity: finalQty,

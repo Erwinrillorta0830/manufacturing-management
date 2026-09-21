@@ -815,7 +815,16 @@ export function StockAdjustmentForm({
           form.reset(values, { keepValues: true });
           toast.success("Adjustment Updated Successfully");
         } else {
-          await createAdjustment(values);
+          let finalValues = values;
+          const expectedPrefix = values.type === "OUT" ? "SAOUT" : "SAIN";
+          if (!values.doc_no || !values.doc_no.startsWith(expectedPrefix)) {
+            const correctDocNo = await fetchNextDocNo(values.type);
+            if (correctDocNo) {
+              finalValues = { ...values, doc_no: correctDocNo };
+              form.setValue("doc_no", correctDocNo);
+            }
+          }
+          await createAdjustment(finalValues);
           toast.success("Adjustment Created Successfully");
         }
         onSuccess();
@@ -826,7 +835,7 @@ export function StockAdjustmentForm({
         setLoading(false);
       }
     },
-    [id, createAdjustment, updateAdjustment, onSuccess, form, mode]
+    [id, createAdjustment, updateAdjustment, onSuccess, form, mode, fetchNextDocNo]
   );
 
   const handleSaveAndExit = useCallback(async () => {
@@ -839,7 +848,16 @@ export function StockAdjustmentForm({
             await updateAdjustment(id, values);
             toast.success("Adjustment Saved Successfully");
           } else {
-            await createAdjustment(values);
+            let finalValues = values;
+            const expectedPrefix = values.type === "OUT" ? "SAOUT" : "SAIN";
+            if (!values.doc_no || !values.doc_no.startsWith(expectedPrefix)) {
+              const correctDocNo = await fetchNextDocNo(values.type);
+              if (correctDocNo) {
+                finalValues = { ...values, doc_no: correctDocNo };
+                form.setValue("doc_no", correctDocNo);
+              }
+            }
+            await createAdjustment(finalValues);
             toast.success("Adjustment Created Successfully");
           }
 
@@ -860,7 +878,7 @@ export function StockAdjustmentForm({
       },
       onInvalid
     )();
-  }, [id, createAdjustment, updateAdjustment, router, form, pendingExitAction]);
+  }, [id, createAdjustment, updateAdjustment, router, form, pendingExitAction, fetchNextDocNo]);
 
   const handleConfirmModalItems = useCallback(
     (newItems: StockAdjustmentItem[]) => {
@@ -1060,6 +1078,7 @@ export function StockAdjustmentForm({
                   <Input
                     id="doc_no"
                     {...form.register("doc_no")}
+                    value={watchedDocNo || ""}
                     readOnly
                     className="bg-muted/50 border-input h-11 text-xs font-semibold"
                   />
@@ -1213,7 +1232,16 @@ export function StockAdjustmentForm({
                   </Label>
                   <RadioGroup
                     value={watchedType}
-                    onValueChange={(v) => form.setValue("type", v as "IN" | "OUT")}
+                    onValueChange={async (v) => {
+                      const newType = v as "IN" | "OUT";
+                      form.setValue("type", newType, { shouldValidate: true, shouldDirty: true });
+                      if (!id) {
+                        const nextDoc = await fetchNextDocNo(newType);
+                        if (nextDoc) {
+                          form.setValue("doc_no", nextDoc, { shouldValidate: true, shouldDirty: true });
+                        }
+                      }
+                    }}
                     className="flex gap-4 pt-1"
                     disabled={isReadOnly || !!id || fields.length > 0}
                   >
