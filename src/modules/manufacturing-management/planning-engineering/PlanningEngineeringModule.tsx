@@ -1127,7 +1127,7 @@ export default function PlanningEngineeringModule() {
                                     Job Order Queue
                                 </h2>
                                 <p className="text-sm text-muted-foreground">
-                                    Track scheduled and released Job Orders from release through staging. Each row shows the current stage and the next step.
+                                    Track Job Orders across all active statuses, from release through production and closing. Each row shows the current stage and the next step.
                                 </p>
                             </div>
                             {loadingJobs && (
