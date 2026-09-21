@@ -43,7 +43,7 @@ export interface LotTransferMovementHistoryResult {
     reconciliationRequired: boolean;
 }
 
-export type LotTransferMode = "request" | "approval" | "posting" | "summary";
+export type LotTransferMode = "request" | "approval" | "posting" | "summary" | "create" | "edit" | "detail";
 
 export interface LotTransferReportFilters {
     search: string;

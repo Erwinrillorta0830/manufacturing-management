@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import {
     AlertTriangle,
+    ArrowLeft,
     ArrowRight,
     ArrowRightLeft,
     Ban,
@@ -29,12 +31,16 @@ import { LotSelectionPagination } from "./components/LotSelectionPagination";
 import { formatPhtDate, formatPhtTimestamp } from "../shared/pht-date";
 import { calculateLotBalance } from "../shared/services/lot-balance.service";
 import { getLotTransferProductTypeLabel } from "./product-type-labels";
-import { getProductTypeFilterKey, type BatchOption, type DestinationBatchResolutionAction, type LotBalanceSnapshot, type LotOption, type LotTransferMode, type LotTransferStatus, type LotTransferStatusHistory, type ProductOption } from "./types";
+import { getProductTypeFilterKey, type BatchOption, type DestinationBatchResolutionAction, type LotBalanceSnapshot, type LotOption, type LotTransfer, type LotTransferMode, type LotTransferStatus, type LotTransferStatusHistory, type ProductOption } from "./types";
 
 interface LotTransferModuleProps {
     mode: LotTransferMode;
     userBranchId?: number | null;
+    transferId?: number | null;
+    backHref?: string;
 }
+
+const LIST_HREF = "/mm/inventory-warehousing/adjustments/lot-transfer/lot-transfer-request";
 
 type LotTransferController = ReturnType<typeof useLotTransfer>;
 
@@ -535,13 +541,23 @@ function BatchSelect({
     );
 }
 
-function RequestEditor({ controller, onClose }: { controller: LotTransferController; onClose: () => void }) {
+function RequestEditor({ controller, onClose, onCreated }: { controller: LotTransferController; onClose: () => void; onCreated?: (record: LotTransfer) => void }) {
     const { form } = controller;
     const [notice, setNotice] = useState<string | null>(null);
-    const [sourceLotSearch, setSourceLotSearch] = useState("");
-    const [targetLotSearch, setTargetLotSearch] = useState("");
+    const [sourceLotSearchInput, setSourceLotSearchInput] = useState<string | null>(null);
+    const [targetLotSearchInput, setTargetLotSearchInput] = useState<string | null>(null);
     const [sourceLotPage, setSourceLotPage] = useState(0);
     const [targetLotPage, setTargetLotPage] = useState(0);
+    const savedSourceLot = useMemo(
+        () => (form.sourceLotId ? controller.lots.find((lot) => String(lot.lotId) === form.sourceLotId) : undefined),
+        [controller.lots, form.sourceLotId]
+    );
+    const savedTargetLot = useMemo(
+        () => (form.targetLotId ? controller.lots.find((lot) => String(lot.lotId) === form.targetLotId) : undefined),
+        [controller.lots, form.targetLotId]
+    );
+    const sourceLotSearch = sourceLotSearchInput ?? savedSourceLot?.lotName ?? "";
+    const targetLotSearch = targetLotSearchInput ?? savedTargetLot?.lotName ?? "";
     const activeLots = useMemo(() => controller.lots.filter((lot) => {
         const branchMatches = !form.branchId || lot.branchId === 0 || lot.branchId === Number(form.branchId);
         return branchMatches && lot.status.toUpperCase() === "ACTIVE";
@@ -556,7 +572,7 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
         }),
         [activeLots, form.sourceLotId, selectedSourceLot?.uomId]
     );
-    const selectedTargetLot = targetLots.find((lot) => String(lot.lotId) === form.targetLotId);
+    const selectedTargetLot = activeLots.find((lot) => String(lot.lotId) === form.targetLotId && (form.sourceLotId === "" || String(lot.lotId) !== form.sourceLotId));
     const sourceLotIdNumber = Number(form.sourceLotId) || 0;
     const sourceBatchesLoading = controller.batchesLoading || (sourceLotIdNumber > 0 && controller.batchesLoadingLotId === sourceLotIdNumber);
     const sourceBatches = useMemo(
@@ -630,14 +646,22 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
             : [],
         [activeLots, controller.allBatchesLoaded, lotBalances]
     );
-    const filteredSourceLots = useMemo(
-        () => sourceLotsWithInventory.filter((lot) => lotMatchesSearch(lot, sourceLotSearch, controller.branches)),
-        [controller.branches, sourceLotSearch, sourceLotsWithInventory]
-    );
-    const filteredTargetLots = useMemo(
-        () => targetLots.filter((lot) => lotMatchesSearch(lot, targetLotSearch, controller.branches)),
-        [controller.branches, targetLotSearch, targetLots]
-    );
+    const filteredSourceLots = useMemo(() => {
+        const filtered = sourceLotsWithInventory.filter((lot) => lotMatchesSearch(lot, sourceLotSearch, controller.branches));
+        if (form.sourceLotId && !filtered.some((lot) => String(lot.lotId) === form.sourceLotId)) {
+            const selected = activeLots.find((lot) => String(lot.lotId) === form.sourceLotId);
+            if (selected && lotMatchesSearch(selected, sourceLotSearch, controller.branches)) filtered.unshift(selected);
+        }
+        return filtered;
+    }, [activeLots, controller.branches, form.sourceLotId, sourceLotSearch, sourceLotsWithInventory]);
+    const filteredTargetLots = useMemo(() => {
+        const filtered = targetLots.filter((lot) => lotMatchesSearch(lot, targetLotSearch, controller.branches));
+        if (form.targetLotId && !filtered.some((lot) => String(lot.lotId) === form.targetLotId)) {
+            const selected = activeLots.find((lot) => String(lot.lotId) === form.targetLotId && String(lot.lotId) !== form.sourceLotId);
+            if (selected && lotMatchesSearch(selected, targetLotSearch, controller.branches)) filtered.unshift(selected);
+        }
+        return filtered;
+    }, [activeLots, controller.branches, form.sourceLotId, form.targetLotId, targetLots, targetLotSearch]);
     const sourceLotPageCount = Math.max(1, Math.ceil(filteredSourceLots.length / LOT_SELECTION_PAGE_SIZE));
     const targetLotPageCount = Math.max(1, Math.ceil(filteredTargetLots.length / LOT_SELECTION_PAGE_SIZE));
     const sourceLotPageIndex = Math.min(sourceLotPage, sourceLotPageCount - 1);
@@ -651,10 +675,12 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
     }, [activeLots.length, controller.allBatchesLoaded, controller.batchesLoadError, controller.batchesLoading, loadAllBatches]);
     useEffect(() => {
         if (!controller.allBatchesLoaded || controller.batchesLoading || controller.batchesLoadError || !form.sourceLotId) return;
+        const savedSourceLotId = controller.selectedRecord ? String(controller.selectedRecord.sourceLotId || "") : null;
+        if (savedSourceLotId !== null && form.sourceLotId === savedSourceLotId) return;
         const selectedSourceLotHasInventory = sourceLotsWithInventory.some((lot) => String(lot.lotId) === form.sourceLotId);
         if (selectedSourceLotHasInventory) return;
         handleSourceLotChange("");
-    }, [controller.allBatchesLoaded, controller.batchesLoadError, controller.batchesLoading, form.sourceLotId, handleSourceLotChange, sourceLotsWithInventory]);
+    }, [controller.allBatchesLoaded, controller.batchesLoadError, controller.batchesLoading, controller.selectedRecord, form.sourceLotId, handleSourceLotChange, sourceLotsWithInventory]);
     const targetCapacityConfigured = !selectedTargetLot || selectedTargetLot.maxBatchCapacity > 0;
     const totalQuantity = form.details.reduce((sum, detail) => sum + (Number(detail.quantity) || 0), 0);
     const currentPreview = controller.draftValidationIsCurrent ? controller.preview : null;
@@ -665,15 +691,23 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
 
     const handleSave = async () => {
         const saved = await controller.saveDraft();
-        if (saved) setNotice(`${saved.requestNo} saved as Draft.`);
+        if (!saved) return;
+        if (onCreated) {
+            onCreated(saved);
+            return;
+        }
+        setNotice(`${saved.requestNo} saved as Draft.`);
     };
 
     const handleSubmit = async () => {
         const submitted = await controller.submit();
-        if (submitted) {
-            setNotice(`${submitted.requestNo} submitted for QA approval.`);
-            onClose();
+        if (!submitted) return;
+        if (onCreated) {
+            onCreated(submitted);
+            return;
         }
+        setNotice(`${submitted.requestNo} submitted for QA approval.`);
+        onClose();
     };
 
     const handleDelete = async () => {
@@ -697,8 +731,8 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
                         <LotTransferSearchableSelect
                             value={form.branchId}
                             onValueChange={(value) => {
-                                setSourceLotSearch("");
-                                setTargetLotSearch("");
+                                setSourceLotSearchInput("");
+                                setTargetLotSearchInput("");
                                 setSourceLotPage(0);
                                 setTargetLotPage(0);
                                 controller.setField("branchId", value);
@@ -722,7 +756,7 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
                         className={`${inputClassName} mt-2`}
                         value={sourceLotSearch}
                         onChange={(event) => {
-                            setSourceLotSearch(event.currentTarget.value);
+                            setSourceLotSearchInput(event.currentTarget.value);
                             setSourceLotPage(0);
                         }}
                         placeholder="Search source lots..."
@@ -741,13 +775,11 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
                             <p className="rounded-lg border border-dashed p-4 text-xs text-muted-foreground xl:col-span-2">
                                 Loading source-lot inventory...
                             </p>
-                        ) : sourceLotsWithInventory.length === 0 ? (
-                            <p className="rounded-lg border border-dashed p-4 text-xs text-muted-foreground xl:col-span-2">
-                                No active storage lots with positive on-hand inventory are available for the selected branch.
-                            </p>
                         ) : filteredSourceLots.length === 0 ? (
                             <p className="rounded-lg border border-dashed p-4 text-xs text-muted-foreground xl:col-span-2">
-                                No source lots match your search.
+                                {sourceLotsWithInventory.length === 0
+                                    ? "No active storage lots with positive on-hand inventory are available for the selected branch."
+                                    : "No source lots match your search."}
                             </p>
                         ) : visibleSourceLots.map((lot) => {
                             const lotId = Number(lot.lotId);
@@ -790,14 +822,14 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
                         className={`${inputClassName} mt-2`}
                         value={targetLotSearch}
                         onChange={(event) => {
-                            setTargetLotSearch(event.currentTarget.value);
+                            setTargetLotSearchInput(event.currentTarget.value);
                             setTargetLotPage(0);
                         }}
                         placeholder="Search target lots..."
                         aria-label="Search target lots"
                     />
                     <div className="mt-2 grid flex-1 auto-rows-fr gap-3 xl:grid-cols-2">
-                        {targetLots.length === 0 ? (
+                        {targetLots.length === 0 && filteredTargetLots.length === 0 ? (
                             <p className="rounded-lg border border-dashed p-4 text-xs text-muted-foreground xl:col-span-2">
                                 {form.sourceLotId && !sourceUomConfigured
                                     ? "Target lots require an explicitly configured source-lot UOM."
@@ -1225,39 +1257,17 @@ function SummaryAudit({ controller, allowCancel = false }: { controller: LotTran
     );
 }
 
-export default function LotTransferModule({ mode, userBranchId }: LotTransferModuleProps) {
-    const controller = useLotTransfer({ mode, userBranchId });
-    const [requestDialogOpen, setRequestDialogOpen] = useState(false);
-    const [requestStatusDialogOpen, setRequestStatusDialogOpen] = useState(false);
+export default function LotTransferModule({ mode, userBranchId, transferId, backHref }: LotTransferModuleProps) {
+    const router = useRouter();
+    const listHref = backHref || LIST_HREF;
+    const goBackToList = () => router.push(listHref);
+    const controller = useLotTransfer({ mode, userBranchId, transferId });
     const [approvalDialogOpen, setApprovalDialogOpen] = useState(false);
     const [postingDialogOpen, setPostingDialogOpen] = useState(false);
     const [summaryDialogOpen, setSummaryDialogOpen] = useState(false);
-    const title = mode === "request" ? "Lot Transfer Request" : mode === "approval" ? "Lot Transfer QA Approval" : mode === "posting" ? "Lot Transfer Posting" : "Master LOT Transfer Summary";
-
-    const closeRequestDialog = () => {
-        setRequestDialogOpen(false);
-        controller.clearSelection();
-    };
-
-    const closeRequestStatusDialog = () => {
-        setRequestStatusDialogOpen(false);
-        controller.clearSelection();
-    };
-
-    const openNewRequest = () => {
-        controller.clearSelection();
-        setRequestDialogOpen(true);
-    };
-
-    const openRequestEditor = async (record: LotTransferController["records"][number]) => {
-        await controller.selectRecord(record);
-        setRequestDialogOpen(true);
-    };
-
-    const openRequestStatus = async (record: LotTransferController["records"][number]) => {
-        await controller.selectRecord(record);
-        setRequestStatusDialogOpen(true);
-    };
+    const title = mode === "request" ? "Lot Transfer Request" : mode === "approval" ? "Lot Transfer QA Approval" : mode === "posting" ? "Lot Transfer Posting" : mode === "create" ? "New Lot Transfer Request" : mode === "edit" ? "Edit Lot Transfer Request" : mode === "detail" ? "Lot Transfer Details" : "Master LOT Transfer Summary";
+    const isFormPage = mode === "create" || mode === "edit";
+    const editRecordBlocked = mode === "edit" && !controller.isLoading && (!controller.selectedRecord || controller.selectedRecord.status !== "Draft");
 
     const handleDeleteRequest = async (record: LotTransferController["records"][number]) => {
         if (!window.confirm(`Delete ${record.requestNo}? This cannot be undone.`)) return;
@@ -1299,28 +1309,22 @@ export default function LotTransferModule({ mode, userBranchId }: LotTransferMod
             <div className="flex flex-wrap items-start justify-between gap-4"><div><div className="flex items-center gap-2"><ArrowRightLeft className="h-5 w-5 text-primary" /><h1 className="text-xl font-semibold tracking-tight">{title}</h1></div><p className="mt-1 text-sm text-muted-foreground">QA-gated movement of an existing inventory batch between storage lots.</p></div></div>
             <ErrorBanner message={controller.error} />
             {controller.isLookupLoading && <div className="rounded-lg border bg-muted/20 px-3 py-2 text-sm text-muted-foreground">Loading branch, product, lot, and batch options...</div>}
-            {mode === "request" && <RequestList controller={controller} onCreate={openNewRequest} onEdit={(record) => void openRequestEditor(record)} onViewStatus={(record) => void openRequestStatus(record)} onDelete={(record) => void handleDeleteRequest(record)} />}
+            {mode === "request" && <RequestList controller={controller} onCreate={() => router.push(`${listHref}/create`)} onEdit={(record) => router.push(`${listHref}/${record.id}/edit`)} onViewStatus={(record) => router.push(`${listHref}/${record.id}`)} onDelete={(record) => void handleDeleteRequest(record)} />}
+            {isFormPage && <div className="flex items-center gap-2">
+                <Button type="button" variant="outline" size="sm" onClick={goBackToList}><ArrowLeft />Back to requests</Button>
+            </div>}
+            {isFormPage && controller.isLoading && <div className="rounded-lg border bg-muted/20 px-3 py-8 text-center text-sm text-muted-foreground">Loading lot-transfer request...</div>}
+            {isFormPage && !controller.isLoading && !editRecordBlocked && <RequestEditor controller={controller} onClose={goBackToList} onCreated={mode === "create" ? (record) => router.push(`${listHref}/${record.id}`) : undefined} />}
+            {isFormPage && !controller.isLoading && editRecordBlocked && <div className="rounded-lg border bg-muted/20 px-3 py-8 text-center text-sm text-muted-foreground">{mode === "edit" && controller.selectedRecord ? "Only Draft lot-transfer requests can be edited." : "The requested lot-transfer request could not be loaded."}</div>}
+            {mode === "detail" && <div className="flex items-center gap-2">
+                <Button type="button" variant="outline" size="sm" onClick={goBackToList}><ArrowLeft />Back to requests</Button>
+            </div>}
+            {mode === "detail" && controller.isLoading && <div className="rounded-lg border bg-muted/20 px-3 py-8 text-center text-sm text-muted-foreground">Loading lot-transfer details...</div>}
+            {mode === "detail" && !controller.isLoading && controller.selectedRecord && <SummaryAudit key={controller.selectedId ?? "empty"} controller={controller} allowCancel />}
+            {mode === "detail" && !controller.isLoading && !controller.selectedRecord && <div className="rounded-lg border bg-muted/20 px-3 py-8 text-center text-sm text-muted-foreground">The requested lot-transfer request could not be loaded.</div>}
             {mode === "approval" && <ApprovalQueue controller={controller} onReview={(record) => void openApprovalReview(record)} />}
             {mode === "posting" && <PostingQueue controller={controller} onReview={(record) => void openPostingReview(record)} />}
             {mode === "summary" && <SummaryTable controller={controller} onView={(record) => void openSummaryAudit(record)} />}
-            {mode === "request" && <Dialog open={requestDialogOpen} onOpenChange={(open) => open ? setRequestDialogOpen(true) : closeRequestDialog()}>
-                <DialogContent className="max-h-[90vh] w-[95vw] overflow-y-auto sm:w-[90vw] sm:max-w-6xl">
-                    <DialogHeader>
-                        <DialogTitle>Lot transfer request</DialogTitle>
-                        <DialogDescription>Select the source batch and save the request; the destination batch is matched or created when the transfer is posted.</DialogDescription>
-                    </DialogHeader>
-                    <RequestEditor controller={controller} onClose={closeRequestDialog} />
-                </DialogContent>
-            </Dialog>}
-            {mode === "request" && <Dialog open={requestStatusDialogOpen} onOpenChange={(open) => open ? setRequestStatusDialogOpen(true) : closeRequestStatusDialog()}>
-                <DialogContent className="max-h-[90vh] w-[95vw] max-w-6xl overflow-x-hidden overflow-y-auto">
-                    <DialogHeader>
-                        <DialogTitle>Lot transfer status</DialogTitle>
-                        <DialogDescription>Read-only status and audit details for the selected transfer request.</DialogDescription>
-                    </DialogHeader>
-                    <SummaryAudit key={controller.selectedId ?? "empty"} controller={controller} allowCancel />
-                </DialogContent>
-            </Dialog>}
             {mode === "approval" && <Dialog open={approvalDialogOpen} onOpenChange={(open) => open ? setApprovalDialogOpen(true) : closeApprovalDialog()}>
                 <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
                     <DialogHeader>
