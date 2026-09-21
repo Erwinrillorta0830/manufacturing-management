@@ -2137,7 +2137,7 @@ export default function CreateConsolidationModal({
                                                                                                                     const isAllocated = currentQty > 0;
                                                                                                                     const inputValue = manualInputValues[key] !== undefined
                                                                                                                         ? manualInputValues[key]
-                                                                                                                        : (currentQty > 0 ? String(currentQty) : "");
+                                                                                                                        : String(currentQty);
                                                                                                                     const batchKey = `${p.productId}:${b.inventoryLotId || 0}:${b.batchNo || "LOT-N/A"}:${b.lotId || 0}`;
                                                                                                                     const totalBatchAlloc = batchTotalAllocatedMap.get(batchKey) || 0;
                                                                                                                     const isNegativeBalance = b.availableQuantity < 0 || totalBatchAlloc > b.availableQuantity;
@@ -2248,6 +2248,28 @@ export default function CreateConsolidationModal({
                                                                                                                                                 ...prev,
                                                                                                                                                 [key]: val,
                                                                                                                                             }));
+
+                                                                                                                                            if (val !== "" && !isNaN(Number(val))) {
+                                                                                                                                                handleManualQtyChange(
+                                                                                                                                                    p.productId,
+                                                                                                                                                    b.inventoryLotId,
+                                                                                                                                                    b.lotId,
+                                                                                                                                                    b.batchNo,
+                                                                                                                                                    b.availableQuantity,
+                                                                                                                                                    val,
+                                                                                                                                                    p.totalQuantity
+                                                                                                                                                );
+                                                                                                                                            } else if (val === "") {
+                                                                                                                                                handleManualQtyChange(
+                                                                                                                                                    p.productId,
+                                                                                                                                                    b.inventoryLotId,
+                                                                                                                                                    b.lotId,
+                                                                                                                                                    b.batchNo,
+                                                                                                                                                    b.availableQuantity,
+                                                                                                                                                    "0",
+                                                                                                                                                    p.totalQuantity
+                                                                                                                                                );
+                                                                                                                                            }
                                                                                                                                         }}
                                                                                                                                         className={`h-8 w-24 text-right text-xs font-mono font-bold ${isAllocated ? "border-primary bg-primary/5 font-black text-primary ring-1 ring-primary/30" : "bg-card"
                                                                                                                                             }`}
