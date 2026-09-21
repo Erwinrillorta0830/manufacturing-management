@@ -59,6 +59,9 @@ export interface CandidateProductLine {
     quantity: number;
     versionId: number | null;
     versionName: string | null;
+    brand?: string;
+    category?: string;
+    unit?: string;
 }
 
 export interface CandidateInvoice {

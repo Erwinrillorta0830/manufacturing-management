@@ -404,31 +404,6 @@ export default function ReconciliationLotAllocationModal({
                                 }}
                             />
                         </div>
-
-                        {/* Quick Strategy Actions */}
-                        <div className="flex items-center justify-between pt-1">
-                            <div className="flex items-center gap-2">
-                                <button
-                                    type="button"
-                                    onClick={handleAutoAllocate}
-                                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-primary/10 text-primary hover:bg-primary/20 transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                                >
-                                    <Layers className="h-3.5 w-3.5" />
-                                    Auto-Allocate ({allocations.length > 1 ? "Originating Batches" : "Batch"})
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={handleReset}
-                                    className="px-3 py-1.5 rounded-lg text-xs font-semibold border bg-background hover:bg-muted text-muted-foreground hover:text-foreground transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                                >
-                                    <RotateCcw className="h-3 w-3" />
-                                    Clear
-                                </button>
-                            </div>
-                            <span className="text-[11px] text-muted-foreground font-medium">
-                                Originating Batches: <strong className="text-foreground">{allocations.length}</strong>
-                            </span>
-                        </div>
                     </div>
 
                     {/* Multi-Lot & Batch List */}
@@ -450,11 +425,6 @@ export default function ReconciliationLotAllocationModal({
                                             <span className="font-bold text-foreground text-xs">
                                                 {group.lotName}
                                             </span>
-                                            {group.lotNumber && (
-                                                <span className="text-[10px] text-muted-foreground font-mono bg-background px-1.5 py-0.5 rounded border">
-                                                    {group.lotNumber}
-                                                </span>
-                                            )}
                                         </div>
                                         <span className="text-[10px] text-muted-foreground font-medium">
                                             {group.items.length} {group.items.length === 1 ? "batch" : "batches"}

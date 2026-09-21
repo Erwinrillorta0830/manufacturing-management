@@ -121,7 +121,7 @@ export async function generateConsolidationPDF(data: PrintData) {
     autoTable(doc, {
         startY: 32,
         margin: { left: 10, right: 10 },
-        head: [["CODE", "PRODUCT", "BRAND / CATEGORY", "LOT / RACK", "BATCH", "EXPIRY", "UOM", "PLAN QTY", "ACTUAL"]],
+        head: [["CODE", "PRODUCT", "BRAND / CATEGORY", "LOT / RACK", "BATCH", "EXPIRY", "UOM", "PICKED QTY", "ACTUAL"]],
         body: bodyRows,
         theme: "grid",
         headStyles: {

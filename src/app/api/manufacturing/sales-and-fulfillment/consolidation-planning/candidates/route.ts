@@ -18,6 +18,9 @@ interface CandidateProductLineResolved {
     remainingQuantity?: number;
     versionId: number | null;
     versionName: string | null;
+    brand?: string;
+    category?: string;
+    unit?: string;
 }
 
 function isDeleted(val: unknown): boolean {
@@ -151,17 +154,68 @@ export async function GET(req: NextRequest) {
             ].filter(Boolean)),
         ];
 
-        let prodMap = new Map<number, { product_name: string; product_code: string; description?: string }>();
+        let prodMap = new Map<number, { product_name: string; product_code: string; description?: string; product_brand?: number | null; product_category?: number | null; unit_of_measurement?: number | null }>();
         if (allProdIds.length > 0) {
             const prodRes = await fetch(
-                `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${allProdIds.join(",")}&fields=product_id,product_name,product_code,description&limit=-1`,
+                `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${allProdIds.join(",")}&fields=product_id,product_name,product_code,description,product_brand,product_category,unit_of_measurement&limit=-1`,
                 { headers: directusHeaders, cache: "no-store" }
             ).catch(() => null);
             if (prodRes && prodRes.ok) {
                 const prodData = (await prodRes.json()).data || [];
-                prodMap = new Map(prodData.map((p: { product_id: number; product_name: string; product_code: string; description?: string }) => [p.product_id, p]));
+                prodMap = new Map(prodData.map((p: { product_id: number; product_name: string; product_code: string; description?: string; product_brand?: number | null; product_category?: number | null; unit_of_measurement?: number | null }) => [p.product_id, p]));
             }
         }
+
+        // Batch-resolve brand, category, and unit names from their respective Directus collections
+        const brandIds = [...new Set([...prodMap.values()].map((p) => p.product_brand).filter((id): id is number => !!id))];
+        const categoryIds = [...new Set([...prodMap.values()].map((p) => p.product_category).filter((id): id is number => !!id))];
+        const unitIds = [...new Set([...prodMap.values()].map((p) => p.unit_of_measurement).filter((id): id is number => !!id))];
+
+        const brandMap = new Map<number, string>();
+        const categoryMap = new Map<number, string>();
+        const unitMap = new Map<number, string>();
+
+        await Promise.all([
+            brandIds.length > 0
+                ? fetch(
+                      `${DIRECTUS_URL}/items/brand?filter[brand_id][_in]=${brandIds.join(",")}&fields=brand_id,brand_name&limit=-1`,
+                      { headers: directusHeaders, cache: "no-store" }
+                  )
+                      .catch(() => null)
+                      .then(async (res) => {
+                          if (res && res.ok) {
+                              const data = (await res.json()).data || [];
+                              for (const b of data) brandMap.set(Number(b.brand_id), b.brand_name || "");
+                          }
+                      })
+                : Promise.resolve(),
+            categoryIds.length > 0
+                ? fetch(
+                      `${DIRECTUS_URL}/items/categories?filter[category_id][_in]=${categoryIds.join(",")}&fields=category_id,category_name&limit=-1`,
+                      { headers: directusHeaders, cache: "no-store" }
+                  )
+                      .catch(() => null)
+                      .then(async (res) => {
+                          if (res && res.ok) {
+                              const data = (await res.json()).data || [];
+                              for (const c of data) categoryMap.set(Number(c.category_id), c.category_name || "");
+                          }
+                      })
+                : Promise.resolve(),
+            unitIds.length > 0
+                ? fetch(
+                      `${DIRECTUS_URL}/items/units?filter[unit_id][_in]=${unitIds.join(",")}&fields=unit_id,unit_shortcut,unit_name&limit=-1`,
+                      { headers: directusHeaders, cache: "no-store" }
+                  )
+                      .catch(() => null)
+                      .then(async (res) => {
+                          if (res && res.ok) {
+                              const data = (await res.json()).data || [];
+                              for (const u of data) unitMap.set(Number(u.unit_id), u.unit_shortcut || u.unit_name || "");
+                          }
+                      })
+                : Promise.resolve(),
+        ]);
 
         // BOM Version lookup
         const allVersionIds = [
@@ -244,6 +298,10 @@ export async function GET(req: NextRequest) {
                     ? (versionTitleMap.get(explicitVersionId) || `v${explicitVersionId}`)
                     : (autoVersion?.versionName || null);
 
+                const resolvedBrand = prod?.product_brand ? (brandMap.get(prod.product_brand) || undefined) : undefined;
+                const resolvedCategory = prod?.product_category ? (categoryMap.get(prod.product_category) || undefined) : undefined;
+                const resolvedUnit = prod?.unit_of_measurement ? (unitMap.get(prod.unit_of_measurement) || undefined) : undefined;
+
                 lines.push({
                     detailId: dId,
                     productId: pId,
@@ -253,6 +311,9 @@ export async function GET(req: NextRequest) {
                     orderedQuantity: orderedQty,
                     versionId: finalVersionId,
                     versionName: finalVersionName,
+                    brand: resolvedBrand,
+                    category: resolvedCategory,
+                    unit: resolvedUnit,
                 });
             }
 

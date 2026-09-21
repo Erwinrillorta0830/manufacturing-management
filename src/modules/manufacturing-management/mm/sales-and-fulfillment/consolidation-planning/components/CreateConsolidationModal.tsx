@@ -63,6 +63,9 @@ function computeAggregatedProducts(
             productId: number;
             productName: string;
             productCode: string;
+            brand?: string;
+            category?: string;
+            unit?: string;
             totalQuantity: number;
             invoiceIds: number[];
             versionNames: string[];
@@ -90,6 +93,9 @@ function computeAggregatedProducts(
                     productId: p.productId,
                     productName: p.productName,
                     productCode: p.productCode,
+                    brand: p.brand,
+                    category: p.category,
+                    unit: p.unit,
                     totalQuantity: p.quantity,
                     invoiceIds: [inv.invoiceId],
                     versionNames: [version],
@@ -98,6 +104,9 @@ function computeAggregatedProducts(
             } else {
                 agg.set(p.productId, {
                     ...existing,
+                    brand: existing.brand || p.brand,
+                    category: existing.category || p.category,
+                    unit: existing.unit || p.unit,
                     totalQuantity: existing.totalQuantity + p.quantity,
                     invoiceIds: existing.invoiceIds.includes(inv.invoiceId)
                         ? existing.invoiceIds
@@ -116,6 +125,9 @@ function computeAggregatedProducts(
             productId: e.productId,
             productName: e.productName,
             productCode: e.productCode,
+            brand: e.brand,
+            category: e.category,
+            unit: e.unit,
             totalQuantity: e.totalQuantity,
             invoiceCount: e.invoiceIds.length,
             versionLabel:
@@ -998,19 +1010,24 @@ export default function CreateConsolidationModal({
 
     const handlePrintPicklist = async () => {
         try {
+            // DEBUG: trace brand/category/unit through the data pipeline
+            const selectedCandidates = candidates.filter(c => selectedIds.has(c.invoiceId));
+            console.log("[DEBUG] selectedCandidates brand/cat/unit:", selectedCandidates.map(c => ({ invoiceId: c.invoiceId, products: c.products.map(p => ({ productId: p.productId, brand: p.brand, category: p.category, unit: p.unit })) })));
+            console.log("[DEBUG] aggregatedProducts brand/cat/unit:", aggregatedProducts.map(p => ({ productId: p.productId, productName: p.productName, brand: p.brand, category: p.category, unit: p.unit })));
+
             const details = aggregatedProducts.map((p) => {
                 return {
                     productId: p.productId,
                     productCode: p.productCode,
                     productName: p.productName,
-                    brand: "Standard",
-                    category: "Finished Goods",
-                    unit: "pcs",
+                    brand: p.brand ?? "-",
+                    category: p.category ?? "-",
+                    unit: p.unit ?? "-",
                     orderedQuantity: p.totalQuantity,
                     pickedQuantity: 0,
                 };
             });
-
+            console.log("[DEBUG] details passed to PDF:", details);
             const invoices = selectedInvoices.map((inv) => ({
                 invoiceNo: inv.orderNo || inv.invoiceNo,
                 customerName: inv.customerName,
@@ -1020,7 +1037,7 @@ export default function CreateConsolidationModal({
                     quantity: pr.quantity,
                 })),
             }));
-
+            console.log(invoices)
             const allocations: Array<{
                 productId: number;
                 productName: string;
@@ -1030,7 +1047,7 @@ export default function CreateConsolidationModal({
                 expiryDate: string | null;
                 quantity: number;
             }> = [];
-
+            console.log(allocations)
             if (allocationMode === "manual") {
                 for (const [key, qty] of Object.entries(manualAllocations)) {
                     if (Number(qty) > 0) {
@@ -2243,33 +2260,12 @@ export default function CreateConsolidationModal({
                                                                                                                                             });
                                                                                                                                         }}
                                                                                                                                         onChange={(e) => {
-                                                                                                                                            const val = e.target.value;
+                                                                                                                                            // Only buffer the raw typed value — no clamping during typing.
+                                                                                                                                            // Commit happens on onBlur.
                                                                                                                                             setManualInputValues((prev) => ({
                                                                                                                                                 ...prev,
-                                                                                                                                                [key]: val,
+                                                                                                                                                [key]: e.target.value,
                                                                                                                                             }));
-
-                                                                                                                                            if (val !== "" && !isNaN(Number(val))) {
-                                                                                                                                                handleManualQtyChange(
-                                                                                                                                                    p.productId,
-                                                                                                                                                    b.inventoryLotId,
-                                                                                                                                                    b.lotId,
-                                                                                                                                                    b.batchNo,
-                                                                                                                                                    b.availableQuantity,
-                                                                                                                                                    val,
-                                                                                                                                                    p.totalQuantity
-                                                                                                                                                );
-                                                                                                                                            } else if (val === "") {
-                                                                                                                                                handleManualQtyChange(
-                                                                                                                                                    p.productId,
-                                                                                                                                                    b.inventoryLotId,
-                                                                                                                                                    b.lotId,
-                                                                                                                                                    b.batchNo,
-                                                                                                                                                    b.availableQuantity,
-                                                                                                                                                    "0",
-                                                                                                                                                    p.totalQuantity
-                                                                                                                                                );
-                                                                                                                                            }
                                                                                                                                         }}
                                                                                                                                         className={`h-8 w-24 text-right text-xs font-mono font-bold ${isAllocated ? "border-primary bg-primary/5 font-black text-primary ring-1 ring-primary/30" : "bg-card"
                                                                                                                                             }`}

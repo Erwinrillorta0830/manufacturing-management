@@ -286,20 +286,23 @@ export default function ProductReconciliationModal({
         return initLineItemReservations(order?.items || []);
     });
 
+    // Linked Sales Return state (1:1 relationship per Sales Order)
+    // Declared before the order-change sync block so setSelectedLinkedReturn is in scope
+    const [selectedLinkedReturn, setSelectedLinkedReturn] = useState<LinkedSalesReturn | null>(() => {
+        return order?.linked_sales_return || null;
+    });
+
     if (order !== prevOrder) {
         setPrevOrder(order);
         setOrderRemarks(order?.remarks || "");
         setLineItems(initLineItemReservations(order?.items || []));
+        setSelectedLinkedReturn(order?.linked_sales_return || null);
     }
 
     const [allocationModalItemIndex, setAllocationModalItemIndex] = useState<number | null>(null);
 
     const [searchQuery, setSearchQuery] = useState<string>("");
 
-    // Linked Sales Return state (1:1 relationship per Sales Order)
-    const [selectedLinkedReturn, setSelectedLinkedReturn] = useState<LinkedSalesReturn | null>(() => {
-        return order?.linked_sales_return || null;
-    });
     const [availableReturns, setAvailableReturns] = useState<
         Array<
             LinkedSalesReturn & {
@@ -327,19 +330,53 @@ export default function ProductReconciliationModal({
                     if (Array.isArray(list)) {
                         const mapped = list.map((r: Record<string, unknown>) => ({
                             return_id: Number(r.return_id || r.id),
-                            return_number: (r.return_number as string) || `RET-${r.return_id || r.id}`,
-                            status: (r.status as string) || (r.isReceived || r.is_received ? "Received" : "Pending"),
+                            // fetchReturns service returns camelCase fields
+                            return_number: (r.returnNo as string) || (r.return_number as string) || `RET-${r.return_id || r.id}`,
+                            status: (r.status as string) || "-",
                             is_received: Boolean(
-                                r.isReceived || r.is_received || r.status === "Received" || r.status === "Approved"
+                                r.status === "Received" || r.status === "Approved" || r.isReceived || r.is_received
                             ),
-                            return_date: (r.return_date as string) || null,
-                            total_amount: typeof r.total_amount === "number" ? r.total_amount : null,
+                            return_date: (r.returnDate as string) || (r.return_date as string) || null,
+                            total_amount: typeof r.totalAmount === "number" ? r.totalAmount : typeof r.total_amount === "number" ? r.total_amount : null,
                             customer_name: (r.customer_name as string) || "",
-                            customer_code: (r.customer_code as string) || "",
-                            order_id: (r.order_id as string | number) || null,
-                            invoice_no: (r.invoice_no as string | number) || null,
+                            customer_code: (r.customerCode as string) || (r.customer_code as string) || "",
+                            order_id: (r.orderNo as string | number) || (r.order_id as string | number) || null,
+                            invoice_no: (r.invoiceNo as string | number) || (r.invoice_no as string | number) || null,
                         }));
+                        console.log("[SR-Debug] [onOpen] raw API fields sample:", list.slice(0, 3).map((r: Record<string, unknown>) => ({
+                            id: r.id, returnNo: r.returnNo, invoiceNo: r.invoiceNo, orderNo: r.orderNo,
+                            // legacy snake_case (should be undefined now)
+                            return_number: r.return_number, invoice_no: r.invoice_no, order_id: r.order_id,
+                        })));
+                        console.log("[SR-Debug] [onOpen] mapped returns (invoice_no / order_id):", mapped.map(m => ({ id: m.return_id, rNo: m.return_number, inv: m.invoice_no, ord: m.order_id, status: m.status })));
                         setAvailableReturns(mapped);
+
+                        // Auto-select the most recent matching return (highest return_id) if nothing is linked yet
+                        if (!order?.linked_sales_return) {
+                            const orderNo = (order?.order_no || "").trim().toLowerCase();
+                            const invNo = (order?.invoice_no || "").trim().toLowerCase();
+                            const matches = mapped.filter(r => {
+                                const rOrd = String(r.order_id || "").trim().toLowerCase();
+                                const rInv = String(r.invoice_no || "").trim().toLowerCase();
+                                const ordMatch = Boolean(rOrd && rOrd !== "---" && (rOrd === orderNo || (orderNo && rOrd.includes(orderNo)) || (orderNo && orderNo.includes(rOrd))));
+                                const invMatch = Boolean(rInv && rInv !== "---" && invNo && invNo !== "---" && (rInv === invNo || rInv.includes(invNo) || invNo.includes(rInv)));
+                                return ordMatch || invMatch;
+                            });
+                            console.log("[SR-Debug] [onOpen] auto-select candidates:", matches.map(m => m.return_number));
+                            // Pick the most recent (highest return_id); dropdown remains editable
+                            const best = matches.sort((a, b) => (b.return_id || 0) - (a.return_id || 0))[0];
+                            if (best && isMounted) {
+                                setSelectedLinkedReturn({
+                                    return_id: best.return_id,
+                                    return_number: best.return_number,
+                                    status: best.status,
+                                    is_received: best.is_received,
+                                    return_date: best.return_date,
+                                    total_amount: best.total_amount,
+                                });
+                                console.log("[SR-Debug] [onOpen] auto-linked:", best.return_number);
+                            }
+                        }
                     }
                 })
                 .catch((err: unknown) => console.warn("[ProductReconciliationModal] Error fetching returns:", err));
@@ -362,19 +399,52 @@ export default function ProductReconciliationModal({
             if (Array.isArray(list)) {
                 const mapped = list.map((r: Record<string, unknown>) => ({
                     return_id: Number(r.return_id || r.id),
-                    return_number: (r.return_number as string) || `RET-${r.return_id || r.id}`,
-                    status: (r.status as string) || (r.isReceived || r.is_received ? "Received" : "Pending"),
+                    // fetchReturns service returns camelCase fields
+                    return_number: (r.returnNo as string) || (r.return_number as string) || `RET-${r.return_id || r.id}`,
+                    status: (r.status as string) || "-",
                     is_received: Boolean(
-                        r.isReceived || r.is_received || r.status === "Received" || r.status === "Approved"
+                        r.status === "Received" || r.status === "Approved" || r.isReceived || r.is_received
                     ),
-                    return_date: (r.return_date as string) || null,
-                    total_amount: typeof r.total_amount === "number" ? r.total_amount : null,
+                    return_date: (r.returnDate as string) || (r.return_date as string) || null,
+                    total_amount: typeof r.totalAmount === "number" ? r.totalAmount : typeof r.total_amount === "number" ? r.total_amount : null,
                     customer_name: (r.customer_name as string) || "",
-                    customer_code: (r.customer_code as string) || "",
-                    order_id: (r.order_id as string | number) || null,
-                    invoice_no: (r.invoice_no as string | number) || null,
+                    customer_code: (r.customerCode as string) || (r.customer_code as string) || "",
+                    order_id: (r.orderNo as string | number) || (r.order_id as string | number) || null,
+                    invoice_no: (r.invoiceNo as string | number) || (r.invoice_no as string | number) || null,
                 }));
+                console.log("[SR-Debug] [refresh] raw API fields sample:", list.slice(0, 3).map((r: Record<string, unknown>) => ({
+                    id: r.id, returnNo: r.returnNo, invoiceNo: r.invoiceNo, orderNo: r.orderNo,
+                    return_number: r.return_number, invoice_no: r.invoice_no, order_id: r.order_id,
+                })));
+                console.log("[SR-Debug] [refresh] mapped returns:", mapped.map(m => ({ id: m.return_id, rNo: m.return_number, inv: m.invoice_no, ord: m.order_id, status: m.status })));
                 setAvailableReturns(mapped);
+
+                // Auto-select the most recent matching return if nothing is currently linked
+                if (!order?.linked_sales_return && !selectedLinkedReturn) {
+                    const orderNo = (order?.order_no || "").trim().toLowerCase();
+                    const invNo = (order?.invoice_no || "").trim().toLowerCase();
+                    const matches = mapped.filter(r => {
+                        const rOrd = String(r.order_id || "").trim().toLowerCase();
+                        const rInv = String(r.invoice_no || "").trim().toLowerCase();
+                        const ordMatch = Boolean(rOrd && rOrd !== "---" && (rOrd === orderNo || (orderNo && rOrd.includes(orderNo)) || (orderNo && orderNo.includes(rOrd))));
+                        const invMatch = Boolean(rInv && rInv !== "---" && invNo && invNo !== "---" && (rInv === invNo || rInv.includes(invNo) || invNo.includes(rInv)));
+                        return ordMatch || invMatch;
+                    });
+                    console.log("[SR-Debug] [refresh] auto-select candidates:", matches.map(m => m.return_number));
+                    // Pick the most recent (highest return_id); dropdown remains editable
+                    const best = matches.sort((a, b) => (b.return_id || 0) - (a.return_id || 0))[0];
+                    if (best) {
+                        setSelectedLinkedReturn({
+                            return_id: best.return_id,
+                            return_number: best.return_number,
+                            status: best.status,
+                            is_received: best.is_received,
+                            return_date: best.return_date,
+                            total_amount: best.total_amount,
+                        });
+                        console.log("[SR-Debug] [refresh] auto-linked:", best.return_number);
+                    }
+                }
             }
         } catch (err: unknown) {
             console.warn("[ProductReconciliationModal] Error fetching sales returns:", err);
@@ -418,6 +488,16 @@ export default function ProductReconciliationModal({
         const currentInvNo = (order?.invoice_no || "").trim().toLowerCase();
         const currentInvId = String(order?.invoice_id || "").trim().toLowerCase();
         const currentCustCode = (order?.customer_code || "").trim().toLowerCase();
+
+        console.log("[SR-Debug] [matching] order keys:", { currentOrderNo, currentOrderId, currentInvNo, currentInvId, currentCustCode });
+        console.log("[SR-Debug] [matching] availableReturns count:", availableReturns.length);
+        availableReturns.forEach(r => {
+            const rOrderId = String(r.order_id || "").trim().toLowerCase();
+            const rInvNo = String(r.invoice_no || "").trim().toLowerCase();
+            const isOrderMatch = Boolean(rOrderId && rOrderId !== "---" && (rOrderId === currentOrderNo || rOrderId === currentOrderId || (currentOrderNo && rOrderId.includes(currentOrderNo)) || (currentOrderNo && currentOrderNo.includes(rOrderId))));
+            const isInvoiceMatch = Boolean(rInvNo && rInvNo !== "---" && (rInvNo === currentInvNo || rInvNo === currentInvId || (currentInvNo && currentInvNo !== "---" && rInvNo.includes(currentInvNo)) || (currentInvNo && currentInvNo !== "---" && currentInvNo.includes(rInvNo))));
+            console.log(`[SR-Debug]   SR#${r.return_id} (${r.return_number}): inv=${r.invoice_no} ord=${r.order_id} → invMatch=${isInvoiceMatch} ordMatch=${isOrderMatch}`);
+        });
 
         // Calculate relevance match score for each candidate return
         const getMatchScore = (r: (typeof availableReturns)[0]) => {
@@ -572,6 +652,11 @@ export default function ProductReconciliationModal({
         return opts;
     }, [availableReturns, selectedLinkedReturn, order]);
 
+    // True when there is at least one real return matching this order's invoice/SO
+    // (returnOptions always has "None" as the first item, so length > 1 means real matches exist)
+    const hasMatchingReturns = returnOptions.length > 1;
+
+
     const handleSelectReturn = (val: string) => {
         if (val === "none" || !val) {
             setSelectedLinkedReturn(null);
@@ -601,6 +686,10 @@ export default function ProductReconciliationModal({
         if (selectedLinkedReturn) {
             return "Fulfilled with Returns";
         }
+        // If a matching SR already exists for this order's invoice/SO, surface the section
+        if (hasMatchingReturns) {
+            return "Fulfilled with Returns";
+        }
         const computed = computePreviewStatus(lineItems);
         if (order?.fulfillment_status === "Fulfilled with Returns") {
             if (computed === "Unfulfilled / Returns") return "Unfulfilled / Returns";
@@ -613,7 +702,8 @@ export default function ProductReconciliationModal({
             return "Fulfilled with Concerns";
         }
         return computed;
-    }, [lineItems, order, selectedLinkedReturn]);
+    }, [lineItems, order, selectedLinkedReturn, hasMatchingReturns]);
+
 
     // Total ordered units calculation for KPI card
     const totalOrderedUnits = useMemo(() => {

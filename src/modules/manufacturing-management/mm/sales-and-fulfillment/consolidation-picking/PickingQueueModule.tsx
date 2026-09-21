@@ -211,11 +211,13 @@ export default function PickingQueueModule() {
                                 const picked = pickedTotal(batch);
                                 const ordered = orderedTotal(batch);
                                 return (
-                                    <button
-                                        type="button"
+                                    <div
+                                        role="button"
+                                        tabIndex={0}
                                         key={batch.id}
                                         onClick={() => handleBatchClick(batch)}
-                                        className="group rounded-xl border bg-card p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-blue-500/40 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"
+                                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") handleBatchClick(batch); }}
+                                        className="group rounded-xl border bg-card p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-blue-500/40 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 cursor-pointer"
                                     >
                                         <div className="flex items-start justify-between mb-4">
                                             <div className="min-w-0 flex-1">
@@ -266,7 +268,7 @@ export default function PickingQueueModule() {
                                                 </span>
                                             </div>
                                         </div>
-                                    </button>
+                                    </div>
                                 );
                         })}
                     </div>
