@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useState, useMemo, useRef, useEffect } from "react";
-import { Loader2, RefreshCw, ClipboardList, Layers, Database, Printer, Factory, AlertTriangle, History, Pencil, Check, X, XCircle } from "lucide-react";
+import { Loader2, RefreshCw, ClipboardList, Layers, Database, Printer, Factory, AlertTriangle, History, Pencil, Check, X, XCircle, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -201,6 +201,8 @@ export default function PlanningEngineeringModule() {
     // Filter bar state for JO Queue
     const [searchQuery, setSearchQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState("all");
+    const [queuePage, setQueuePage] = useState(1);
+    const [queuePageSize, setQueuePageSize] = useState(10);
     const [cancelledSearchQuery, setCancelledSearchQuery] = useState("");
 
     // Quantity editing state for Draft JOs
@@ -372,6 +374,25 @@ export default function PlanningEngineeringModule() {
 
         return groups;
     }, [filteredUnreleasedJobs]);
+
+    useEffect(() => {
+        setQueuePage(1);
+    }, [selectedBranchId, searchQuery, statusFilter]);
+
+    const queuePageCount = Math.max(1, Math.ceil(familyGroups.length / queuePageSize));
+    const safeQueuePage = Math.min(queuePage, queuePageCount);
+
+    useEffect(() => {
+        if (queuePage !== safeQueuePage) setQueuePage(safeQueuePage);
+    }, [queuePage, safeQueuePage]);
+
+    const paginatedFamilyGroups = useMemo(() => {
+        const startIndex = (safeQueuePage - 1) * queuePageSize;
+        return familyGroups.slice(startIndex, startIndex + queuePageSize);
+    }, [familyGroups, safeQueuePage, queuePageSize]);
+
+    const queueRangeStart = familyGroups.length === 0 ? 0 : (safeQueuePage - 1) * queuePageSize + 1;
+    const queueRangeEnd = Math.min(safeQueuePage * queuePageSize, familyGroups.length);
 
     const familyChildJobs = useMemo(() => {
         if (!selectedUnreleasedJo) return [];
@@ -1130,10 +1151,65 @@ export default function PlanningEngineeringModule() {
                         {/* Job Orders Table */}
                         <JOTable
                             unreleasedJobs={filteredUnreleasedJobs}
-                            familyGroups={familyGroups}
+                            familyGroups={paginatedFamilyGroups}
                             loadingJobs={loadingJobs}
                             handleOpenDetails={handleOpenDetails}
                         />
+                        {familyGroups.length > 0 && (
+                            <div className="flex flex-col gap-3 border-t border-border/60 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                                <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                                    <div className="flex items-center gap-2">
+                                        <span>Entries per page</span>
+                                        <Select
+                                            value={String(queuePageSize)}
+                                            onValueChange={(value) => {
+                                                setQueuePageSize(Number(value));
+                                                setQueuePage(1);
+                                            }}
+                                        >
+                                            <SelectTrigger className="h-8 w-[76px]" aria-label="Queue entries per page">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {[10, 25, 50].map((size) => (
+                                                    <SelectItem key={size} value={String(size)}>{size}</SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                    <span title="An entry is one standalone Job Order or one complete family group.">
+                                        Showing {queueRangeStart}–{queueRangeEnd} of {familyGroups.length} queue entries
+                                    </span>
+                                </div>
+                                <div className="flex items-center justify-between gap-3 sm:justify-end">
+                                    <span className="whitespace-nowrap text-xs font-medium text-muted-foreground">
+                                        Page {safeQueuePage} of {queuePageCount}
+                                    </span>
+                                    <div className="flex items-center gap-1">
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="icon-sm"
+                                            aria-label="Previous queue page"
+                                            disabled={safeQueuePage <= 1}
+                                            onClick={() => setQueuePage((page) => Math.max(1, page - 1))}
+                                        >
+                                            <ChevronLeft />
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="icon-sm"
+                                            aria-label="Next queue page"
+                                            disabled={safeQueuePage >= queuePageCount}
+                                            onClick={() => setQueuePage((page) => Math.min(queuePageCount, page + 1))}
+                                        >
+                                            <ChevronRight />
+                                        </Button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </TabsContent>
 

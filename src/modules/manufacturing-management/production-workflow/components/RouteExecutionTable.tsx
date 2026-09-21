@@ -330,13 +330,13 @@ function RouteExecutionRow({
                                         <Button
                                             type="button"
                                             size="xs"
-                                            disabled={!assigneeId}
+                                            disabled={!assigneeId || isCompleted}
                                             onClick={() => {
                                                 handleAddOperator(true, task.id, assigneeId);
                                                 setAssigneeId("");
                                             }}
                                             className="h-8 bg-primary px-2 text-[10px] font-bold text-primary-foreground"
-                                            title="Assign additional personnel and start timer"
+                                            title={isCompleted ? "Cannot start a timer because this route is completed." : "Assign additional personnel and start timer"}
                                         >
                                             <Play className="h-3 w-3" />
                                         </Button>
@@ -418,7 +418,7 @@ function RouteExecutionRow({
                                                     <Square className="mr-1 h-2.5 w-2.5 fill-current" /> Stop
                                                 </Button>
                                             ) : (
-                                                <Button type="button" size="xs" variant="outline" disabled={readOnly} className="h-6 border-emerald-500/30 px-2 text-[9px] font-bold text-emerald-700 dark:text-emerald-400" onClick={() => handleStartTimer(task.id, operator.userId)}>
+                                                <Button type="button" size="xs" variant="outline" disabled={readOnly || isCompleted} title={isCompleted ? "Cannot start a timer because this route is completed." : "Start shift timer"} className="h-6 border-emerald-500/30 px-2 text-[9px] font-bold text-emerald-700 dark:text-emerald-400" onClick={() => handleStartTimer(task.id, operator.userId)}>
                                                     <Play className="mr-1 h-2.5 w-2.5 fill-current" /> Start
                                                 </Button>
                                             )}
