@@ -1066,28 +1066,27 @@ export function StockAdjustmentManualForm({
 
       doc.setFontSize(8);
       doc.setTextColor(100, 116, 139);
-      doc.setFont("helvetica", "normal");
+      doc.setFont("helvetica", "bold");
       doc.setLineWidth(0.2);
       doc.setDrawColor(148, 163, 184);
 
-      // Prepared By
-      doc.text("PREPARED BY:", margins.left, sigY);
+      // Created By
+      doc.text("CREATED BY:", margins.left, sigY);
       doc.line(margins.left, sigY + 12, margins.left + 50, sigY + 12);
       doc.setFontSize(9);
       doc.setFont("helvetica", "bold");
       doc.setTextColor(15, 23, 42);
       doc.text(currentUserName, margins.left, sigY + 10);
-
-      // Approved By
+ 
+      // Posted By
       doc.setFontSize(8);
-      doc.setFont("helvetica", "normal");
       doc.setTextColor(100, 116, 139);
-      doc.text("APPROVED BY:", pageWidth / 2 - 25, sigY);
-      doc.line(pageWidth / 2 - 25, sigY + 12, pageWidth / 2 + 25, sigY + 12);
-
-      // Received By
-      doc.text("RECEIVED BY:", pageWidth - margins.right - 50, sigY);
+      doc.setFont("helvetica", "bold");
+      doc.setLineWidth(0.2);
+      doc.setDrawColor(148, 163, 184);
+      doc.text("POSTED BY:", pageWidth - margins.right - 50, sigY);
       doc.line(pageWidth - margins.right - 50, sigY + 12, pageWidth - margins.right, sigY + 12);
+      
     });
 
     doc.save(`StockAdjustmentManual_${values.doc_no}.pdf`);
