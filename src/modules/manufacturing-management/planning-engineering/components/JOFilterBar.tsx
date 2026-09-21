@@ -69,7 +69,7 @@ export function JOFilterBar({
                         </div>
                     ) : (
                         <Select value={statusFilter} onValueChange={setStatusFilter}>
-                            <SelectTrigger className="h-9 font-semibold text-xs bg-card border-input w-full sm:w-[150px]">
+                            <SelectTrigger className="h-9 font-semibold text-xs bg-card border-input w-full sm:w-[200px]">
                                 <SelectValue placeholder="Status Filter" />
                             </SelectTrigger>
                             <SelectContent>
@@ -77,6 +77,12 @@ export function JOFilterBar({
                                 <SelectItem value="Draft">Draft</SelectItem>
                                 <SelectItem value={JOB_ORDER_STATUS.FOR_PICKING}>For Picking</SelectItem>
                                 <SelectItem value={JOB_ORDER_STATUS.PICKED}>Picked</SelectItem>
+                                <SelectItem value={JOB_ORDER_STATUS.IN_PRODUCTION}>In Production</SelectItem>
+                                <SelectItem value={JOB_ORDER_STATUS.ON_HOLD}>On Hold</SelectItem>
+                                <SelectItem value={JOB_ORDER_STATUS.QA_HOLD}>QA Hold</SelectItem>
+                                <SelectItem value={JOB_ORDER_STATUS.PRODUCTION_COMPLETED}>Production Completed</SelectItem>
+                                <SelectItem value={JOB_ORDER_STATUS.FOR_QA_RECONCILIATION}>For QA and Reconciliation</SelectItem>
+                                <SelectItem value={JOB_ORDER_STATUS.CLOSED}>Closed</SelectItem>
                             </SelectContent>
                         </Select>
                     )}
