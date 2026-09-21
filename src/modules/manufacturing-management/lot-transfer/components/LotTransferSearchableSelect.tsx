@@ -45,7 +45,7 @@ export function LotTransferSearchableSelect({
     }, [options, value]);
 
     return (
-        <Popover open={open} onOpenChange={setOpen}>
+        <Popover modal={false} open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
                 <Button
                     variant="outline"
@@ -58,10 +58,21 @@ export function LotTransferSearchableSelect({
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                 </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+            <PopoverContent
+                className="w-[--radix-popover-trigger-width] overscroll-contain p-0"
+                align="start"
+                data-radix-scroll-lock-ignore="true"
+                onWheelCapture={(event) => event.stopPropagation()}
+                onTouchMoveCapture={(event) => event.stopPropagation()}
+            >
                 <Command>
                     <CommandInput placeholder={searchPlaceholder || `Search ${placeholder.toLowerCase()}...`} />
-                    <CommandList>
+                    <CommandList
+                        className="max-h-64 overflow-y-auto overscroll-contain touch-pan-y"
+                        data-radix-scroll-lock-ignore="true"
+                        onWheelCapture={(event) => event.stopPropagation()}
+                        onTouchMoveCapture={(event) => event.stopPropagation()}
+                    >
                         <CommandEmpty>No results found.</CommandEmpty>
                         <CommandGroup>
                             {options.map((opt) => (

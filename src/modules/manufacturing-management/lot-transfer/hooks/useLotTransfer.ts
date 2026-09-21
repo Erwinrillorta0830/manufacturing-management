@@ -641,8 +641,8 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     }, [clearSelection, refresh, selectedId]);
 
     const submit = useCallback(async () => {
-        if (!selectedId) {
-            setError("Save the lot-transfer request as a Draft before submitting it for QA approval.");
+        if (selectedId && selectedRecord?.status !== "Draft") {
+            setError("Only Draft lot-transfer requests can be submitted for QA approval.");
             return null;
         }
         if (hasSameLotSelection(form)) {
@@ -655,7 +655,15 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         }
         setIsActionLoading(true);
         try {
-            const submitted = await submitLotTransfer(selectedId);
+            let transferId = selectedId;
+            if (!transferId) {
+                const created = await createLotTransfer(form);
+                transferId = created.id;
+                setSelectedId(created.id);
+                setSelectedRecord(created);
+                setForm(formFromRecord(created, userBranchId));
+            }
+            const submitted = await submitLotTransfer(transferId);
             await refresh();
             clearSelection();
             setError(null);
@@ -666,7 +674,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         } finally {
             setIsActionLoading(false);
         }
-    }, [clearSelection, draftValidationIsCurrent, draftValidationStatus, form, preview, refresh, selectedId]);
+    }, [clearSelection, draftValidationIsCurrent, draftValidationStatus, form, preview, refresh, selectedId, selectedRecord?.status, userBranchId]);
 
     const approve = useCallback(async () => {
         if (!selectedId) return null;

@@ -200,6 +200,7 @@ export function transientRecordFromInput(input: LotTransferInput, transferUnitId
         requestedAt: null,
         transferDate: null,
         submittedBy: null,
+        submittedByName: null,
         submittedAt: null,
         approvedBy: null,
         approvedByName: null,

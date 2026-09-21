@@ -250,7 +250,11 @@ export async function reverseLotTransfer(
 ): Promise<{ original: LotTransferRecord; reversal: LotTransferRecord; preview: LotTransferPreview; idempotent: boolean }> {
     const actor = requireSessionUserId(actorUserId, "reverse a lot-transfer request");
     const original = await getLotTransfer(id);
-    if (original.status !== "Posted") {
+    const originalStatus = String(original.status);
+    if (originalStatus === "Posted") {
+        throw new LotTransferError(409, "Posted lot-transfer requests are finalized and cannot be reversed.");
+    }
+    if (originalStatus !== "Posted") {
         throw new LotTransferError(409, `Only Posted lot-transfer requests can be reversed. Current status: ${original.status}.`);
     }
     if (original.reconciliationRequired) {
