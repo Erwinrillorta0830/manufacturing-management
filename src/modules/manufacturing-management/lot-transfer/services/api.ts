@@ -13,6 +13,7 @@ import type {
     LotTransferMovementDirection,
     LotTransferMovementHistoryResult
 } from "../types";
+import { getLotTransferProductTypeLabel } from "../product-type-labels";
 
 interface ApiEnvelope<T> {
     success?: boolean;
@@ -336,6 +337,25 @@ export async function fetchProducts(): Promise<ProductOption[]> {
                 ?? uom?.id
                 ?? rawUom
             ) || null;
+            const rawProductType = raw.product_type ?? raw.productType;
+            const productType = typeof rawProductType === "object" && rawProductType !== null
+                ? rawProductType as Record<string, unknown>
+                : null;
+            const productTypeId = numberValue(
+                (row as ProductOption).productTypeId
+                ?? raw.product_type_id
+                ?? productType?.id
+                ?? productType?.product_type_id
+                ?? (typeof rawProductType === "number" || typeof rawProductType === "string" ? rawProductType : null)
+            ) || null;
+            const rawProductTypeName = stringValue(
+                (row as ProductOption).productTypeName
+                ?? raw.product_type_name
+                ?? productType?.name
+                ?? productType?.type_name
+                ?? productType?.description
+                ?? (typeof rawProductType === "string" && Number.isNaN(Number(rawProductType)) ? rawProductType : "")
+            );
             return {
                 productId: numberValue((row as ProductOption).productId ?? raw.product_id),
                 productName: stringValue((row as ProductOption).productName ?? raw.product_name),
@@ -343,7 +363,9 @@ export async function fetchProducts(): Promise<ProductOption[]> {
                 unitCost: numberValue((row as ProductOption).unitCost ?? raw.unit_cost),
                 uomId,
                 uomName: stringValue((row as ProductOption).uomName ?? raw.uom_name ?? uom?.unit_name),
-                uomShortcut: stringValue((row as ProductOption).uomShortcut ?? raw.uom_shortcut ?? uom?.unit_shortcut)
+                uomShortcut: stringValue((row as ProductOption).uomShortcut ?? raw.uom_shortcut ?? uom?.unit_shortcut),
+                productTypeId,
+                productTypeName: getLotTransferProductTypeLabel(productTypeId, rawProductTypeName)
             };
         })
         .filter((row) => row.productId > 0);

@@ -39,7 +39,7 @@ import type {
     LotTransferStatusHistory,
     UserOption
 } from "../types";
-import { DEFAULT_LOT_TRANSFER_REPORT_FILTERS, EMPTY_LOT_TRANSFER_FORM as emptyForm } from "../types";
+import { DEFAULT_LOT_TRANSFER_REPORT_FILTERS, EMPTY_LOT_TRANSFER_FORM as emptyForm, getProductTypeFilterKey } from "../types";
 
 interface UseLotTransferOptions {
     mode: LotTransferMode;
@@ -69,6 +69,7 @@ function formFromRecord(record: LotTransfer, fallbackBranchId?: number | null): 
         details: details.map((detail) => ({
             detailId: detail.detailId || undefined,
             lineNo: detail.lineNo,
+            productTypeId: "",
             productId: String(detail.productId || ""),
             sourceInventoryLotId: String(detail.sourceInventoryLotId || ""),
             sourceBatchNo: detail.sourceBatchNo,
@@ -86,6 +87,7 @@ function initialForm(userBranchId?: number | null): LotTransferForm {
         branchId: userBranchId && userBranchId > 0 ? String(userBranchId) : "",
         details: [{
             lineNo: 1,
+            productTypeId: "",
             productId: "",
             sourceInventoryLotId: "",
             sourceBatchNo: "",
@@ -520,6 +522,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
             ...current,
             details: [...current.details, {
                 lineNo: current.details.length + 1,
+                productTypeId: "",
                 productId: "",
                 sourceInventoryLotId: "",
                 sourceBatchNo: "",
@@ -537,6 +540,30 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
             details: current.details.filter((_, detailIndex) => detailIndex !== index).map((detail, detailIndex) => ({ ...detail, lineNo: detailIndex + 1 }))
         }));
     }, [updateForm]);
+
+    const handleProductTypeChange = useCallback((productTypeId: string, index = 0) => {
+        const detail = form.details[index];
+        const selectedProduct = detail?.productId
+            ? products.find((product) => String(product.productId) === String(detail.productId))
+            : undefined;
+        const selectedProductMatchesType = !selectedProduct
+            || !productTypeId
+            || getProductTypeFilterKey(selectedProduct) === productTypeId;
+
+        updateDetail(index, {
+            productTypeId,
+            ...(selectedProduct && !selectedProductMatchesType
+                ? {
+                    productId: "",
+                    sourceInventoryLotId: "",
+                    sourceBatchNo: "",
+                    targetInventoryLotId: "",
+                    targetBatchNo: ""
+                }
+                : {})
+        });
+        setError(null);
+    }, [form.details, products, updateDetail]);
 
     const handleProductChange = useCallback((productId: string, index = 0) => {
         updateDetail(index, {
@@ -816,6 +843,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         updateDetail,
         addDetail,
         removeDetail,
+        handleProductTypeChange,
         handleProductChange,
         handleSourceLotChange,
         handleTargetLotChange,

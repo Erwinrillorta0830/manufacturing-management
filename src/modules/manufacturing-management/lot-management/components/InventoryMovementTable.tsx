@@ -13,6 +13,7 @@ import {
     RefreshCw
 } from "lucide-react";
 import { InventoryMovement, Lot, ProductItem } from "../types";
+import { movementMmLotId } from "../movement-reference";
 import { SearchableLotSelect } from "./SearchableLotSelect";
 import {
     Table,
@@ -278,10 +279,7 @@ export default function InventoryMovementTable({
                         <TableBody>
                             {paginatedMovements.map((m, idx) => {
                                 const isDirectionIn = (m.movementDirection || "").toUpperCase() === "IN";
-                                const rawInvId = m.inventoryLotId ?? m.inventory_lot_id;
-                                const hasInvId = rawInvId !== null && rawInvId !== undefined && Number(rawInvId) > 0;
-                                const rawLotId = m.mmLotId ?? m.lotId;
-                                const effectiveLotId = (hasInvId && rawLotId) ? Number(rawLotId) : 0;
+                                const effectiveLotId = movementMmLotId(m) ?? 0;
                                 const matchedLot = lots.find((l) => Number(l.lotId) === Number(effectiveLotId));
                                 const resolvedLotName = matchedLot?.lotName || (Number(effectiveLotId) === 0 ? "Unassigned / Pending Storage Rack (Ghost Rack)" : (m.lotName || `Lot #${effectiveLotId}`));
                                 const qty = isDirectionIn ? Number(m.quantityIn || 0) : Number(m.quantityOut || 0);

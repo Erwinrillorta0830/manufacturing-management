@@ -164,20 +164,24 @@ export async function deleteBatch(batchId: number): Promise<{ success: boolean }
 export async function fetchInventoryMovements(params?: {
     branchId?: number;
     lotId?: number;
+    mmLotId?: number;
     productId?: number;
     batchNo?: string;
     direction?: string;
     transactionType?: string;
     referenceNo?: string;
+    includeLotTransfers?: boolean;
 }): Promise<InventoryMovement[]> {
     const searchParams = new URLSearchParams();
     if (params?.branchId) searchParams.append("branch", String(params.branchId));
-    if (params?.lotId) searchParams.append("lotId", String(params.lotId));
+    const canonicalLotId = params?.mmLotId ?? params?.lotId;
+    if (canonicalLotId) searchParams.append("mmLotId", String(canonicalLotId));
     if (params?.productId) searchParams.append("productId", String(params.productId));
     if (params?.batchNo) searchParams.append("batchNo", params.batchNo);
     if (params?.direction && params.direction !== "ALL") searchParams.append("direction", params.direction);
     if (params?.transactionType && params.transactionType !== "ALL") searchParams.append("transactionType", params.transactionType);
     if (params?.referenceNo) searchParams.append("referenceNo", params.referenceNo);
+    if (params?.includeLotTransfers) searchParams.append("includeLotTransfers", "true");
     searchParams.append("_t", String(Date.now()));
 
     const queryStr = searchParams.toString();
