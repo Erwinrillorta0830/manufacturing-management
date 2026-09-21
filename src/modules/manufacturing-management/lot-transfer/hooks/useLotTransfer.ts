@@ -8,6 +8,7 @@ import {
     deleteLotTransfer,
     fetchBranches,
     fetchBatches,
+    fetchLotTransfer,
     fetchLotTransfers,
     fetchLotTransferMovementHistory,
     fetchLotTransferStatusHistory,
@@ -44,6 +45,7 @@ import { DEFAULT_LOT_TRANSFER_REPORT_FILTERS, EMPTY_LOT_TRANSFER_FORM as emptyFo
 interface UseLotTransferOptions {
     mode: LotTransferMode;
     userBranchId?: number | null;
+    transferId?: number | null;
 }
 
 const WORKFLOW_VISIBLE_STATUSES: LotTransferStatus[] = ["Draft", "Submitted", "Approved", "Posted", "Rejected", "Cancelled", "Reversed"];
@@ -123,7 +125,7 @@ function isCompleteDraftForm(form: LotTransferForm): boolean {
 
 type DraftValidationStatus = "idle" | "stale" | "loading" | "valid" | "invalid" | "error";
 
-export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
+export function useLotTransfer({ mode, userBranchId, transferId }: UseLotTransferOptions) {
     const [records, setRecords] = useState<LotTransfer[]>([]);
     const [totalCount, setTotalCount] = useState(0);
     const [form, setForm] = useState<LotTransferForm>(() => initialForm(userBranchId));
@@ -181,6 +183,10 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     }, [markDraftValidationStale]);
 
     const refresh = useCallback(async () => {
+        if (mode === "create" || mode === "edit" || mode === "detail") {
+            setIsLoading(false);
+            return;
+        }
         setIsLoading(true);
         try {
             const workflowStatuses = mode === "summary"
@@ -221,7 +227,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     }, [refresh]);
 
     useEffect(() => {
-        if (mode !== "request" || !isCompleteDraftForm(form)) return;
+        if ((mode !== "request" && mode !== "create" && mode !== "edit") || !isCompleteDraftForm(form)) return;
         let cancelled = false;
         const currentKey = draftFormKey;
         const timer = window.setTimeout(async () => {
@@ -451,6 +457,26 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
             }
         }
     }, [loadBatchesForLot, loadStatusHistory, markDraftValidationStale, mode, userBranchId]);
+
+    useEffect(() => {
+        if ((mode !== "edit" && mode !== "detail") || transferId === null || transferId === undefined) return;
+        let active = true;
+        const loadTransferRecord = async () => {
+            setIsLoading(true);
+            try {
+                const record = await fetchLotTransfer(transferId);
+                if (!active) return;
+                await selectRecord(record);
+            } catch (loadError) {
+                if (!active) return;
+                setError(loadError instanceof Error ? loadError.message : "Unable to load the lot-transfer request.");
+            } finally {
+                if (active) setIsLoading(false);
+            }
+        };
+        void loadTransferRecord();
+        return () => { active = false; };
+    }, [mode, transferId, selectRecord]);
 
     const handleSourceLotChange = useCallback((lotId: string) => {
         updateForm((current) => ({
