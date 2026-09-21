@@ -4,6 +4,8 @@ import { Pencil, Package, Calendar, AlertCircle, CheckCircle2, ShieldAlert, Boxe
 import { Lot, Batch, BatchStatus } from "../types";
 import { getFefoPriorityMap, groupAndSumLotBatches, sortBatchesByFefo, sortLotsByFefoExpiry } from "../utils/fefoEngine";
 import { resolveProductClassification } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
+import { calculateLotBalance } from "@/modules/manufacturing-management/shared/services/lot-balance.service";
+import { LotOccupancyIndicator } from "@/modules/manufacturing-management/shared/components/LotOccupancyIndicator";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -318,41 +320,7 @@ export default function WarehouseRackView({
                         })
                     );
 
-                    const positiveStockQty = allLotBatches.reduce((sum, b) => {
-                        const q = Number(b.quantity) || 0;
-                        return q > 0 ? sum + q : sum;
-                    }, 0);
-
-                    const negativeStockQty = allLotBatches.reduce((sum, b) => {
-                        const q = Number(b.quantity) || 0;
-                        return q < 0 ? sum + Math.abs(q) : sum;
-                    }, 0);
-
-                    // Physical rack occupancy and capacity reflect positive stock stored in this rack
-                    const totalRackOccupancy = positiveStockQty;
-                    const isRackNegative = negativeStockQty > 0;
-
-                    const cap = lot.maxBatchCapacity > 0 ? lot.maxBatchCapacity : 100;
-                    const positivePercent = Math.max(0, Math.min(100, Math.round((positiveStockQty / cap) * 100)));
-                    const capacityPercent = positivePercent;
-
-                    // Capacity status color
-                    let progressColorClass = "bg-emerald-500";
-                    let progressBadgeClass = "text-emerald-600 bg-emerald-500/10 border-emerald-500/20";
-                    if (isGhostLot) {
-                        progressColorClass = "bg-amber-500";
-                        progressBadgeClass = "text-amber-600 bg-amber-500/10 border-amber-500/20 font-bold";
-                    } else if (isRackNegative) {
-                        progressColorClass = "bg-emerald-500";
-                        progressBadgeClass = "text-rose-600 bg-rose-500/15 border-rose-500/30 font-bold";
-                    } else if (capacityPercent >= 90) {
-                        progressColorClass = "bg-rose-500";
-                        progressBadgeClass = "text-rose-600 bg-rose-500/10 border-rose-500/20";
-                    } else if (capacityPercent >= 70) {
-                        progressColorClass = "bg-amber-500";
-                        progressBadgeClass = "text-amber-600 bg-amber-500/10 border-amber-500/20";
-                    }
-
+                    const lotBalance = calculateLotBalance(allLotBatches, Number(lot.lotId), lot.maxBatchCapacity);
                     const uomLabel = lot.uomShortcut || lot.uomName || "";
 
                     // Calculate stored inventory types in this lot
@@ -484,33 +452,7 @@ export default function WarehouseRackView({
                                 </div>
 
                                 {/* Capacity Fill Indicator */}
-                                <div className="mt-3 space-y-1.5">
-                                    <div className="flex items-center justify-between text-[11px]">
-                                        <span className="font-semibold text-muted-foreground">
-                                            Occupancy: <span className="font-mono text-foreground font-bold">{totalRackOccupancy.toLocaleString()}</span> / {lot.maxBatchCapacity.toLocaleString()} {uomLabel}
-                                            {negativeStockQty > 0 && (
-                                                <span className="ml-1 text-rose-600 dark:text-rose-400 font-bold">
-                                                    (-{negativeStockQty.toLocaleString()} Shortfall)
-                                                </span>
-                                            )}
-                                        </span>
-                                        <span className={`px-1.5 py-0.2 rounded font-bold text-[10px] border ${progressBadgeClass}`}>
-                                            {isRackNegative ? "Shortfall" : `${capacityPercent}%`}
-                                        </span>
-                                    </div>
-                                    <div
-                                        className="h-2 w-full bg-muted/60 rounded-full overflow-hidden flex relative"
-                                        title={`Physical Occupancy: ${totalRackOccupancy.toLocaleString()} / ${lot.maxBatchCapacity.toLocaleString()} ${uomLabel}${negativeStockQty > 0 ? ` (-${negativeStockQty.toLocaleString()} Shortfall)` : ""}`}
-                                    >
-                                        {positiveStockQty > 0 && (
-                                            <div
-                                                className={cn("h-full transition-all duration-300 rounded-full shrink-0", progressColorClass)}
-                                                style={{ width: `${positivePercent}%` }}
-                                                title={`Current Positive Stock: ${positiveStockQty.toLocaleString()} / ${cap.toLocaleString()} ${uomLabel} (${positivePercent}%)`}
-                                            />
-                                        )}
-                                    </div>
-                                </div>
+                                <LotOccupancyIndicator balance={lotBalance} maxCapacity={lot.maxBatchCapacity} uomLabel={uomLabel} isGhost={isGhostLot} />
                             </div>
 
                             {/* Shelving Bay Area (Visual Batch Boxes Stack) */}

@@ -318,6 +318,10 @@ export default function BatchMovementsDialog({
                                         const isDirectionIn = String(m.movementDirection ?? m.movement_direction ?? "").toUpperCase() === "IN";
                                         const refNo = (m.referenceNo ?? m.reference_no ?? m.movementKey ?? m.movement_key ?? "-") as string;
                                         const keyNo = (m.movementKey ?? m.movement_key) as string | undefined;
+                                        const movementId = m.movementId ?? m.movement_id;
+                                        const rowKey = movementId !== null && movementId !== undefined && movementId > 0
+                                            ? `movement-${movementId}`
+                                            : `${keyNo || "movement"}-${idx}`;
                                         const transType = (m.transactionType ?? m.transaction_type ?? m.sourceModule ?? m.source_module ?? "MOVEMENT") as string;
                                         const qIn = Number(m.quantityIn ?? m.quantity_in ?? 0);
                                         const qOut = Number(m.quantityOut ?? m.quantity_out ?? 0);
@@ -326,7 +330,7 @@ export default function BatchMovementsDialog({
                                         const dateStr = (m.transactionDate ?? m.transaction_date ?? m.postedAt ?? m.posted_at ?? "") as string;
 
                                         return (
-                                            <TableRow key={keyNo || idx}>
+                                            <TableRow key={rowKey}>
                                                 <TableCell className="text-xs text-muted-foreground font-medium pl-4 py-3">{idx + 1}</TableCell>
                                                 <TableCell className="py-3">
                                                     <div className="flex flex-col">

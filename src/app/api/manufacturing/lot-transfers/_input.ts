@@ -5,7 +5,8 @@ import {
     mutateDirectus,
     readInventoryLot,
     readMmLot,
-    readOptionalInventoryLot
+    readOptionalInventoryLot,
+    readProduct
 } from "./_directus";
 import type { RecordValue } from "./_directus";
 import type {
@@ -20,6 +21,7 @@ import {
     manilaCalendarDate,
     manilaTimestamp,
     numeric,
+    productUnitId,
     rowId,
     unitId
 } from "./_values";
@@ -88,6 +90,36 @@ export function requireMatchingTransferUnitId(resolution: CanonicalLotTransferRe
         );
     }
     return sourceUnitId;
+}
+
+export async function requireMatchingProductUnitIds(
+    details: LotTransferDetailInput[],
+    resolution: CanonicalLotTransferResolution
+): Promise<void> {
+    const sourceUnitId = unitId(resolution.sourceLot);
+    const targetUnitId = unitId(resolution.targetLot);
+    const productIds = [...new Set(details.map((detail) => detail.productId))];
+    const productUnits = new Map<number, number | null>();
+    await Promise.all(productIds.map(async (productId) => {
+        const product = await readProduct(productId);
+        productUnits.set(productId, productUnitId(product));
+    }));
+
+    for (const detail of details) {
+        const resolvedProductUnitId = productUnits.get(detail.productId) ?? null;
+        if (resolvedProductUnitId !== null && resolvedProductUnitId === sourceUnitId && resolvedProductUnitId === targetUnitId) continue;
+        throw new LotTransferError(
+            409,
+            "Product " + detail.productId + " must use the same UOM as the source and destination lots. UOM conversion is not supported.",
+            {
+                lineNo: detail.lineNo,
+                productId: detail.productId,
+                productUnitId: resolvedProductUnitId,
+                sourceUnitId,
+                targetUnitId
+            }
+        );
+    }
 }
 
 export function normalizedDetails(input: LotTransferInput): LotTransferDetailInput[] {

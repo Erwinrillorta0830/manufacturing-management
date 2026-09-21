@@ -95,6 +95,13 @@ export function unitId(row: RecordValue): number | null {
     return resolved > 0 ? resolved : null;
 }
 
+export function productUnitId(row: RecordValue): number | null {
+    const resolved = relationId(firstValue(row, ["unit_of_measurement"]), ["unit_id", "uom_id", "id"])
+        || relationId(firstValue(row, ["uom_id"]), ["uom_id", "unit_id", "id"])
+        || relationId(firstValue(row, ["unit_id"]), ["unit_id", "id"]);
+    return resolved > 0 ? resolved : null;
+}
+
 export function normalizeStatus(value: unknown): string {
     return stringValue(value).toUpperCase().replace(/[_-]+/g, " ");
 }

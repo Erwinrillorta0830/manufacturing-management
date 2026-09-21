@@ -188,6 +188,9 @@ export interface ProductOption {
     productName: string;
     skuCode: string;
     unitCost: number;
+    uomId: number | null;
+    uomName: string;
+    uomShortcut: string;
 }
 
 export interface LotOption {
