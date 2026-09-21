@@ -48,6 +48,10 @@ function buildHeaderUserFromToken(token: string | null | undefined) {
     const name = [first, last].filter(Boolean).join(" ") || email || "User";
     return { name, email: email || "", avatar: "/vertex_logo_black.png" };
 }
+export const metadata = {
+    title: "Consolidation Planning | MM",
+    description: "Consolidate shipments for better delivery efficiency."
+};
 
 export default async function ConsolidationPlanningPage() {
     const cookieStore = await cookies();

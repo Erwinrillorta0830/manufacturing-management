@@ -58,7 +58,7 @@ export async function generateConsolidationPDF(data: PrintData) {
     doc.text("WAREHOUSE PICK LIST", pageWidth / 2, 10, { align: "center" });
 
     doc.setFontSize(7).setFont("helvetica", "normal");
-    doc.text("Vertex Terminal - Manufacturing", pageWidth / 2, 14, { align: "center" });
+    doc.text("Manufacturing", pageWidth / 2, 14, { align: "center" });
 
     // ── Batch Info Block ──
     doc.setFontSize(8).setFont("helvetica", "bold");
@@ -102,9 +102,12 @@ export async function generateConsolidationPDF(data: PrintData) {
         a.category.localeCompare(b.category, undefined, { sensitivity: "base" }) ||
         a.productName.localeCompare(b.productName, undefined, { sensitivity: "base" })
     );
+    console.log("sortedDetails", sortedDetails);
+  
     const detailByProduct = new Map(sortedDetails.map((detail) => [detail.productId, detail]));
     const bodyRows = data.allocations.map((allocation) => {
         const detail = detailByProduct.get(allocation.productId);
+        console.log("detail:",detail)
         return [
             detail?.productCode || "-",
             detail?.productName || allocation.productName,

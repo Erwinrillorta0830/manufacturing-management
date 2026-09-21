@@ -54,6 +54,13 @@ interface ProductReconciliationModalProps {
     onRefresh?: () => Promise<void> | void;
 }
 
+const getReservationPickedQty = (r: LineItemReservation): number => {
+    if (r.picked_quantity !== undefined && r.picked_quantity !== null && !isNaN(Number(r.picked_quantity))) {
+        return Number(r.picked_quantity);
+    }
+    return Number(r.reserved_quantity || 0);
+};
+
 function initLineItemReservations(items: ClearanceLineItem[]): ClearanceLineItem[] {
     return items.map((item) => {
         const reservations = (item.reservations || []).map((r) => ({
@@ -66,6 +73,202 @@ function initLineItemReservations(items: ClearanceLineItem[]): ClearanceLineItem
         };
     });
 }
+
+interface ReconciliationRowItemProps {
+    item: ClearanceLineItem;
+    originalIndex: number;
+    effectiveReadOnly: boolean;
+    onReturnedQtyChange: (originalIndex: number, newReturnedQty: number) => void;
+    onOpenAllocationModal: (originalIndex: number) => void;
+}
+
+const ReconciliationRowItem = React.memo(function ReconciliationRowItem({
+    item,
+    originalIndex,
+    effectiveReadOnly,
+    onReturnedQtyChange,
+    onOpenAllocationModal,
+}: ReconciliationRowItemProps) {
+    const invoicedQty = item.invoiced_quantity;
+    const targetQty = (invoicedQty !== undefined && invoicedQty !== null ? invoicedQty : item.ordered_quantity) ?? 0;
+    const variance = targetQty - (item.received_quantity + item.returned_quantity);
+    const isBalanced = variance === 0;
+
+    const [rawQty, setRawQty] = useState<string>(() =>
+        item.returned_quantity === 0 ? "" : String(item.returned_quantity)
+    );
+    const isFocusedRef = React.useRef<boolean>(false);
+
+    // Sync rawQty when item.returned_quantity changes externally and user is not actively typing
+    useEffect(() => {
+        if (!isFocusedRef.current) {
+            setRawQty(item.returned_quantity === 0 ? "" : String(item.returned_quantity));
+        }
+    }, [item.returned_quantity]);
+
+    const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+        isFocusedRef.current = true;
+        e.target.select();
+    };
+
+    const handleClick = (e: React.MouseEvent<HTMLInputElement>) => {
+        if (!isFocusedRef.current) {
+            isFocusedRef.current = true;
+            (e.target as HTMLInputElement).select();
+        }
+    };
+
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const val = e.target.value;
+        // Allow empty string or digits while typing
+        if (val === "" || /^\d+$/.test(val)) {
+            setRawQty(val);
+            if (val !== "") {
+                const parsed = parseInt(val, 10);
+                if (!isNaN(parsed)) {
+                    const clamped = Math.max(0, Math.min(parsed, targetQty));
+                    onReturnedQtyChange(originalIndex, clamped);
+                }
+            }
+        }
+    };
+
+    const handleBlur = () => {
+        isFocusedRef.current = false;
+        if (rawQty === "" || isNaN(parseInt(rawQty, 10))) {
+            setRawQty("");
+            onReturnedQtyChange(originalIndex, 0);
+        } else {
+            const parsed = parseInt(rawQty, 10);
+            const clamped = Math.max(0, Math.min(parsed, targetQty));
+            setRawQty(clamped === 0 ? "" : String(clamped));
+            onReturnedQtyChange(originalIndex, clamped);
+        }
+    };
+
+    return (
+        <tr key={item.detail_id || originalIndex} className="hover:bg-muted/10 transition-colors">
+            {/* Product Info */}
+            <td className="p-3.5 align-middle">
+                <span className="font-bold text-foreground block text-xs">{item.product_name}</span>
+                <span className="text-[10px] text-muted-foreground font-mono bg-muted/60 px-1.5 py-0.5 rounded border border-border/50 inline-block mt-0.5">
+                    {item.product_code}
+                </span>
+                {/* Originating Batches from sales_invoice_batches / sales_order_reservation */}
+                {item.reservations && item.reservations.length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap gap-1 items-center">
+                        {item.reservations.map((r) => (
+                            <span
+                                key={r.reservation_id}
+                                className="inline-flex items-center gap-1 text-[10px] bg-sky-500/10 text-sky-700 dark:text-sky-300 border border-sky-500/20 px-1.5 py-0.5 rounded font-mono"
+                                title={`Originating Lot: ${r.lot_name || r.lot_number || `Lot #${r.lot_id}`} | Batch: ${r.batch_no || "N/A"} | Picked: ${getReservationPickedQty(r)}`}
+                            >
+                                <Boxes className="h-3 w-3 text-sky-500" />
+                                <span>{r.lot_name || r.lot_number || `Lot #${r.lot_id}`}</span>
+                                {r.batch_no && <span className="opacity-70">· {r.batch_no}</span>}
+                                <span className="font-bold">({getReservationPickedQty(r)})</span>
+                            </span>
+                        ))}
+                    </div>
+                )}
+            </td>
+
+            {/* Ordered (Customer request - informational) */}
+            <td className="p-3.5 text-center align-middle font-medium text-xs text-muted-foreground" title="Original order quantity">
+                {item.ordered_quantity}
+            </td>
+
+            {/* Invoiced (Authoritative clearance baseline) */}
+            <td className="p-3.5 text-center align-middle font-black text-sm text-sky-600 dark:text-sky-400" title="Billed delivery quantity">
+                {invoicedQty !== undefined && invoicedQty !== null && invoicedQty > 0 ? (
+                    invoicedQty
+                ) : (
+                    <span className="text-muted-foreground font-bold">—</span>
+                )}
+            </td>
+
+            {/* Fulfilled Input */}
+            <td className="p-3.5 text-center align-middle">
+                <span className="font-black text-sm text-emerald-600 dark:text-emerald-400">
+                    {item.received_quantity}
+                </span>
+            </td>
+
+            {/* Returned Input */}
+            <td className="p-3.5 text-center align-middle">
+                {effectiveReadOnly ? (
+                    <span className="font-black text-sm text-rose-500">
+                        {item.returned_quantity}
+                    </span>
+                ) : (
+                    <input
+                        type="number"
+                        min={0}
+                        max={targetQty}
+                        value={rawQty}
+                        placeholder="0"
+                        onFocus={handleFocus}
+                        onClick={handleClick}
+                        onChange={handleChange}
+                        onBlur={handleBlur}
+                        className="w-20 h-8 text-center bg-background border border-rose-500/40 focus:border-rose-500 rounded-lg px-2 text-xs font-black text-foreground outline-none shadow-xs"
+                    />
+                )}
+            </td>
+
+            {/* Dedicated Column: Lot & Batch Allocation */}
+            <td className="p-3.5 text-center align-middle">
+                {item.returned_quantity > 0 && item.reservations && item.reservations.length > 0 ? (
+                    <div className="flex flex-col items-center gap-1">
+                        {!effectiveReadOnly && (
+                            <button
+                                type="button"
+                                onClick={() => onOpenAllocationModal(originalIndex)}
+                                className="text-[10px] text-primary hover:underline font-bold flex items-center gap-1 cursor-pointer bg-primary/10 hover:bg-primary/20 border border-primary/20 px-2 py-1 rounded-md transition-colors shadow-2xs active:scale-95"
+                                title="Allocate lots and batches for this returned item"
+                            >
+                                <SlidersHorizontal className="h-2.5 w-2.5" />
+                                Allocate Batches
+                            </button>
+                        )}
+                        {item.reservations.some((r) => (Number(r.returned_quantity) || 0) > 0) && (
+                            <div className="flex flex-col items-center gap-0.5 mt-0.5">
+                                {item.reservations
+                                    .filter((r) => (Number(r.returned_quantity) || 0) > 0)
+                                    .map((r) => (
+                                        <span
+                                            key={r.reservation_id}
+                                            className="text-[9px] font-mono text-muted-foreground bg-muted/50 border border-border/50 px-1.5 py-0.5 rounded"
+                                            title={`Lot: ${r.lot_name || `Lot #${r.lot_id}`} | Batch: ${r.batch_no || "N/A"}`}
+                                        >
+                                            {r.returned_quantity} → {r.lot_name || `Lot #${r.lot_id}`} {r.batch_no ? `(${r.batch_no})` : ""}
+                                        </span>
+                                    ))}
+                            </div>
+                        )}
+                    </div>
+                ) : (
+                    <span className="text-muted-foreground/40 text-xs font-medium">—</span>
+                )}
+            </td>
+
+            {/* Variance */}
+            <td className="p-3.5 text-center align-middle">
+                {isBalanced ? (
+                    <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-bold text-xs">
+                        <CheckCircle2 className="h-4 w-4" />
+                        0 OK
+                    </span>
+                ) : (
+                    <span className="inline-flex items-center gap-1 text-rose-500 font-bold text-xs px-2 py-0.5 rounded-md bg-rose-500/10">
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                        {variance > 0 ? `-${variance}` : `+${Math.abs(variance)}`}
+                    </span>
+                )}
+            </td>
+        </tr>
+    );
+});
 
 export default function ProductReconciliationModal({
     order,
@@ -112,12 +315,17 @@ export default function ProductReconciliationModal({
     useEffect(() => {
         let isMounted = true;
         if (isOpen) {
-            fetch("/api/manufacturing/sales-return", { cache: "no-store" })
-                .then((res) => (res.ok ? res.json() : []))
+            fetch("/api/manufacturing/sales-and-fulfillment/sales-return-and-credit-notes?action=list&limit=100", { cache: "no-store" })
+                .then((res) => (res.ok ? res.json() : null))
                 .then((data: unknown) => {
                     if (!isMounted) return;
-                    if (Array.isArray(data)) {
-                        const mapped = data.map((r: Record<string, unknown>) => ({
+                    const list = Array.isArray(data)
+                        ? data
+                        : data && typeof data === "object" && "data" in data && Array.isArray((data as { data: unknown[] }).data)
+                            ? (data as { data: unknown[] }).data
+                            : [];
+                    if (Array.isArray(list)) {
+                        const mapped = list.map((r: Record<string, unknown>) => ({
                             return_id: Number(r.return_id || r.id),
                             return_number: (r.return_number as string) || `RET-${r.return_id || r.id}`,
                             status: (r.status as string) || (r.isReceived || r.is_received ? "Received" : "Pending"),
@@ -144,10 +352,15 @@ export default function ProductReconciliationModal({
     // Manual refresh handler for sales returns
     const fetchAvailableReturns = useCallback(async () => {
         try {
-            const res = await fetch("/api/manufacturing/sales-return", { cache: "no-store" });
-            const data = res.ok ? await res.json() : [];
-            if (Array.isArray(data)) {
-                const mapped = data.map((r: Record<string, unknown>) => ({
+            const res = await fetch("/api/manufacturing/sales-and-fulfillment/sales-return-and-credit-notes?action=list&limit=100", { cache: "no-store" });
+            const data = res.ok ? await res.json() : null;
+            const list = Array.isArray(data)
+                ? data
+                : data && typeof data === "object" && "data" in data && Array.isArray((data as { data: unknown[] }).data)
+                    ? (data as { data: unknown[] }).data
+                    : [];
+            if (Array.isArray(list)) {
+                const mapped = list.map((r: Record<string, unknown>) => ({
                     return_id: Number(r.return_id || r.id),
                     return_number: (r.return_number as string) || `RET-${r.return_id || r.id}`,
                     status: (r.status as string) || (r.isReceived || r.is_received ? "Received" : "Pending"),
@@ -407,14 +620,17 @@ export default function ProductReconciliationModal({
         return lineItems.reduce((acc, item) => acc + item.ordered_quantity, 0);
     }, [lineItems]);
 
+    const hasAnyInvoice = useMemo(() => {
+        return Boolean(order?.invoice_no && order.invoice_no !== "---") || lineItems.some((i) => i.invoiced_quantity !== undefined && i.invoiced_quantity !== null);
+    }, [order, lineItems]);
+
     // Total invoiced units calculation for KPI card
     const totalInvoicedUnits = useMemo(() => {
-        return lineItems.reduce(
-            (acc, item) =>
-                acc + (item.invoiced_quantity !== undefined && item.invoiced_quantity !== null ? item.invoiced_quantity : item.ordered_quantity),
-            0
-        );
-    }, [lineItems]);
+        if (hasAnyInvoice) {
+            return lineItems.reduce((acc, item) => acc + (item.invoiced_quantity ?? 0), 0);
+        }
+        return lineItems.reduce((acc, item) => acc + item.ordered_quantity, 0);
+    }, [hasAnyInvoice, lineItems]);
 
     // Filtered line items with original indices preserved for safe editing
     const filteredLineItemsWithIndex = useMemo(() => {
@@ -522,23 +738,48 @@ export default function ProductReconciliationModal({
         });
     };
 
-    const handleReturnedQtyChange = (originalIndex: number, newReturnedQty: number) => {
-        const item = lineItems[originalIndex];
-        let updatedReservations = item.reservations ? item.reservations.map((r) => ({ ...r })) : [];
+    const handleReturnedQtyChange = useCallback((originalIndex: number, newReturnedQty: number) => {
+        setLineItems((prev) => {
+            const next = [...prev];
+            const item = next[originalIndex];
+            if (!item) return prev;
+            let updatedReservations = item.reservations ? item.reservations.map((r) => ({ ...r })) : [];
 
-        // If return quantity is set to 0, clear all reservation return allocations
-        if (newReturnedQty === 0) {
-            updatedReservations = updatedReservations.map((r) => ({
-                ...r,
-                returned_quantity: 0,
-            }));
-        }
+            // If return quantity is set to 0, clear all reservation return allocations
+            if (newReturnedQty === 0) {
+                updatedReservations = updatedReservations.map((r) => ({
+                    ...r,
+                    returned_quantity: 0,
+                }));
+            } else if (updatedReservations.length > 0) {
+                const currentTotalAllocated = updatedReservations.reduce(
+                    (sum, r) => sum + (Number(r.returned_quantity) || 0),
+                    0
+                );
+                // If allocations exceed the new returned quantity, clamp them sequentially down
+                if (currentTotalAllocated > newReturnedQty) {
+                    let remainingAllowed = newReturnedQty;
+                    updatedReservations = updatedReservations.map((r) => {
+                        const currentVal = Number(r.returned_quantity) || 0;
+                        const maxForThis = getReservationPickedQty(r);
+                        const clamped = Math.min(currentVal, maxForThis, remainingAllowed);
+                        remainingAllowed = Math.max(0, remainingAllowed - clamped);
+                        return {
+                            ...r,
+                            returned_quantity: clamped,
+                        };
+                    });
+                }
+            }
 
-        updateLine(originalIndex, {
-            returned_quantity: newReturnedQty,
-            reservations: updatedReservations,
+            next[originalIndex] = {
+                ...item,
+                returned_quantity: newReturnedQty,
+                reservations: updatedReservations,
+            };
+            return next;
         });
-    };
+    }, []);
 
     const handleConfirmLotAllocation = (updatedReservations: LineItemReservation[]) => {
         if (allocationModalItemIndex === null) return;
@@ -612,7 +853,7 @@ export default function ProductReconciliationModal({
         for (const item of lineItems) {
             if (item.returned_quantity > 0 && item.reservations && item.reservations.length > 0) {
                 const physicalDispatched = item.reservations.reduce(
-                    (sum, r) => sum + (Number(r.picked_quantity || r.reserved_quantity) || 0),
+                    (sum, r) => sum + getReservationPickedQty(r),
                     0
                 );
                 const targetReturn = physicalDispatched > 0 ? Math.min(item.returned_quantity, physicalDispatched) : item.returned_quantity;
@@ -819,7 +1060,7 @@ export default function ProductReconciliationModal({
                                     {lineItems.length} Products
                                 </div>
                                 <div className="text-[10px] text-muted-foreground font-semibold flex items-center gap-1.5">
-                                    <span className="text-sky-600 dark:text-sky-400 font-bold">{totalInvoicedUnits} Invoiced</span>
+                                    <span className="text-sky-600 dark:text-sky-400 font-bold">{totalInvoicedUnits > 0 ? `${totalInvoicedUnits} Invoiced` : "— Invoiced"}</span>
                                     <span className="opacity-40">·</span>
                                     <span className="opacity-70 font-normal">({totalOrderedUnits} Ordered)</span>
                                 </div>
@@ -1076,141 +1317,16 @@ export default function ProductReconciliationModal({
                                                     </td>
                                                 </tr>
                                             ) : (
-                                                filteredLineItemsWithIndex.map(({ item, originalIndex }) => {
-                                                    const targetQty = item.invoiced_quantity !== undefined && item.invoiced_quantity !== null
-                                                        ? item.invoiced_quantity
-                                                        : item.ordered_quantity;
-                                                    const variance = targetQty - (item.received_quantity + item.returned_quantity);
-                                                    const isBalanced = variance === 0;
-
-                                                    return (
-                                                        <tr key={item.detail_id || originalIndex} className="hover:bg-muted/10 transition-colors">
-                                                            {/* Product Info */}
-                                                            <td className="p-3.5 align-middle">
-                                                                <span className="font-bold text-foreground block text-xs">{item.product_name}</span>
-                                                                <span className="text-[10px] text-muted-foreground font-mono bg-muted/60 px-1.5 py-0.5 rounded border border-border/50 inline-block mt-0.5">
-                                                                    {item.product_code}
-                                                                </span>
-                                                                {/* Originating Batches from sales_invoice_batches / sales_order_reservation */}
-                                                                {item.reservations && item.reservations.length > 0 && (
-                                                                    <div className="mt-1.5 flex flex-wrap gap-1 items-center">
-                                                                        {item.reservations.map((r) => (
-                                                                            <span
-                                                                                key={r.reservation_id}
-                                                                                className="inline-flex items-center gap-1 text-[10px] bg-sky-500/10 text-sky-700 dark:text-sky-300 border border-sky-500/20 px-1.5 py-0.5 rounded font-mono"
-                                                                                title={`Originating Lot: ${r.lot_name || r.lot_number || `Lot #${r.lot_id}`} | Batch: ${r.batch_no || "N/A"} | Picked: ${r.picked_quantity || r.reserved_quantity}`}
-                                                                            >
-                                                                                <Boxes className="h-3 w-3 text-sky-500" />
-                                                                                <span>{r.lot_name || r.lot_number || `Lot #${r.lot_id}`}</span>
-                                                                                {r.batch_no && <span className="opacity-70">· {r.batch_no}</span>}
-                                                                                <span className="font-bold">({r.picked_quantity || r.reserved_quantity})</span>
-                                                                            </span>
-                                                                        ))}
-                                                                    </div>
-                                                                )}
-                                                            </td>
-
-                                                            {/* Ordered (Customer request - informational) */}
-                                                            <td className="p-3.5 text-center align-middle font-medium text-xs text-muted-foreground" title="Original order quantity">
-                                                                {item.ordered_quantity}
-                                                            </td>
-
-                                                            {/* Invoiced (Authoritative clearance baseline) */}
-                                                            <td className="p-3.5 text-center align-middle font-black text-sm text-sky-600 dark:text-sky-400" title="Billed delivery quantity">
-                                                                {targetQty}
-                                                            </td>
-
-                                                            {/* Fulfilled Input */}
-                                                            <td className="p-3.5 text-center align-middle">
-                                                                <span className="font-black text-sm text-emerald-600 dark:text-emerald-400">
-                                                                    {item.received_quantity}
-                                                                </span>
-                                                            </td>
-
-                                                            {/* Returned Input */}
-                                                            <td className="p-3.5 text-center align-middle">
-                                                                {effectiveReadOnly ? (
-                                                                    <span className="font-black text-sm text-rose-500">
-                                                                        {item.returned_quantity}
-                                                                    </span>
-                                                                ) : (
-                                                                    <input
-                                                                        type="number"
-                                                                        min={0}
-                                                                        max={targetQty}
-                                                                        value={item.returned_quantity === 0 ? "" : item.returned_quantity}
-                                                                        placeholder="0"
-                                                                        onFocus={(e) => e.target.select()}
-                                                                        onClick={(e) => (e.target as HTMLInputElement).select()}
-                                                                        onChange={(e) => {
-                                                                            const val = e.target.value;
-                                                                            const parsed = val === "" ? 0 : parseInt(val, 10);
-                                                                            handleReturnedQtyChange(originalIndex, isNaN(parsed) ? 0 : Math.max(0, Math.min(parsed, targetQty)));
-                                                                        }}
-                                                                        onBlur={(e) => {
-                                                                            const val = e.target.value;
-                                                                            if (val === "" || isNaN(parseInt(val, 10))) {
-                                                                                handleReturnedQtyChange(originalIndex, 0);
-                                                                            }
-                                                                        }}
-                                                                        className="w-20 h-8 text-center bg-background border border-rose-500/40 focus:border-rose-500 rounded-lg px-2 text-xs font-black text-foreground outline-none shadow-xs"
-                                                                    />
-                                                                )}
-                                                            </td>
-
-                                                            {/* Dedicated Column: Lot & Batch Allocation */}
-                                                            <td className="p-3.5 text-center align-middle">
-                                                                {item.returned_quantity > 0 && item.reservations && item.reservations.length > 0 ? (
-                                                                    <div className="flex flex-col items-center gap-1">
-                                                                        {!effectiveReadOnly && (
-                                                                            <button
-                                                                                type="button"
-                                                                                onClick={() => setAllocationModalItemIndex(originalIndex)}
-                                                                                className="text-[10px] text-primary hover:underline font-bold flex items-center gap-1 cursor-pointer bg-primary/10 hover:bg-primary/20 border border-primary/20 px-2 py-1 rounded-md transition-colors shadow-2xs active:scale-95"
-                                                                                title="Allocate lots and batches for this returned item"
-                                                                            >
-                                                                                <SlidersHorizontal className="h-2.5 w-2.5" />
-                                                                                Allocate Batches
-                                                                            </button>
-                                                                        )}
-                                                                        {item.reservations.some((r) => (r.returned_quantity || 0) > 0) && (
-                                                                            <div className="flex flex-col items-center gap-0.5 mt-0.5">
-                                                                                {item.reservations
-                                                                                    .filter((r) => (r.returned_quantity || 0) > 0)
-                                                                                    .map((r) => (
-                                                                                        <span
-                                                                                            key={r.reservation_id}
-                                                                                            className="text-[9px] font-mono text-muted-foreground bg-muted/50 border border-border/50 px-1.5 py-0.5 rounded"
-                                                                                            title={`Lot: ${r.lot_name || `Lot #${r.lot_id}`} | Batch: ${r.batch_no || "N/A"}`}
-                                                                                        >
-                                                                                            {r.returned_quantity} → {r.lot_name || `Lot #${r.lot_id}`} {r.batch_no ? `(${r.batch_no})` : ""}
-                                                                                        </span>
-                                                                                    ))}
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
-                                                                ) : (
-                                                                    <span className="text-muted-foreground/40 text-xs font-medium">—</span>
-                                                                )}
-                                                            </td>
-
-                                                            {/* Variance */}
-                                                            <td className="p-3.5 text-center align-middle">
-                                                                {isBalanced ? (
-                                                                    <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-bold text-xs">
-                                                                        <CheckCircle2 className="h-4 w-4" />
-                                                                        0 OK
-                                                                    </span>
-                                                                ) : (
-                                                                    <span className="inline-flex items-center gap-1 text-rose-500 font-bold text-xs px-2 py-0.5 rounded-md bg-rose-500/10">
-                                                                        <AlertTriangle className="h-3.5 w-3.5" />
-                                                                        {variance > 0 ? `-${variance}` : `+${Math.abs(variance)}`}
-                                                                    </span>
-                                                                )}
-                                                            </td>
-                                                        </tr>
-                                                    );
-                                                })
+                                                filteredLineItemsWithIndex.map(({ item, originalIndex }) => (
+                                                    <ReconciliationRowItem
+                                                        key={item.detail_id || originalIndex}
+                                                        item={item}
+                                                        originalIndex={originalIndex}
+                                                        effectiveReadOnly={effectiveReadOnly}
+                                                        onReturnedQtyChange={handleReturnedQtyChange}
+                                                        onOpenAllocationModal={setAllocationModalItemIndex}
+                                                    />
+                                                ))
                                             )}
                                         </tbody>
                                     </table>
@@ -1313,7 +1429,7 @@ export default function ProductReconciliationModal({
                     {allocationModalItemIndex !== null && lineItems[allocationModalItemIndex] && (() => {
                         const targetItem = lineItems[allocationModalItemIndex];
                         const physicalDispatched = (targetItem.reservations || []).reduce(
-                            (sum, r) => sum + (Number(r.picked_quantity || r.reserved_quantity) || 0),
+                            (sum, r) => sum + getReservationPickedQty(r),
                             0
                         );
                         const itemBaseline = targetItem.invoiced_quantity !== undefined && targetItem.invoiced_quantity !== null

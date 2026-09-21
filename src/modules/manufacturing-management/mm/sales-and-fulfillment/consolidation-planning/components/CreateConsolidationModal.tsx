@@ -176,6 +176,7 @@ export default function CreateConsolidationModal({
 
     // Manual allocation state: key = `${productId}:${inventoryLotId}:${batchNo}:${lotId}` -> allocated quantity
     const [manualAllocations, setManualAllocations] = useState<Record<string, number>>({});
+    const [manualInputValues, setManualInputValues] = useState<Record<string, string>>({});
 
     const getManualKey = useCallback(
         (productId: number, inventoryLotId?: number, lotId?: number, batchNo?: string) =>
@@ -214,6 +215,7 @@ export default function CreateConsolidationModal({
                         }
                     }
                     setManualAllocations(initialManual);
+                    setManualInputValues({});
                 })
                 .catch((error: Error) => {
                     if (error.name !== "AbortError") {
@@ -242,6 +244,7 @@ export default function CreateConsolidationModal({
         setPreviewLoading(false);
         setPreviewError(null);
         setManualAllocations({});
+        setManualInputValues({});
         setAllowExpiredBatches(false);
         setShowExpiredConfirmModal(false);
     };
@@ -258,6 +261,7 @@ export default function CreateConsolidationModal({
         setSelectedIds(new Set());
         setAllocationPreview(null);
         setManualAllocations({});
+        setManualInputValues({});
         setAllowExpiredBatches(false);
         setShowExpiredConfirmModal(false);
         setCollapsedStep2ProductIds(new Set());
@@ -561,10 +565,13 @@ export default function CreateConsolidationModal({
         totalRequired: number
     ) => {
         const key = getManualKey(productId, inventoryLotId, lotId, batchNo);
+        
         const currentAlloc = getProductManualAllocation(productId);
         const currentBatchAlloc = Number(manualAllocations[key] || 0);
+        
         const otherBatchesAlloc = currentAlloc - currentBatchAlloc;
         const remainingDemand = Math.max(0, totalRequired - otherBatchesAlloc);
+        
         const allowedMax = Math.min(maxAvail, remainingDemand);
 
         const parsed = Math.max(0, Math.min(allowedMax, Number(val) || 0));
@@ -602,6 +609,7 @@ export default function CreateConsolidationModal({
             }
         }
         setManualAllocations(initialManual);
+        setManualInputValues({});
     }, [allocationPreview, getManualKey]);
 
     const handleExcludeAndReallocate = useCallback(() => {
@@ -697,6 +705,7 @@ export default function CreateConsolidationModal({
         });
 
         setManualAllocations(newManual);
+        setManualInputValues({});
         setAllocationMode("auto");
         setAllowExpiredBatches(false);
         setShowExpiredConfirmModal(false);
@@ -758,6 +767,7 @@ export default function CreateConsolidationModal({
         }
 
         setManualAllocations(updatedManual);
+        setManualInputValues({});
         setAllocationMode("manual");
         setAllowExpiredBatches(false);
         setShowExpiredConfirmModal(false);
@@ -897,6 +907,7 @@ export default function CreateConsolidationModal({
                 type: "shortage" | "excess";
             }> = [];
 
+
             for (const p of aggregatedProducts) {
                 const summary = getProductManualSummary(p.productId, p.totalQuantity);
                 if (summary.difference !== 0) {
@@ -914,7 +925,8 @@ export default function CreateConsolidationModal({
                     });
                 }
             }
-
+            console.log("discrepancies", discrepancies)
+            console.log("aggregatedProducts", aggregatedProducts)
             if (discrepancies.length > 0) {
                 setUnbalancedLines(discrepancies);
                 setShowUnbalancedConfirmModal(true);
@@ -1152,8 +1164,8 @@ export default function CreateConsolidationModal({
                                         {step === 1
                                             ? "Step 1: Select one or multiple candidate sales orders and job orders for consolidation."
                                             : step === 2
-                                            ? "Step 2: Allocate stock and lot batches grouped by order, product, and rack locations."
-                                            : "Step 3: Review consolidated product demand summary and finalize batch creation."}
+                                                ? "Step 2: Allocate stock and lot batches grouped by order, product, and rack locations."
+                                                : "Step 3: Review consolidated product demand summary and finalize batch creation."}
                                     </p>
                                 </div>
                                 <span className="hidden items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2.5 py-1 text-[10px] font-bold text-muted-foreground lg:flex">
@@ -1167,11 +1179,10 @@ export default function CreateConsolidationModal({
                                 <div className="hidden sm:flex items-center gap-1 bg-muted/50 p-1 rounded-2xl border border-border/60">
                                     <button
                                         onClick={() => setStep(1)}
-                                        className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold transition-all ${
-                                            step === 1
+                                        className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold transition-all ${step === 1
                                                 ? "bg-card text-foreground shadow-sm border border-border/60"
                                                 : "text-muted-foreground hover:text-foreground"
-                                        }`}
+                                            }`}
                                     >
                                         <span className="flex h-4 w-4 items-center justify-center rounded-full bg-primary/10 text-primary text-[10px] font-black">
                                             1
@@ -1181,13 +1192,12 @@ export default function CreateConsolidationModal({
                                     <button
                                         onClick={() => canProceedToStep2 && setStep(2)}
                                         disabled={!canProceedToStep2}
-                                        className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold transition-all ${
-                                            step === 2
+                                        className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold transition-all ${step === 2
                                                 ? "bg-card text-foreground shadow-sm border border-border/60"
                                                 : canProceedToStep2
-                                                ? "text-muted-foreground hover:text-foreground"
-                                                : "opacity-40 cursor-not-allowed text-muted-foreground"
-                                        }`}
+                                                    ? "text-muted-foreground hover:text-foreground"
+                                                    : "opacity-40 cursor-not-allowed text-muted-foreground"
+                                            }`}
                                     >
                                         <span className="flex h-4 w-4 items-center justify-center rounded-full bg-primary/10 text-primary text-[10px] font-black">
                                             2
@@ -1197,13 +1207,12 @@ export default function CreateConsolidationModal({
                                     <button
                                         onClick={() => canProceedToStep3 && setStep(3)}
                                         disabled={!canProceedToStep3}
-                                        className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold transition-all ${
-                                            step === 3
+                                        className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold transition-all ${step === 3
                                                 ? "bg-card text-foreground shadow-sm border border-border/60"
                                                 : canProceedToStep3
-                                                ? "text-muted-foreground hover:text-foreground"
-                                                : "opacity-40 cursor-not-allowed text-muted-foreground"
-                                        }`}
+                                                    ? "text-muted-foreground hover:text-foreground"
+                                                    : "opacity-40 cursor-not-allowed text-muted-foreground"
+                                            }`}
                                     >
                                         <span className="flex h-4 w-4 items-center justify-center rounded-full bg-primary/10 text-primary text-[10px] font-black">
                                             3
@@ -1229,1781 +1238,1791 @@ export default function CreateConsolidationModal({
                                     transition={{ duration: 0.2 }}
                                     className="flex-1 flex flex-col min-h-0"
                                 >
-                        {/* Filters Toolbar */}
-                        <div className="shrink-0 border-b bg-muted/20 px-4 py-3 sm:px-7 space-y-2.5">
-                            <div className="flex flex-wrap items-center justify-between gap-2.5">
-                                <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[280px]">
-                                    {/* Search Input */}
-                                    <div className="relative flex-1 min-w-[200px] max-w-sm">
-                                        <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                                        <Input
-                                            placeholder="Search order no, SO, PO, customer, product..."
-                                            value={search}
-                                            onChange={(e) => setSearch(e.target.value)}
-                                            className="h-8.5 pl-8 text-xs bg-card rounded-xl border-border/60"
-                                        />
-                                    </div>
-
-                                    {/* Customer Filter */}
-                                    <div className="w-[200px]">
-                                        <SearchableSelect
-                                            options={step1CustomerSelectOptions}
-                                            value={selectedCustomer}
-                                            onValueChange={setSelectedCustomer}
-                                            placeholder="Filter Customer..."
-                                            searchPlaceholder="Search customer..."
-                                            triggerClassName="h-8.5 rounded-xl border border-border/60 bg-card px-2.5 text-xs font-semibold text-foreground"
-                                        />
-                                    </div>
-
-                                    {/* Date Range Filters */}
-                                    <div className="flex items-center gap-1 text-xs">
-                                        <Input
-                                            type="date"
-                                            value={dateFrom}
-                                            onChange={(e) => setDateFrom(e.target.value)}
-                                            className="h-8.5 text-xs bg-card rounded-xl border-border/60 w-32"
-                                            title="Filter From Date"
-                                        />
-                                        <span className="text-muted-foreground text-xs font-bold">-</span>
-                                        <Input
-                                            type="date"
-                                            value={dateTo}
-                                            onChange={(e) => setDateTo(e.target.value)}
-                                            className="h-8.5 text-xs bg-card rounded-xl border-border/60 w-32"
-                                            title="Filter To Date"
-                                        />
-                                    </div>
-
-                                    {(search || selectedCustomer !== "ALL" || dateFrom || dateTo) && (
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            onClick={resetFilters}
-                                            className="h-8.5 text-xs text-muted-foreground hover:text-foreground font-bold px-2 rounded-xl"
-                                        >
-                                            <RotateCcw className="h-3 w-3 mr-1" />
-                                            Reset
-                                        </Button>
-                                    )}
-                                </div>
-
-                                {/* Select All Actions */}
-                                <div className="flex items-center gap-2">
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={toggleAll}
-                                        className="h-8.5 text-xs font-bold rounded-xl bg-card border-border/60"
-                                        disabled={loading || filtered.length === 0}
-                                    >
-                                        {loading ? (
-                                            <>
-                                                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-primary" />
-                                                Loading...
-                                            </>
-                                        ) : selectedIds.size === filtered.length && filtered.length > 0 ? (
-                                            <>
-                                                <CheckSquare className="mr-1.5 h-3.5 w-3.5 text-primary" />
-                                                Deselect All
-                                            </>
-                                        ) : (
-                                            <>
-                                                <Square className="mr-1.5 h-3.5 w-3.5" />
-                                                Select All ({filtered.length})
-                                            </>
-                                        )}
-                                    </Button>
-                                    <span className="text-xs text-muted-foreground font-bold bg-muted/40 px-2.5 py-1.5 rounded-xl border border-border/40">
-                                        {loading ? (
-                                            <span className="inline-flex items-center gap-1.5">
-                                                <Loader2 className="h-3 w-3 animate-spin text-primary" />
-                                                Checking orders...
-                                            </span>
-                                        ) : (
-                                            <>
-                                                <strong className="text-foreground">{selectedIds.size}</strong> of {filtered.length} selected
-                                            </>
-                                        )}
-                                    </span>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Candidates Table */}
-                        <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-7 space-y-4">
-                            {loading ? (
-                                <div className="flex h-64 flex-col items-center justify-center gap-3 py-16">
-                                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                                    <p className="text-xs font-semibold text-muted-foreground animate-pulse">
-                                        Loading eligible sales orders for this branch...
-                                    </p>
-                                </div>
-                            ) : filtered.length === 0 ? (
-                                <div className="py-16 text-center text-xs text-muted-foreground space-y-2">
-                                    <FileText className="h-8 w-8 text-muted-foreground/40 mx-auto" />
-                                    <p className="font-bold">No eligible sales orders found</p>
-                                    <p className="text-[11px]">Try adjusting your search query, customer, or date filters.</p>
-                                </div>
-                            ) : (
-                                <div className="overflow-hidden rounded-3xl border border-border/60 bg-card shadow-sm">
-                                    <table className="w-full text-left border-collapse text-xs">
-                                        <thead>
-                                            <tr className="border-b bg-muted/20">
-                                                <th className="p-3 w-10"></th>
-                                                <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] tracking-wider w-16">Type</th>
-                                                <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] tracking-wider">Order No</th>
-                                                <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] tracking-wider">PO No</th>
-                                                <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] tracking-wider">Customer</th>
-                                                <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] tracking-wider">Order Status</th>
-                                                <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] tracking-wider">Order Date</th>
-                                                <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] tracking-wider text-right">Net Amount</th>
-                                                <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] tracking-wider text-right">Items</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-border/40">
-                                            {filtered.map((inv, invIdx) => {
-                                                const isSelected = selectedIds.has(inv.invoiceId);
-                                                const isExpanded = expandedInvoiceIds.has(inv.invoiceId);
-
-                                                return (
-                                                    <React.Fragment key={inv.invoiceId}>
-                                                        <motion.tr
-                                                            initial={{ opacity: 0, y: -8 }}
-                                                            animate={{ opacity: 1, y: 0 }}
-                                                            transition={{ duration: 0.18, delay: Math.min(invIdx * 0.025, 0.3) }}
-                                                            onClick={() => toggle(inv.invoiceId)}
-                                                            className={`cursor-pointer transition-colors ${
-                                                                isSelected ? "bg-primary/5 hover:bg-primary/10" : "hover:bg-muted/10"
-                                                            }`}
-                                                        >
-                                                            <td className="p-3" onClick={(e) => e.stopPropagation()}>
-                                                                <div className="flex items-center gap-1">
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => toggleExpand(inv.invoiceId)}
-                                                                        className="p-0.5 text-muted-foreground hover:text-foreground rounded"
-                                                                    >
-                                                                        <motion.div
-                                                                            animate={{ rotate: isExpanded ? 90 : 0 }}
-                                                                            transition={{ duration: 0.2 }}
-                                                                            className="flex items-center justify-center"
-                                                                        >
-                                                                            <ChevronRight className="h-3.5 w-3.5" />
-                                                                        </motion.div>
-                                                                    </button>
-                                                                    <input
-                                                                        type="checkbox"
-                                                                        checked={isSelected}
-                                                                        onChange={() => toggle(inv.invoiceId)}
-                                                                        className="h-4 w-4 rounded border-border/80 text-primary accent-primary"
-                                                                    />
-                                                                </div>
-                                                            </td>
-                                                            <td className="p-3">
-                                                                {inv.documentType === "JOB_ORDER" ? (
-                                                                    <span className="inline-flex items-center rounded-md border border-purple-500/30 bg-purple-500/10 px-1.5 py-0.5 text-[9px] font-black text-purple-600">
-                                                                        JO
-                                                                    </span>
-                                                                ) : (
-                                                                    <span className="inline-flex items-center rounded-md border border-blue-500/30 bg-blue-500/10 px-1.5 py-0.5 text-[9px] font-black text-blue-600">
-                                                                        SO
-                                                                    </span>
-                                                                )}
-                                                            </td>
-                                                            <td className="p-3 font-mono font-bold text-foreground">
-                                                                {inv.invoiceNo}
-                                                            </td>
-                                                            <td className="p-3">
-                                                                {inv.poNo ? (
-                                                                    <span className="font-mono text-xs text-foreground font-semibold">
-                                                                        {inv.poNo}
-                                                                    </span>
-                                                                ) : (
-                                                                    <span className="text-muted-foreground">-</span>
-                                                                )}
-                                                            </td>
-                                                            <td className="p-3">
-                                                                <div className="font-bold text-foreground">{inv.customerName}</div>
-                                                                <div className="font-mono text-[10px] text-muted-foreground">{inv.customerCode}</div>
-                                                            </td>
-                                                            <td className="p-3">
-                                                                <span className="inline-flex items-center rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[9px] font-extrabold uppercase text-primary">
-                                                                    {inv.orderStatus || "For Consolidation"}
-                                                                </span>
-                                                            </td>
-                                                            <td className="p-3 text-muted-foreground font-medium">
-                                                                {inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleDateString() : "-"}
-                                                            </td>
-                                                            <td className="p-3 text-right font-black text-foreground">
-                                                                ₱{(inv.netAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                                            </td>
-                                                            <td className="p-3 text-right text-muted-foreground font-semibold">
-                                                                {inv.products.length} product(s)
-                                                            </td>
-                                                        </motion.tr>
-
-                                                        {/* Expanded Invoice Line Details */}
-                                                        <AnimatePresence initial={false}>
-                                                            {isExpanded && (
-                                                                <motion.tr
-                                                                    key={`step1-expanded-${inv.invoiceId}`}
-                                                                    initial={{ opacity: 0 }}
-                                                                    animate={{ opacity: 1 }}
-                                                                    exit={{ opacity: 0 }}
-                                                                    transition={{ duration: 0.2 }}
-                                                                    className="bg-muted/5"
-                                                                >
-                                                                    <td colSpan={9} className="p-0">
-                                                                        <motion.div
-                                                                            initial={{ opacity: 0, height: 0 }}
-                                                                            animate={{ opacity: 1, height: "auto" }}
-                                                                            exit={{ opacity: 0, height: 0 }}
-                                                                            transition={{ duration: 0.22, ease: "easeInOut" }}
-                                                                            className="overflow-hidden"
-                                                                        >
-                                                                            <div className="p-3.5 bg-muted/10 border-t border-b border-border/40 space-y-2.5">
-                                                                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                                                                    <p className="text-[11px] font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                                                                                        <Package className="h-3.5 w-3.5 text-primary" />
-                                                                                        Invoice: <span className="font-mono text-foreground font-bold">{inv.invoiceNo}</span>
-                                                                                        {inv.orderNo && (
-                                                                                            <span className="text-muted-foreground"> · SO: <strong className="font-mono text-foreground">{inv.orderNo}</strong></span>
-                                                                                        )}
-                                                                                        {inv.poNo && (
-                                                                                            <span className="text-muted-foreground"> · PO: <strong className="text-foreground">{inv.poNo}</strong></span>
-                                                                                        )}
-                                                                                    </p>
-                                                                                </div>
-
-                                                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                                                                                    {inv.products.map((p, pIdx) => (
-                                                                                        <motion.div
-                                                                                            key={`${inv.invoiceId}-${p.productId}`}
-                                                                                            initial={{ opacity: 0, y: -4 }}
-                                                                                            animate={{ opacity: 1, y: 0 }}
-                                                                                            transition={{ duration: 0.15, delay: Math.min(pIdx * 0.02, 0.2) }}
-                                                                                            className="rounded-2xl border border-border/60 bg-card p-3 shadow-sm flex items-center justify-between gap-2"
-                                                                                        >
-                                                                                            <div>
-                                                                                                <p className="text-xs font-bold text-foreground">{p.productName}</p>
-                                                                                                <p className="font-mono text-[10px] text-muted-foreground">{p.productCode}</p>
-                                                                                            </div>
-                                                                                            <div className="text-right">
-                                                                                                <span className="text-xs font-black text-foreground">
-                                                                                                    Qty: {p.quantity}
-                                                                                                </span>
-                                                                                                {p.versionName && (
-                                                                                                    <p className="text-[9px] text-primary font-bold">{p.versionName}</p>
-                                                                                                )}
-                                                                                            </div>
-                                                                                        </motion.div>
-                                                                                    ))}
-                                                                                </div>
-                                                                            </div>
-                                                                        </motion.div>
-                                                                    </td>
-                                                                </motion.tr>
-                                                            )}
-                                                        </AnimatePresence>
-                                                    </React.Fragment>
-                                                );
-                                            })}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Step 1 Footer */}
-                        <div className="shrink-0 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-border/60 bg-card px-4 py-4 sm:px-7">
-                            <div className="text-xs text-muted-foreground">
-                                {selectedIds.size > 0 ? (
-                                    <>
-                                        <span className="font-bold text-foreground">{selectedIds.size}</span> order(s) selected
-                                        {" — "}Total:{" "}
-                                        <span className="font-black text-foreground text-sm">
-                                            ₱{totalSelectedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                        </span>
-                                    </>
-                                ) : (
-                                    <span>Select at least 1 order to proceed.</span>
-                                )}
-                            </div>
-
-                            <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-                                <Button variant="ghost" onClick={handleClose} className="rounded-xl">
-                                    Cancel
-                                </Button>
-                                <Button
-                                    onClick={() => setStep(2)}
-                                    disabled={!canProceedToStep2}
-                                    className="rounded-xl px-5 font-black uppercase tracking-wider gap-1.5"
-                                >
-                                    Proceed to Stock Allocation ({selectedIds.size})
-                                    <ArrowRight className="h-4 w-4" />
-                                </Button>
-                            </div>
-                        </div>
-                    </motion.div>
-                )}
-
-                {/* STEP 2: STOCK ALLOCATION & FEFO (GROUPED BY ORDER -> PRODUCT -> LOT/RACK/BATCHES MAX 5 SCROLLABLE) */}
-                {step === 2 && (
-                    <motion.div
-                        key="step-2"
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -8 }}
-                        transition={{ duration: 0.2 }}
-                        className="flex-1 flex flex-col min-h-0"
-                    >
-                        {/* Step 2 Toolbar & Allocation Mode Switcher */}
-                        <div className="shrink-0 border-b bg-muted/20 px-4 py-3 sm:px-7 flex flex-wrap items-center justify-between gap-3">
-                            <div className="flex flex-wrap items-center gap-3">
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => setStep(1)}
-                                    className="rounded-xl text-xs font-bold gap-1 bg-card border-border/60"
-                                >
-                                    <ArrowLeft className="h-3.5 w-3.5" />
-                                    Back to Orders
-                                </Button>
-
-                                <div className="text-xs font-bold text-muted-foreground flex items-center gap-2">
-                                    <span>
-                                        Allocating for <strong className="text-foreground">{selectedIds.size}</strong> order(s)
-                                    </span>
-                                    <span>·</span>
-                                    <span className="text-foreground font-black">
-                                        ₱{totalSelectedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                    </span>
-                                </div>
-                            </div>
-
-                            {/* Actions & Mode Switcher */}
-                            <div className="flex flex-wrap items-center gap-2">
-                                {/* Expand / Collapse All Products */}
-                                <div className="flex items-center gap-1 bg-muted/40 p-0.5 rounded-xl border border-border/60">
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={expandAllStep2Products}
-                                        className="h-7 px-2 text-[10px] font-bold rounded-lg text-muted-foreground hover:text-foreground"
-                                        title="Expand all product cards"
-                                    >
-                                        <Maximize2 className="h-3 w-3 mr-1" />
-                                        Expand All
-                                    </Button>
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={collapseAllStep2Products}
-                                        className="h-7 px-2 text-[10px] font-bold rounded-lg text-muted-foreground hover:text-foreground"
-                                        title="Collapse all product cards"
-                                    >
-                                        <Minimize2 className="h-3 w-3 mr-1" />
-                                        Collapse All
-                                    </Button>
-                                </div>
-
-                                {/* Mode Switcher */}
-                                <div className="relative flex rounded-2xl bg-muted/50 p-1 border border-border/60 shadow-inner">
-                                    <button
-                                        type="button"
-                                        onClick={() => setAllocationMode("auto")}
-                                        className={`relative z-10 flex items-center gap-1.5 rounded-xl px-3 py-1 text-xs font-bold transition-colors ${
-                                            allocationMode === "auto"
-                                                ? "text-foreground"
-                                                : "text-muted-foreground hover:text-foreground"
-                                        }`}
-                                    >
-                                        {allocationMode === "auto" && (
-                                            <motion.div
-                                                layoutId="activeAllocationModePill"
-                                                className="absolute inset-0 rounded-xl bg-card border border-border/60 shadow-sm"
-                                                transition={{ type: "spring", bounce: 0.15, duration: 0.35 }}
-                                            />
-                                        )}
-                                        <span className="relative z-10 flex items-center gap-1.5">
-                                            <Sparkles className="h-3.5 w-3.5 text-primary" />
-                                            Auto FEFO
-                                        </span>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setAllocationMode("manual")}
-                                        className={`relative z-10 flex items-center gap-1.5 rounded-xl px-3 py-1 text-xs font-bold transition-colors ${
-                                            allocationMode === "manual"
-                                                ? "text-foreground"
-                                                : "text-muted-foreground hover:text-foreground"
-                                        }`}
-                                    >
-                                        {allocationMode === "manual" && (
-                                            <motion.div
-                                                layoutId="activeAllocationModePill"
-                                                className="absolute inset-0 rounded-xl bg-card border border-border/60 shadow-sm"
-                                                transition={{ type: "spring", bounce: 0.15, duration: 0.35 }}
-                                            />
-                                        )}
-                                        <span className="relative z-10 flex items-center gap-1.5">
-                                            <Sliders className="h-3.5 w-3.5 text-primary" />
-                                            Manual Allocation
-                                        </span>
-                                    </button>
-                                </div>
-
-                                {allocationMode === "manual" && (
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={handleResetToAutoFEFO}
-                                        className="rounded-xl text-xs font-bold h-8 bg-card border-border/60 gap-1"
-                                        title="Reset manual inputs to match default FEFO allocations"
-                                    >
-                                        <RotateCcw className="h-3 w-3" />
-                                        Reset to FEFO
-                                    </Button>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* Step 2 Filter Bar */}
-                        <div className="shrink-0 border-b bg-card px-4 py-2.5 sm:px-7 flex flex-wrap items-center justify-between gap-2.5">
-                            <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[280px]">
-                                <div className="flex items-center gap-1 text-[11px] font-bold text-muted-foreground mr-1">
-                                    <Filter className="h-3.5 w-3.5 text-primary" />
-                                    <span>Filter Products:</span>
-                                </div>
-
-                                {/* Search by text */}
-                                <div className="relative min-w-[220px] max-w-sm flex-1">
-                                    <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                                    <Input
-                                        placeholder="Search product, code, order #, customer, batch #..."
-                                        value={step2Search}
-                                        onChange={(e) => setStep2Search(e.target.value)}
-                                        className="h-8 pl-7 pr-7 text-xs bg-muted/20 rounded-xl border-border/60"
-                                    />
-                                    {step2Search && (
-                                        <button
-                                            type="button"
-                                            onClick={() => setStep2Search("")}
-                                            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                                        >
-                                            <X className="h-3 w-3" />
-                                        </button>
-                                    )}
-                                </div>
-
-                                {/* Filter by Customer */}
-                                <div className="w-[180px] sm:w-[210px]">
-                                    <SearchableSelect
-                                        options={step2CustomerSelectOptions}
-                                        value={step2CustomerFilter}
-                                        onValueChange={setStep2CustomerFilter}
-                                        placeholder="All Customers"
-                                        searchPlaceholder="Search customer..."
-                                        triggerClassName="h-8 rounded-xl border border-border/60 bg-muted/20 px-2.5 text-xs font-semibold text-foreground"
-                                    />
-                                </div>
-
-                                {/* Filter by Product */}
-                                <div className="w-[180px] sm:w-[210px]">
-                                    <SearchableSelect
-                                        options={step2ProductSelectOptions}
-                                        value={step2ProductFilter}
-                                        onValueChange={setStep2ProductFilter}
-                                        placeholder="All Products"
-                                        searchPlaceholder="Search product..."
-                                        triggerClassName="h-8 rounded-xl border border-border/60 bg-muted/20 px-2.5 text-xs font-semibold text-foreground"
-                                    />
-                                </div>
-
-                                {/* Filter by Allocation Status (in Auto mode) */}
-                                {allocationMode === "auto" && (
-                                    <div className="w-[160px] sm:w-[190px]">
-                                        <SearchableSelect
-                                            options={step2StatusSelectOptions}
-                                            value={step2StatusFilter}
-                                            onValueChange={setStep2StatusFilter}
-                                            placeholder="All Statuses"
-                                            searchPlaceholder="Search status..."
-                                            triggerClassName="h-8 rounded-xl border border-border/60 bg-muted/20 px-2.5 text-xs font-semibold text-foreground"
-                                        />
-                                    </div>
-                                )}
-
-                                {/* Reset button */}
-                                {hasActiveStep2Filters && (
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={resetStep2Filters}
-                                        className="h-8 text-xs text-muted-foreground hover:text-foreground font-bold px-2 rounded-xl"
-                                    >
-                                        <RotateCcw className="h-3 w-3 mr-1" />
-                                        Reset Filters
-                                    </Button>
-                                )}
-                            </div>
-
-                            <span className="text-[11px] text-muted-foreground font-bold bg-muted/30 px-2.5 py-1 rounded-xl border border-border/40 shrink-0">
-                                Showing <strong className="text-foreground">{filteredStep2Products.length}</strong> of {aggregatedProducts.length} products
-                            </span>
-                        </div>
-
-                        {/* Step 2 Main Content */}
-                        <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-7 space-y-4">
-                            {previewLoading ? (
-                                <div className="flex h-48 flex-col items-center justify-center gap-2">
-                                    <Loader2 className="h-7 w-7 animate-spin text-primary" />
-                                    <p className="text-xs text-muted-foreground font-semibold">
-                                        Querying live stock from Spring Boot service...
-                                    </p>
-                                </div>
-                            ) : previewError ? (
-                                <div className="rounded-3xl border border-destructive/30 bg-destructive/5 p-6 text-center space-y-3">
-                                    <AlertCircle className="h-8 w-8 text-destructive mx-auto" />
-                                    <h4 className="font-bold text-destructive text-sm">Spring Boot Stock Error</h4>
-                                    <p className="text-xs text-muted-foreground max-w-md mx-auto">{previewError}</p>
-                                    <Button
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() => {
-                                            const next = new Set(selectedIds);
-                                            setSelectedIds(new Set());
-                                            setTimeout(() => setSelectedIds(next), 50);
-                                        }}
-                                        className="rounded-xl text-xs font-bold"
-                                    >
-                                        <RotateCcw className="h-3.5 w-3.5 mr-1" />
-                                        Retry Stock Query
-                                    </Button>
-                                </div>
-                            ) : (
-                                <>
-                                    {/* Overall Shortages Alert in Auto Mode if any */}
-                                    {allocationMode === "auto" && allocationPreview?.shortages && allocationPreview.shortages.length > 0 && (
-                                        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-3.5 text-xs text-amber-800 dark:text-amber-300 space-y-1">
-                                            <div className="flex items-center gap-1.5 font-black uppercase text-[11px]">
-                                                <AlertTriangle className="h-4 w-4 text-amber-600" />
-                                                Stock Shortages Detected Across Selected Orders
-                                            </div>
-                                            <div className="space-y-0.5 pl-5">
-                                                {allocationPreview.shortages.map((s) => (
-                                                    <p key={s.productId}>
-                                                        <strong>{s.productName}</strong>: {s.quantity} units unallocated in available warehouse stock.
-                                                    </p>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {/* Expired Batch Alert Banner in Step 2 */}
-                                    {expiredAllocatedBatches.length > 0 && (
-                                        <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-900 dark:text-rose-200 space-y-2.5 shadow-sm">
-                                            <div className="flex flex-wrap items-center justify-between gap-2">
-                                                <div className="flex items-center gap-2 font-black uppercase text-[11px] text-rose-600 dark:text-rose-400">
-                                                    <AlertTriangle className="h-4 w-4" />
-                                                    Expired Batch(es) Included in Allocation ({expiredAllocatedBatches.length})
+                                    {/* Filters Toolbar */}
+                                    <div className="shrink-0 border-b bg-muted/20 px-4 py-3 sm:px-7 space-y-2.5">
+                                        <div className="flex flex-wrap items-center justify-between gap-2.5">
+                                            <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[280px]">
+                                                {/* Search Input */}
+                                                <div className="relative flex-1 min-w-[200px] max-w-sm">
+                                                    <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                                                    <Input
+                                                        placeholder="Search order no, SO, PO, customer, product..."
+                                                        value={search}
+                                                        onChange={(e) => setSearch(e.target.value)}
+                                                        className="h-8.5 pl-8 text-xs bg-card rounded-xl border-border/60"
+                                                    />
                                                 </div>
-                                                <div className="flex flex-wrap items-center gap-2">
-                                                    <Button
-                                                        size="sm"
-                                                        variant="outline"
-                                                        onClick={handleSwitchToManual}
-                                                        className="h-7 rounded-xl text-[11px] font-bold border-rose-500/40 text-rose-700 dark:text-rose-300 hover:bg-rose-500/15 gap-1.5 shadow-xs"
-                                                    >
-                                                        <Sliders className="h-3.5 w-3.5" />
-                                                        Manual Adjust
-                                                    </Button>
-                                                    <Button
-                                                        size="sm"
-                                                        variant="destructive"
-                                                        onClick={handleExcludeAndReallocate}
-                                                        className="h-7 rounded-xl text-[11px] font-black uppercase tracking-wider gap-1.5 shadow-sm"
-                                                    >
-                                                        <RotateCcw className="h-3.5 w-3.5" />
-                                                        Exclude & Reallocate
-                                                    </Button>
-                                                    <span className="rounded-full bg-rose-500/20 text-rose-700 dark:text-rose-300 font-bold px-2 py-0.5 text-[10px]">
-                                                        QA Expiry Alert
-                                                    </span>
-                                                </div>
-                                            </div>
-                                            <p className="text-xs text-muted-foreground">
-                                                Warning: Some allocated units belong to batches that have passed their expiration date. Choose <strong>Exclude & Reallocate</strong> to shift demand to valid unexpired batches, or <strong>Manual Adjust</strong> to select batches yourself.
-                                            </p>
-                                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                                                {expiredAllocatedBatches.map((exp, expIdx) => (
-                                                    <div key={expIdx} className="rounded-xl border border-rose-500/30 bg-card p-2.5 space-y-1 shadow-sm">
-                                                        <div className="flex items-center justify-between">
-                                                            <span className="font-mono font-bold text-foreground text-xs">{exp.batchNo}</span>
-                                                            <span className="text-[9px] font-black uppercase text-rose-600 bg-rose-500/15 border border-rose-500/30 px-1.5 py-0.5 rounded">
-                                                                Expired
-                                                            </span>
-                                                        </div>
-                                                        <p className="text-[10px] text-muted-foreground truncate">{exp.productName}</p>
-                                                        <p className="text-[10px] text-rose-600 dark:text-rose-400 font-semibold">
-                                                            Expired: {exp.expiryDate} · Qty: <strong>{exp.quantity}</strong>
-                                                        </p>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
 
-                                    {/* GROUPED BY PRODUCT -> CONTRIBUTING SOs -> LOT/RACK/BATCHES (MAX 5 SCROLLABLE) */}
-                                    <div className="space-y-4">
-                                        <div className="flex items-center justify-between">
+                                                {/* Customer Filter */}
+                                                <div className="w-[200px]">
+                                                    <SearchableSelect
+                                                        options={step1CustomerSelectOptions}
+                                                        value={selectedCustomer}
+                                                        onValueChange={setSelectedCustomer}
+                                                        placeholder="Filter Customer..."
+                                                        searchPlaceholder="Search customer..."
+                                                        triggerClassName="h-8.5 rounded-xl border border-border/60 bg-card px-2.5 text-xs font-semibold text-foreground"
+                                                    />
+                                                </div>
+
+                                                {/* Date Range Filters */}
+                                                <div className="flex items-center gap-1 text-xs">
+                                                    <Input
+                                                        type="date"
+                                                        value={dateFrom}
+                                                        onChange={(e) => setDateFrom(e.target.value)}
+                                                        className="h-8.5 text-xs bg-card rounded-xl border-border/60 w-32"
+                                                        title="Filter From Date"
+                                                    />
+                                                    <span className="text-muted-foreground text-xs font-bold">-</span>
+                                                    <Input
+                                                        type="date"
+                                                        value={dateTo}
+                                                        onChange={(e) => setDateTo(e.target.value)}
+                                                        className="h-8.5 text-xs bg-card rounded-xl border-border/60 w-32"
+                                                        title="Filter To Date"
+                                                    />
+                                                </div>
+
+                                                {(search || selectedCustomer !== "ALL" || dateFrom || dateTo) && (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={resetFilters}
+                                                        className="h-8.5 text-xs text-muted-foreground hover:text-foreground font-bold px-2 rounded-xl"
+                                                    >
+                                                        <RotateCcw className="h-3 w-3 mr-1" />
+                                                        Reset
+                                                    </Button>
+                                                )}
+                                            </div>
+
+                                            {/* Select All Actions */}
                                             <div className="flex items-center gap-2">
-                                                <Package className="h-4 w-4 text-primary" />
-                                                <h3 className="text-xs font-black uppercase tracking-wider text-foreground">
-                                                    Allocations by Product ({filteredStep2Products.length})
-                                                </h3>
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={toggleAll}
+                                                    className="h-8.5 text-xs font-bold rounded-xl bg-card border-border/60"
+                                                    disabled={loading || filtered.length === 0}
+                                                >
+                                                    {loading ? (
+                                                        <>
+                                                            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-primary" />
+                                                            Loading...
+                                                        </>
+                                                    ) : selectedIds.size === filtered.length && filtered.length > 0 ? (
+                                                        <>
+                                                            <CheckSquare className="mr-1.5 h-3.5 w-3.5 text-primary" />
+                                                            Deselect All
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <Square className="mr-1.5 h-3.5 w-3.5" />
+                                                            Select All ({filtered.length})
+                                                        </>
+                                                    )}
+                                                </Button>
+                                                <span className="text-xs text-muted-foreground font-bold bg-muted/40 px-2.5 py-1.5 rounded-xl border border-border/40">
+                                                    {loading ? (
+                                                        <span className="inline-flex items-center gap-1.5">
+                                                            <Loader2 className="h-3 w-3 animate-spin text-primary" />
+                                                            Checking orders...
+                                                        </span>
+                                                    ) : (
+                                                        <>
+                                                            <strong className="text-foreground">{selectedIds.size}</strong> of {filtered.length} selected
+                                                        </>
+                                                    )}
+                                                </span>
                                             </div>
-                                            <span className="text-[11px] text-muted-foreground font-semibold">
-                                                {allocationMode === "auto" ? "Batches allocated via Auto FEFO" : "Manual lot batch distribution"}
-                                            </span>
+                                        </div>
+                                    </div>
+
+                                    {/* Candidates Table */}
+                                    <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-7 space-y-4">
+                                        {loading ? (
+                                            <div className="flex h-64 flex-col items-center justify-center gap-3 py-16">
+                                                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                                                <p className="text-xs font-semibold text-muted-foreground animate-pulse">
+                                                    Loading eligible sales orders for this branch...
+                                                </p>
+                                            </div>
+                                        ) : filtered.length === 0 ? (
+                                            <div className="py-16 text-center text-xs text-muted-foreground space-y-2">
+                                                <FileText className="h-8 w-8 text-muted-foreground/40 mx-auto" />
+                                                <p className="font-bold">No eligible sales orders found</p>
+                                                <p className="text-[11px]">Try adjusting your search query, customer, or date filters.</p>
+                                            </div>
+                                        ) : (
+                                            <div className="overflow-hidden rounded-3xl border border-border/60 bg-card shadow-sm">
+                                                <table className="w-full text-left border-collapse text-xs">
+                                                    <thead>
+                                                        <tr className="border-b bg-muted/20">
+                                                            <th className="p-3 w-10"></th>
+                                                            <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] tracking-wider w-16">Type</th>
+                                                            <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] tracking-wider">Order No</th>
+                                                            <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] tracking-wider">PO No</th>
+                                                            <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] tracking-wider">Customer</th>
+                                                            <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] tracking-wider">Order Status</th>
+                                                            <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] tracking-wider">Order Date</th>
+                                                            <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] tracking-wider text-right">Net Amount</th>
+                                                            <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] tracking-wider text-right">Items</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="divide-y divide-border/40">
+                                                        {filtered.map((inv, invIdx) => {
+                                                            const isSelected = selectedIds.has(inv.invoiceId);
+                                                            const isExpanded = expandedInvoiceIds.has(inv.invoiceId);
+
+                                                            return (
+                                                                <React.Fragment key={inv.invoiceId}>
+                                                                    <motion.tr
+                                                                        initial={{ opacity: 0, y: -8 }}
+                                                                        animate={{ opacity: 1, y: 0 }}
+                                                                        transition={{ duration: 0.18, delay: Math.min(invIdx * 0.025, 0.3) }}
+                                                                        onClick={() => toggle(inv.invoiceId)}
+                                                                        className={`cursor-pointer transition-colors ${isSelected ? "bg-primary/5 hover:bg-primary/10" : "hover:bg-muted/10"
+                                                                            }`}
+                                                                    >
+                                                                        <td className="p-3" onClick={(e) => e.stopPropagation()}>
+                                                                            <div className="flex items-center gap-1">
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => toggleExpand(inv.invoiceId)}
+                                                                                    className="p-0.5 text-muted-foreground hover:text-foreground rounded"
+                                                                                >
+                                                                                    <motion.div
+                                                                                        animate={{ rotate: isExpanded ? 90 : 0 }}
+                                                                                        transition={{ duration: 0.2 }}
+                                                                                        className="flex items-center justify-center"
+                                                                                    >
+                                                                                        <ChevronRight className="h-3.5 w-3.5" />
+                                                                                    </motion.div>
+                                                                                </button>
+                                                                                <input
+                                                                                    type="checkbox"
+                                                                                    checked={isSelected}
+                                                                                    onChange={() => toggle(inv.invoiceId)}
+                                                                                    className="h-4 w-4 rounded border-border/80 text-primary accent-primary"
+                                                                                />
+                                                                            </div>
+                                                                        </td>
+                                                                        <td className="p-3">
+                                                                            {inv.documentType === "JOB_ORDER" ? (
+                                                                                <span className="inline-flex items-center rounded-md border border-purple-500/30 bg-purple-500/10 px-1.5 py-0.5 text-[9px] font-black text-purple-600">
+                                                                                    JO
+                                                                                </span>
+                                                                            ) : (
+                                                                                <span className="inline-flex items-center rounded-md border border-blue-500/30 bg-blue-500/10 px-1.5 py-0.5 text-[9px] font-black text-blue-600">
+                                                                                    SO
+                                                                                </span>
+                                                                            )}
+                                                                        </td>
+                                                                        <td className="p-3 font-mono font-bold text-foreground">
+                                                                            {inv.invoiceNo}
+                                                                        </td>
+                                                                        <td className="p-3">
+                                                                            {inv.poNo ? (
+                                                                                <span className="font-mono text-xs text-foreground font-semibold">
+                                                                                    {inv.poNo}
+                                                                                </span>
+                                                                            ) : (
+                                                                                <span className="text-muted-foreground">-</span>
+                                                                            )}
+                                                                        </td>
+                                                                        <td className="p-3">
+                                                                            <div className="font-bold text-foreground">{inv.customerName}</div>
+                                                                            <div className="font-mono text-[10px] text-muted-foreground">{inv.customerCode}</div>
+                                                                        </td>
+                                                                        <td className="p-3">
+                                                                            <span className="inline-flex items-center rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[9px] font-extrabold uppercase text-primary">
+                                                                                {inv.orderStatus || "For Consolidation"}
+                                                                            </span>
+                                                                        </td>
+                                                                        <td className="p-3 text-muted-foreground font-medium">
+                                                                            {inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleDateString() : "-"}
+                                                                        </td>
+                                                                        <td className="p-3 text-right font-black text-foreground">
+                                                                            ₱{(inv.netAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                                        </td>
+                                                                        <td className="p-3 text-right text-muted-foreground font-semibold">
+                                                                            {inv.products.length} product(s)
+                                                                        </td>
+                                                                    </motion.tr>
+
+                                                                    {/* Expanded Invoice Line Details */}
+                                                                    <AnimatePresence initial={false}>
+                                                                        {isExpanded && (
+                                                                            <motion.tr
+                                                                                key={`step1-expanded-${inv.invoiceId}`}
+                                                                                initial={{ opacity: 0 }}
+                                                                                animate={{ opacity: 1 }}
+                                                                                exit={{ opacity: 0 }}
+                                                                                transition={{ duration: 0.2 }}
+                                                                                className="bg-muted/5"
+                                                                            >
+                                                                                <td colSpan={9} className="p-0">
+                                                                                    <motion.div
+                                                                                        initial={{ opacity: 0, height: 0 }}
+                                                                                        animate={{ opacity: 1, height: "auto" }}
+                                                                                        exit={{ opacity: 0, height: 0 }}
+                                                                                        transition={{ duration: 0.22, ease: "easeInOut" }}
+                                                                                        className="overflow-hidden"
+                                                                                    >
+                                                                                        <div className="p-3.5 bg-muted/10 border-t border-b border-border/40 space-y-2.5">
+                                                                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                                                                                <p className="text-[11px] font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                                                                                                    <Package className="h-3.5 w-3.5 text-primary" />
+                                                                                                    Invoice: <span className="font-mono text-foreground font-bold">{inv.invoiceNo}</span>
+                                                                                                    {inv.orderNo && (
+                                                                                                        <span className="text-muted-foreground"> · SO: <strong className="font-mono text-foreground">{inv.orderNo}</strong></span>
+                                                                                                    )}
+                                                                                                    {inv.poNo && (
+                                                                                                        <span className="text-muted-foreground"> · PO: <strong className="text-foreground">{inv.poNo}</strong></span>
+                                                                                                    )}
+                                                                                                </p>
+                                                                                            </div>
+
+                                                                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                                                                                {inv.products.map((p, pIdx) => (
+                                                                                                    <motion.div
+                                                                                                        key={`${inv.invoiceId}-${p.productId}`}
+                                                                                                        initial={{ opacity: 0, y: -4 }}
+                                                                                                        animate={{ opacity: 1, y: 0 }}
+                                                                                                        transition={{ duration: 0.15, delay: Math.min(pIdx * 0.02, 0.2) }}
+                                                                                                        className="rounded-2xl border border-border/60 bg-card p-3 shadow-sm flex items-center justify-between gap-2"
+                                                                                                    >
+                                                                                                        <div>
+                                                                                                            <p className="text-xs font-bold text-foreground">{p.productName}</p>
+                                                                                                            <p className="font-mono text-[10px] text-muted-foreground">{p.productCode}</p>
+                                                                                                        </div>
+                                                                                                        <div className="text-right">
+                                                                                                            <span className="text-xs font-black text-foreground">
+                                                                                                                Qty: {p.quantity}
+                                                                                                            </span>
+                                                                                                            {p.versionName && (
+                                                                                                                <p className="text-[9px] text-primary font-bold">{p.versionName}</p>
+                                                                                                            )}
+                                                                                                        </div>
+                                                                                                    </motion.div>
+                                                                                                ))}
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    </motion.div>
+                                                                                </td>
+                                                                            </motion.tr>
+                                                                        )}
+                                                                    </AnimatePresence>
+                                                                </React.Fragment>
+                                                            );
+                                                        })}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Step 1 Footer */}
+                                    <div className="shrink-0 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-border/60 bg-card px-4 py-4 sm:px-7">
+                                        <div className="text-xs text-muted-foreground">
+                                            {selectedIds.size > 0 ? (
+                                                <>
+                                                    <span className="font-bold text-foreground">{selectedIds.size}</span> order(s) selected
+                                                    {" — "}Total:{" "}
+                                                    <span className="font-black text-foreground text-sm">
+                                                        ₱{totalSelectedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                    </span>
+                                                </>
+                                            ) : (
+                                                <span>Select at least 1 order to proceed.</span>
+                                            )}
                                         </div>
 
-                                        {filteredStep2Products.length === 0 ? (
-                                            <div className="rounded-3xl border border-dashed border-border/70 p-8 text-center bg-card/50 space-y-3">
-                                                <Filter className="h-8 w-8 text-muted-foreground mx-auto" />
-                                                <h4 className="font-bold text-foreground text-sm">No Products Match Your Filters</h4>
-                                                <p className="text-xs text-muted-foreground max-w-sm mx-auto">
-                                                    Try adjusting your search query, customer, product, or allocation status filters.
+                                        <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                                            <Button variant="ghost" onClick={handleClose} className="rounded-xl">
+                                                Cancel
+                                            </Button>
+                                            <Button
+                                                onClick={() => setStep(2)}
+                                                disabled={!canProceedToStep2}
+                                                className="rounded-xl px-5 font-black uppercase tracking-wider gap-1.5"
+                                            >
+                                                Proceed to Stock Allocation ({selectedIds.size})
+                                                <ArrowRight className="h-4 w-4" />
+                                            </Button>
+                                        </div>
+                                    </div>
+                                </motion.div>
+                            )}
+
+                            {/* STEP 2: STOCK ALLOCATION & FEFO (GROUPED BY ORDER -> PRODUCT -> LOT/RACK/BATCHES MAX 5 SCROLLABLE) */}
+                            {step === 2 && (
+                                <motion.div
+                                    key="step-2"
+                                    initial={{ opacity: 0, y: 8 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, y: -8 }}
+                                    transition={{ duration: 0.2 }}
+                                    className="flex-1 flex flex-col min-h-0"
+                                >
+                                    {/* Step 2 Toolbar & Allocation Mode Switcher */}
+                                    <div className="shrink-0 border-b bg-muted/20 px-4 py-3 sm:px-7 flex flex-wrap items-center justify-between gap-3">
+                                        <div className="flex flex-wrap items-center gap-3">
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => setStep(1)}
+                                                className="rounded-xl text-xs font-bold gap-1 bg-card border-border/60"
+                                            >
+                                                <ArrowLeft className="h-3.5 w-3.5" />
+                                                Back to Orders
+                                            </Button>
+
+                                            <div className="text-xs font-bold text-muted-foreground flex items-center gap-2">
+                                                <span>
+                                                    Allocating for <strong className="text-foreground">{selectedIds.size}</strong> order(s)
+                                                </span>
+                                                <span>·</span>
+                                                <span className="text-foreground font-black">
+                                                    ₱{totalSelectedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                </span>
+                                            </div>
+                                        </div>
+
+                                        {/* Actions & Mode Switcher */}
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            {/* Expand / Collapse All Products */}
+                                            <div className="flex items-center gap-1 bg-muted/40 p-0.5 rounded-xl border border-border/60">
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    onClick={expandAllStep2Products}
+                                                    className="h-7 px-2 text-[10px] font-bold rounded-lg text-muted-foreground hover:text-foreground"
+                                                    title="Expand all product cards"
+                                                >
+                                                    <Maximize2 className="h-3 w-3 mr-1" />
+                                                    Expand All
+                                                </Button>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    onClick={collapseAllStep2Products}
+                                                    className="h-7 px-2 text-[10px] font-bold rounded-lg text-muted-foreground hover:text-foreground"
+                                                    title="Collapse all product cards"
+                                                >
+                                                    <Minimize2 className="h-3 w-3 mr-1" />
+                                                    Collapse All
+                                                </Button>
+                                            </div>
+
+                                            {/* Mode Switcher */}
+                                            <div className="relative flex rounded-2xl bg-muted/50 p-1 border border-border/60 shadow-inner">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setAllocationMode("auto")}
+                                                    className={`relative z-10 flex items-center gap-1.5 rounded-xl px-3 py-1 text-xs font-bold transition-colors ${allocationMode === "auto"
+                                                            ? "text-foreground"
+                                                            : "text-muted-foreground hover:text-foreground"
+                                                        }`}
+                                                >
+                                                    {allocationMode === "auto" && (
+                                                        <motion.div
+                                                            layoutId="activeAllocationModePill"
+                                                            className="absolute inset-0 rounded-xl bg-card border border-border/60 shadow-sm"
+                                                            transition={{ type: "spring", bounce: 0.15, duration: 0.35 }}
+                                                        />
+                                                    )}
+                                                    <span className="relative z-10 flex items-center gap-1.5">
+                                                        <Sparkles className="h-3.5 w-3.5 text-primary" />
+                                                        Auto FEFO
+                                                    </span>
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setAllocationMode("manual")}
+                                                    className={`relative z-10 flex items-center gap-1.5 rounded-xl px-3 py-1 text-xs font-bold transition-colors ${allocationMode === "manual"
+                                                            ? "text-foreground"
+                                                            : "text-muted-foreground hover:text-foreground"
+                                                        }`}
+                                                >
+                                                    {allocationMode === "manual" && (
+                                                        <motion.div
+                                                            layoutId="activeAllocationModePill"
+                                                            className="absolute inset-0 rounded-xl bg-card border border-border/60 shadow-sm"
+                                                            transition={{ type: "spring", bounce: 0.15, duration: 0.35 }}
+                                                        />
+                                                    )}
+                                                    <span className="relative z-10 flex items-center gap-1.5">
+                                                        <Sliders className="h-3.5 w-3.5 text-primary" />
+                                                        Manual Allocation
+                                                    </span>
+                                                </button>
+                                            </div>
+
+                                            {allocationMode === "manual" && (
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={handleResetToAutoFEFO}
+                                                    className="rounded-xl text-xs font-bold h-8 bg-card border-border/60 gap-1"
+                                                    title="Reset manual inputs to match default FEFO allocations"
+                                                >
+                                                    <RotateCcw className="h-3 w-3" />
+                                                    Reset to FEFO
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Step 2 Filter Bar */}
+                                    <div className="shrink-0 border-b bg-card px-4 py-2.5 sm:px-7 flex flex-wrap items-center justify-between gap-2.5">
+                                        <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[280px]">
+                                            <div className="flex items-center gap-1 text-[11px] font-bold text-muted-foreground mr-1">
+                                                <Filter className="h-3.5 w-3.5 text-primary" />
+                                                <span>Filter Products:</span>
+                                            </div>
+
+                                            {/* Search by text */}
+                                            <div className="relative min-w-[220px] max-w-sm flex-1">
+                                                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                                                <Input
+                                                    placeholder="Search product, code, order #, customer, batch #..."
+                                                    value={step2Search}
+                                                    onChange={(e) => setStep2Search(e.target.value)}
+                                                    className="h-8 pl-7 pr-7 text-xs bg-muted/20 rounded-xl border-border/60"
+                                                />
+                                                {step2Search && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setStep2Search("")}
+                                                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                                    >
+                                                        <X className="h-3 w-3" />
+                                                    </button>
+                                                )}
+                                            </div>
+
+                                            {/* Filter by Customer */}
+                                            <div className="w-[180px] sm:w-[210px]">
+                                                <SearchableSelect
+                                                    options={step2CustomerSelectOptions}
+                                                    value={step2CustomerFilter}
+                                                    onValueChange={setStep2CustomerFilter}
+                                                    placeholder="All Customers"
+                                                    searchPlaceholder="Search customer..."
+                                                    triggerClassName="h-8 rounded-xl border border-border/60 bg-muted/20 px-2.5 text-xs font-semibold text-foreground"
+                                                />
+                                            </div>
+
+                                            {/* Filter by Product */}
+                                            <div className="w-[180px] sm:w-[210px]">
+                                                <SearchableSelect
+                                                    options={step2ProductSelectOptions}
+                                                    value={step2ProductFilter}
+                                                    onValueChange={setStep2ProductFilter}
+                                                    placeholder="All Products"
+                                                    searchPlaceholder="Search product..."
+                                                    triggerClassName="h-8 rounded-xl border border-border/60 bg-muted/20 px-2.5 text-xs font-semibold text-foreground"
+                                                />
+                                            </div>
+
+                                            {/* Filter by Allocation Status (in Auto mode) */}
+                                            {allocationMode === "auto" && (
+                                                <div className="w-[160px] sm:w-[190px]">
+                                                    <SearchableSelect
+                                                        options={step2StatusSelectOptions}
+                                                        value={step2StatusFilter}
+                                                        onValueChange={setStep2StatusFilter}
+                                                        placeholder="All Statuses"
+                                                        searchPlaceholder="Search status..."
+                                                        triggerClassName="h-8 rounded-xl border border-border/60 bg-muted/20 px-2.5 text-xs font-semibold text-foreground"
+                                                    />
+                                                </div>
+                                            )}
+
+                                            {/* Reset button */}
+                                            {hasActiveStep2Filters && (
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    onClick={resetStep2Filters}
+                                                    className="h-8 text-xs text-muted-foreground hover:text-foreground font-bold px-2 rounded-xl"
+                                                >
+                                                    <RotateCcw className="h-3 w-3 mr-1" />
+                                                    Reset Filters
+                                                </Button>
+                                            )}
+                                        </div>
+
+                                        <span className="text-[11px] text-muted-foreground font-bold bg-muted/30 px-2.5 py-1 rounded-xl border border-border/40 shrink-0">
+                                            Showing <strong className="text-foreground">{filteredStep2Products.length}</strong> of {aggregatedProducts.length} products
+                                        </span>
+                                    </div>
+
+                                    {/* Step 2 Main Content */}
+                                    <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-7 space-y-4">
+                                        {previewLoading ? (
+                                            <div className="flex h-48 flex-col items-center justify-center gap-2">
+                                                <Loader2 className="h-7 w-7 animate-spin text-primary" />
+                                                <p className="text-xs text-muted-foreground font-semibold">
+                                                    Querying live stock from Spring Boot service...
                                                 </p>
+                                            </div>
+                                        ) : previewError ? (
+                                            <div className="rounded-3xl border border-destructive/30 bg-destructive/5 p-6 text-center space-y-3">
+                                                <AlertCircle className="h-8 w-8 text-destructive mx-auto" />
+                                                <h4 className="font-bold text-destructive text-sm">Spring Boot Stock Error</h4>
+                                                <p className="text-xs text-muted-foreground max-w-md mx-auto">{previewError}</p>
                                                 <Button
                                                     size="sm"
                                                     variant="outline"
-                                                    onClick={resetStep2Filters}
+                                                    onClick={() => {
+                                                        const next = new Set(selectedIds);
+                                                        setSelectedIds(new Set());
+                                                        setTimeout(() => setSelectedIds(next), 50);
+                                                    }}
                                                     className="rounded-xl text-xs font-bold"
                                                 >
                                                     <RotateCcw className="h-3.5 w-3.5 mr-1" />
-                                                    Reset All Filters
+                                                    Retry Stock Query
                                                 </Button>
                                             </div>
                                         ) : (
-                                            filteredStep2Products.map((p, pIdx) => {
-                                                const isExpanded = !collapsedStep2ProductIds.has(p.productId);
-                                                const availableBatches = batchesByProduct.get(p.productId) || [];
-                                                const autoInfo = getProductAutoAllocation(p.productId, p.totalQuantity);
-                                                const manualSummary = getProductManualSummary(p.productId, p.totalQuantity);
+                                            <>
+                                                {/* Overall Shortages Alert in Auto Mode if any */}
+                                                {allocationMode === "auto" && allocationPreview?.shortages && allocationPreview.shortages.length > 0 && (
+                                                    <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-3.5 text-xs text-amber-800 dark:text-amber-300 space-y-1">
+                                                        <div className="flex items-center gap-1.5 font-black uppercase text-[11px]">
+                                                            <AlertTriangle className="h-4 w-4 text-amber-600" />
+                                                            Stock Shortages Detected Across Selected Orders
+                                                        </div>
+                                                        <div className="space-y-0.5 pl-5">
+                                                            {allocationPreview.shortages.map((s) => (
+                                                                <p key={s.productId}>
+                                                                    <strong>{s.productName}</strong>: {s.quantity} units unallocated in available warehouse stock.
+                                                                </p>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
 
-                                                return (
-                                                    <motion.div
-                                                        key={p.productId}
-                                                        initial={{ opacity: 0, y: -10 }}
-                                                        animate={{ opacity: 1, y: 0 }}
-                                                        transition={{ duration: 0.2, delay: Math.min(pIdx * 0.035, 0.35) }}
-                                                        className="rounded-3xl border border-border/70 bg-card shadow-sm overflow-hidden transition-all"
-                                                    >
-                                                        {/* PRODUCT HEADER */}
-                                                        <div
-                                                            onClick={() => toggleStep2Product(p.productId)}
-                                                            className="flex flex-wrap items-center justify-between gap-3 border-b border-border/50 bg-muted/20 px-4 py-3 cursor-pointer hover:bg-muted/30 transition-colors"
-                                                        >
-                                                            <div className="flex flex-wrap items-center gap-3">
-                                                                <button
-                                                                    type="button"
-                                                                    className="flex h-6 w-6 items-center justify-center rounded-lg bg-card border border-border/60 text-muted-foreground hover:text-foreground"
-                                                                >
-                                                                    <motion.div
-                                                                        animate={{ rotate: isExpanded ? 90 : 0 }}
-                                                                        transition={{ duration: 0.2 }}
-                                                                        className="flex items-center justify-center"
-                                                                    >
-                                                                        <ChevronRight className="h-3.5 w-3.5" />
-                                                                    </motion.div>
-                                                                </button>
-
-                                                                <div className="flex items-center gap-2.5">
-                                                                    <div className="rounded-lg bg-primary/10 p-2">
-                                                                        <Package className="h-4 w-4 text-primary" />
-                                                                    </div>
-                                                                    <div>
-                                                                        <div className="flex flex-wrap items-center gap-2">
-                                                                            <span className="font-black text-sm text-foreground">
-                                                                                {p.productName}
-                                                                            </span>
-                                                                            <span className="font-mono text-[10px] text-muted-foreground bg-card border border-border/50 px-1.5 py-0.5 rounded-md">
-                                                                                {p.productCode}
-                                                                            </span>
-                                                                            {p.versionLabel && (
-                                                                                <span className="rounded-full bg-primary/10 border border-primary/20 px-2 py-0.5 text-[9px] font-bold text-primary">
-                                                                                    {p.versionLabel}
-                                                                                </span>
-                                                                            )}
-                                                                        </div>
-
-                                                                        {/* Contributing Sales Orders Badges */}
-                                                                        <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                                                                            <span className="text-[10px] font-bold text-muted-foreground">
-                                                                                {p.orders.length} Order(s):
-                                                                            </span>
-                                                                            {p.orders.map((o) => (
-                                                                                <span
-                                                                                    key={o.invoiceId}
-                                                                                    className="inline-flex items-center gap-1 rounded-md bg-card border border-border/60 px-1.5 py-0.5 text-[10px] font-mono text-foreground font-semibold shadow-2xs"
-                                                                                    title={`${o.customerName} - ${o.quantity} units`}
-                                                                                >
-                                                                                    <span>{o.orderNo}</span>
-                                                                                    <span className="font-black text-primary font-sans">({o.quantity})</span>
-                                                                                </span>
-                                                                            ))}
-                                                                        </div>
-                                                                    </div>
-                                                                </div>
+                                                {/* Expired Batch Alert Banner in Step 2 */}
+                                                {expiredAllocatedBatches.length > 0 && (
+                                                    <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-900 dark:text-rose-200 space-y-2.5 shadow-sm">
+                                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                                            <div className="flex items-center gap-2 font-black uppercase text-[11px] text-rose-600 dark:text-rose-400">
+                                                                <AlertTriangle className="h-4 w-4" />
+                                                                Expired Batch(es) Included in Allocation ({expiredAllocatedBatches.length})
                                                             </div>
-
-                                                            <div className="flex items-center gap-3">
-                                                                {/* Demand & Allocation Status */}
-                                                                <div className="text-right">
-                                                                    <div className="text-xs font-semibold text-muted-foreground">
-                                                                        Total Demand: <strong className="text-sm font-black text-foreground">{p.totalQuantity}</strong>
-                                                                    </div>
-                                                                </div>
-
-                                                                {allocationMode === "auto" ? (
-                                                                    autoInfo.hasShortage ? (
-                                                                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 text-[10px] font-bold text-amber-600">
-                                                                            <AlertTriangle className="h-3 w-3" />
-                                                                            Allocated: {autoInfo.allocated} / {p.totalQuantity} (Short: {Math.abs(autoInfo.difference)})
-                                                                        </span>
-                                                                    ) : (
-                                                                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 text-[10px] font-bold text-emerald-600">
-                                                                            <CheckCircle2 className="h-3 w-3" />
-                                                                            Allocated: {autoInfo.allocated} / {p.totalQuantity}
-                                                                        </span>
-                                                                    )
-                                                                ) : (
-                                                                    <span
-                                                                        className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold ${
-                                                                            manualSummary.isValid
-                                                                                ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
-                                                                                : "bg-amber-500/10 text-amber-600 border border-amber-500/20"
-                                                                        }`}
-                                                                    >
-                                                                        {manualSummary.isValid ? (
-                                                                            <>
-                                                                                <CheckCircle2 className="h-3 w-3" />
-                                                                                Allocated: {manualSummary.allocated} / {p.totalQuantity}
-                                                                            </>
-                                                                        ) : (
-                                                                            <>
-                                                                                <AlertTriangle className="h-3 w-3" />
-                                                                                Allocated: {manualSummary.allocated} / {p.totalQuantity}{" "}
-                                                                                {manualSummary.difference < 0
-                                                                                    ? `(Short: ${Math.abs(manualSummary.difference)})`
-                                                                                    : `(Over: +${manualSummary.difference})`}
-                                                                            </>
-                                                                        )}
-                                                                    </span>
-                                                                )}
+                                                            <div className="flex flex-wrap items-center gap-2">
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="outline"
+                                                                    onClick={handleSwitchToManual}
+                                                                    className="h-7 rounded-xl text-[11px] font-bold border-rose-500/40 text-rose-700 dark:text-rose-300 hover:bg-rose-500/15 gap-1.5 shadow-xs"
+                                                                >
+                                                                    <Sliders className="h-3.5 w-3.5" />
+                                                                    Manual Adjust
+                                                                </Button>
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="destructive"
+                                                                    onClick={handleExcludeAndReallocate}
+                                                                    className="h-7 rounded-xl text-[11px] font-black uppercase tracking-wider gap-1.5 shadow-sm"
+                                                                >
+                                                                    <RotateCcw className="h-3.5 w-3.5" />
+                                                                    Exclude & Reallocate
+                                                                </Button>
+                                                                <span className="rounded-full bg-rose-500/20 text-rose-700 dark:text-rose-300 font-bold px-2 py-0.5 text-[10px]">
+                                                                    QA Expiry Alert
+                                                                </span>
                                                             </div>
                                                         </div>
-
-                                                        {/* EXPANDED ALLOCATION DETAILS */}
-                                                        <AnimatePresence initial={false}>
-                                                            {isExpanded && (
-                                                                <motion.div
-                                                                    key={`step2-prod-expanded-${p.productId}`}
-                                                                    initial={{ opacity: 0, height: 0 }}
-                                                                    animate={{ opacity: 1, height: "auto" }}
-                                                                    exit={{ opacity: 0, height: 0 }}
-                                                                    transition={{ duration: 0.25, ease: "easeInOut" }}
-                                                                    className="overflow-hidden"
-                                                                >
-                                                                    <div className="p-4 bg-card">
-                                                                        <AnimatePresence mode="wait">
-                                                                            {allocationMode === "auto" ? (
-                                                                                <motion.div
-                                                                                    key="step2-prod-auto"
-                                                                                    initial={{ opacity: 0, y: -6 }}
-                                                                                    animate={{ opacity: 1, y: 0 }}
-                                                                                    exit={{ opacity: 0, y: 6 }}
-                                                                                    transition={{ duration: 0.18 }}
-                                                                                    className="space-y-3"
-                                                                                >
-                                                                                    {autoInfo.allocations.length > 0 ? (
-                                                                                        <div className="max-h-[220px] overflow-y-auto rounded-2xl border border-border/50 bg-card shadow-sm">
-                                                                                            <table className="w-full text-left text-xs border-collapse">
-                                                                                                <thead className="sticky top-0 z-10 bg-muted/90 backdrop-blur-sm border-b border-border/60">
-                                                                                                    <tr className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">
-                                                                                                        <th className="p-2.5">Lot / Rack</th>
-                                                                                                        <th className="p-2.5">Batch No</th>
-                                                                                                        <th className="p-2.5">Expiry Date</th>
-                                                                                                        <th className="p-2.5 text-right">Allocated Quantity</th>
-                                                                                                    </tr>
-                                                                                                </thead>
-                                                                                                <tbody className="divide-y divide-border/40">
-                                                                                                    {autoInfo.allocations.map((a, idx) => (
-                                                                                                        <tr
-                                                                                                            key={`${a.inventoryLotId}-${a.batchNo}-${idx}`}
-                                                                                                            className="bg-emerald-500/[0.07] hover:bg-emerald-500/15 border-l-4 border-l-emerald-500 transition-colors"
-                                                                                                        >
-                                                                                                            <td className="p-2.5 font-bold text-foreground">
-                                                                                                                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-black">
-                                                                                                                    {a.lotName}
-                                                                                                                </span>
-                                                                                                            </td>
-                                                                                                            <td className="p-2.5 font-mono">
-                                                                                                                <span className="font-bold text-foreground bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
-                                                                                                                    {a.batchNo}
-                                                                                                                </span>
-                                                                                                            </td>
-                                                                                                            <td className="p-2.5 text-muted-foreground font-medium">
-                                                                                                                <div className="flex items-center gap-1.5">
-                                                                                                                    <span>{a.expiryDate || "-"}</span>
-                                                                                                                    {isBatchExpired(a.expiryDate) && (
-                                                                                                                        <span className="inline-flex items-center rounded bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 px-1.5 py-0.5 text-[9px] font-black uppercase">
-                                                                                                                            Expired
-                                                                                                                        </span>
-                                                                                                                    )}
-                                                                                                                </div>
-                                                                                                            </td>
-                                                                                                            <td className="p-2.5 text-right">
-                                                                                                                <span className="inline-flex items-center rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[10px] font-black text-emerald-600">
-                                                                                                                    {a.quantity}
-                                                                                                                </span>
-                                                                                                            </td>
-                                                                                                        </tr>
-                                                                                                    ))}
-                                                                                                </tbody>
-                                                                                            </table>
-                                                                                        </div>
-                                                                                    ) : (
-                                                                                        <div className="rounded-xl border border-dashed border-border/70 p-3 text-center text-xs text-muted-foreground">
-                                                                                            No lot allocations available for this product line.
-                                                                                        </div>
-                                                                                    )}
-
-                                                                                    {autoInfo.hasShortage && (
-                                                                                        <div className="flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-bold text-amber-700 dark:text-amber-300">
-                                                                                            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
-                                                                                            <span>
-                                                                                                Shortage of <strong>{Math.abs(autoInfo.difference)}</strong> unit(s) cannot be fulfilled by current FEFO inventory.
-                                                                                            </span>
-                                                                                        </div>
-                                                                                    )}
-                                                                                </motion.div>
-                                                                            ) : (
-                                                                                /* MANUAL ALLOCATION MODE TABLE */
-                                                                                <motion.div
-                                                                                    key="step2-prod-manual"
-                                                                                    initial={{ opacity: 0, y: -6 }}
-                                                                                    animate={{ opacity: 1, y: 0 }}
-                                                                                    exit={{ opacity: 0, y: 6 }}
-                                                                                    transition={{ duration: 0.18 }}
-                                                                                >
-                                                                                    {availableBatches.filter((b) => {
-                                                                                        const key = getManualKey(p.productId, b.inventoryLotId, b.lotId, b.batchNo);
-                                                                                        const currentQty = Number(manualAllocations[key] || 0);
-                                                                                        return b.availableQuantity > 0 || currentQty > 0;
-                                                                                    }).length > 0 ? (
-                                                                                        <div className="max-h-[260px] overflow-y-auto rounded-2xl border border-border/50 bg-card shadow-sm">
-                                                                                            <table className="w-full text-left text-xs border-collapse">
-                                                                                                <thead className="sticky top-0 z-10 bg-muted/90 backdrop-blur-sm border-b border-border/60">
-                                                                                                    <tr className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">
-                                                                                                        <th className="p-2.5">Lot / Rack</th>
-                                                                                                        <th className="p-2.5">Batch No</th>
-                                                                                                        <th className="p-2.5">Expiry Date</th>
-                                                                                                        <th className="p-2.5">Condition</th>
-                                                                                                        <th className="p-2.5 text-right">Available</th>
-                                                                                                        <th className="p-2.5 text-right w-44">Allocate Quantity</th>
-                                                                                                    </tr>
-                                                                                                </thead>
-                                                                                                <tbody className="divide-y divide-border/40">
-                                                                                                    {availableBatches.filter((b) => {
-                                                                                                        const key = getManualKey(p.productId, b.inventoryLotId, b.lotId, b.batchNo);
-                                                                                                        const currentQty = Number(manualAllocations[key] || 0);
-                                                                                                        return b.availableQuantity > 0 || currentQty > 0;
-                                                                                                    }).map((b, bIdx) => {
-                                                                                                        const key = getManualKey(
-                                                                                                            p.productId,
-                                                                                                            b.inventoryLotId,
-                                                                                                            b.lotId,
-                                                                                                            b.batchNo
-                                                                                                        );
-                                                                                                        const currentQty = Number(manualAllocations[key] || 0);
-                                                                                                        const isAllocated = currentQty > 0;
-                                                                                                        const batchKey = `${p.productId}:${b.inventoryLotId || 0}:${b.batchNo || "LOT-N/A"}:${b.lotId || 0}`;
-                                                                                                        const totalBatchAlloc = batchTotalAllocatedMap.get(batchKey) || 0;
-                                                                                                        const isNegativeBalance = b.availableQuantity < 0 || totalBatchAlloc > b.availableQuantity;
-                                                                                                        const isZeroQuantity = b.availableQuantity === 0 && totalBatchAlloc <= 0;
-
-                                                                                                        return (
-                                                                                                            <tr
-                                                                                                                key={`batch-row-${p.productId}-${b.lotId}-${b.batchNo}-${b.inventoryLotId || bIdx}`}
-                                                                                                                className={`transition-colors ${
-                                                                                                                    isAllocated
-                                                                                                                        ? "bg-primary/10 hover:bg-primary/15 border-l-4 border-l-primary"
-                                                                                                                        : "hover:bg-muted/10"
-                                                                                                                }`}
-                                                                                                            >
-                                                                                                                <td className="p-2.5 font-bold text-foreground">
-                                                                                                                    {isAllocated ? (
-                                                                                                                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-primary/20 text-primary font-black">
-                                                                                                                            {b.lotName}
-                                                                                                                        </span>
-                                                                                                                    ) : (
-                                                                                                                        b.lotName
-                                                                                                                    )}
-                                                                                                                </td>
-                                                                                                                <td className="p-2.5 font-mono">
-                                                                                                                    <div className="flex flex-col gap-1">
-                                                                                                                        <div>
-                                                                                                                            {isAllocated ? (
-                                                                                                                                <span className="font-bold text-foreground bg-primary/10 px-1.5 py-0.5 rounded border border-primary/20">
-                                                                                                                                    {b.batchNo}
-                                                                                                                                </span>
-                                                                                                                            ) : (
-                                                                                                                                <span className="text-muted-foreground">{b.batchNo}</span>
-                                                                                                                            )}
-                                                                                                                        </div>
-                                                                                                                        {isNegativeBalance && (
-                                                                                                                            <div>
-                                                                                                                                <span className="inline-flex items-center gap-1 rounded bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30 px-1.5 py-0.5 text-[9px] font-black uppercase">
-                                                                                                                                    <AlertTriangle className="h-2.5 w-2.5 shrink-0" />
-                                                                                                                                    Negative Balance Warning
-                                                                                                                                </span>
-                                                                                                                            </div>
-                                                                                                                        )}
-                                                                                                                        {isZeroQuantity && (
-                                                                                                                            <div>
-                                                                                                                                <span className="inline-flex items-center gap-1 rounded bg-muted text-muted-foreground border border-border/70 px-1.5 py-0.5 text-[9px] font-bold uppercase">
-                                                                                                                                    Zero Quantity
-                                                                                                                                </span>
-                                                                                                                            </div>
-                                                                                                                        )}
-                                                                                                                    </div>
-                                                                                                                </td>
-                                                                                                                <td className="p-2.5 text-muted-foreground font-medium">
-                                                                                                                    <div className="flex items-center gap-1.5">
-                                                                                                                        <span>{b.expiryDate || "-"}</span>
-                                                                                                                        {isBatchExpired(b.expiryDate) && (
-                                                                                                                            <span className="inline-flex items-center rounded bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 px-1.5 py-0.5 text-[9px] font-black uppercase">
-                                                                                                                                Expired
-                                                                                                                            </span>
-                                                                                                                        )}
-                                                                                                                    </div>
-                                                                                                                </td>
-                                                                                                                <td className="p-2.5">
-                                                                                                                    <span className="rounded-full bg-muted px-2 py-0.5 text-[9px] font-bold uppercase">
-                                                                                                                        {b.inventoryCondition}
-                                                                                                                    </span>
-                                                                                                                </td>
-                                                                                                                <td className="p-2.5 text-right font-mono font-bold text-foreground">
-                                                                                                                    {b.availableQuantity}
-                                                                                                                </td>
-                                                                                                                <td className="p-2.5 text-right">
-                                                                                                                    <div className="flex items-center justify-end gap-1.5">
-                                                                                                                        <Input
-                                                                                                                            type="number"
-                                                                                                                            min={0}
-                                                                                                                            value={currentQty || ""}
-                                                                                                                            placeholder="0"
-                                                                                                                            onFocus={(e) => e.target.select()}
-                                                                                                                            onClick={(e) => (e.target as HTMLInputElement).select()}
-                                                                                                                            onBlur={(e) => {
-                                                                                                                                if (e.target.value === "" || isNaN(Number(e.target.value))) {
-                                                                                                                                    handleManualQtyChange(
-                                                                                                                                        p.productId,
-                                                                                                                                        b.inventoryLotId,
-                                                                                                                                        b.lotId,
-                                                                                                                                        b.batchNo,
-                                                                                                                                        b.availableQuantity,
-                                                                                                                                        "0",
-                                                                                                                                        p.totalQuantity
-                                                                                                                                    );
-                                                                                                                                }
-                                                                                                                            }}
-                                                                                                                            onChange={(e) =>
-                                                                                                                                handleManualQtyChange(
-                                                                                                                                    p.productId,
-                                                                                                                                    b.inventoryLotId,
-                                                                                                                                    b.lotId,
-                                                                                                                                    b.batchNo,
-                                                                                                                                    b.availableQuantity,
-                                                                                                                                    e.target.value,
-                                                                                                                                    p.totalQuantity
-                                                                                                                                )
-                                                                                                                            }
-                                                                                                                            className={`h-8 w-24 text-right text-xs font-mono font-bold ${
-                                                                                                                                isAllocated ? "border-primary bg-primary/5 font-black text-primary ring-1 ring-primary/30" : "bg-card"
-                                                                                                                            }`}
-                                                                                                                        />
-                                                                                                                        <Button
-                                                                                                                            type="button"
-                                                                                                                            variant={isAllocated ? "default" : "outline"}
-                                                                                                                            size="sm"
-                                                                                                                            onClick={() => {
-                                                                                                                                const currentAlloc = getProductManualAllocation(p.productId);
-                                                                                                                                const otherBatchesAlloc = currentAlloc - currentQty;
-                                                                                                                                const remainingDemand = Math.max(0, p.totalQuantity - otherBatchesAlloc);
-                                                                                                                                const fillAmount = Math.min(b.availableQuantity, remainingDemand);
-                                                                                                                                handleManualQtyChange(
-                                                                                                                                    p.productId,
-                                                                                                                                    b.inventoryLotId,
-                                                                                                                                    b.lotId,
-                                                                                                                                    b.batchNo,
-                                                                                                                                    b.availableQuantity,
-                                                                                                                                    String(fillAmount),
-                                                                                                                                    p.totalQuantity
-                                                                                                                                );
-                                                                                                                            }}
-                                                                                                                            className="h-8 px-2 text-[10px] font-bold rounded-lg"
-                                                                                                                        >
-                                                                                                                            Fill
-                                                                                                                        </Button>
-                                                                                                                    </div>
-                                                                                                                </td>
-                                                                                                            </tr>
-                                                                                                        );
-                                                                                                    })}
-                                                                                                </tbody>
-                                                                                            </table>
-                                                                                        </div>
-                                                                                    ) : (
-                                                                                        <div className="rounded-xl border border-dashed border-border/70 p-3 text-center text-xs text-muted-foreground italic">
-                                                                                            No available stock batches found for this product in warehouse.
-                                                                                        </div>
-                                                                                    )}
-                                                                                </motion.div>
-                                                                            )}
-                                                                        </AnimatePresence>
+                                                        <p className="text-xs text-muted-foreground">
+                                                            Warning: Some allocated units belong to batches that have passed their expiration date. Choose <strong>Exclude & Reallocate</strong> to shift demand to valid unexpired batches, or <strong>Manual Adjust</strong> to select batches yourself.
+                                                        </p>
+                                                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                                                            {expiredAllocatedBatches.map((exp, expIdx) => (
+                                                                <div key={expIdx} className="rounded-xl border border-rose-500/30 bg-card p-2.5 space-y-1 shadow-sm">
+                                                                    <div className="flex items-center justify-between">
+                                                                        <span className="font-mono font-bold text-foreground text-xs">{exp.batchNo}</span>
+                                                                        <span className="text-[9px] font-black uppercase text-rose-600 bg-rose-500/15 border border-rose-500/30 px-1.5 py-0.5 rounded">
+                                                                            Expired
+                                                                        </span>
                                                                     </div>
+                                                                    <p className="text-[10px] text-muted-foreground truncate">{exp.productName}</p>
+                                                                    <p className="text-[10px] text-rose-600 dark:text-rose-400 font-semibold">
+                                                                        Expired: {exp.expiryDate} · Qty: <strong>{exp.quantity}</strong>
+                                                                    </p>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* GROUPED BY PRODUCT -> CONTRIBUTING SOs -> LOT/RACK/BATCHES (MAX 5 SCROLLABLE) */}
+                                                <div className="space-y-4">
+                                                    <div className="flex items-center justify-between">
+                                                        <div className="flex items-center gap-2">
+                                                            <Package className="h-4 w-4 text-primary" />
+                                                            <h3 className="text-xs font-black uppercase tracking-wider text-foreground">
+                                                                Allocations by Product ({filteredStep2Products.length})
+                                                            </h3>
+                                                        </div>
+                                                        <span className="text-[11px] text-muted-foreground font-semibold">
+                                                            {allocationMode === "auto" ? "Batches allocated via Auto FEFO" : "Manual lot batch distribution"}
+                                                        </span>
+                                                    </div>
+
+                                                    {filteredStep2Products.length === 0 ? (
+                                                        <div className="rounded-3xl border border-dashed border-border/70 p-8 text-center bg-card/50 space-y-3">
+                                                            <Filter className="h-8 w-8 text-muted-foreground mx-auto" />
+                                                            <h4 className="font-bold text-foreground text-sm">No Products Match Your Filters</h4>
+                                                            <p className="text-xs text-muted-foreground max-w-sm mx-auto">
+                                                                Try adjusting your search query, customer, product, or allocation status filters.
+                                                            </p>
+                                                            <Button
+                                                                size="sm"
+                                                                variant="outline"
+                                                                onClick={resetStep2Filters}
+                                                                className="rounded-xl text-xs font-bold"
+                                                            >
+                                                                <RotateCcw className="h-3.5 w-3.5 mr-1" />
+                                                                Reset All Filters
+                                                            </Button>
+                                                        </div>
+                                                    ) : (
+                                                        filteredStep2Products.map((p, pIdx) => {
+                                                            const isExpanded = !collapsedStep2ProductIds.has(p.productId);
+                                                            const availableBatches = batchesByProduct.get(p.productId) || [];
+                                                            const autoInfo = getProductAutoAllocation(p.productId, p.totalQuantity);
+                                                            const manualSummary = getProductManualSummary(p.productId, p.totalQuantity);
+
+                                                            return (
+                                                                <motion.div
+                                                                    key={p.productId}
+                                                                    initial={{ opacity: 0, y: -10 }}
+                                                                    animate={{ opacity: 1, y: 0 }}
+                                                                    transition={{ duration: 0.2, delay: Math.min(pIdx * 0.035, 0.35) }}
+                                                                    className="rounded-3xl border border-border/70 bg-card shadow-sm overflow-hidden transition-all"
+                                                                >
+                                                                    {/* PRODUCT HEADER */}
+                                                                    <div
+                                                                        onClick={() => toggleStep2Product(p.productId)}
+                                                                        className="flex flex-wrap items-center justify-between gap-3 border-b border-border/50 bg-muted/20 px-4 py-3 cursor-pointer hover:bg-muted/30 transition-colors"
+                                                                    >
+                                                                        <div className="flex flex-wrap items-center gap-3">
+                                                                            <button
+                                                                                type="button"
+                                                                                className="flex h-6 w-6 items-center justify-center rounded-lg bg-card border border-border/60 text-muted-foreground hover:text-foreground"
+                                                                            >
+                                                                                <motion.div
+                                                                                    animate={{ rotate: isExpanded ? 90 : 0 }}
+                                                                                    transition={{ duration: 0.2 }}
+                                                                                    className="flex items-center justify-center"
+                                                                                >
+                                                                                    <ChevronRight className="h-3.5 w-3.5" />
+                                                                                </motion.div>
+                                                                            </button>
+
+                                                                            <div className="flex items-center gap-2.5">
+                                                                                <div className="rounded-lg bg-primary/10 p-2">
+                                                                                    <Package className="h-4 w-4 text-primary" />
+                                                                                </div>
+                                                                                <div>
+                                                                                    <div className="flex flex-wrap items-center gap-2">
+                                                                                        <span className="font-black text-sm text-foreground">
+                                                                                            {p.productName}
+                                                                                        </span>
+                                                                                        <span className="font-mono text-[10px] text-muted-foreground bg-card border border-border/50 px-1.5 py-0.5 rounded-md">
+                                                                                            {p.productCode}
+                                                                                        </span>
+                                                                                        {p.versionLabel && (
+                                                                                            <span className="rounded-full bg-primary/10 border border-primary/20 px-2 py-0.5 text-[9px] font-bold text-primary">
+                                                                                                {p.versionLabel}
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
+
+                                                                                    {/* Contributing Sales Orders Badges */}
+                                                                                    <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                                                                                        <span className="text-[10px] font-bold text-muted-foreground">
+                                                                                            {p.orders.length} Order(s):
+                                                                                        </span>
+                                                                                        {p.orders.map((o) => (
+                                                                                            <span
+                                                                                                key={o.invoiceId}
+                                                                                                className="inline-flex items-center gap-1 rounded-md bg-card border border-border/60 px-1.5 py-0.5 text-[10px] font-mono text-foreground font-semibold shadow-2xs"
+                                                                                                title={`${o.customerName} - ${o.quantity} units`}
+                                                                                            >
+                                                                                                <span>{o.orderNo}</span>
+                                                                                                <span className="font-black text-primary font-sans">({o.quantity})</span>
+                                                                                            </span>
+                                                                                        ))}
+                                                                                    </div>
+                                                                                </div>
+                                                                            </div>
+                                                                        </div>
+
+                                                                        <div className="flex items-center gap-3">
+                                                                            {/* Demand & Allocation Status */}
+                                                                            <div className="text-right">
+                                                                                <div className="text-xs font-semibold text-muted-foreground">
+                                                                                    Total Demand: <strong className="text-sm font-black text-foreground">{p.totalQuantity}</strong>
+                                                                                </div>
+                                                                            </div>
+
+                                                                            {allocationMode === "auto" ? (
+                                                                                autoInfo.hasShortage ? (
+                                                                                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 text-[10px] font-bold text-amber-600">
+                                                                                        <AlertTriangle className="h-3 w-3" />
+                                                                                        Allocated: {autoInfo.allocated} / {p.totalQuantity} (Short: {Math.abs(autoInfo.difference)})
+                                                                                    </span>
+                                                                                ) : (
+                                                                                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 text-[10px] font-bold text-emerald-600">
+                                                                                        <CheckCircle2 className="h-3 w-3" />
+                                                                                        Allocated: {autoInfo.allocated} / {p.totalQuantity}
+                                                                                    </span>
+                                                                                )
+                                                                            ) : (
+                                                                                <span
+                                                                                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold ${manualSummary.isValid
+                                                                                            ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
+                                                                                            : "bg-amber-500/10 text-amber-600 border border-amber-500/20"
+                                                                                        }`}
+                                                                                >
+                                                                                    {manualSummary.isValid ? (
+                                                                                        <>
+                                                                                            <CheckCircle2 className="h-3 w-3" />
+                                                                                            Allocated: {manualSummary.allocated} / {p.totalQuantity}
+                                                                                        </>
+                                                                                    ) : (
+                                                                                        <>
+                                                                                            <AlertTriangle className="h-3 w-3" />
+                                                                                            Allocated: {manualSummary.allocated} / {p.totalQuantity}{" "}
+                                                                                            {manualSummary.difference < 0
+                                                                                                ? `(Short: ${Math.abs(manualSummary.difference)})`
+                                                                                                : `(Over: +${manualSummary.difference})`}
+                                                                                        </>
+                                                                                    )}
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+
+                                                                    {/* EXPANDED ALLOCATION DETAILS */}
+                                                                    <AnimatePresence initial={false}>
+                                                                        {isExpanded && (
+                                                                            <motion.div
+                                                                                key={`step2-prod-expanded-${p.productId}`}
+                                                                                initial={{ opacity: 0, height: 0 }}
+                                                                                animate={{ opacity: 1, height: "auto" }}
+                                                                                exit={{ opacity: 0, height: 0 }}
+                                                                                transition={{ duration: 0.25, ease: "easeInOut" }}
+                                                                                className="overflow-hidden"
+                                                                            >
+                                                                                <div className="p-4 bg-card">
+                                                                                    <AnimatePresence mode="wait">
+                                                                                        {allocationMode === "auto" ? (
+                                                                                            <motion.div
+                                                                                                key="step2-prod-auto"
+                                                                                                initial={{ opacity: 0, y: -6 }}
+                                                                                                animate={{ opacity: 1, y: 0 }}
+                                                                                                exit={{ opacity: 0, y: 6 }}
+                                                                                                transition={{ duration: 0.18 }}
+                                                                                                className="space-y-3"
+                                                                                            >
+                                                                                                {autoInfo.allocations.length > 0 ? (
+                                                                                                    <div className="max-h-[220px] overflow-y-auto rounded-2xl border border-border/50 bg-card shadow-sm">
+                                                                                                        <table className="w-full text-left text-xs border-collapse">
+                                                                                                            <thead className="sticky top-0 z-10 bg-muted/90 backdrop-blur-sm border-b border-border/60">
+                                                                                                                <tr className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">
+                                                                                                                    <th className="p-2.5">Lot / Rack</th>
+                                                                                                                    <th className="p-2.5">Batch No</th>
+                                                                                                                    <th className="p-2.5">Expiry Date</th>
+                                                                                                                    <th className="p-2.5 text-right">Allocated Quantity</th>
+                                                                                                                </tr>
+                                                                                                            </thead>
+                                                                                                            <tbody className="divide-y divide-border/40">
+                                                                                                                {autoInfo.allocations.map((a, idx) => (
+                                                                                                                    <tr
+                                                                                                                        key={`${a.inventoryLotId}-${a.batchNo}-${idx}`}
+                                                                                                                        className="bg-emerald-500/[0.07] hover:bg-emerald-500/15 border-l-4 border-l-emerald-500 transition-colors"
+                                                                                                                    >
+                                                                                                                        <td className="p-2.5 font-bold text-foreground">
+                                                                                                                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-black">
+                                                                                                                                {a.lotName}
+                                                                                                                            </span>
+                                                                                                                        </td>
+                                                                                                                        <td className="p-2.5 font-mono">
+                                                                                                                            <span className="font-bold text-foreground bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                                                                                                                                {a.batchNo}
+                                                                                                                            </span>
+                                                                                                                        </td>
+                                                                                                                        <td className="p-2.5 text-muted-foreground font-medium">
+                                                                                                                            <div className="flex items-center gap-1.5">
+                                                                                                                                <span>{a.expiryDate || "-"}</span>
+                                                                                                                                {isBatchExpired(a.expiryDate) && (
+                                                                                                                                    <span className="inline-flex items-center rounded bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 px-1.5 py-0.5 text-[9px] font-black uppercase">
+                                                                                                                                        Expired
+                                                                                                                                    </span>
+                                                                                                                                )}
+                                                                                                                            </div>
+                                                                                                                        </td>
+                                                                                                                        <td className="p-2.5 text-right">
+                                                                                                                            <span className="inline-flex items-center rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[10px] font-black text-emerald-600">
+                                                                                                                                {a.quantity}
+                                                                                                                            </span>
+                                                                                                                        </td>
+                                                                                                                    </tr>
+                                                                                                                ))}
+                                                                                                            </tbody>
+                                                                                                        </table>
+                                                                                                    </div>
+                                                                                                ) : (
+                                                                                                    <div className="rounded-xl border border-dashed border-border/70 p-3 text-center text-xs text-muted-foreground">
+                                                                                                        No lot allocations available for this product line.
+                                                                                                    </div>
+                                                                                                )}
+
+                                                                                                {autoInfo.hasShortage && (
+                                                                                                    <div className="flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-bold text-amber-700 dark:text-amber-300">
+                                                                                                        <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+                                                                                                        <span>
+                                                                                                            Shortage of <strong>{Math.abs(autoInfo.difference)}</strong> unit(s) cannot be fulfilled by current FEFO inventory.
+                                                                                                        </span>
+                                                                                                    </div>
+                                                                                                )}
+                                                                                            </motion.div>
+                                                                                        ) : (
+                                                                                            /* MANUAL ALLOCATION MODE TABLE */
+                                                                                            <motion.div
+                                                                                                key="step2-prod-manual"
+                                                                                                initial={{ opacity: 0, y: -6 }}
+                                                                                                animate={{ opacity: 1, y: 0 }}
+                                                                                                exit={{ opacity: 0, y: 6 }}
+                                                                                                transition={{ duration: 0.18 }}
+                                                                                            >
+                                                                                                {availableBatches.filter((b) => {
+                                                                                                    const key = getManualKey(p.productId, b.inventoryLotId, b.lotId, b.batchNo);
+                                                                                                    const currentQty = Number(manualAllocations[key] || 0);
+                                                                                                    return b.availableQuantity > 0 || currentQty > 0;
+                                                                                                }).length > 0 ? (
+                                                                                                    <div className="max-h-[260px] overflow-y-auto rounded-2xl border border-border/50 bg-card shadow-sm">
+                                                                                                        <table className="w-full text-left text-xs border-collapse">
+                                                                                                            <thead className="sticky top-0 z-10 bg-muted/90 backdrop-blur-sm border-b border-border/60">
+                                                                                                                <tr className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">
+                                                                                                                    <th className="p-2.5">Lot / Rack</th>
+                                                                                                                    <th className="p-2.5">Batch No</th>
+                                                                                                                    <th className="p-2.5">Expiry Date</th>
+                                                                                                                    <th className="p-2.5">Condition</th>
+                                                                                                                    <th className="p-2.5 text-right">Available</th>
+                                                                                                                    <th className="p-2.5 text-right w-44">Allocate Quantity</th>
+                                                                                                                </tr>
+                                                                                                            </thead>
+                                                                                                            <tbody className="divide-y divide-border/40">
+                                                                                                                {availableBatches.filter((b) => {
+                                                                                                                    const key = getManualKey(p.productId, b.inventoryLotId, b.lotId, b.batchNo);
+                                                                                                                    const currentQty = Number(manualAllocations[key] || 0);
+                                                                                                                    return b.availableQuantity > 0 || currentQty > 0;
+                                                                                                                }).map((b, bIdx) => {
+                                                                                                                    const key = getManualKey(
+                                                                                                                        p.productId,
+                                                                                                                        b.inventoryLotId,
+                                                                                                                        b.lotId,
+                                                                                                                        b.batchNo
+                                                                                                                    );
+                                                                                                                    const currentQty = Number(manualAllocations[key] || 0);
+                                                                                                                    const isAllocated = currentQty > 0;
+                                                                                                                    const inputValue = manualInputValues[key] !== undefined
+                                                                                                                        ? manualInputValues[key]
+                                                                                                                        : (currentQty > 0 ? String(currentQty) : "");
+                                                                                                                    const batchKey = `${p.productId}:${b.inventoryLotId || 0}:${b.batchNo || "LOT-N/A"}:${b.lotId || 0}`;
+                                                                                                                    const totalBatchAlloc = batchTotalAllocatedMap.get(batchKey) || 0;
+                                                                                                                    const isNegativeBalance = b.availableQuantity < 0 || totalBatchAlloc > b.availableQuantity;
+                                                                                                                    const isZeroQuantity = b.availableQuantity === 0 && totalBatchAlloc <= 0;
+
+                                                                                                                    return (
+                                                                                                                        <tr
+                                                                                                                            key={`batch-row-${p.productId}-${b.lotId}-${b.batchNo}-${b.inventoryLotId || bIdx}`}
+                                                                                                                            className={`transition-colors ${isAllocated
+                                                                                                                                    ? "bg-primary/10 hover:bg-primary/15 border-l-4 border-l-primary"
+                                                                                                                                    : "hover:bg-muted/10"
+                                                                                                                                }`}
+                                                                                                                        >
+                                                                                                                            <td className="p-2.5 font-bold text-foreground">
+                                                                                                                                {isAllocated ? (
+                                                                                                                                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-primary/20 text-primary font-black">
+                                                                                                                                        {b.lotName}
+                                                                                                                                    </span>
+                                                                                                                                ) : (
+                                                                                                                                    b.lotName
+                                                                                                                                )}
+                                                                                                                            </td>
+                                                                                                                            <td className="p-2.5 font-mono">
+                                                                                                                                <div className="flex flex-col gap-1">
+                                                                                                                                    <div>
+                                                                                                                                        {isAllocated ? (
+                                                                                                                                            <span className="font-bold text-foreground bg-primary/10 px-1.5 py-0.5 rounded border border-primary/20">
+                                                                                                                                                {b.batchNo}
+                                                                                                                                            </span>
+                                                                                                                                        ) : (
+                                                                                                                                            <span className="text-muted-foreground">{b.batchNo}</span>
+                                                                                                                                        )}
+                                                                                                                                    </div>
+                                                                                                                                    {isNegativeBalance && (
+                                                                                                                                        <div>
+                                                                                                                                            <span className="inline-flex items-center gap-1 rounded bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30 px-1.5 py-0.5 text-[9px] font-black uppercase">
+                                                                                                                                                <AlertTriangle className="h-2.5 w-2.5 shrink-0" />
+                                                                                                                                                Negative Balance Warning
+                                                                                                                                            </span>
+                                                                                                                                        </div>
+                                                                                                                                    )}
+                                                                                                                                    {isZeroQuantity && (
+                                                                                                                                        <div>
+                                                                                                                                            <span className="inline-flex items-center gap-1 rounded bg-muted text-muted-foreground border border-border/70 px-1.5 py-0.5 text-[9px] font-bold uppercase">
+                                                                                                                                                Zero Quantity
+                                                                                                                                            </span>
+                                                                                                                                        </div>
+                                                                                                                                    )}
+                                                                                                                                </div>
+                                                                                                                            </td>
+                                                                                                                            <td className="p-2.5 text-muted-foreground font-medium">
+                                                                                                                                <div className="flex items-center gap-1.5">
+                                                                                                                                    <span>{b.expiryDate || "-"}</span>
+                                                                                                                                    {isBatchExpired(b.expiryDate) && (
+                                                                                                                                        <span className="inline-flex items-center rounded bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 px-1.5 py-0.5 text-[9px] font-black uppercase">
+                                                                                                                                            Expired
+                                                                                                                                        </span>
+                                                                                                                                    )}
+                                                                                                                                </div>
+                                                                                                                            </td>
+                                                                                                                            <td className="p-2.5">
+                                                                                                                                <span className="rounded-full bg-muted px-2 py-0.5 text-[9px] font-bold uppercase">
+                                                                                                                                    {b.inventoryCondition}
+                                                                                                                                </span>
+                                                                                                                            </td>
+                                                                                                                            <td className="p-2.5 text-right font-mono font-bold text-foreground">
+                                                                                                                                {b.availableQuantity}
+                                                                                                                            </td>
+                                                                                                                            <td className="p-2.5 text-right">
+                                                                                                                                <div className="flex items-center justify-end gap-1.5">
+                                                                                                                                    <Input
+                                                                                                                                        type="number"
+                                                                                                                                        min={0}
+                                                                                                                                        value={inputValue}
+                                                                                                                                        placeholder="0"
+                                                                                                                                        onFocus={(e) => e.target.select()}
+                                                                                                                                        onClick={(e) => (e.target as HTMLInputElement).select()}
+                                                                                                                                        onKeyDown={(e) => {
+                                                                                                                                            if (e.key === "Enter") {
+                                                                                                                                                (e.target as HTMLInputElement).blur();
+                                                                                                                                            }
+                                                                                                                                        }}
+                                                                                                                                        onBlur={(e) => {
+                                                                                                                                            const rawVal = e.target.value.trim();
+                                                                                                                                            const numVal = Number(rawVal);
+                                                                                                                                            const safeVal = rawVal === "" || isNaN(numVal) ? "0" : rawVal;
+
+                                                                                                                                            handleManualQtyChange(
+                                                                                                                                                p.productId,
+                                                                                                                                                b.inventoryLotId,
+                                                                                                                                                b.lotId,
+                                                                                                                                                b.batchNo,
+                                                                                                                                                b.availableQuantity,
+                                                                                                                                                safeVal,
+                                                                                                                                                p.totalQuantity
+                                                                                                                                            );
+
+                                                                                                                                            setManualInputValues((prev) => {
+                                                                                                                                                if (prev[key] === undefined) return prev;
+                                                                                                                                                const next = { ...prev };
+                                                                                                                                                delete next[key];
+                                                                                                                                                return next;
+                                                                                                                                            });
+                                                                                                                                        }}
+                                                                                                                                        onChange={(e) => {
+                                                                                                                                            const val = e.target.value;
+                                                                                                                                            setManualInputValues((prev) => ({
+                                                                                                                                                ...prev,
+                                                                                                                                                [key]: val,
+                                                                                                                                            }));
+                                                                                                                                        }}
+                                                                                                                                        className={`h-8 w-24 text-right text-xs font-mono font-bold ${isAllocated ? "border-primary bg-primary/5 font-black text-primary ring-1 ring-primary/30" : "bg-card"
+                                                                                                                                            }`}
+                                                                                                                                    />
+                                                                                                                                    <Button
+                                                                                                                                        type="button"
+                                                                                                                                        variant={isAllocated ? "default" : "outline"}
+                                                                                                                                        size="sm"
+                                                                                                                                        onClick={() => {
+                                                                                                                                            const currentAlloc = getProductManualAllocation(p.productId);
+                                                                                                                                            const otherBatchesAlloc = currentAlloc - currentQty;
+                                                                                                                                            const remainingDemand = Math.max(0, p.totalQuantity - otherBatchesAlloc);
+                                                                                                                                            const fillAmount = Math.min(b.availableQuantity, remainingDemand);
+                                                                                                                                            handleManualQtyChange(
+                                                                                                                                                p.productId,
+                                                                                                                                                b.inventoryLotId,
+                                                                                                                                                b.lotId,
+                                                                                                                                                b.batchNo,
+                                                                                                                                                b.availableQuantity,
+                                                                                                                                                String(fillAmount),
+                                                                                                                                                p.totalQuantity
+                                                                                                                                            );
+                                                                                                                                            setManualInputValues((prev) => {
+                                                                                                                                                if (prev[key] === undefined) return prev;
+                                                                                                                                                const next = { ...prev };
+                                                                                                                                                delete next[key];
+                                                                                                                                                return next;
+                                                                                                                                            });
+                                                                                                                                        }}
+                                                                                                                                        className="h-8 px-2 text-[10px] font-bold rounded-lg"
+                                                                                                                                    >
+                                                                                                                                        Fill
+                                                                                                                                    </Button>
+                                                                                                                                </div>
+                                                                                                                            </td>
+                                                                                                                        </tr>
+                                                                                                                    );
+                                                                                                                })}
+                                                                                                            </tbody>
+                                                                                                        </table>
+                                                                                                    </div>
+                                                                                                ) : (
+                                                                                                    <div className="rounded-xl border border-dashed border-border/70 p-3 text-center text-xs text-muted-foreground italic">
+                                                                                                        No available stock batches found for this product in warehouse.
+                                                                                                    </div>
+                                                                                                )}
+                                                                                            </motion.div>
+                                                                                        )}
+                                                                                    </AnimatePresence>
+                                                                                </div>
+                                                                            </motion.div>
+                                                                        )}
+                                                                    </AnimatePresence>
                                                                 </motion.div>
-                                                            )}
-                                                        </AnimatePresence>
-                                                    </motion.div>
-                                                );
-                                            })
+                                                            );
+                                                        })
+                                                    )}
+                                                </div>
+                                            </>
                                         )}
                                     </div>
-                                </>
-                            )}
-                        </div>
 
-                        {/* Step 2 Footer */}
-                        <div className="shrink-0 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-border/60 bg-card px-4 py-4 sm:px-7">
-                            <div className="text-xs text-muted-foreground">
-                                <span className="font-bold text-foreground">{selectedIds.size}</span> order(s) selected
-                                {" — "}Total Value:{" "}
-                                <span className="font-black text-foreground">
-                                    ₱{totalSelectedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                </span>
-                                {allocationMode === "manual" && (
-                                    <span
-                                        className={`ml-2 font-bold ${
-                                            isManualValid ? "text-emerald-600" : "text-amber-600"
-                                        }`}
-                                    >
-                                        ({isManualValid ? "All products balanced" : "Adjustment needed"})
-                                    </span>
-                                )}
-                            </div>
+                                    {/* Step 2 Footer */}
+                                    <div className="shrink-0 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-border/60 bg-card px-4 py-4 sm:px-7">
+                                        <div className="text-xs text-muted-foreground">
+                                            <span className="font-bold text-foreground">{selectedIds.size}</span> order(s) selected
+                                            {" — "}Total Value:{" "}
+                                            <span className="font-black text-foreground">
+                                                ₱{totalSelectedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                            </span>
+                                            {allocationMode === "manual" && (
+                                                <span
+                                                    className={`ml-2 font-bold ${isManualValid ? "text-emerald-600" : "text-amber-600"
+                                                        }`}
+                                                >
+                                                    ({isManualValid ? "All products balanced" : "Adjustment needed"})
+                                                </span>
+                                            )}
+                                        </div>
 
-                            <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-                                <Button
-                                    variant="outline"
-                                    onClick={() => setStep(1)}
-                                    disabled={submitting}
-                                    className="rounded-xl font-bold"
-                                >
-                                    <ArrowLeft className="h-4 w-4 mr-1" />
-                                    Back to Orders
-                                </Button>
-                                <Button
-                                    onClick={handleProceedToStep3}
-                                    disabled={!canProceedToStep3}
-                                    className="rounded-xl px-5 font-black uppercase tracking-wider gap-1.5"
-                                >
-                                    Review Demand Summary (Step 3)
-                                    <ArrowRight className="h-4 w-4" />
-                                </Button>
-                            </div>
-                        </div>
-                    </motion.div>
-                )}
-
-                {/* STEP 3: CONSOLIDATED DEMAND SUMMARY */}
-                {step === 3 && (
-                    <motion.div
-                        key="step-3"
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -8 }}
-                        transition={{ duration: 0.2 }}
-                        className="flex-1 flex flex-col min-h-0"
-                    >
-                        {/* Step 3 Metrics Header Bar */}
-                        <div className="shrink-0 border-b bg-muted/20 px-4 py-3.5 sm:px-7">
-                            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3">
-                                <div className="rounded-2xl border border-border/60 bg-card p-3 shadow-sm">
-                                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Selected Orders</p>
-                                    <p className="mt-1 text-lg font-black text-foreground">{selectedIds.size}</p>
-                                    <p className="text-[10px] text-muted-foreground">Sales Orders</p>
-                                </div>
-                                <div className="rounded-2xl border border-border/60 bg-card p-3 shadow-sm">
-                                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Unique Products</p>
-                                    <p className="mt-1 text-lg font-black text-primary">{aggregatedProducts.length}</p>
-                                    <p className="text-[10px] text-muted-foreground">Consolidated SKUs</p>
-                                </div>
-                                <div className="rounded-2xl border border-border/60 bg-card p-3 shadow-sm">
-                                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Total Demand</p>
-                                    <p className="mt-1 text-lg font-black text-foreground">
-                                        {totalOrderedUnits} <span className="text-xs font-semibold text-muted-foreground">units</span>
-                                    </p>
-                                    <p className="text-[10px] text-muted-foreground">{totalAllocatedUnits} units allocated</p>
-                                </div>
-                                <div className="rounded-2xl border border-border/60 bg-card p-3 shadow-sm">
-                                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Gross Value</p>
-                                    <p className="mt-1 text-lg font-black text-foreground">
-                                        ₱{totalSelectedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                    </p>
-                                    <p className="text-[10px] text-muted-foreground">Branch: {branch.branchName}</p>
-                                </div>
-                                <div className="col-span-2 sm:col-span-4 lg:col-span-1 rounded-2xl border border-border/60 bg-card p-3 shadow-sm flex flex-col justify-between">
-                                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Allocation Strategy</p>
-                                    <div className="mt-1">
-                                        <span
-                                            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-black ${
-                                                allocationMode === "auto"
-                                                    ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
-                                                    : isManualValid
-                                                    ? "bg-blue-500/10 text-blue-600 border border-blue-500/20"
-                                                    : "bg-amber-500/10 text-amber-600 border border-amber-500/20"
-                                            }`}
-                                        >
-                                            {allocationMode === "auto" ? "⚡ Live FEFO (Auto)" : isManualValid ? "✓ Custom (Balanced)" : "⚠ Custom (Unbalanced)"}
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Step 3 Table Container */}
-                        <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-7 space-y-4">
-                            {/* Shortage warning if any */}
-                            {allocationPreview && allocationPreview.shortages.length > 0 && allocationMode === "auto" && (
-                                <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-xs text-amber-800 dark:text-amber-200 flex items-start gap-3 shadow-sm">
-                                    <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
-                                    <div className="space-y-1">
-                                        <p className="font-black uppercase tracking-wider text-[11px]">Consolidation Stock Notice</p>
-                                        <p className="text-xs">
-                                            Some products have insufficient available stock in this warehouse. A total of{" "}
-                                            <strong>{allocationPreview.shortages.reduce((s, sh) => s + sh.quantity, 0)} unit(s)</strong> are currently short across {allocationPreview.shortages.length} product(s).
-                                        </p>
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Consolidated Demand Summary Table */}
-                            <div className="overflow-hidden rounded-3xl border border-border/60 bg-card shadow-sm">
-                                <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/20 px-4 py-3.5 sm:px-5">
-                                    <div className="flex items-center gap-2">
-                                        <Layers className="h-4.5 w-4.5 text-primary" />
-                                        <h3 className="text-sm font-black uppercase tracking-wider text-foreground">
-                                            Consolidated Demand Summary — {aggregatedProducts.length} Unique Product(s)
-                                        </h3>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <Button
-                                            type="button"
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={handlePrintPicklist}
-                                            className="h-7 px-2.5 text-[10px] font-bold rounded-lg border-border/60 hover:bg-muted/40 gap-1.5"
-                                            title="Print Consolidation Picklist (Portrait PDF)"
-                                        >
-                                            <Printer className="h-3.5 w-3.5 text-primary" />
-                                            Print Picklist
-                                        </Button>
-                                        <div className="flex items-center gap-1 bg-muted/40 p-0.5 rounded-xl border border-border/60">
+                                        <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
                                             <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                onClick={expandAllStep3Products}
-                                                className="h-7 px-2 text-[10px] font-bold rounded-lg text-muted-foreground hover:text-foreground"
-                                                title="Expand all product details"
+                                                variant="outline"
+                                                onClick={() => setStep(1)}
+                                                disabled={submitting}
+                                                className="rounded-xl font-bold"
                                             >
-                                                <Maximize2 className="h-3 w-3 mr-1" />
-                                                Expand All
+                                                <ArrowLeft className="h-4 w-4 mr-1" />
+                                                Back to Orders
                                             </Button>
                                             <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                onClick={collapseAllStep3Products}
-                                                className="h-7 px-2 text-[10px] font-bold rounded-lg text-muted-foreground hover:text-foreground"
-                                                title="Collapse all product details"
+                                                onClick={handleProceedToStep3}
+                                                disabled={!canProceedToStep3}
+                                                className="rounded-xl px-5 font-black uppercase tracking-wider gap-1.5"
                                             >
-                                                <Minimize2 className="h-3 w-3 mr-1" />
-                                                Collapse All
+                                                Review Demand Summary (Step 3)
+                                                <ArrowRight className="h-4 w-4" />
                                             </Button>
                                         </div>
-                                        <span className="text-xs font-bold text-muted-foreground bg-muted/50 px-2.5 py-1 rounded-xl border border-border/40">
-                                            Total Demand: <strong className="text-foreground">{totalOrderedUnits}</strong> units across <strong className="text-foreground">{selectedIds.size}</strong> order(s)
-                                        </span>
                                     </div>
-                                </div>
+                                </motion.div>
+                            )}
 
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-left border-collapse text-xs">
-                                        <thead>
-                                            <tr className="border-b bg-muted/10 text-muted-foreground text-[10px] font-bold uppercase tracking-wider">
-                                                <th className="p-3.5 w-10"></th>
-                                                <th className="p-3.5">Product</th>
-                                                <th className="p-3.5">Code</th>
-                                                <th className="p-3.5">BOM Version</th>
-                                                <th className="p-3.5 text-right">Orders Requesting</th>
-                                                <th className="p-3.5 text-right">Total Demand</th>
-                                                <th className="p-3.5 text-right">Allocated Qty</th>
-                                                <th className="p-3.5">Allocated Batches & Lots</th>
-                                                <th className="p-3.5 text-right">Fulfillment Status</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-border/40">
-                                            {aggregatedProducts.map((p, pIdx) => {
-                                                const isExpanded = expandedStep3ProdIds.has(p.productId);
-                                                let productAllocatedQty = 0;
-                                                const allocatedBatches: Array<{
-                                                    batchNo: string;
-                                                    lotName: string;
-                                                    lotId?: number;
-                                                    inventoryLotId?: number;
-                                                    expiryDate?: string | null;
-                                                    quantity: number;
-                                                    availableQuantity?: number;
-                                                }> = [];
+                            {/* STEP 3: CONSOLIDATED DEMAND SUMMARY */}
+                            {step === 3 && (
+                                <motion.div
+                                    key="step-3"
+                                    initial={{ opacity: 0, y: 8 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, y: -8 }}
+                                    transition={{ duration: 0.2 }}
+                                    className="flex-1 flex flex-col min-h-0"
+                                >
+                                    {/* Step 3 Metrics Header Bar */}
+                                    <div className="shrink-0 border-b bg-muted/20 px-4 py-3.5 sm:px-7">
+                                        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3">
+                                            <div className="rounded-2xl border border-border/60 bg-card p-3 shadow-sm">
+                                                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Selected Orders</p>
+                                                <p className="mt-1 text-lg font-black text-foreground">{selectedIds.size}</p>
+                                                <p className="text-[10px] text-muted-foreground">Sales Orders</p>
+                                            </div>
+                                            <div className="rounded-2xl border border-border/60 bg-card p-3 shadow-sm">
+                                                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Unique Products</p>
+                                                <p className="mt-1 text-lg font-black text-primary">{aggregatedProducts.length}</p>
+                                                <p className="text-[10px] text-muted-foreground">Consolidated SKUs</p>
+                                            </div>
+                                            <div className="rounded-2xl border border-border/60 bg-card p-3 shadow-sm">
+                                                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Total Demand</p>
+                                                <p className="mt-1 text-lg font-black text-foreground">
+                                                    {totalOrderedUnits} <span className="text-xs font-semibold text-muted-foreground">units</span>
+                                                </p>
+                                                <p className="text-[10px] text-muted-foreground">{totalAllocatedUnits} units allocated</p>
+                                            </div>
+                                            <div className="rounded-2xl border border-border/60 bg-card p-3 shadow-sm">
+                                                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Gross Value</p>
+                                                <p className="mt-1 text-lg font-black text-foreground">
+                                                    ₱{totalSelectedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                </p>
+                                                <p className="text-[10px] text-muted-foreground">Branch: {branch.branchName}</p>
+                                            </div>
+                                            <div className="col-span-2 sm:col-span-4 lg:col-span-1 rounded-2xl border border-border/60 bg-card p-3 shadow-sm flex flex-col justify-between">
+                                                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Allocation Strategy</p>
+                                                <div className="mt-1">
+                                                    <span
+                                                        className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-black ${allocationMode === "auto"
+                                                                ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
+                                                                : isManualValid
+                                                                    ? "bg-blue-500/10 text-blue-600 border border-blue-500/20"
+                                                                    : "bg-amber-500/10 text-amber-600 border border-amber-500/20"
+                                                            }`}
+                                                    >
+                                                        {allocationMode === "auto" ? "⚡ Live FEFO (Auto)" : isManualValid ? "✓ Custom (Balanced)" : "⚠ Custom (Unbalanced)"}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
 
-                                                if (allocationMode === "manual") {
-                                                    for (const [key, qty] of Object.entries(manualAllocations)) {
-                                                        if (Number(qty) > 0) {
-                                                            const [pIdStr, invLotIdStr, batchNo, lotIdStr] = key.split(":");
-                                                            if (Number(pIdStr) === p.productId) {
-                                                                const numericQty = Number(qty);
-                                                                productAllocatedQty += numericQty;
-                                                                const invLotId = Number(invLotIdStr || 0);
-                                                                const lotId = Number(lotIdStr || 0);
-                                                                const b = (allocationPreview?.availableBatches || []).find(
-                                                                    (batch) =>
-                                                                        batch.productId === p.productId &&
-                                                                        ((invLotId > 0 && batch.inventoryLotId === invLotId) ||
-                                                                            (batch.batchNo === batchNo && batch.lotId === lotId))
-                                                                );
-                                                                const existing = allocatedBatches.find(
-                                                                    (ab) => ab.batchNo === (b?.batchNo || batchNo) && ab.lotName === (b?.lotName || "Warehouse Lot")
-                                                                );
-                                                                if (existing) {
-                                                                    existing.quantity += numericQty;
-                                                                } else {
-                                                                    allocatedBatches.push({
-                                                                        batchNo: b?.batchNo || batchNo,
-                                                                        lotName: b?.lotName || "Warehouse Lot",
-                                                                        lotId: b?.lotId || lotId,
-                                                                        inventoryLotId: b?.inventoryLotId || invLotId,
-                                                                        expiryDate: b?.expiryDate || null,
-                                                                        quantity: numericQty,
-                                                                        availableQuantity: b?.availableQuantity,
-                                                                    });
+                                    {/* Step 3 Table Container */}
+                                    <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-7 space-y-4">
+                                        {/* Shortage warning if any */}
+                                        {allocationPreview && allocationPreview.shortages.length > 0 && allocationMode === "auto" && (
+                                            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-xs text-amber-800 dark:text-amber-200 flex items-start gap-3 shadow-sm">
+                                                <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                                                <div className="space-y-1">
+                                                    <p className="font-black uppercase tracking-wider text-[11px]">Consolidation Stock Notice</p>
+                                                    <p className="text-xs">
+                                                        Some products have insufficient available stock in this warehouse. A total of{" "}
+                                                        <strong>{allocationPreview.shortages.reduce((s, sh) => s + sh.quantity, 0)} unit(s)</strong> are currently short across {allocationPreview.shortages.length} product(s).
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Consolidated Demand Summary Table */}
+                                        <div className="overflow-hidden rounded-3xl border border-border/60 bg-card shadow-sm">
+                                            <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/20 px-4 py-3.5 sm:px-5">
+                                                <div className="flex items-center gap-2">
+                                                    <Layers className="h-4.5 w-4.5 text-primary" />
+                                                    <h3 className="text-sm font-black uppercase tracking-wider text-foreground">
+                                                        Consolidated Demand Summary — {aggregatedProducts.length} Unique Product(s)
+                                                    </h3>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="sm"
+                                                        onClick={handlePrintPicklist}
+                                                        className="h-7 px-2.5 text-[10px] font-bold rounded-lg border-border/60 hover:bg-muted/40 gap-1.5"
+                                                        title="Print Consolidation Picklist (Portrait PDF)"
+                                                    >
+                                                        <Printer className="h-3.5 w-3.5 text-primary" />
+                                                        Print Picklist
+                                                    </Button>
+                                                    <div className="flex items-center gap-1 bg-muted/40 p-0.5 rounded-xl border border-border/60">
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            onClick={expandAllStep3Products}
+                                                            className="h-7 px-2 text-[10px] font-bold rounded-lg text-muted-foreground hover:text-foreground"
+                                                            title="Expand all product details"
+                                                        >
+                                                            <Maximize2 className="h-3 w-3 mr-1" />
+                                                            Expand All
+                                                        </Button>
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            onClick={collapseAllStep3Products}
+                                                            className="h-7 px-2 text-[10px] font-bold rounded-lg text-muted-foreground hover:text-foreground"
+                                                            title="Collapse all product details"
+                                                        >
+                                                            <Minimize2 className="h-3 w-3 mr-1" />
+                                                            Collapse All
+                                                        </Button>
+                                                    </div>
+                                                    <span className="text-xs font-bold text-muted-foreground bg-muted/50 px-2.5 py-1 rounded-xl border border-border/40">
+                                                        Total Demand: <strong className="text-foreground">{totalOrderedUnits}</strong> units across <strong className="text-foreground">{selectedIds.size}</strong> order(s)
+                                                    </span>
+                                                </div>
+                                            </div>
+
+                                            <div className="overflow-x-auto">
+                                                <table className="w-full text-left border-collapse text-xs">
+                                                    <thead>
+                                                        <tr className="border-b bg-muted/10 text-muted-foreground text-[10px] font-bold uppercase tracking-wider">
+                                                            <th className="p-3.5 w-10"></th>
+                                                            <th className="p-3.5">Product</th>
+                                                            <th className="p-3.5">Code</th>
+                                                            <th className="p-3.5">BOM Version</th>
+                                                            <th className="p-3.5 text-right">Orders Requesting</th>
+                                                            <th className="p-3.5 text-right">Total Demand</th>
+                                                            <th className="p-3.5 text-right">Allocated Qty</th>
+                                                            <th className="p-3.5">Allocated Batches & Lots</th>
+                                                            <th className="p-3.5 text-right">Fulfillment Status</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="divide-y divide-border/40">
+                                                        {aggregatedProducts.map((p, pIdx) => {
+                                                            const isExpanded = expandedStep3ProdIds.has(p.productId);
+                                                            let productAllocatedQty = 0;
+                                                            const allocatedBatches: Array<{
+                                                                batchNo: string;
+                                                                lotName: string;
+                                                                lotId?: number;
+                                                                inventoryLotId?: number;
+                                                                expiryDate?: string | null;
+                                                                quantity: number;
+                                                                availableQuantity?: number;
+                                                            }> = [];
+
+                                                            if (allocationMode === "manual") {
+                                                                for (const [key, qty] of Object.entries(manualAllocations)) {
+                                                                    if (Number(qty) > 0) {
+                                                                        const [pIdStr, invLotIdStr, batchNo, lotIdStr] = key.split(":");
+                                                                        if (Number(pIdStr) === p.productId) {
+                                                                            const numericQty = Number(qty);
+                                                                            productAllocatedQty += numericQty;
+                                                                            const invLotId = Number(invLotIdStr || 0);
+                                                                            const lotId = Number(lotIdStr || 0);
+                                                                            const b = (allocationPreview?.availableBatches || []).find(
+                                                                                (batch) =>
+                                                                                    batch.productId === p.productId &&
+                                                                                    ((invLotId > 0 && batch.inventoryLotId === invLotId) ||
+                                                                                        (batch.batchNo === batchNo && batch.lotId === lotId))
+                                                                            );
+                                                                            const existing = allocatedBatches.find(
+                                                                                (ab) => ab.batchNo === (b?.batchNo || batchNo) && ab.lotName === (b?.lotName || "Warehouse Lot")
+                                                                            );
+                                                                            if (existing) {
+                                                                                existing.quantity += numericQty;
+                                                                            } else {
+                                                                                allocatedBatches.push({
+                                                                                    batchNo: b?.batchNo || batchNo,
+                                                                                    lotName: b?.lotName || "Warehouse Lot",
+                                                                                    lotId: b?.lotId || lotId,
+                                                                                    inventoryLotId: b?.inventoryLotId || invLotId,
+                                                                                    expiryDate: b?.expiryDate || null,
+                                                                                    quantity: numericQty,
+                                                                                    availableQuantity: b?.availableQuantity,
+                                                                                });
+                                                                            }
+                                                                        }
+                                                                    }
                                                                 }
-                                                            }
-                                                        }
-                                                    }
-                                                } else if (allocationPreview?.allocations && allocationPreview.allocations.length > 0) {
-                                                    const allocs = allocationPreview.allocations.filter((a) => a.productId === p.productId && a.quantity > 0);
-                                                    for (const a of allocs) {
-                                                        productAllocatedQty += a.quantity;
-                                                        const b = (allocationPreview?.availableBatches || []).find(
-                                                            (batch) =>
-                                                                batch.productId === p.productId &&
-                                                                ((a.inventoryLotId && batch.inventoryLotId === a.inventoryLotId) ||
-                                                                    (batch.batchNo === a.batchNo && batch.lotId === a.lotId))
-                                                        );
-                                                        const existing = allocatedBatches.find(
-                                                            (ab) => ab.batchNo === a.batchNo && ab.lotName === a.lotName
-                                                        );
-                                                        if (existing) {
-                                                            existing.quantity += a.quantity;
-                                                        } else {
-                                                            allocatedBatches.push({
-                                                                batchNo: a.batchNo,
-                                                                lotName: a.lotName,
-                                                                lotId: a.lotId,
-                                                                inventoryLotId: a.inventoryLotId,
-                                                                expiryDate: a.expiryDate || b?.expiryDate || null,
-                                                                quantity: a.quantity,
-                                                                availableQuantity: b?.availableQuantity,
-                                                            });
-                                                        }
-                                                    }
-                                                } else if (allocationPreview?.invoiceBreakdown && allocationPreview.invoiceBreakdown.length > 0) {
-                                                    for (const inv of allocationPreview.invoiceBreakdown) {
-                                                        for (const line of inv.lines || []) {
-                                                            if (line.productId === p.productId) {
-                                                                for (const a of line.allocations || []) {
-                                                                    if (a.quantity > 0) {
-                                                                        productAllocatedQty += a.quantity;
-                                                                        const b = (allocationPreview?.availableBatches || []).find(
-                                                                            (batch) =>
-                                                                                batch.productId === p.productId &&
-                                                                                ((a.inventoryLotId && batch.inventoryLotId === a.inventoryLotId) ||
-                                                                                    (batch.batchNo === a.batchNo && batch.lotId === a.lotId))
-                                                                        );
-                                                                        const existing = allocatedBatches.find(
-                                                                            (ab) => ab.batchNo === a.batchNo && ab.lotName === a.lotName
-                                                                        );
-                                                                        if (existing) {
-                                                                            existing.quantity += a.quantity;
-                                                                        } else {
-                                                                            allocatedBatches.push({
-                                                                                batchNo: a.batchNo,
-                                                                                lotName: a.lotName,
-                                                                                lotId: a.lotId,
-                                                                                inventoryLotId: a.inventoryLotId,
-                                                                                expiryDate: a.expiryDate || b?.expiryDate || null,
-                                                                                quantity: a.quantity,
-                                                                                availableQuantity: b?.availableQuantity,
-                                                                            });
+                                                            } else if (allocationPreview?.allocations && allocationPreview.allocations.length > 0) {
+                                                                const allocs = allocationPreview.allocations.filter((a) => a.productId === p.productId && a.quantity > 0);
+                                                                for (const a of allocs) {
+                                                                    productAllocatedQty += a.quantity;
+                                                                    const b = (allocationPreview?.availableBatches || []).find(
+                                                                        (batch) =>
+                                                                            batch.productId === p.productId &&
+                                                                            ((a.inventoryLotId && batch.inventoryLotId === a.inventoryLotId) ||
+                                                                                (batch.batchNo === a.batchNo && batch.lotId === a.lotId))
+                                                                    );
+                                                                    const existing = allocatedBatches.find(
+                                                                        (ab) => ab.batchNo === a.batchNo && ab.lotName === a.lotName
+                                                                    );
+                                                                    if (existing) {
+                                                                        existing.quantity += a.quantity;
+                                                                    } else {
+                                                                        allocatedBatches.push({
+                                                                            batchNo: a.batchNo,
+                                                                            lotName: a.lotName,
+                                                                            lotId: a.lotId,
+                                                                            inventoryLotId: a.inventoryLotId,
+                                                                            expiryDate: a.expiryDate || b?.expiryDate || null,
+                                                                            quantity: a.quantity,
+                                                                            availableQuantity: b?.availableQuantity,
+                                                                        });
+                                                                    }
+                                                                }
+                                                            } else if (allocationPreview?.invoiceBreakdown && allocationPreview.invoiceBreakdown.length > 0) {
+                                                                for (const inv of allocationPreview.invoiceBreakdown) {
+                                                                    for (const line of inv.lines || []) {
+                                                                        if (line.productId === p.productId) {
+                                                                            for (const a of line.allocations || []) {
+                                                                                if (a.quantity > 0) {
+                                                                                    productAllocatedQty += a.quantity;
+                                                                                    const b = (allocationPreview?.availableBatches || []).find(
+                                                                                        (batch) =>
+                                                                                            batch.productId === p.productId &&
+                                                                                            ((a.inventoryLotId && batch.inventoryLotId === a.inventoryLotId) ||
+                                                                                                (batch.batchNo === a.batchNo && batch.lotId === a.lotId))
+                                                                                    );
+                                                                                    const existing = allocatedBatches.find(
+                                                                                        (ab) => ab.batchNo === a.batchNo && ab.lotName === a.lotName
+                                                                                    );
+                                                                                    if (existing) {
+                                                                                        existing.quantity += a.quantity;
+                                                                                    } else {
+                                                                                        allocatedBatches.push({
+                                                                                            batchNo: a.batchNo,
+                                                                                            lotName: a.lotName,
+                                                                                            lotId: a.lotId,
+                                                                                            inventoryLotId: a.inventoryLotId,
+                                                                                            expiryDate: a.expiryDate || b?.expiryDate || null,
+                                                                                            quantity: a.quantity,
+                                                                                            availableQuantity: b?.availableQuantity,
+                                                                                        });
+                                                                                    }
+                                                                                }
+                                                                            }
                                                                         }
                                                                     }
                                                                 }
                                                             }
-                                                        }
-                                                    }
-                                                }
 
-                                                const isFullyCovered = productAllocatedQty >= p.totalQuantity;
-                                                const diff = p.totalQuantity - productAllocatedQty;
+                                                            const isFullyCovered = productAllocatedQty >= p.totalQuantity;
+                                                            const diff = p.totalQuantity - productAllocatedQty;
 
-                                                return (
-                                                    <React.Fragment key={`demand-prod-${p.productId}`}>
-                                                        <motion.tr
-                                                            initial={{ opacity: 0, y: -8 }}
-                                                            animate={{ opacity: 1, y: 0 }}
-                                                            transition={{ duration: 0.2, delay: Math.min(pIdx * 0.03, 0.3) }}
-                                                            onClick={() => toggleStep3Product(p.productId)}
-                                                            className="cursor-pointer hover:bg-muted/10 transition-colors"
-                                                        >
-                                                            <td className="p-3.5 text-center">
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        toggleStep3Product(p.productId);
-                                                                    }}
-                                                                    className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
-                                                                >
-                                                                    <motion.div
-                                                                        animate={{ rotate: isExpanded ? 90 : 0 }}
-                                                                        transition={{ duration: 0.2 }}
+                                                            return (
+                                                                <React.Fragment key={`demand-prod-${p.productId}`}>
+                                                                    <motion.tr
+                                                                        initial={{ opacity: 0, y: -8 }}
+                                                                        animate={{ opacity: 1, y: 0 }}
+                                                                        transition={{ duration: 0.2, delay: Math.min(pIdx * 0.03, 0.3) }}
+                                                                        onClick={() => toggleStep3Product(p.productId)}
+                                                                        className="cursor-pointer hover:bg-muted/10 transition-colors"
                                                                     >
-                                                                        <ChevronRight className="h-4 w-4" />
-                                                                    </motion.div>
-                                                                </button>
-                                                            </td>
-                                                            <td className="p-3.5 font-bold text-foreground">
-                                                                {p.productName}
-                                                            </td>
-                                                            <td className="p-3.5 font-mono text-muted-foreground">
-                                                                {p.productCode || "-"}
-                                                            </td>
-                                                            <td className="p-3.5">
-                                                                <span className="rounded-full bg-primary/10 border border-primary/20 px-2 py-0.5 text-[9px] font-bold text-primary">
-                                                                    {p.versionLabel}
-                                                                </span>
-                                                            </td>
-                                                            <td className="p-3.5 text-right font-bold text-muted-foreground">
-                                                                {p.invoiceCount} order(s)
-                                                            </td>
-                                                            <td className="p-3.5 text-right font-black text-foreground text-sm">
-                                                                {p.totalQuantity}
-                                                            </td>
-                                                            <td className="p-3.5 text-right font-black text-sm">
-                                                                <span className={isFullyCovered ? "text-emerald-600" : "text-amber-600"}>
-                                                                    {productAllocatedQty}
-                                                                </span>
-                                                            </td>
-                                                            <td className="p-3.5">
-                                                                {allocatedBatches.length > 0 ? (
-                                                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                                                        <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 border border-primary/20 px-2.5 py-1 text-[10px] font-bold text-primary">
-                                                                            <Package className="h-3 w-3" />
-                                                                            {allocatedBatches.length} batch(es) ({productAllocatedQty} units)
-                                                                        </span>
-                                                                        <span className="text-[10px] text-muted-foreground font-semibold">
-                                                                            ({isExpanded ? "Click to collapse" : "Click to view lots"})
-                                                                        </span>
-                                                                    </div>
-                                                                ) : (
-                                                                    <span className="text-[11px] text-muted-foreground italic">No batches allocated</span>
-                                                                )}
-                                                            </td>
-                                                            <td className="p-3.5 text-right">
-                                                                <span
-                                                                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
-                                                                        isFullyCovered
-                                                                            ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
-                                                                            : "bg-amber-500/10 text-amber-600 border border-amber-500/20"
-                                                                    }`}
-                                                                >
-                                                                    {isFullyCovered ? (
-                                                                        <>
-                                                                            <CheckCircle2 className="h-3 w-3" />
-                                                                            Fully Covered
-                                                                        </>
-                                                                    ) : (
-                                                                        <>
-                                                                            <AlertTriangle className="h-3 w-3" />
-                                                                            Shortage ({diff > 0 ? `-${diff}` : diff})
-                                                                        </>
-                                                                    )}
-                                                                </span>
-                                                            </td>
-                                                        </motion.tr>
-
-                                                        {/* EXPANDED ALLOCATED LOTS & BATCHES PANEL */}
-                                                        <AnimatePresence initial={false}>
-                                                            {isExpanded && (
-                                                                <motion.tr
-                                                                    key={`expanded-demand-${p.productId}`}
-                                                                    initial={{ opacity: 0 }}
-                                                                    animate={{ opacity: 1 }}
-                                                                    exit={{ opacity: 0 }}
-                                                                    transition={{ duration: 0.2 }}
-                                                                    className="bg-muted/5"
-                                                                >
-                                                                    <td colSpan={9} className="p-0">
-                                                                        <motion.div
-                                                                            initial={{ opacity: 0, height: 0 }}
-                                                                            animate={{ opacity: 1, height: "auto" }}
-                                                                            exit={{ opacity: 0, height: 0 }}
-                                                                            transition={{ duration: 0.22, ease: "easeInOut" }}
-                                                                            className="overflow-hidden"
-                                                                        >
-                                                                            <div className="p-4 bg-muted/10 border-t border-b border-border/40 space-y-3">
-                                                                                <div className="flex items-center justify-between">
-                                                                                    <p className="text-[11px] font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                                                                                        <Layers className="h-3.5 w-3.5 text-primary" />
-                                                                                        Allocated Lots &amp; Batches for <span className="text-foreground font-bold">{p.productName}</span>
-                                                                                    </p>
-                                                                                    <span className="text-xs font-bold text-primary bg-primary/10 px-2.5 py-1 rounded-full border border-primary/20">
-                                                                                        Total Allocated: {productAllocatedQty} / {p.totalQuantity} units
+                                                                        <td className="p-3.5 text-center">
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={(e) => {
+                                                                                    e.stopPropagation();
+                                                                                    toggleStep3Product(p.productId);
+                                                                                }}
+                                                                                className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
+                                                                            >
+                                                                                <motion.div
+                                                                                    animate={{ rotate: isExpanded ? 90 : 0 }}
+                                                                                    transition={{ duration: 0.2 }}
+                                                                                >
+                                                                                    <ChevronRight className="h-4 w-4" />
+                                                                                </motion.div>
+                                                                            </button>
+                                                                        </td>
+                                                                        <td className="p-3.5 font-bold text-foreground">
+                                                                            {p.productName}
+                                                                        </td>
+                                                                        <td className="p-3.5 font-mono text-muted-foreground">
+                                                                            {p.productCode || "-"}
+                                                                        </td>
+                                                                        <td className="p-3.5">
+                                                                            <span className="rounded-full bg-primary/10 border border-primary/20 px-2 py-0.5 text-[9px] font-bold text-primary">
+                                                                                {p.versionLabel}
+                                                                            </span>
+                                                                        </td>
+                                                                        <td className="p-3.5 text-right font-bold text-muted-foreground">
+                                                                            {p.invoiceCount} order(s)
+                                                                        </td>
+                                                                        <td className="p-3.5 text-right font-black text-foreground text-sm">
+                                                                            {p.totalQuantity}
+                                                                        </td>
+                                                                        <td className="p-3.5 text-right font-black text-sm">
+                                                                            <span className={isFullyCovered ? "text-emerald-600" : "text-amber-600"}>
+                                                                                {productAllocatedQty}
+                                                                            </span>
+                                                                        </td>
+                                                                        <td className="p-3.5">
+                                                                            {allocatedBatches.length > 0 ? (
+                                                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                                                    <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 border border-primary/20 px-2.5 py-1 text-[10px] font-bold text-primary">
+                                                                                        <Package className="h-3 w-3" />
+                                                                                        {allocatedBatches.length} batch(es) ({productAllocatedQty} units)
+                                                                                    </span>
+                                                                                    <span className="text-[10px] text-muted-foreground font-semibold">
+                                                                                        ({isExpanded ? "Click to collapse" : "Click to view lots"})
                                                                                     </span>
                                                                                 </div>
-
-                                                                                {allocatedBatches.length > 0 ? (
-                                                                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                                                                                        {allocatedBatches.map((b, bIdx) => {
-                                                                                            const isNegative = b.availableQuantity !== undefined
-                                                                                                ? (b.availableQuantity < 0 || b.quantity > b.availableQuantity)
-                                                                                                : false;
-
-                                                                                            return (
-                                                                                                <div
-                                                                                                    key={`allocated-batch-${p.productId}-${b.batchNo}-${bIdx}`}
-                                                                                                    className="flex items-center justify-between gap-3 rounded-2xl border border-border/60 bg-card p-3 shadow-xs"
-                                                                                                >
-                                                                                                    <div className="min-w-0 space-y-1">
-                                                                                                        <div className="flex items-center gap-1.5 flex-wrap">
-                                                                                                            <span className="font-bold text-xs text-foreground">
-                                                                                                                {b.lotName}
-                                                                                                            </span>
-                                                                                                            <span className="font-mono text-[10px] text-muted-foreground bg-muted/30 px-1.5 py-0.5 rounded border border-border/40">
-                                                                                                                {b.batchNo}
-                                                                                                            </span>
-                                                                                                        </div>
-                                                                                                        <p className="text-[10px] text-muted-foreground">
-                                                                                                            {b.expiryDate
-                                                                                                                ? `Exp: ${new Date(b.expiryDate).toLocaleDateString()}`
-                                                                                                                : "No expiration"}
-                                                                                                        </p>
-                                                                                                    </div>
-
-                                                                                                    <div className="flex items-center gap-2 shrink-0">
-                                                                                                        {isNegative && (
-                                                                                                            <span className="inline-flex items-center gap-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 text-[8px] font-black uppercase">
-                                                                                                                <AlertTriangle className="h-2.5 w-2.5" /> Negative
-                                                                                                            </span>
-                                                                                                        )}
-                                                                                                        <span className="font-black text-primary text-xs bg-primary/5 px-2.5 py-1 rounded-lg border border-primary/15 font-mono">
-                                                                                                            {b.quantity} units
-                                                                                                        </span>
-                                                                                                    </div>
-                                                                                                </div>
-                                                                                            );
-                                                                                        })}
-                                                                                    </div>
+                                                                            ) : (
+                                                                                <span className="text-[11px] text-muted-foreground italic">No batches allocated</span>
+                                                                            )}
+                                                                        </td>
+                                                                        <td className="p-3.5 text-right">
+                                                                            <span
+                                                                                className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${isFullyCovered
+                                                                                        ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
+                                                                                        : "bg-amber-500/10 text-amber-600 border border-amber-500/20"
+                                                                                    }`}
+                                                                            >
+                                                                                {isFullyCovered ? (
+                                                                                    <>
+                                                                                        <CheckCircle2 className="h-3 w-3" />
+                                                                                        Fully Covered
+                                                                                    </>
                                                                                 ) : (
-                                                                                    <div className="py-6 text-center text-xs text-muted-foreground italic bg-card rounded-2xl border border-border/40">
-                                                                                        No lots allocated for this product.
-                                                                                    </div>
+                                                                                    <>
+                                                                                        <AlertTriangle className="h-3 w-3" />
+                                                                                        Shortage ({diff > 0 ? `-${diff}` : diff})
+                                                                                    </>
                                                                                 )}
-                                                                            </div>
-                                                                        </motion.div>
-                                                                    </td>
-                                                                </motion.tr>
-                                                            )}
-                                                        </AnimatePresence>
-                                                    </React.Fragment>
-                                                );
-                                            })}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        </div>
+                                                                            </span>
+                                                                        </td>
+                                                                    </motion.tr>
 
-                        {/* Step 3 Footer */}
-                        <div className="shrink-0 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-border/60 bg-card px-4 py-4 sm:px-7">
-                            <div className="text-xs text-muted-foreground">
-                                Ready to create consolidation batch for <strong className="text-foreground">{branch.branchName}</strong> with{" "}
-                                <span className="font-bold text-foreground">{selectedIds.size}</span> order(s) and{" "}
-                                <span className="font-bold text-foreground">{totalOrderedUnits}</span> total units.
-                            </div>
+                                                                    {/* EXPANDED ALLOCATED LOTS & BATCHES PANEL */}
+                                                                    <AnimatePresence initial={false}>
+                                                                        {isExpanded && (
+                                                                            <motion.tr
+                                                                                key={`expanded-demand-${p.productId}`}
+                                                                                initial={{ opacity: 0 }}
+                                                                                animate={{ opacity: 1 }}
+                                                                                exit={{ opacity: 0 }}
+                                                                                transition={{ duration: 0.2 }}
+                                                                                className="bg-muted/5"
+                                                                            >
+                                                                                <td colSpan={9} className="p-0">
+                                                                                    <motion.div
+                                                                                        initial={{ opacity: 0, height: 0 }}
+                                                                                        animate={{ opacity: 1, height: "auto" }}
+                                                                                        exit={{ opacity: 0, height: 0 }}
+                                                                                        transition={{ duration: 0.22, ease: "easeInOut" }}
+                                                                                        className="overflow-hidden"
+                                                                                    >
+                                                                                        <div className="p-4 bg-muted/10 border-t border-b border-border/40 space-y-3">
+                                                                                            <div className="flex items-center justify-between">
+                                                                                                <p className="text-[11px] font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                                                                                                    <Layers className="h-3.5 w-3.5 text-primary" />
+                                                                                                    Allocated Lots &amp; Batches for <span className="text-foreground font-bold">{p.productName}</span>
+                                                                                                </p>
+                                                                                                <span className="text-xs font-bold text-primary bg-primary/10 px-2.5 py-1 rounded-full border border-primary/20">
+                                                                                                    Total Allocated: {productAllocatedQty} / {p.totalQuantity} units
+                                                                                                </span>
+                                                                                            </div>
 
-                            <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    onClick={handlePrintPicklist}
-                                    className="rounded-xl font-bold gap-1.5"
-                                    title="Print Consolidation Picklist (Portrait PDF)"
-                                >
-                                    <Printer className="h-4 w-4 text-primary" />
-                                    Print Picklist
-                                </Button>
-                                <Button
-                                    variant="outline"
-                                    onClick={() => setStep(2)}
-                                    disabled={submitting}
-                                    className="rounded-xl font-bold"
-                                >
-                                    <ArrowLeft className="h-4 w-4 mr-1" />
-                                    Back to Stock Allocation
-                                </Button>
-                                <Button
-                                    onClick={handleSubmit}
-                                    disabled={!canSubmit}
-                                    className="rounded-xl px-5 font-black uppercase tracking-wider"
-                                >
-                                    {submitting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-                                    Create Consolidation Batch ({selectedIds.size})
-                                </Button>
-                            </div>
-                        </div>
-                    </motion.div>
-                )}
-                </AnimatePresence>
+                                                                                            {allocatedBatches.length > 0 ? (
+                                                                                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                                                                                                    {allocatedBatches.map((b, bIdx) => {
+                                                                                                        const isNegative = b.availableQuantity !== undefined
+                                                                                                            ? (b.availableQuantity < 0 || b.quantity > b.availableQuantity)
+                                                                                                            : false;
 
-                {/* Expired Batches Confirmation Modal */}
-                <AnimatePresence>
-                    {showExpiredConfirmModal && (
-                        <div className="fixed inset-0 z-70 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-                            <motion.div
-                                initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                                animate={{ opacity: 1, scale: 1, y: 0 }}
-                                exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                                transition={{ duration: 0.2 }}
-                                className="w-full max-w-md rounded-3xl border border-rose-500/30 bg-background p-6 shadow-2xl space-y-4"
-                            >
-                                <div className="flex items-center gap-3">
-                                    <div className="rounded-2xl bg-rose-500/10 p-3 text-rose-600 dark:text-rose-400">
-                                        <AlertTriangle className="h-6 w-6" />
+                                                                                                        return (
+                                                                                                            <div
+                                                                                                                key={`allocated-batch-${p.productId}-${b.batchNo}-${bIdx}`}
+                                                                                                                className="flex items-center justify-between gap-3 rounded-2xl border border-border/60 bg-card p-3 shadow-xs"
+                                                                                                            >
+                                                                                                                <div className="min-w-0 space-y-1">
+                                                                                                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                                                                                                        <span className="font-bold text-xs text-foreground">
+                                                                                                                            {b.lotName}
+                                                                                                                        </span>
+                                                                                                                        <span className="font-mono text-[10px] text-muted-foreground bg-muted/30 px-1.5 py-0.5 rounded border border-border/40">
+                                                                                                                            {b.batchNo}
+                                                                                                                        </span>
+                                                                                                                    </div>
+                                                                                                                    <p className="text-[10px] text-muted-foreground">
+                                                                                                                        {b.expiryDate
+                                                                                                                            ? `Exp: ${new Date(b.expiryDate).toLocaleDateString()}`
+                                                                                                                            : "No expiration"}
+                                                                                                                    </p>
+                                                                                                                </div>
+
+                                                                                                                <div className="flex items-center gap-2 shrink-0">
+                                                                                                                    {isNegative && (
+                                                                                                                        <span className="inline-flex items-center gap-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 text-[8px] font-black uppercase">
+                                                                                                                            <AlertTriangle className="h-2.5 w-2.5" /> Negative
+                                                                                                                        </span>
+                                                                                                                    )}
+                                                                                                                    <span className="font-black text-primary text-xs bg-primary/5 px-2.5 py-1 rounded-lg border border-primary/15 font-mono">
+                                                                                                                        {b.quantity} units
+                                                                                                                    </span>
+                                                                                                                </div>
+                                                                                                            </div>
+                                                                                                        );
+                                                                                                    })}
+                                                                                                </div>
+                                                                                            ) : (
+                                                                                                <div className="py-6 text-center text-xs text-muted-foreground italic bg-card rounded-2xl border border-border/40">
+                                                                                                    No lots allocated for this product.
+                                                                                                </div>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    </motion.div>
+                                                                                </td>
+                                                                            </motion.tr>
+                                                                        )}
+                                                                    </AnimatePresence>
+                                                                </React.Fragment>
+                                                            );
+                                                        })}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
                                     </div>
-                                    <div>
-                                        <h3 className="text-base font-black uppercase italic tracking-tight text-foreground">
-                                            Confirm Expired Batches
-                                        </h3>
-                                        <p className="text-xs text-muted-foreground">
-                                            {expiredAllocatedBatches.length} expired batch(es) are currently allocated.
-                                        </p>
-                                    </div>
-                                </div>
 
-                                <div className="max-h-48 overflow-y-auto rounded-2xl border border-border/60 bg-muted/20 p-3 space-y-2 text-xs">
-                                    {expiredAllocatedBatches.map((b, i) => (
-                                        <div key={i} className="flex items-center justify-between border-b border-border/40 pb-1.5 last:border-0 last:pb-0">
+                                    {/* Step 3 Footer */}
+                                    <div className="shrink-0 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-border/60 bg-card px-4 py-4 sm:px-7">
+                                        <div className="text-xs text-muted-foreground">
+                                            Ready to create consolidation batch for <strong className="text-foreground">{branch.branchName}</strong> with{" "}
+                                            <span className="font-bold text-foreground">{selectedIds.size}</span> order(s) and{" "}
+                                            <span className="font-bold text-foreground">{totalOrderedUnits}</span> total units.
+                                        </div>
+
+                                        <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                onClick={handlePrintPicklist}
+                                                className="rounded-xl font-bold gap-1.5"
+                                                title="Print Consolidation Picklist (Portrait PDF)"
+                                            >
+                                                <Printer className="h-4 w-4 text-primary" />
+                                                Print Picklist
+                                            </Button>
+                                            <Button
+                                                variant="outline"
+                                                onClick={() => setStep(2)}
+                                                disabled={submitting}
+                                                className="rounded-xl font-bold"
+                                            >
+                                                <ArrowLeft className="h-4 w-4 mr-1" />
+                                                Back to Stock Allocation
+                                            </Button>
+                                            <Button
+                                                onClick={handleSubmit}
+                                                disabled={!canSubmit}
+                                                className="rounded-xl px-5 font-black uppercase tracking-wider"
+                                            >
+                                                {submitting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+                                                Create Consolidation Batch ({selectedIds.size})
+                                            </Button>
+                                        </div>
+                                    </div>
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+
+                        {/* Expired Batches Confirmation Modal */}
+                        <AnimatePresence>
+                            {showExpiredConfirmModal && (
+                                <div className="fixed inset-0 z-70 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                                    <motion.div
+                                        initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                                        exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                                        transition={{ duration: 0.2 }}
+                                        className="w-full max-w-md rounded-3xl border border-rose-500/30 bg-background p-6 shadow-2xl space-y-4"
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <div className="rounded-2xl bg-rose-500/10 p-3 text-rose-600 dark:text-rose-400">
+                                                <AlertTriangle className="h-6 w-6" />
+                                            </div>
                                             <div>
-                                                <p className="font-mono font-bold text-foreground">{b.batchNo}</p>
-                                                <p className="text-[10px] text-muted-foreground truncate max-w-[200px]">{b.productName}</p>
-                                            </div>
-                                            <div className="text-right">
-                                                <p className="text-[10px] font-black text-rose-600 dark:text-rose-400">Expired {b.expiryDate}</p>
-                                                <p className="text-[10px] text-muted-foreground font-semibold">Qty: {b.quantity}</p>
+                                                <h3 className="text-base font-black uppercase italic tracking-tight text-foreground">
+                                                    Confirm Expired Batches
+                                                </h3>
+                                                <p className="text-xs text-muted-foreground">
+                                                    {expiredAllocatedBatches.length} expired batch(es) are currently allocated.
+                                                </p>
                                             </div>
                                         </div>
-                                    ))}
-                                </div>
 
-                                <p className="text-xs text-muted-foreground">
-                                    Do you want to proceed and include these expired batches in this consolidation order?
-                                </p>
+                                        <div className="max-h-48 overflow-y-auto rounded-2xl border border-border/60 bg-muted/20 p-3 space-y-2 text-xs">
+                                            {expiredAllocatedBatches.map((b, i) => (
+                                                <div key={i} className="flex items-center justify-between border-b border-border/40 pb-1.5 last:border-0 last:pb-0">
+                                                    <div>
+                                                        <p className="font-mono font-bold text-foreground">{b.batchNo}</p>
+                                                        <p className="text-[10px] text-muted-foreground truncate max-w-[200px]">{b.productName}</p>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <p className="text-[10px] font-black text-rose-600 dark:text-rose-400">Expired {b.expiryDate}</p>
+                                                        <p className="text-[10px] text-muted-foreground font-semibold">Qty: {b.quantity}</p>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
 
-                                <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => setShowExpiredConfirmModal(false)}
-                                        className="rounded-xl text-xs font-bold"
-                                    >
-                                        Cancel & Review
-                                    </Button>
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={handleSwitchToManual}
-                                        className="rounded-xl text-xs font-bold border-rose-500/40 text-rose-600 hover:bg-rose-500/10 gap-1.5"
-                                    >
-                                        <Sliders className="h-3.5 w-3.5" />
-                                        Manual Adjust
-                                    </Button>
-                                    <Button
-                                        variant="default"
-                                        size="sm"
-                                        onClick={handleExcludeAndReallocate}
-                                        className="rounded-xl text-xs font-black uppercase tracking-wider bg-rose-600 hover:bg-rose-700 text-white gap-1.5"
-                                    >
-                                        <RotateCcw className="h-3.5 w-3.5" />
-                                        Exclude & Reallocate
-                                    </Button>
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => {
-                                            setAllowExpiredBatches(true);
-                                            setShowExpiredConfirmModal(false);
-                                            setStep(3);
-                                        }}
-                                        className="rounded-xl text-xs font-bold text-muted-foreground hover:text-foreground"
-                                    >
-                                        Proceed with Expired
-                                    </Button>
-                                </div>
-                            </motion.div>
-                        </div>
-                    )}
-                </AnimatePresence>
-
-                {/* Unbalanced Allocation (Shortage & Over-allocated) Confirmation Modal */}
-                <AnimatePresence>
-                    {showUnbalancedConfirmModal && (
-                        <div className="fixed inset-0 z-70 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-                            <motion.div
-                                initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                                animate={{ opacity: 1, scale: 1, y: 0 }}
-                                exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                                transition={{ duration: 0.2 }}
-                                className="w-full max-w-lg rounded-3xl border border-amber-500/30 bg-background p-6 shadow-2xl space-y-4"
-                            >
-                                <div className="flex items-center gap-3">
-                                    <div className="rounded-2xl bg-amber-500/10 p-3 text-amber-600 dark:text-amber-400">
-                                        <AlertTriangle className="h-6 w-6" />
-                                    </div>
-                                    <div>
-                                        <h3 className="text-base font-black uppercase italic tracking-tight text-foreground">
-                                            Unbalanced Stock Allocations
-                                        </h3>
                                         <p className="text-xs text-muted-foreground">
-                                            {unbalancedLines.length} product line(s) have allocation discrepancies (shortage or excess).
+                                            Do you want to proceed and include these expired batches in this consolidation order?
                                         </p>
-                                    </div>
-                                </div>
 
-                                <div className="max-h-56 overflow-y-auto rounded-2xl border border-border/60 bg-muted/20 p-3 space-y-2.5 text-xs">
-                                    {unbalancedLines.map((item, i) => (
-                                        <div
-                                            key={`unbalanced-alloc-${item.invoiceId}-${item.productId}-${i}`}
-                                            className="flex items-center justify-between gap-3 border-b border-border/40 pb-2 last:border-0 last:pb-0"
-                                        >
-                                            <div className="min-w-0 flex-1">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="font-mono font-bold text-foreground">
-                                                        Doc #{item.invoiceNo}
-                                                    </span>
-                                                    {item.customerName && (
-                                                        <span className="truncate text-[10px] text-muted-foreground">
-                                                            ({item.customerName})
-                                                        </span>
-                                                    )}
-                                                </div>
-                                                <p className="truncate text-xs font-semibold text-foreground/90 mt-0.5">
-                                                    {item.productName}
-                                                </p>
-                                                <p className="font-mono text-[10px] text-muted-foreground">
-                                                    SKU: {item.productCode} • ID #{item.productId}
-                                                </p>
+                                        <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => setShowExpiredConfirmModal(false)}
+                                                className="rounded-xl text-xs font-bold"
+                                            >
+                                                Cancel & Review
+                                            </Button>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={handleSwitchToManual}
+                                                className="rounded-xl text-xs font-bold border-rose-500/40 text-rose-600 hover:bg-rose-500/10 gap-1.5"
+                                            >
+                                                <Sliders className="h-3.5 w-3.5" />
+                                                Manual Adjust
+                                            </Button>
+                                            <Button
+                                                variant="default"
+                                                size="sm"
+                                                onClick={handleExcludeAndReallocate}
+                                                className="rounded-xl text-xs font-black uppercase tracking-wider bg-rose-600 hover:bg-rose-700 text-white gap-1.5"
+                                            >
+                                                <RotateCcw className="h-3.5 w-3.5" />
+                                                Exclude & Reallocate
+                                            </Button>
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={() => {
+                                                    setAllowExpiredBatches(true);
+                                                    setShowExpiredConfirmModal(false);
+                                                    setStep(3);
+                                                }}
+                                                className="rounded-xl text-xs font-bold text-muted-foreground hover:text-foreground"
+                                            >
+                                                Proceed with Expired
+                                            </Button>
+                                        </div>
+                                    </motion.div>
+                                </div>
+                            )}
+                        </AnimatePresence>
+
+                        {/* Unbalanced Allocation (Shortage & Over-allocated) Confirmation Modal */}
+                        <AnimatePresence>
+                            {showUnbalancedConfirmModal && (
+                                <div className="fixed inset-0 z-70 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                                    <motion.div
+                                        initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                                        exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                                        transition={{ duration: 0.2 }}
+                                        className="w-full max-w-lg rounded-3xl border border-amber-500/30 bg-background p-6 shadow-2xl space-y-4"
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <div className="rounded-2xl bg-amber-500/10 p-3 text-amber-600 dark:text-amber-400">
+                                                <AlertTriangle className="h-6 w-6" />
                                             </div>
-                                            <div className="text-right shrink-0">
-                                                <div className="flex items-center justify-end gap-1.5 text-[11px]">
-                                                    <span className="text-muted-foreground">Req: <strong className="text-foreground">{item.requiredQty}</strong></span>
-                                                    <span className="text-muted-foreground">|</span>
-                                                    <span className="font-bold text-foreground">Alloc: {item.allocatedQty}</span>
-                                                </div>
-                                                {item.type === "shortage" ? (
-                                                    <span className="inline-block mt-0.5 rounded px-1.5 py-0.5 text-[10px] font-black uppercase bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
-                                                        Shortage: -{Math.abs(item.difference)}
-                                                    </span>
-                                                ) : (
-                                                    <span className="inline-block mt-0.5 rounded px-1.5 py-0.5 text-[10px] font-black uppercase bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
-                                                        Over-allocated: +{item.difference}
-                                                    </span>
-                                                )}
+                                            <div>
+                                                <h3 className="text-base font-black uppercase italic tracking-tight text-foreground">
+                                                    Unbalanced Stock Allocations
+                                                </h3>
+                                                <p className="text-xs text-muted-foreground">
+                                                    {unbalancedLines.length} product line(s) have allocation discrepancies (shortage or excess).
+                                                </p>
                                             </div>
                                         </div>
-                                    ))}
-                                </div>
 
-                                <p className="text-xs text-muted-foreground leading-relaxed">
-                                    The custom allocations above do not match the required document quantities. Would you like to review and adjust your allocations, or proceed with the current allocations?
-                                </p>
+                                        <div className="max-h-56 overflow-y-auto rounded-2xl border border-border/60 bg-muted/20 p-3 space-y-2.5 text-xs">
+                                            {unbalancedLines.map((item, i) => (
+                                                <div
+                                                    key={`unbalanced-alloc-${item.invoiceId}-${item.productId}-${i}`}
+                                                    className="flex items-center justify-between gap-3 border-b border-border/40 pb-2 last:border-0 last:pb-0"
+                                                >
+                                                    <div className="min-w-0 flex-1">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="font-mono font-bold text-foreground">
+                                                                Doc #{item.invoiceNo}
+                                                            </span>
+                                                            {item.customerName && (
+                                                                <span className="truncate text-[10px] text-muted-foreground">
+                                                                    ({item.customerName})
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <p className="truncate text-xs font-semibold text-foreground/90 mt-0.5">
+                                                            {item.productName}
+                                                        </p>
+                                                        <p className="font-mono text-[10px] text-muted-foreground">
+                                                            SKU: {item.productCode} • ID #{item.productId}
+                                                        </p>
+                                                    </div>
+                                                    <div className="text-right shrink-0">
+                                                        <div className="flex items-center justify-end gap-1.5 text-[11px]">
+                                                            <span className="text-muted-foreground">Req: <strong className="text-foreground">{item.requiredQty}</strong></span>
+                                                            <span className="text-muted-foreground">|</span>
+                                                            <span className="font-bold text-foreground">Alloc: {item.allocatedQty}</span>
+                                                        </div>
+                                                        {item.type === "shortage" ? (
+                                                            <span className="inline-block mt-0.5 rounded px-1.5 py-0.5 text-[10px] font-black uppercase bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                                                                Shortage: -{Math.abs(item.difference)}
+                                                            </span>
+                                                        ) : (
+                                                            <span className="inline-block mt-0.5 rounded px-1.5 py-0.5 text-[10px] font-black uppercase bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                                                                Over-allocated: +{item.difference}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
 
-                                <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => setShowUnbalancedConfirmModal(false)}
-                                        disabled={submitting}
-                                        className="rounded-xl text-xs font-bold"
-                                    >
-                                        Cancel
-                                    </Button>
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={handleReviewUnbalancedAllocations}
-                                        disabled={submitting}
-                                        className="rounded-xl text-xs font-bold border-border/80 gap-1.5"
-                                    >
-                                        <Sliders className="h-3.5 w-3.5" />
-                                        Review & Adjust
-                                    </Button>
-                                    <Button
-                                        variant="default"
-                                        size="sm"
-                                        onClick={handleConfirmUnbalancedSubmit}
-                                        disabled={submitting}
-                                        className="rounded-xl text-xs font-black uppercase tracking-wider bg-amber-600 hover:bg-amber-700 text-white gap-1.5"
-                                    >
-                                        {submitting ? (
-                                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                        ) : (
-                                            <CheckCircle2 className="h-3.5 w-3.5" />
-                                        )}
-                                        Proceed with Allocation
-                                    </Button>
+                                        <p className="text-xs text-muted-foreground leading-relaxed">
+                                            The custom allocations above do not match the required document quantities. Would you like to review and adjust your allocations, or proceed with the current allocations?
+                                        </p>
+
+                                        <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => setShowUnbalancedConfirmModal(false)}
+                                                disabled={submitting}
+                                                className="rounded-xl text-xs font-bold"
+                                            >
+                                                Cancel
+                                            </Button>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={handleReviewUnbalancedAllocations}
+                                                disabled={submitting}
+                                                className="rounded-xl text-xs font-bold border-border/80 gap-1.5"
+                                            >
+                                                <Sliders className="h-3.5 w-3.5" />
+                                                Review & Adjust
+                                            </Button>
+                                            <Button
+                                                variant="default"
+                                                size="sm"
+                                                onClick={handleConfirmUnbalancedSubmit}
+                                                disabled={submitting}
+                                                className="rounded-xl text-xs font-black uppercase tracking-wider bg-amber-600 hover:bg-amber-700 text-white gap-1.5"
+                                            >
+                                                {submitting ? (
+                                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                ) : (
+                                                    <CheckCircle2 className="h-3.5 w-3.5" />
+                                                )}
+                                                Proceed with Allocation
+                                            </Button>
+                                        </div>
+                                    </motion.div>
                                 </div>
-                            </motion.div>
-                        </div>
-                    )}
-                </AnimatePresence>
-            </motion.div>
-        </motion.div>
-    )}
-</AnimatePresence>
+                            )}
+                        </AnimatePresence>
+                    </motion.div>
+                </motion.div>
+            )}
+        </AnimatePresence>
     );
 }
