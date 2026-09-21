@@ -15,7 +15,6 @@ import {
     Send,
     ShieldCheck,
     Trash2,
-    Undo2,
     Upload,
     XCircle
 } from "lucide-react";
@@ -86,6 +85,10 @@ function formatDateTime(value: string | null | undefined) {
     return formatPhtTimestamp(value);
 }
 
+function actorLabel(name: string | null | undefined, id: number | null | undefined) {
+    return name || (id && id > 0 ? `User #${id}` : "-");
+}
+
 function uomLabel(unitId: number | null | undefined, lots: LotOption[]) {
     if (!unitId) return "Not recorded";
     return lots.find((lot) => lot.uomId === unitId)?.uomName || `UOM #${unitId}`;
@@ -129,10 +132,6 @@ function StatusBadge({ status }: { status: string }) {
 
 function canCancelTransfer(status: LotTransferStatus) {
     return status === "Draft" || status === "Submitted" || status === "Approved" || status === "Rejected";
-}
-
-function canReverseTransfer(record: LotTransferController["records"][number]) {
-    return record.status === "Posted" && !record.linkedReversalId;
 }
 
 function CancelTransferAction({
@@ -185,63 +184,6 @@ function CancelTransferAction({
                 <div className="flex justify-end gap-2">
                     <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={controller.isActionLoading}>Keep request</Button>
                     <Button type="button" variant="destructive" onClick={() => void handleCancel()} disabled={controller.isActionLoading}><Ban />{controller.isActionLoading ? "Cancelling..." : "Cancel transfer"}</Button>
-                </div>
-            </DialogContent>
-        </Dialog>
-    </>;
-}
-
-function ReverseTransferAction({
-    controller,
-    record,
-    onSuccess
-}: {
-    controller: LotTransferController;
-    record: LotTransferController["records"][number];
-    onSuccess?: () => void;
-}) {
-    const [open, setOpen] = useState(false);
-    const [reason, setReason] = useState("");
-    const [localError, setLocalError] = useState<string | null>(null);
-
-    if (!canReverseTransfer(record)) return null;
-
-    const handleReverse = async () => {
-        const cleanReason = reason.trim();
-        if (!cleanReason) {
-            setLocalError("A reversal reason is required.");
-            return;
-        }
-        setLocalError(null);
-        const reversed = await controller.reverse(record.id, cleanReason);
-        if (!reversed) {
-            setLocalError("The transfer could not be reversed. Review the page error and retry if appropriate.");
-            return;
-        }
-        setReason("");
-        setOpen(false);
-        onSuccess?.();
-    };
-
-    return <>
-        <Button type="button" variant="outline" size="sm" onClick={() => { setLocalError(null); setOpen(true); }} disabled={controller.isActionLoading}>
-            <Undo2 />Reverse transfer
-        </Button>
-        <Dialog open={open} onOpenChange={(nextOpen) => { setOpen(nextOpen); if (!nextOpen) { setReason(""); setLocalError(null); } }}>
-            <DialogContent className="max-w-lg">
-                <DialogHeader>
-                    <DialogTitle>Reverse {record.requestNo}?</DialogTitle>
-                    <DialogDescription>The posted transfer remains immutable. This creates one linked Reversed record with compensating movements from the posted destination back to the posted source.</DialogDescription>
-                </DialogHeader>
-                {localError && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200">{localError}</div>}
-                <label>
-                    <FieldLabel required>Reversal reason</FieldLabel>
-                    <textarea className={textAreaClassName} value={reason} onChange={(event) => setReason(event.currentTarget.value)} maxLength={5000} placeholder="Explain why the posted transfer must be fully reversed..." />
-                </label>
-                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">The server revalidates destination availability, source capacity, UOM, QA, and every original movement pair before posting the reversal.</div>
-                <div className="flex justify-end gap-2">
-                    <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={controller.isActionLoading}>Keep posted</Button>
-                    <Button type="button" onClick={() => void handleReverse()} disabled={controller.isActionLoading}><Undo2 />{controller.isActionLoading ? "Reversing..." : "Reverse transfer"}</Button>
                 </div>
             </DialogContent>
         </Dialog>
@@ -455,7 +397,7 @@ function MovementHistoryTimeline({ controller, record }: { controller: LotTransf
     }, [record, result]);
 
     return (
-        <div className="mt-4 rounded-lg border bg-muted/20 p-3" aria-label="Inventory movement history">
+        <div className="mt-4 min-w-0 max-w-full rounded-lg border bg-muted/20 p-3" aria-label="Inventory movement history">
             <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                     <h3 className="text-sm font-semibold">Movement history</h3>
@@ -476,10 +418,10 @@ function MovementHistoryTimeline({ controller, record }: { controller: LotTransf
                                 <span>Paired lines: <strong className="text-foreground">{result.pairedLineCount}/{result.expectedLineCount}</strong></span>
                             </div>
                             {result.reconciliationRequired && <p role="alert" className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">Movement reconciliation is required: the recorded ledger rows do not form the expected canonical OUT/IN pair for every transfer line.</p>}
-                            {groups.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">No inventory movements are recorded for this transfer.</p> : <div className="mt-3 space-y-3">
+                            {groups.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">No inventory movements are recorded for this transfer.</p> : <div className="mt-3 min-w-0 max-w-full space-y-3">
                                 {groups.map((group) => <div key={group.label} className="rounded-lg border bg-background p-2">
                                     <h4 className="px-1 pb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</h4>
-                                    <div className="overflow-x-auto">
+                                    <div className="min-w-0 max-w-full overflow-x-auto">
                                         <table className="w-full min-w-[980px] text-left text-xs">
                                             <thead className="border-y bg-muted/40 text-[10px] uppercase tracking-wide text-muted-foreground"><tr><th className="px-2 py-2">Direction</th><th className="px-2 py-2">Transaction type</th><th className="px-2 py-2">Product</th><th className="px-2 py-2">MM lot</th><th className="px-2 py-2">Batch</th><th className="px-2 py-2">Quantity</th><th className="px-2 py-2">Created</th><th className="px-2 py-2">User</th><th className="px-2 py-2">Remarks</th></tr></thead>
                                             <tbody className="divide-y">{group.rows.map((movement) => <tr key={movement.movementId}>
@@ -992,7 +934,7 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
                 {controller.selectedRecord && <CancelTransferAction controller={controller} record={controller.selectedRecord} onSuccess={onClose} />}
                 {controller.selectedId && controller.selectedRecord?.status === "Draft" && <Button type="button" variant="destructive" onClick={() => void handleDelete()} disabled={controller.isActionLoading}><Trash2 />Delete Draft</Button>}
                 <Button type="button" variant="outline" onClick={() => void handleSave()} disabled={controller.isActionLoading || controller.isLookupLoading || !controller.isDraftFormComplete}><Save />Save Draft</Button>
-                <Button type="button" onClick={() => void handleSubmit()} disabled={controller.isActionLoading || !controller.selectedId || controller.selectedRecord?.status !== "Draft" || !controller.draftValidationIsCurrent || controller.draftValidationStatus !== "valid" || !controller.preview?.canApprove}><Send />Submit for QA</Button>
+                <Button type="button" onClick={() => void handleSubmit()} disabled={controller.isActionLoading || (controller.selectedId !== null && controller.selectedRecord?.status !== "Draft") || !controller.isDraftFormComplete || !controller.draftValidationIsCurrent || controller.draftValidationStatus !== "valid" || !controller.preview?.canApprove}><Send />Submit for QA</Button>
             </div>
         </section>
     );
@@ -1098,7 +1040,7 @@ function PostingReview({ controller }: { controller: LotTransferController }) {
                 <div className="mt-4"><h3 className="mb-2 text-sm font-semibold">Posting validation</h3><Checks preview={preview} /></div>
                 <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-sm"><strong>Reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reason}</p></div>
                 {notice && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">{notice}</div>}
-                <div className="mt-4 flex justify-end gap-2"><ReverseTransferAction controller={controller} record={record} /><CancelTransferAction controller={controller} record={record} />{record.status === "Approved" && <Button type="button" onClick={() => void handlePost()} disabled={controller.isActionLoading || !preview?.canPost}><Upload />Post transfer</Button>}</div>
+                <div className="mt-4 flex justify-end gap-2"><CancelTransferAction controller={controller} record={record} />{record.status === "Approved" && <Button type="button" onClick={() => void handlePost()} disabled={controller.isActionLoading || !preview?.canPost}><Upload />Post transfer</Button>}</div>
             </>}
         </section>
     );
@@ -1225,7 +1167,7 @@ function SummaryAudit({ controller, allowCancel = false }: { controller: LotTran
     };
 
     return (
-        <section className={panelClassName} aria-labelledby="lot-transfer-audit-heading">
+        <section className={`${panelClassName} min-w-0 w-full`} aria-labelledby="lot-transfer-audit-heading">
             {!record ? <EmptyState message="Select a terminal request to view its audit record." /> : <>
                 <div className="mb-4 flex items-center justify-between gap-3">
                     <div>
@@ -1247,19 +1189,17 @@ function SummaryAudit({ controller, allowCancel = false }: { controller: LotTran
                     <div><dt className="text-xs text-muted-foreground">UOM</dt><dd className="font-semibold">{uomLabel(record.unitId, controller.lots)}</dd></div>
                     <div><dt className="text-xs text-muted-foreground">Source movement</dt><dd className="font-semibold">{record.sourceMovementId || "Not posted"}</dd></div>
                     <div><dt className="text-xs text-muted-foreground">Target movement</dt><dd className="font-semibold">{record.targetMovementId || "Not posted"}</dd></div>
-                    <div><dt className="text-xs text-muted-foreground">Source balance</dt><dd>{formatQuantity(record.sourceBalanceBefore)} -&gt; {formatQuantity(record.sourceBalanceAfter)}</dd></div>
-                    <div><dt className="text-xs text-muted-foreground">Target balance</dt><dd>{formatQuantity(record.targetBalanceBefore)} -&gt; {formatQuantity(record.targetBalanceAfter)}</dd></div>
                     <div><dt className="text-xs text-muted-foreground">Effective expiry</dt><dd>{formatDate(record.effectiveExpiryDate)}</dd></div>
-                    <div><dt className="text-xs text-muted-foreground">Submitted by</dt><dd>{record.submittedBy || "System"}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Submitted by</dt><dd>{actorLabel(record.submittedByName, record.submittedBy)}</dd></div>
                     <div><dt className="text-xs text-muted-foreground">Submitted at</dt><dd>{formatDateTime(record.submittedAt)}</dd></div>
                     <div><dt className="text-xs text-muted-foreground">Approved at</dt><dd>{formatDateTime(record.approvedAt)}</dd></div>
                     <div><dt className="text-xs text-muted-foreground">Posted at</dt><dd>{formatDateTime(record.postedAt)}</dd></div>
-                    <div><dt className="text-xs text-muted-foreground">Posted by</dt><dd>{record.postedByName || record.postedBy || "Not posted"}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Posted by</dt><dd>{actorLabel(record.postedByName, record.postedBy)}</dd></div>
                     <div><dt className="text-xs text-muted-foreground">Cancelled at</dt><dd>{formatDateTime(record.cancelledAt)}</dd></div>
-                    <div><dt className="text-xs text-muted-foreground">Cancelled by</dt><dd>{record.cancelledByName || record.cancelledBy || "Not cancelled"}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Cancelled by</dt><dd>{actorLabel(record.cancelledByName, record.cancelledBy)}</dd></div>
                     {record.reversalOfId !== null && <div><dt className="text-xs text-muted-foreground">Reversal of</dt><dd className="font-semibold">Transfer #{record.reversalOfId}</dd></div>}
                     {record.reversedAt && <div><dt className="text-xs text-muted-foreground">Reversed at</dt><dd>{formatDateTime(record.reversedAt)}</dd></div>}
-                    {record.reversedAt && <div><dt className="text-xs text-muted-foreground">Reversed by</dt><dd>{record.reversedByName || record.reversedBy || "System"}</dd></div>}
+                    {record.reversedAt && <div><dt className="text-xs text-muted-foreground">Reversed by</dt><dd>{actorLabel(record.reversedByName, record.reversedBy)}</dd></div>}
                 </dl>
                 <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-sm">
                     <strong>Reason</strong>
@@ -1269,16 +1209,15 @@ function SummaryAudit({ controller, allowCancel = false }: { controller: LotTran
                     {record.reversalReason && <><strong className="mt-3 block">Reversal reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reversalReason}</p></>}
                     {record.postingError && <><strong className="mt-3 block text-red-700">Posting error</strong><p className="mt-1 whitespace-pre-wrap text-red-700">{record.postingError}</p></>}
                 </div>
-                <Tabs value={auditTab} onValueChange={handleAuditTabChange} className="mt-4" aria-label="Lot-transfer audit history">
+                <Tabs value={auditTab} onValueChange={handleAuditTabChange} className="mt-4 min-w-0 w-full" aria-label="Lot-transfer audit history">
                     <TabsList className="w-full sm:w-fit">
                         <TabsTrigger value="approval">Approval history</TabsTrigger>
                         <TabsTrigger value="movement">Movement history</TabsTrigger>
                     </TabsList>
-                    <TabsContent value="approval"><StatusHistoryTimeline controller={controller} record={record} /></TabsContent>
-                    <TabsContent value="movement"><MovementHistoryTimeline controller={controller} record={record} /></TabsContent>
+                    <TabsContent value="approval" className="min-w-0"><StatusHistoryTimeline controller={controller} record={record} /></TabsContent>
+                    <TabsContent value="movement" className="min-w-0"><MovementHistoryTimeline controller={controller} record={record} /></TabsContent>
                 </Tabs>
                 <div className="mt-4 flex justify-end gap-2">
-                    <ReverseTransferAction controller={controller} record={record} />
                     {allowCancel && <CancelTransferAction controller={controller} record={record} />}
                 </div>
             </>}
@@ -1374,7 +1313,7 @@ export default function LotTransferModule({ mode, userBranchId }: LotTransferMod
                 </DialogContent>
             </Dialog>}
             {mode === "request" && <Dialog open={requestStatusDialogOpen} onOpenChange={(open) => open ? setRequestStatusDialogOpen(true) : closeRequestStatusDialog()}>
-                <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+                <DialogContent className="max-h-[90vh] w-[95vw] max-w-6xl overflow-x-hidden overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>Lot transfer status</DialogTitle>
                         <DialogDescription>Read-only status and audit details for the selected transfer request.</DialogDescription>
@@ -1401,7 +1340,7 @@ export default function LotTransferModule({ mode, userBranchId }: LotTransferMod
                 </DialogContent>
             </Dialog>}
             {mode === "summary" && <Dialog open={summaryDialogOpen} onOpenChange={(open) => open ? setSummaryDialogOpen(true) : closeSummaryDialog()}>
-                <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+                <DialogContent className="max-h-[90vh] w-[95vw] max-w-6xl overflow-x-hidden overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>Lot transfer audit</DialogTitle>
                         <DialogDescription>Read-only details for the selected terminal transfer request.</DialogDescription>

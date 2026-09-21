@@ -7,6 +7,7 @@ import {
     mapTransferRow,
     readLinkedReversals
 } from "./_record-mappers";
+import { enrichTransferActorNames } from "./_user-enrichment";
 import type { LotTransferRecord } from "./_types";
 import { isRecord, numeric, transferId } from "./_values";
 
@@ -192,8 +193,9 @@ export async function listLotTransfers(options: LotTransferListOptions): Promise
     }
 
     const recordsWithoutLinks = await Promise.all(headerRows.map(async (row) => hydrateTransferRecord(mapTransferRow(row), false)));
-    const linkedReversals = await readLinkedReversals(recordsWithoutLinks.map((record) => record.id));
-    const records = recordsWithoutLinks.map((record) => attachLinkedReversal(record, linkedReversals.get(record.id)));
+    const recordsWithUserNames = await enrichTransferActorNames(recordsWithoutLinks);
+    const linkedReversals = await readLinkedReversals(recordsWithUserNames.map((record) => record.id));
+    const records = recordsWithUserNames.map((record) => attachLinkedReversal(record, linkedReversals.get(record.id)));
     const searchText = options.search?.trim().toLowerCase() || "";
     const filteredRecords = expandedFilterActive
         ? records.filter((record) => {
@@ -222,5 +224,6 @@ export async function listLotTransfers(options: LotTransferListOptions): Promise
 
 export async function getLotTransfer(id: number): Promise<LotTransferRecord> {
     const row = await directusItem(`/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(id))}?fields=*`, "Lot-transfer lookup");
-    return hydrateTransferRecord(mapTransferRow(row));
+    const record = await hydrateTransferRecord(mapTransferRow(row));
+    return (await enrichTransferActorNames([record]))[0];
 }
