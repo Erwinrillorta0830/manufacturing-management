@@ -130,9 +130,9 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
 
     // --- Find Best Match Template (similar to generatePoPdf) ---
     const templates = await pdfTemplateService.fetchTemplates();
-    const template = templates.find(t => t.name === "MEN2") 
-                 || templates.find(t => t.name.toLowerCase().includes("men2")) 
-                 || templates[0];
+    const template = templates.find(t => t.name === "MEN2")
+      || templates.find(t => t.name.toLowerCase().includes("men2"))
+      || templates[0];
     const templateName = template?.name || "MEN2";
 
     const doc = await PdfEngine.generateWithFrame(templateName, companyData, (doc, startY, config) => {
@@ -450,11 +450,11 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
       doc.setFontSize(8);
       doc.setTextColor(100, 116, 139);
       doc.setFont("helvetica", "normal");
-      
+
       doc.setLineWidth(0.2);
       doc.setDrawColor(148, 163, 184);
-      
-      // Prepared By
+
+      // Created By
       doc.text("PREPARED BY:", margins.left, sigY);
       doc.line(margins.left, sigY + 12, margins.left + 50, sigY + 12);
       doc.setFontSize(9);
@@ -463,16 +463,19 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
       const createdBy = typeof data.created_by === 'object' ? `${data.created_by?.user_fname} ${data.created_by?.user_lname}` : data.created_by || "System";
       doc.text(createdBy, margins.left, sigY + 10);
 
-      // Approved By
+      // Posted BY
       doc.setFontSize(8);
-      doc.setFont("helvetica", "normal");
       doc.setTextColor(100, 116, 139);
-      doc.text("APPROVED BY:", pageWidth / 2 - 25, sigY);
-      doc.line(pageWidth / 2 - 25, sigY + 12, pageWidth / 2 + 25, sigY + 12);
-
-      // Received By
-      doc.text("RECEIVED BY:", pageWidth - margins.right - 50, sigY);
+      doc.setFont("helvetica", "normal");
+      doc.setLineWidth(0.2);
+      doc.setDrawColor(148, 163, 184);
+      doc.text("POSTED BY:", pageWidth - margins.right - 50, sigY);
       doc.line(pageWidth - margins.right - 50, sigY + 12, pageWidth - margins.right, sigY + 12);
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(15, 23, 42);
+      const postedBy = typeof data.posted_by === 'object' ? `${data.posted_by?.user_fname} ${data.posted_by?.user_lname}` : data.posted_by || "System";
+      doc.text(postedBy, pageWidth - margins.right - 50, sigY + 10);
     });
 
     doc.save(`StockAdjustment_${data.doc_no}.pdf`);
@@ -613,7 +616,7 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
                           const isImage = typeof file === 'object'
                             ? Boolean(file.type?.startsWith('image') || (file.filename_download && /\.(png|jpe?g|webp|gif|svg|avif|bmp)$/i.test(file.filename_download)))
                             : true;
-                          const sizeInMb = typeof file === 'object' && file.filesize 
+                          const sizeInMb = typeof file === 'object' && file.filesize
                             ? (Number(file.filesize) / (1024 * 1024)).toFixed(2)
                             : null;
 
@@ -729,7 +732,7 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
                 const total = qty * cost;
                 const current = Number(item.current_stock) || 0;
                 const unitName = item.unit_name || product.unit_name || "pcs";
-                
+
                 // Color-coded Delta quantities
                 const isIncoming = data.type === 'IN';
                 const newStock = isIncoming ? current + qty : current - qty;
@@ -751,9 +754,8 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
                     <React.Fragment key={item.id || idx}>
                       {/* Product Summary Row */}
                       <TableRow
-                        className={`border-b border-border/70 bg-muted/40 hover:bg-muted/50 transition-colors duration-150 font-semibold ${
-                          idx > 0 ? "border-t-2 border-t-border" : "border-t border-border/50"
-                        }`}
+                        className={`border-b border-border/70 bg-muted/40 hover:bg-muted/50 transition-colors duration-150 font-semibold ${idx > 0 ? "border-t-2 border-t-border" : "border-t border-border/50"
+                          }`}
                       >
                         <TableCell className="text-center font-bold">
                           <div className="flex items-center justify-center">
@@ -912,9 +914,8 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
                 return (
                   <TableRow
                     key={item.id || idx}
-                    className={`border-b border-border/60 hover:bg-muted/35 transition-colors duration-150 ${
-                      idx > 0 ? "border-t-2 border-t-border" : "border-t border-border/50"
-                    }`}
+                    className={`border-b border-border/60 hover:bg-muted/35 transition-colors duration-150 ${idx > 0 ? "border-t-2 border-t-border" : "border-t border-border/50"
+                      }`}
                   >
                     <TableCell className="text-center font-bold">
                       <div className="flex items-center justify-center">
@@ -971,9 +972,9 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
                         {item.rfid_tags && item.rfid_tags.length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-2 animate-in fade-in duration-300">
                             {item.rfid_tags.map((tag) => (
-                              <Badge 
-                                key={tag} 
-                                variant="secondary" 
+                              <Badge
+                                key={tag}
+                                variant="secondary"
                                 className="bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 border border-amber-200/50 dark:border-amber-800/30 font-mono text-[9px] py-0.5 px-2 flex items-center gap-1 rounded-md shadow-sm"
                               >
                                 <Tag className="h-2.5 w-2.5" />
