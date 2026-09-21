@@ -17,6 +17,8 @@ import type { LotTransferMode } from "@/modules/manufacturing-management/lot-tra
 interface LotTransferPageShellProps {
     mode: LotTransferMode;
     title: string;
+    transferId?: number;
+    backHref?: string;
 }
 
 function numberValue(value: unknown) {
@@ -24,7 +26,7 @@ function numberValue(value: unknown) {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
-export default async function LotTransferPageShell({ mode, title }: LotTransferPageShellProps) {
+export default async function LotTransferPageShell({ mode, title, transferId, backHref }: LotTransferPageShellProps) {
     const cookieStore = await cookies();
     const token = cookieStore.get("vos_access_token")?.value || cookieStore.get("springboot_token")?.value;
     const payload = token ? decodeJwtPayload(token) : null;
@@ -60,7 +62,7 @@ export default async function LotTransferPageShell({ mode, title }: LotTransferP
                 </div>
                 <div className="flex h-full max-w-[48vw] shrink-0 items-center overflow-hidden px-2 sm:max-w-none sm:px-4"><NavUser user={headerUser} /></div>
             </header>
-            <LotTransferModule mode={mode} userBranchId={userBranchId || null} />
+            <LotTransferModule mode={mode} userBranchId={userBranchId || null} transferId={transferId} backHref={backHref} />
         </div>
     );
 }

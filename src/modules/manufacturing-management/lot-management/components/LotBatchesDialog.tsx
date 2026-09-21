@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Batch, Lot } from "../types";
 import { groupAndSumLotBatches } from "../utils/fefoEngine";
+import { calculateLotBalance } from "@/modules/manufacturing-management/shared/services/lot-balance.service";
 import {
     Boxes,
     Search,
@@ -70,21 +71,13 @@ export default function LotBatchesDialog({
     if (!lot) return null;
 
     const unitLabel = lot.uomShortcut || lot.uomName || "";
-    const positiveQuantity = lotBatches.reduce((sum, b) => {
-        const q = Number(b.quantity || 0);
-        return q > 0 ? sum + q : sum;
-    }, 0);
-
-    const negativeQuantity = lotBatches.reduce((sum, b) => {
-        const q = Number(b.quantity || 0);
-        return q < 0 ? sum + Math.abs(q) : sum;
-    }, 0);
+    const lotBalance = calculateLotBalance(lotBatches, Number(lot.lotId), lot.maxBatchCapacity);
+    const positiveQuantity = lotBalance.onHandQuantity;
+    const negativeQuantity = lotBalance.negativeQuantity;
 
     const maxCapacity = Number(lot.maxBatchCapacity || 0);
     const isNegative = negativeQuantity > 0;
-    const occupancyPct = maxCapacity > 0
-        ? Math.max(0, Math.min(100, Math.round((positiveQuantity / maxCapacity) * 100)))
-        : 0;
+    const occupancyPct = lotBalance.occupancyPercent ?? 0;
     const isOverCapacity = maxCapacity > 0 && positiveQuantity > maxCapacity;
     const isNearCapacity = maxCapacity > 0 && positiveQuantity >= maxCapacity * 0.8 && !isOverCapacity && !isNegative;
 

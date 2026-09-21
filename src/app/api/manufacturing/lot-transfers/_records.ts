@@ -21,6 +21,7 @@ import {
     normalizedDetails,
     patchPayload,
     replaceTransferDetails,
+    requireMatchingProductUnitIds,
     requireMatchingTransferUnitId,
     transferPayload
 } from "./_input";
@@ -41,9 +42,12 @@ export async function createLotTransfer(input: LotTransferInput, actorUserId: nu
             targetLotId: input.targetLotId,
             targetInventoryLotId: detail.targetInventoryLotId
         });
-        return requireMatchingTransferUnitId(canonical);
+        return { canonical, unitId: requireMatchingTransferUnitId(canonical) };
     }));
-    const transferUnitId = canonicalReferences.every((unit) => unit === canonicalReferences[0]) ? canonicalReferences[0] : null;
+    await requireMatchingProductUnitIds(details, canonicalReferences[0].canonical);
+    const transferUnitId = canonicalReferences.every((reference) => reference.unitId === canonicalReferences[0].unitId)
+        ? canonicalReferences[0].unitId
+        : null;
     const requestNo = generateRequestNo();
     const row = await mutateDirectus(
         `/items/${LOT_TRANSFER_COLLECTION}`,
@@ -110,16 +114,21 @@ export async function updateLotTransfer(id: number, input: LotTransferPatchInput
             }] : fallbackDetails)
     };
     assertDifferentLotIds(normalized.sourceLotId, normalized.targetLotId);
-    const unitIds = await Promise.all(normalizedDetails(normalized).map(async (detail) => {
+    const normalizedTransferDetails = normalizedDetails(normalized);
+    const canonicalReferences = await Promise.all(normalizedTransferDetails.map(async (detail) => {
         if (detail.sourceInventoryLotId === detail.targetInventoryLotId) throw new LotTransferError(400, `Detail line ${detail.lineNo} must use different source and target inventory lots.`);
-        return requireMatchingTransferUnitId(await assertCanonicalLotReferences({
+        const canonical = await assertCanonicalLotReferences({
             sourceLotId: normalized.sourceLotId,
             sourceInventoryLotId: detail.sourceInventoryLotId,
             targetLotId: normalized.targetLotId,
             targetInventoryLotId: detail.targetInventoryLotId
-        }));
+        });
+        return { canonical, unitId: requireMatchingTransferUnitId(canonical) };
     }));
-    const transferUnitId = unitIds.every((unit) => unit === unitIds[0]) ? unitIds[0] : null;
+    await requireMatchingProductUnitIds(normalizedTransferDetails, canonicalReferences[0].canonical);
+    const transferUnitId = canonicalReferences.every((reference) => reference.unitId === canonicalReferences[0].unitId)
+        ? canonicalReferences[0].unitId
+        : null;
     const existingDetailRows = await readRawTransferDetails(id);
     const row = await mutateDirectus(
         `/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(id))}`,

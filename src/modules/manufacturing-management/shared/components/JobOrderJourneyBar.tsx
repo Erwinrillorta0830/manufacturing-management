@@ -45,9 +45,9 @@ export function JobOrderJourneyBar({ journey, compact = false, className }: JobO
 
     if (compact) {
         return (
-            <div className={cn("flex items-center gap-2", className)} title={journey.statusDescription}>
+            <div className={cn("flex min-w-0 max-w-full items-center gap-2", className)} title={journey.statusDescription}>
                 {dots}
-                <span className="text-[10px] font-semibold text-muted-foreground whitespace-nowrap">{journey.stageLabel}</span>
+                <span className="min-w-0 truncate text-[10px] font-semibold text-muted-foreground whitespace-nowrap">{journey.stageLabel}</span>
             </div>
         );
     }

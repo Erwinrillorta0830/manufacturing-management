@@ -31,11 +31,11 @@ function ConnectedSalesOrderCell({ jobOrder }: { jobOrder: any }) {
         .filter((orderNo: string, index: number, orderNumbers: string[]) => orderNumbers.indexOf(orderNo) === index);
 
     return (
-        <td className="px-4 py-3 align-top">
+        <td className="px-2 py-3 align-top">
             {salesOrders.length > 0 ? (
                 <div className="flex flex-col gap-1">
                     {salesOrders.map((orderNo: string) => (
-                        <span key={orderNo} className="font-mono text-xs font-semibold text-primary whitespace-nowrap">
+                        <span key={orderNo} className="block break-all font-mono text-xs font-semibold text-primary">
                             {orderNo}
                         </span>
                     ))}
@@ -65,18 +65,26 @@ export function JOTable({
     }
 
     return (
-        <div className="overflow-x-auto border rounded-lg">
-            <table className="w-full text-sm text-left text-muted-foreground border-collapse">
+        <div className="w-full overflow-hidden border rounded-lg">
+            <table className="w-full table-fixed text-sm text-left text-muted-foreground border-collapse">
+                <colgroup>
+                    <col style={{ width: "12%" }} />
+                    <col style={{ width: "13%" }} />
+                    <col style={{ width: "19%" }} />
+                    <col style={{ width: "9%" }} />
+                    <col style={{ width: "15%" }} />
+                    <col style={{ width: "17%" }} />
+                    <col style={{ width: "15%" }} />
+                </colgroup>
                 <thead className="text-xs uppercase bg-muted/40 font-bold border-b text-foreground">
                     <tr>
-                        <th className="px-4 py-3">Job Order ID</th>
-                        <th className="px-4 py-3">Connected SO</th>
-                        <th className="px-4 py-3">Product Name</th>
-                        <th className="px-4 py-3 text-right">Target Qty</th>
-                        <th className="px-4 py-3">Duration / Lead Time</th>
-                        <th className="px-4 py-3">Stage / Status</th>
-                        <th className="px-4 py-3">Remarks / Constraints</th>
-                        <th className="px-4 py-3 text-center">Actions</th>
+                        <th className="px-2 py-3 break-words">Job Order ID</th>
+                        <th className="px-2 py-3 break-words">Connected SO</th>
+                        <th className="px-2 py-3 break-words">Product Name</th>
+                        <th className="px-2 py-3 break-words text-right">Target Qty</th>
+                        <th className="px-2 py-3 break-words">Duration / Lead Time</th>
+                        <th className="px-2 py-3 break-words">Stage / Status</th>
+                        <th className="px-2 py-3 text-center">Actions</th>
                     </tr>
                 </thead>
                 <tbody className="divide-y text-foreground/90">
@@ -103,27 +111,27 @@ export function JOTable({
                             const journey = resolveJobOrderJourney({ status: jo.status, jobOrderNo: jo.jo_id });
                             return (
                                 <tr key={jo.jo_id || jo.id} className="hover:bg-muted/10">
-                                    <td className="px-4 py-3 font-semibold text-primary">{jo.jo_id}</td>
+                                    <td className="px-2 py-3 break-words font-semibold text-primary">{jo.jo_id}</td>
                                     <ConnectedSalesOrderCell jobOrder={jo} />
-                                    <td className="px-4 py-3">
+                                    <td className="px-2 py-3">
                                         <div className="flex items-center gap-2 flex-wrap">
-                                            <span className="font-bold text-foreground">{jo.product_name}</span>
+                                            <span className="min-w-0 break-words font-bold text-foreground">{jo.product_name}</span>
                                             <span className="text-[10px] font-semibold text-primary bg-primary/10 border border-primary/20 px-2 py-0.5 rounded-md shrink-0">
                                                 {jo.uom_name || jo.unit_of_measurement || "Pieces"}
                                             </span>
                                         </div>
                                     </td>
-                                    <td className="px-4 py-3 text-right font-semibold">
+                                    <td className="px-2 py-3 break-all text-right font-semibold">
                                         {jo.quantity?.toLocaleString()} <span className="text-xs text-muted-foreground font-normal">{jo.uom_name || jo.uom_shortcut || "pcs"}</span>
                                     </td>
-                                    <td className="px-4 py-3 font-medium">
+                                    <td className="px-2 py-3 font-medium">
                                         {metrics.leadTimeHours > 0 ? (
                                             <div className="text-xs font-mono space-y-0.5">
-                                                <div className="flex items-center gap-1.5">
+                                                <div className="flex flex-wrap items-center gap-1.5">
                                                     <span className="font-bold text-foreground text-[13px]">{metrics.leadTimeDays.toFixed(1)} days</span>
                                                     <span className="text-[10px] text-muted-foreground">({metrics.leadTimeHours.toFixed(1)} line hrs)</span>
                                                 </div>
-                                                <div className="text-[10px] text-muted-foreground flex items-center gap-1">
+                                                <div className="text-[10px] text-muted-foreground flex flex-wrap items-center gap-1">
                                                     <span>Effort:</span>
                                                     <span className="font-semibold text-foreground/80">{metrics.cumulativeHours.toFixed(1)} mach-hrs</span>
                                                 </div>
@@ -132,7 +140,7 @@ export function JOTable({
                                             <span className="text-xs text-muted-foreground">—</span>
                                         )}
                                     </td>
-                                    <td className="px-4 py-3">
+                                    <td className="px-2 py-3">
                                         <div className="space-y-1.5">
                                             <div className="flex flex-wrap items-center gap-1.5">
                                                 <JobOrderStatusBadge
@@ -145,25 +153,22 @@ export function JOTable({
                                                     </Badge>
                                                 )}
                                             </div>
-                                            <JobOrderJourneyBar journey={journey} compact />
+                                            <JobOrderJourneyBar journey={journey} compact className="min-w-0" />
                                         </div>
                                     </td>
-                                    <td className="px-4 py-3 text-xs max-w-xs truncate text-muted-foreground" title={jo.remarks || ""}>
-                                        {jo.remarks || "No planning constraints logged."}
-                                    </td>
-                                    <td className="px-4 py-3 text-center">
-                                        <div className="flex items-center justify-center gap-1.5">
+                                    <td className="px-2 py-3 text-center">
+                                        <div className="flex flex-wrap items-center justify-center gap-1.5">
                                             {readOnly ? (
                                                 <Button
                                                     size="sm"
                                                     variant="outline"
                                                     onClick={() => handleOpenDetails(jo)}
-                                                    className="border-primary/30 hover:border-primary text-primary hover:bg-primary/5 font-bold h-8 text-xs px-3 transition-all duration-200"
+                                                    className="h-auto min-h-8 max-w-full shrink whitespace-normal break-words border-primary/30 px-2 py-1 text-center text-[11px] font-bold leading-tight text-primary transition-all duration-200 hover:border-primary hover:bg-primary/5"
                                                 >
                                                     View Details
                                                 </Button>
                                             ) : journey.nextAction?.href && !journey.nextAction.blockedReason ? (
-                                                <Button asChild size="sm" className="h-8 text-xs font-semibold">
+                                                <Button asChild size="sm" className="h-auto min-h-8 max-w-full shrink whitespace-normal break-words px-2 py-1 text-center text-[11px] font-semibold leading-tight">
                                                     <Link href={journey.nextAction.href}>{journey.nextAction.label}</Link>
                                                 </Button>
                                             ) : (
@@ -173,7 +178,7 @@ export function JOTable({
                                                     onClick={() => handleOpenDetails(jo)}
                                                     disabled={Boolean(journey.nextAction?.blockedReason)}
                                                     title={journey.nextAction?.blockedReason || journey.nextAction?.description}
-                                                    className="border-primary/30 hover:border-primary text-primary hover:bg-primary/5 font-bold h-8 text-xs px-3 transition-all duration-200"
+                                                    className="h-auto min-h-8 max-w-full shrink whitespace-normal break-words border-primary/30 px-2 py-1 text-center text-[11px] font-bold leading-tight text-primary transition-all duration-200 hover:border-primary hover:bg-primary/5"
                                                 >
                                                     {journey.nextAction?.label || "Manage / View Details"}
                                                 </Button>
@@ -183,7 +188,7 @@ export function JOTable({
                                                     size="sm"
                                                     variant="ghost"
                                                     onClick={() => handleOpenDetails(jo)}
-                                                    className="h-8 text-xs text-muted-foreground"
+                                                    className="h-auto min-h-8 max-w-full shrink whitespace-normal break-words px-2 py-1 text-center text-[11px] leading-tight text-muted-foreground"
                                                 >
                                                     Details
                                                 </Button>
@@ -208,7 +213,7 @@ export function JOTable({
                             <React.Fragment key={`family-group-${fg.familyId}`}>
                                 {/* Family Header Banner */}
                                 <tr className="bg-sky-500/10 dark:bg-sky-950/40 border-t-2 border-b border-sky-500/30">
-                                    <td colSpan={8} className="px-4 py-2.5">
+                                    <td colSpan={7} className="px-2 py-2.5">
                                         <div className="flex flex-wrap items-center justify-between gap-2">
                                             <div className="flex items-center gap-2 text-xs font-bold text-sky-700 dark:text-sky-300">
                                                 <span className="bg-sky-500/20 text-sky-600 dark:text-sky-400 border border-sky-500/30 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider flex items-center gap-1">
@@ -239,32 +244,32 @@ export function JOTable({
 
                                 {/* Parent JO Row */}
                                 <tr className="hover:bg-muted/10 bg-card/60">
-                                    <td className="px-4 py-3 font-semibold text-primary flex items-center gap-2">
+                                    <td className="px-2 py-3 break-words font-semibold text-primary">
                                         <span className="text-[9px] bg-primary/10 text-primary border border-primary/20 px-1.5 py-0.5 rounded uppercase font-black shrink-0">
                                             📦 Parent JO
                                         </span>
                                         <span>{fg.parentJo.jo_id}</span>
                                     </td>
                                     <ConnectedSalesOrderCell jobOrder={fg.parentJo} />
-                                    <td className="px-4 py-3">
+                                    <td className="px-2 py-3">
                                         <div className="flex items-center gap-2 flex-wrap">
-                                            <span className="font-bold text-foreground">{fg.parentJo.product_name}</span>
+                                            <span className="min-w-0 break-words font-bold text-foreground">{fg.parentJo.product_name}</span>
                                             <span className="text-[10px] font-semibold text-primary bg-primary/10 border border-primary/20 px-2 py-0.5 rounded-md shrink-0">
                                                 {fg.parentJo.uom_name || fg.parentJo.unit_of_measurement || "Pieces"}
                                             </span>
                                         </div>
                                     </td>
-                                    <td className="px-4 py-3 text-right font-semibold">
+                                    <td className="px-2 py-3 break-all text-right font-semibold">
                                         {fg.parentJo.quantity?.toLocaleString()} <span className="text-xs text-muted-foreground font-normal">{fg.parentJo.uom_name || fg.parentJo.uom_shortcut || "pcs"}</span>
                                     </td>
-                                    <td className="px-4 py-3 font-medium">
+                                    <td className="px-2 py-3 font-medium">
                                         {pMetrics.leadTimeHours > 0 ? (
                                             <div className="text-xs font-mono space-y-0.5">
-                                                <div className="flex items-center gap-1.5">
+                                                <div className="flex flex-wrap items-center gap-1.5">
                                                     <span className="font-bold text-foreground text-[13px]">{pMetrics.leadTimeDays.toFixed(1)} days</span>
                                                     <span className="text-[10px] text-muted-foreground">({pMetrics.leadTimeHours.toFixed(1)} line hrs)</span>
                                                 </div>
-                                                <div className="text-[10px] text-muted-foreground flex items-center gap-1">
+                                                <div className="text-[10px] text-muted-foreground flex flex-wrap items-center gap-1">
                                                     <span>Effort:</span>
                                                     <span className="font-semibold text-foreground/80">{pMetrics.cumulativeHours.toFixed(1)} mach-hrs</span>
                                                 </div>
@@ -273,7 +278,7 @@ export function JOTable({
                                             <span className="text-xs text-muted-foreground">—</span>
                                         )}
                                     </td>
-                                    <td className="px-4 py-3">
+                                    <td className="px-2 py-3">
                                         <div className="space-y-1.5">
                                             <div className="flex flex-wrap items-center gap-1.5">
                                                 <JobOrderStatusBadge
@@ -289,18 +294,16 @@ export function JOTable({
                                             <JobOrderJourneyBar
                                                 journey={resolveJobOrderJourney({ status: fg.parentJo.status, jobOrderNo: fg.parentJo.jo_id })}
                                                 compact
+                                                className="min-w-0"
                                             />
                                         </div>
                                     </td>
-                                    <td className="px-4 py-3 text-xs max-w-xs truncate text-muted-foreground" title={fg.parentJo.remarks || ""}>
-                                        {fg.parentJo.remarks || "No planning constraints logged."}
-                                    </td>
-                                    <td className="px-4 py-3 text-center">
+                                    <td className="px-2 py-3 text-center">
                                         <Button
                                             size="sm"
                                             variant="outline"
                                             onClick={() => handleOpenDetails(fg.parentJo)}
-                                            className="border-primary/30 hover:border-primary text-primary hover:bg-primary/5 font-bold h-8 text-xs px-3 transition-all duration-200"
+                                            className="h-auto min-h-8 max-w-full shrink whitespace-normal break-words border-primary/30 px-2 py-1 text-center text-[11px] font-bold leading-tight text-primary transition-all duration-200 hover:border-primary hover:bg-primary/5"
                                         >
                                             {readOnly ? "View Details" : "Manage Family"}
                                         </Button>
@@ -312,7 +315,7 @@ export function JOTable({
                                     const cMetrics = computeJoMetrics(cJo);
                                     return (
                                         <tr key={cJo.jo_id} className="hover:bg-sky-500/5 bg-sky-500/[0.02]">
-                                            <td className="px-4 py-3 font-semibold text-sky-600 dark:text-sky-400 pl-8 flex items-center gap-2">
+                                            <td className="px-2 py-3 pl-4 break-words font-semibold text-sky-600 dark:text-sky-400 sm:pl-6">
                                                 <span className="text-muted-foreground font-normal">↳</span>
                                                 <span className="text-[9px] bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20 px-1.5 py-0.5 rounded uppercase font-black shrink-0">
                                                     🧩 Sub-Assembly
@@ -320,25 +323,25 @@ export function JOTable({
                                                 <span>{cJo.jo_id}</span>
                                             </td>
                                             <ConnectedSalesOrderCell jobOrder={cJo} />
-                                            <td className="px-4 py-3">
+                                            <td className="px-2 py-3">
                                                 <div className="flex items-center gap-2 flex-wrap">
-                                                    <span className="font-medium text-foreground">{cJo.product_name}</span>
+                                                    <span className="min-w-0 break-words font-medium text-foreground">{cJo.product_name}</span>
                                                     <span className="text-[10px] font-semibold text-sky-700 dark:text-sky-300 bg-sky-500/10 border border-sky-500/20 px-2 py-0.5 rounded-md shrink-0">
                                                         {cJo.uom_name || cJo.unit_of_measurement || "Pieces"}
                                                     </span>
                                                 </div>
                                             </td>
-                                            <td className="px-4 py-3 text-right font-semibold">
+                                            <td className="px-2 py-3 break-all text-right font-semibold">
                                                 {cJo.quantity?.toLocaleString()} <span className="text-xs text-muted-foreground font-normal">{cJo.uom_name || cJo.uom_shortcut || "pcs"}</span>
                                             </td>
-                                            <td className="px-4 py-3 font-medium">
+                                            <td className="px-2 py-3 font-medium">
                                                 {cMetrics.leadTimeHours > 0 ? (
                                                     <div className="text-xs font-mono space-y-0.5">
-                                                        <div className="flex items-center gap-1.5">
+                                                        <div className="flex flex-wrap items-center gap-1.5">
                                                             <span className="font-bold text-sky-700 dark:text-sky-300 text-[13px]">{cMetrics.leadTimeDays.toFixed(1)} days</span>
                                                             <span className="text-[10px] text-muted-foreground">({cMetrics.leadTimeHours.toFixed(1)} line hrs)</span>
                                                         </div>
-                                                        <div className="text-[10px] text-muted-foreground flex items-center gap-1">
+                                                        <div className="text-[10px] text-muted-foreground flex flex-wrap items-center gap-1">
                                                             <span>Effort:</span>
                                                             <span className="font-semibold text-foreground/80">{cMetrics.cumulativeHours.toFixed(1)} mach-hrs</span>
                                                         </div>
@@ -347,7 +350,7 @@ export function JOTable({
                                                     <span className="text-xs text-muted-foreground">—</span>
                                                 )}
                                             </td>
-                                            <td className="px-4 py-3">
+                                            <td className="px-2 py-3">
                                                 <div className="flex flex-wrap items-center gap-1.5">
                                                     <JobOrderStatusBadge
                                                         status={cJo.status}
@@ -360,15 +363,12 @@ export function JOTable({
                                                     )}
                                                 </div>
                                             </td>
-                                            <td className="px-4 py-3 text-xs max-w-xs truncate text-muted-foreground" title={cJo.remarks || ""}>
-                                                {cJo.remarks || "Auto-spawned for sub-assembly shortfall."}
-                                            </td>
-                                            <td className="px-4 py-3 text-center">
+                                            <td className="px-2 py-3 text-center">
                                                 <Button
                                                     size="sm"
                                                     variant="ghost"
                                                     onClick={() => handleOpenDetails(cJo)}
-                                                    className="text-sky-600 hover:text-sky-700 hover:bg-sky-500/10 font-bold h-8 text-xs px-3 transition-all duration-200"
+                                                    className="h-auto min-h-8 max-w-full shrink whitespace-normal break-words px-2 py-1 text-center text-[11px] font-bold leading-tight text-sky-600 transition-all duration-200 hover:bg-sky-500/10 hover:text-sky-700"
                                                 >
                                                     View Details
                                                 </Button>
