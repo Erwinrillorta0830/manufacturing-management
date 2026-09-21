@@ -21,6 +21,7 @@ import {
     AlertCircle,
     Sparkles,
     GitCompare,
+    Printer,
 } from "lucide-react";
 
 interface Props {
@@ -36,6 +37,7 @@ interface Props {
     onReturnToDraft: (sheet: MmPhysicalInventorySheet) => void;
     onCommit?: (sheet: MmPhysicalInventorySheet) => void;
     onCancel: (sheet: MmPhysicalInventorySheet) => void;
+    onPrint?: (sheet: MmPhysicalInventorySheet) => void;
 }
 
 export function formatQty(val: number | string | null | undefined): string {
@@ -64,6 +66,7 @@ export default function PhysicalInventoryList({
     onSubmit,
     onReturnToDraft,
     onCancel,
+    onPrint,
 }: Props) {
     const [search, setSearch] = useState("");
     const [branchFilter, setBranchFilter] = useState("");
@@ -460,6 +463,16 @@ export default function PhysicalInventoryList({
                                                     >
                                                         <Eye className="h-4 w-4" />
                                                     </button>
+
+                                                    {onPrint && (
+                                                        <button
+                                                            onClick={() => onPrint(s)}
+                                                            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors"
+                                                            title="Print Count Sheet"
+                                                        >
+                                                            <Printer className="h-4 w-4" />
+                                                        </button>
+                                                    )}
 
                                                     {s.status === "DRAFT" && (
                                                         <>
