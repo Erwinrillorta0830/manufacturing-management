@@ -46,7 +46,7 @@ export function LotSelectionCard({
             disabled={disabled}
             aria-pressed={selected}
             className={cn(
-                "group w-full rounded-xl border text-left shadow-sm transition-all duration-200",
+                "group flex h-full min-h-[12rem] w-full flex-col rounded-xl border text-left shadow-sm transition-all duration-200",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50",
                 selected
                     ? "border-primary bg-primary/5 shadow-md ring-1 ring-primary/20"
@@ -54,7 +54,7 @@ export function LotSelectionCard({
                 disabled && "cursor-not-allowed opacity-60 hover:border-border/80 hover:shadow-sm"
             )}
         >
-            <div className="border-b border-border/60 bg-gradient-to-r from-muted/40 via-card to-muted/20 p-3.5">
+            <div className="min-h-[5.25rem] border-b border-border/60 bg-gradient-to-r from-muted/40 via-card to-muted/20 p-3.5">
                 <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
@@ -77,7 +77,7 @@ export function LotSelectionCard({
                 </div>
             </div>
 
-            <div className="p-3.5">
+            <div className="flex flex-1 flex-col p-3.5">
                 <LotOccupancyIndicator
                     balance={balance}
                     maxCapacity={lot.maxBatchCapacity}
@@ -86,11 +86,11 @@ export function LotSelectionCard({
                     error={occupancyError}
                 />
                 {productName && productOnHand !== undefined && (
-                    <p className="mt-2 text-[11px] text-muted-foreground">
+                    <p className="mt-2 truncate text-[11px] text-muted-foreground" title={`${productName} on hand: ${productOnHand.toLocaleString()}${productUomName ? ` ${productUomName}` : ""}`}>
                         {productName} on hand: <strong className="text-foreground">{productOnHand.toLocaleString()}</strong>{productUomName ? ` ${productUomName}` : ""}
                     </p>
                 )}
-                {disabledReason && <p className="mt-2 text-[11px] font-medium text-muted-foreground">{disabledReason}</p>}
+                {disabledReason && <p className="mt-2 truncate text-[11px] font-medium text-muted-foreground" title={disabledReason}>{disabledReason}</p>}
             </div>
         </button>
     );

@@ -24,6 +24,7 @@ interface LotTransferSearchableSelectProps {
     value?: string;
     onValueChange: (value: string) => void;
     placeholder?: string;
+    searchPlaceholder?: string;
     disabled?: boolean;
     className?: string;
 }
@@ -33,6 +34,7 @@ export function LotTransferSearchableSelect({
     value,
     onValueChange,
     placeholder = "Select option...",
+    searchPlaceholder,
     disabled = false,
     className,
 }: LotTransferSearchableSelectProps) {
@@ -58,7 +60,7 @@ export function LotTransferSearchableSelect({
             </PopoverTrigger>
             <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
                 <Command>
-                    <CommandInput placeholder={`Search ${placeholder.toLowerCase()}...`} />
+                    <CommandInput placeholder={searchPlaceholder || `Search ${placeholder.toLowerCase()}...`} />
                     <CommandList>
                         <CommandEmpty>No results found.</CommandEmpty>
                         <CommandGroup>
