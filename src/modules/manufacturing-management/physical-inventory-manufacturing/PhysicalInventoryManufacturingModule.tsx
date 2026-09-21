@@ -44,6 +44,7 @@ import CreateLotModal from "./components/CreateLotModal";
 import CreateBatchModal from "./components/CreateBatchModal";
 import CommitConfirmationModal from "./components/CommitConfirmationModal";
 import CancelModal from "./components/CancelModal";
+import PrintableManufacturingCountSheet from "./components/PrintableManufacturingCountSheet";
 import { CheckCircle2, AlertTriangle, X } from "lucide-react";
 
 export default function PhysicalInventoryManufacturingModule() {
@@ -80,6 +81,25 @@ export default function PhysicalInventoryManufacturingModule() {
     const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
     const [isOffsettingModalOpen, setIsOffsettingModalOpen] = useState(false);
     const [offsetPairings, setOffsetPairings] = useState<MmOffsetPairing[]>([]);
+
+    const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+    const [printableSheet, setPrintableSheet] = useState<MmPhysicalInventorySheet | null>(null);
+    const [printTargetLot, setPrintTargetLot] = useState<number | string | null>(null);
+
+    const handleOpenPrintModal = async (sheet: MmPhysicalInventorySheet, filterLot?: number | string | null) => {
+        try {
+            setLoading(true);
+            const fullSheet = await fetchPhysicalInventorySheet(sheet.physical_inventory_id);
+            setPrintableSheet(fullSheet);
+            setPrintTargetLot(filterLot ?? null);
+            setIsPrintModalOpen(true);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Failed to load count sheet for printing";
+            showToast(msg, "error");
+        } finally {
+            setLoading(false);
+        }
+    };
 
     useEffect(() => {
         if (activeSheet && activeSheet.offset_pairings) {
@@ -558,6 +578,7 @@ export default function PhysicalInventoryManufacturingModule() {
                     onEdit={handleViewSheet}
                     onSubmit={handleSubmitSheet}
                     onReturnToDraft={handleReturnToDraft}
+                    onPrint={handleOpenPrintModal}
                     onCancel={(s) => {
                         setActiveSheet(s);
                         setIsCancelModalOpen(true);
@@ -590,6 +611,7 @@ export default function PhysicalInventoryManufacturingModule() {
                     onOpenOffsettingModal={() => setIsOffsettingModalOpen(true)}
                     onSubmit={() => handleSubmitSheet()}
                     onReturnToDraft={() => handleReturnToDraft()}
+                    onPrintCountSheet={handleOpenPrintModal}
                 />
             )}
 
@@ -664,6 +686,19 @@ export default function PhysicalInventoryManufacturingModule() {
                 onClose={() => setIsCancelModalOpen(false)}
                 onConfirmCancel={handleConfirmCancel}
             />
+
+            {/* Printable Count Sheet Modal */}
+            {isPrintModalOpen && printableSheet && (
+                <PrintableManufacturingCountSheet
+                    sheet={printableSheet}
+                    targetLot={printTargetLot}
+                    onClose={() => {
+                        setIsPrintModalOpen(false);
+                        setPrintableSheet(null);
+                        setPrintTargetLot(null);
+                    }}
+                />
+            )}
         </div>
     );
 }
