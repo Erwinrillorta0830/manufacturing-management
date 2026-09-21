@@ -94,26 +94,25 @@ const ReconciliationRowItem = React.memo(function ReconciliationRowItem({
     const variance = targetQty - (item.received_quantity + item.returned_quantity);
     const isBalanced = variance === 0;
 
-    const [rawQty, setRawQty] = useState<string>(() =>
-        item.returned_quantity === 0 ? "" : String(item.returned_quantity)
-    );
-    const isFocusedRef = React.useRef<boolean>(false);
+    const [rawQty, setRawQty] = useState<string>("");
+    const [isFocused, setIsFocused] = useState<boolean>(false);
 
-    // Sync rawQty when item.returned_quantity changes externally and user is not actively typing
-    useEffect(() => {
-        if (!isFocusedRef.current) {
-            setRawQty(item.returned_quantity === 0 ? "" : String(item.returned_quantity));
-        }
-    }, [item.returned_quantity]);
+    const displayQty = isFocused
+        ? rawQty
+        : item.returned_quantity === 0
+            ? ""
+            : String(item.returned_quantity);
 
     const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
-        isFocusedRef.current = true;
+        setIsFocused(true);
+        setRawQty(item.returned_quantity === 0 ? "" : String(item.returned_quantity));
         e.target.select();
     };
 
     const handleClick = (e: React.MouseEvent<HTMLInputElement>) => {
-        if (!isFocusedRef.current) {
-            isFocusedRef.current = true;
+        if (!isFocused) {
+            setIsFocused(true);
+            setRawQty(item.returned_quantity === 0 ? "" : String(item.returned_quantity));
             (e.target as HTMLInputElement).select();
         }
     };
@@ -134,7 +133,7 @@ const ReconciliationRowItem = React.memo(function ReconciliationRowItem({
     };
 
     const handleBlur = () => {
-        isFocusedRef.current = false;
+        setIsFocused(false);
         if (rawQty === "" || isNaN(parseInt(rawQty, 10))) {
             setRawQty("");
             onReturnedQtyChange(originalIndex, 0);
@@ -205,7 +204,7 @@ const ReconciliationRowItem = React.memo(function ReconciliationRowItem({
                         type="number"
                         min={0}
                         max={targetQty}
-                        value={rawQty}
+                        value={displayQty}
                         placeholder="0"
                         onFocus={handleFocus}
                         onClick={handleClick}
@@ -384,7 +383,7 @@ export default function ProductReconciliationModal({
         return () => {
             isMounted = false;
         };
-    }, [isOpen]);
+    }, [isOpen, order?.invoice_no, order?.linked_sales_return, order?.order_no]);
 
     // Manual refresh handler for sales returns
     const fetchAvailableReturns = useCallback(async () => {
@@ -449,7 +448,7 @@ export default function ProductReconciliationModal({
         } catch (err: unknown) {
             console.warn("[ProductReconciliationModal] Error fetching sales returns:", err);
         }
-    }, []);
+    }, [order?.invoice_no, order?.linked_sales_return, order?.order_no, selectedLinkedReturn]);
 
     // Format options for SearchableSelect combobox with SO & Invoice matching
     const returnOptions: SearchableSelectOption[] = useMemo(() => {

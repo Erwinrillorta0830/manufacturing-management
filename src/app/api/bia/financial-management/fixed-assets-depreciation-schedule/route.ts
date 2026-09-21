@@ -31,37 +31,54 @@ function getDirectusHeaders(): Record<string, string> {
     return h;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function fetchSpringBootDepreciation(): Promise<Map<number, any>> {
-    const yieldMap = new Map<number, any>();
+interface SpringBootDepreciation {
+    asset_id?: number | string | null;
+    id?: number | string | null;
+    [key: string]: unknown;
+}
+
+async function fetchSpringBootDepreciation(): Promise<Map<number, SpringBootDepreciation>> {
+    const yieldMap = new Map<number, SpringBootDepreciation>();
+
     if (!SPRING_API_BASE_URL) return yieldMap;
 
     try {
         const cookieStore = await cookies();
         const springToken =
-            cookieStore.get("springboot_token")?.value || cookieStore.get("vos_access_token")?.value;
+            cookieStore.get("springboot_token")?.value ||
+            cookieStore.get("vos_access_token")?.value;
 
         const res = await fetch(`${SPRING_API_BASE_URL}/api/asset-depreciation`, {
             headers: {
                 ...(springToken ? { Authorization: `Bearer ${springToken}` } : {}),
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
             },
-            cache: "no-store"
+            cache: "no-store",
         });
 
         if (res.ok) {
-            const data = await res.json();
+            const data: unknown = await res.json();
+
             if (Array.isArray(data)) {
                 for (const item of data) {
-                    const id = Number(item.asset_id || item.id);
-                    if (!isNaN(id) && id > 0) {
-                        yieldMap.set(id, item);
+                    if (typeof item !== "object" || item === null) {
+                        continue;
+                    }
+
+                    const depreciation = item as SpringBootDepreciation;
+                    const id = Number(depreciation.asset_id ?? depreciation.id);
+
+                    if (!Number.isNaN(id) && id > 0) {
+                        yieldMap.set(id, depreciation);
                     }
                 }
             }
         }
     } catch (e) {
-        console.warn("[Fixed Assets Depreciation] Spring Boot fetch notice:", e);
+        console.warn(
+            "[Fixed Assets Depreciation] Spring Boot fetch notice:",
+            e
+        );
     }
 
     return yieldMap;

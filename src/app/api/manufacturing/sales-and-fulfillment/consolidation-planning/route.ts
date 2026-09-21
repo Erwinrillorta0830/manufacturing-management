@@ -130,7 +130,7 @@ export async function GET(req: NextRequest) {
         const allInvoiceIds = [...new Set(invJunctions.map((j) => Number(j.invoice_id)).filter(Boolean))];
         let salesOrderMap = new Map<number, { order_id: number; order_no: string; branch_id: number; total_amount: number; net_amount: number; customer_code: string; created_date: string }>();
         let customerNameMap = new Map<string, string>();
-        let sodByOrder = new Map<number, Array<{ detail_id: number; order_id: number; product_id: number; ordered_quantity: number }>>();
+        const sodByOrder = new Map<number, Array<{ detail_id: number; order_id: number; product_id: number; ordered_quantity: number }>>();
 
         if (allInvoiceIds.length > 0) {
             const [soRes, sodRes] = await Promise.all([

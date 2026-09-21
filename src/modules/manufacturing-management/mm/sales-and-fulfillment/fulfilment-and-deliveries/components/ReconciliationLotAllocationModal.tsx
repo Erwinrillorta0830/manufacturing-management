@@ -1,7 +1,7 @@
 // src/modules/manufacturing-management/mm/sales-and-fulfillment/fulfilment-and-deliveries/components/ReconciliationLotAllocationModal.tsx
 "use client";
 
-import React, { useState, useMemo, useEffect, useCallback } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { LineItemReservation } from "../types";
@@ -44,23 +44,25 @@ const AllocationBatchRow = React.memo(function AllocationBatchRow({
     onFillMax,
 }: AllocationBatchRowProps) {
     const currentAlloc = Number(resv.returned_quantity || 0);
-    const [rawVal, setRawVal] = useState<string>(() => (currentAlloc === 0 ? "" : String(currentAlloc)));
-    const isFocusedRef = React.useRef<boolean>(false);
+    const [rawVal, setRawVal] = useState<string>("");
+    const [isFocused, setIsFocused] = useState<boolean>(false);
 
-    useEffect(() => {
-        if (!isFocusedRef.current) {
-            setRawVal(currentAlloc === 0 ? "" : String(currentAlloc));
-        }
-    }, [currentAlloc]);
+    const displayVal = isFocused
+        ? rawVal
+        : currentAlloc === 0
+            ? ""
+            : String(currentAlloc);
 
     const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
-        isFocusedRef.current = true;
+        setIsFocused(true);
+        setRawVal(currentAlloc === 0 ? "" : String(currentAlloc));
         e.target.select();
     };
 
     const handleClick = (e: React.MouseEvent<HTMLInputElement>) => {
-        if (!isFocusedRef.current) {
-            isFocusedRef.current = true;
+        if (!isFocused) {
+            setIsFocused(true);
+            setRawVal(currentAlloc === 0 ? "" : String(currentAlloc));
             (e.target as HTMLInputElement).select();
         }
     };
@@ -76,7 +78,7 @@ const AllocationBatchRow = React.memo(function AllocationBatchRow({
     };
 
     const handleBlur = () => {
-        isFocusedRef.current = false;
+        setIsFocused(false);
         if (rawVal === "" || isNaN(parseInt(rawVal, 10))) {
             setRawVal("");
             onQtyChange(originalIndex, "0");
@@ -111,7 +113,7 @@ const AllocationBatchRow = React.memo(function AllocationBatchRow({
                     type="number"
                     min={0}
                     max={maxLimit}
-                    value={rawVal}
+                    value={displayVal}
                     placeholder="0"
                     onFocus={handleFocus}
                     onClick={handleClick}
