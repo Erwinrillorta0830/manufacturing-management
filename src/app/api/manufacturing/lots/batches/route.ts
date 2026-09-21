@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { Batch, BatchStatus, BatchQaStatus } from "@/modules/manufacturing-management/lot-management/types";
+import { movementQuantities } from "@/app/api/manufacturing/lots/_movement-quantity";
+import { unreflectedMovementDelta, type BatchBalanceMovement } from "@/app/api/manufacturing/lots/_batch-reconciliation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -67,7 +69,7 @@ export async function GET(request: Request) {
                 ? `&filter[mm_lot_id][_eq]=${encodeURIComponent(filterLotId)}`
                 : "";
             const directusMovementsRes = await fetch(
-                `${DIRECTUS_URL}/items/inventory_movements?limit=-1&fields=movement_id,product_id,branch_id,mm_lot_id,batch_no,quantity,expiry_date,manufacturing_date,transaction_type_id,source_document_id,source_document_no${lotFilter}&_t=${timestamp}`,
+                `${DIRECTUS_URL}/items/inventory_movements?limit=-1&fields=movement_id,product_id,branch_id,mm_lot_id,inventory_lot_id,batch_no,quantity,expiry_date,manufacturing_date,transaction_type_id,source_document_id,source_document_no,created_at${lotFilter}&_t=${timestamp}`,
                 { headers, cache: "no-store" }
             ).catch(() => null);
 
@@ -156,6 +158,7 @@ export async function GET(request: Request) {
         const movementNetByInvLotId = new Map<number, { onhand: number; totalIn: number; totalOut: number; unitCost: number; count: number; mfgDate?: string; expDate?: string }>();
         const movementNetByLotProductBatch = new Map<string, { onhand: number; totalIn: number; totalOut: number; unitCost: number; count: number; lotId: number; productId: number; batchNo: string; mfgDate?: string; expDate?: string; condition?: string; remarks?: string; referenceNo?: string; postedAt?: string; branchId?: number; unitId?: number; productName?: string; productCode?: string; }>();
         const movementNetByLotProductBatchDate = new Map<string, { onhand: number; totalIn: number; totalOut: number; unitCost: number; count: number; lotId: number; productId: number; batchNo: string; mfgDate?: string; expDate?: string; condition?: string; remarks?: string; referenceNo?: string; postedAt?: string; branchId?: number; unitId?: number; productName?: string; productCode?: string; }>();
+        const canonicalLotMovements: BatchBalanceMovement[] = [];
 
         rawMovements.forEach((m) => {
             const rawLotId = m.mmLotId ?? m.mm_lot_id ?? m.lotId ?? m.lot_id;
@@ -166,18 +169,23 @@ export async function GET(request: Request) {
             const lId = matchedLot ? parsedLotId : 0;
             const pId = Number(m.productId || m.product_id || 0);
             const bNo = String(m.batchNo || m.batch_no || "").trim();
-            const signedQuantity = Number(m.quantity || 0);
-            const rawQuantityIn = m.quantityIn ?? m.quantity_in;
-            const rawQuantityOut = m.quantityOut ?? m.quantity_out;
-            const qIn = rawQuantityIn !== null && rawQuantityIn !== undefined
-                ? Number(rawQuantityIn)
-                : Math.max(0, signedQuantity);
-            const qOut = rawQuantityOut !== null && rawQuantityOut !== undefined
-                ? Number(rawQuantityOut)
-                : Math.max(0, -signedQuantity);
-            const net = qIn - qOut;
+            const { quantityIn: qIn, quantityOut: qOut, net } = movementQuantities(m);
             const cost = Number(m.unitCost || m.unit_cost || 0);
             const invId = Number(m.inventoryLotId || m.inventory_lot_id || 0);
+            const sourceDocumentNo = String(m.sourceDocumentNo || m.source_document_no || "").trim();
+
+            if (lotTransferSource && sourceDocumentNo.toUpperCase().startsWith("LTR-") && parsedLotId > 0 && pId > 0 && bNo) {
+                canonicalLotMovements.push({
+                    branchId: Number(m.branchId || m.branch_id || 0),
+                    lotId: parsedLotId,
+                    productId: pId,
+                    batchNo: bNo,
+                    manufacturingDate: (m.manufacturingDate || m.manufacturing_date) as string | null | undefined,
+                    expirationDate: (m.expirationDate || m.expiration_date || m.expiry_date) as string | null | undefined,
+                    quantity: net,
+                    createdAt: (m.createdAt || m.created_at) as string | null | undefined
+                });
+            }
 
             if (invId > 0) {
                 const cur = movementNetByInvLotId.get(invId) || { onhand: 0, totalIn: 0, totalOut: 0, unitCost: cost, count: 0 };
@@ -248,8 +256,6 @@ export async function GET(request: Request) {
             }
         });
 
-        if (lotTransferSource) rawOnhand = [];
-
         rawOnhand.forEach((oh) => {
             const lId = Number(oh.mmLotId || oh.mm_lot_id || oh.lotId || oh.lot_id || 0);
             const pId = Number(oh.productId || oh.product_id || 0);
@@ -261,15 +267,32 @@ export async function GET(request: Request) {
             const mfgDate = (oh.manufacturingDate || oh.manufacturing_date) as string | undefined;
             const expDate = (oh.expirationDate || oh.expiration_date || oh.expiry_date) as string | undefined;
             const cond = String(oh.inventoryCondition || oh.inventory_condition || "GOOD");
+            const branchId = Number(oh.branchId || oh.branch_id || 0);
+
+            const pendingCanonicalDelta = lotTransferSource
+                ? unreflectedMovementDelta({
+                    branchId,
+                    lotId: lId,
+                    productId: pId,
+                    batchNo: bNo,
+                    manufacturingDate: mfgDate,
+                    expirationDate: expDate,
+                    onHand: onhand,
+                    lastMovementDate: (oh.lastMovementDate || oh.last_movement_date) as string | null | undefined
+                }, canonicalLotMovements)
+                : 0;
+            const reconciledOnhand = onhand + pendingCanonicalDelta;
+            const reconciledTotalIn = qIn + Math.max(0, pendingCanonicalDelta);
+            const reconciledTotalOut = qOut + Math.max(0, -pendingCanonicalDelta);
 
             if (invId > 0) {
                 const cur = movementNetByInvLotId.get(invId) || { onhand: 0, totalIn: 0, totalOut: 0, unitCost: 0, count: 0 };
-                // Only use onhand snapshot if no movements were found
-                if (cur.count === 0) {
-                    cur.onhand = onhand;
-                    cur.totalIn = qIn;
-                    cur.totalOut = qOut;
-                }
+                // The live snapshot is the base balance; newer canonical lot
+                // movements are applied once when the projection has not seen them.
+                cur.onhand = reconciledOnhand;
+                cur.totalIn = reconciledTotalIn;
+                cur.totalOut = reconciledTotalOut;
+                cur.count = Math.max(cur.count, 1);
                 if (mfgDate && !cur.mfgDate) cur.mfgDate = mfgDate;
                 if (expDate && !cur.expDate) cur.expDate = expDate;
                 movementNetByInvLotId.set(invId, cur);
@@ -295,12 +318,12 @@ export async function GET(request: Request) {
                     branchId: Number(oh.branchId || oh.branch_id || 1),
                     unitId: Number(oh.unitId || oh.unit_id || 1)
                 };
-                // Only use onhand snapshot if no movements were found
-                if (curBase.count === 0) {
-                    curBase.onhand = onhand;
-                    curBase.totalIn = qIn;
-                    curBase.totalOut = qOut;
-                }
+                // The live snapshot is the base balance; newer canonical lot
+                // movements are applied once when the projection has not seen them.
+                curBase.onhand = reconciledOnhand;
+                curBase.totalIn = reconciledTotalIn;
+                curBase.totalOut = reconciledTotalOut;
+                curBase.count = Math.max(curBase.count, 1);
                 if (mfgDate && !curBase.mfgDate) curBase.mfgDate = mfgDate;
                 if (expDate && !curBase.expDate) curBase.expDate = expDate;
                 movementNetByLotProductBatch.set(baseKey, curBase);
@@ -317,11 +340,10 @@ export async function GET(request: Request) {
                         mfgDate,
                         expDate
                     };
-                    if (curDate.count === 0) {
-                        curDate.onhand = onhand;
-                        curDate.totalIn = qIn;
-                        curDate.totalOut = qOut;
-                    }
+                    curDate.onhand = reconciledOnhand;
+                    curDate.totalIn = reconciledTotalIn;
+                    curDate.totalOut = reconciledTotalOut;
+                    curDate.count = Math.max(curDate.count, 1);
                     movementNetByLotProductBatchDate.set(dateKey, curDate);
                 }
             }
@@ -450,7 +472,7 @@ export async function GET(request: Request) {
                 : undefined;
             const movementByLotProdBatch = movementNetByLotProductBatch.get(`${lotId}_${productId}_${batchNumber.toLowerCase()}`);
             const movementByInvId = batchId > 0 ? movementNetByInvLotId.get(batchId) : undefined;
-            const movementInfo = movementByExactDates || movementByLotProdBatch || movementByInvId;
+            const movementInfo = movementByInvId || movementByExactDates || movementByLotProdBatch;
 
             const quantity = movementInfo !== undefined
                 ? Number(movementInfo.onhand || 0)

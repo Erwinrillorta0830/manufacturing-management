@@ -106,6 +106,7 @@ export interface LotTransfer {
     requestedAt: string | null;
     transferDate: string | null;
     submittedBy: number | null;
+    submittedByName: string | null;
     submittedAt: string | null;
     approvedBy: number | null;
     approvedByName: string | null;
@@ -188,6 +189,18 @@ export interface ProductOption {
     productName: string;
     skuCode: string;
     unitCost: number;
+    uomId: number | null;
+    uomName: string;
+    uomShortcut: string;
+    productTypeId: number | null;
+    productTypeName: string;
+}
+
+export const UNCLASSIFIED_PRODUCT_TYPE_FILTER = "__UNCLASSIFIED__";
+
+export function getProductTypeFilterKey(product: Pick<ProductOption, "productTypeId" | "productTypeName">) {
+    const productTypeName = product.productTypeName.trim();
+    return product.productTypeId ? String(product.productTypeId) : productTypeName ? `name:${productTypeName.toLowerCase()}` : UNCLASSIFIED_PRODUCT_TYPE_FILTER;
 }
 
 export interface LotOption {
@@ -340,6 +353,7 @@ export interface LotTransferForm {
 export interface LotTransferFormDetail {
     detailId?: number;
     lineNo: number;
+    productTypeId: string;
     productId: string;
     sourceInventoryLotId: string;
     sourceBatchNo: string;

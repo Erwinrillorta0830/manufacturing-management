@@ -15,7 +15,6 @@ import {
     Send,
     ShieldCheck,
     Trash2,
-    Undo2,
     Upload,
     XCircle
 } from "lucide-react";
@@ -25,8 +24,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useLotTransfer } from "./hooks/useLotTransfer";
 import { LotTransferSearchableSelect } from "./components/LotTransferSearchableSelect";
+import { LotSelectionCard } from "./components/LotSelectionCard";
+import { LotSelectionPagination } from "./components/LotSelectionPagination";
 import { formatPhtDate, formatPhtTimestamp } from "../shared/pht-date";
-import type { BatchOption, DestinationBatchResolutionAction, LotBalanceSnapshot, LotOption, LotTransferMode, LotTransferStatus, LotTransferStatusHistory } from "./types";
+import { calculateLotBalance } from "../shared/services/lot-balance.service";
+import { getLotTransferProductTypeLabel } from "./product-type-labels";
+import { getProductTypeFilterKey, type BatchOption, type DestinationBatchResolutionAction, type LotBalanceSnapshot, type LotOption, type LotTransferMode, type LotTransferStatus, type LotTransferStatusHistory, type ProductOption } from "./types";
 
 interface LotTransferModuleProps {
     mode: LotTransferMode;
@@ -39,6 +42,7 @@ const inputClassName = "h-9 w-full rounded-md border bg-background px-3 text-sm 
 const selectClassName = "h-9 w-full min-w-0 justify-between overflow-hidden text-left font-normal";
 const textAreaClassName = "min-h-20 w-full resize-y rounded-md border bg-background px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60";
 const panelClassName = "rounded-xl border bg-card p-4 shadow-sm";
+const LOT_SELECTION_PAGE_SIZE = 6;
 
 function productLabel(productId: number, products: LotTransferController["products"]) {
     const product = products.find((item) => item.productId === productId);
@@ -53,6 +57,17 @@ function branchLabel(branchId: number, branches: LotTransferController["branches
 
 function lotLabel(lotId: number, lots: LotOption[]) {
     return lots.find((lot) => lot.lotId === lotId)?.lotName || `Lot #${lotId}`;
+}
+
+function lotMatchesSearch(lot: LotOption, search: string, branches: LotTransferController["branches"]) {
+    const query = search.trim().toLowerCase();
+    if (!query) return true;
+    return [
+        lot.lotName,
+        String(lot.lotId),
+        lot.uomName,
+        branchLabel(lot.branchId, branches)
+    ].some((value) => value.toLowerCase().includes(query));
 }
 
 function formatQuantity(value: number | null | undefined) {
@@ -70,9 +85,35 @@ function formatDateTime(value: string | null | undefined) {
     return formatPhtTimestamp(value);
 }
 
+function actorLabel(name: string | null | undefined, id: number | null | undefined) {
+    return name || (id && id > 0 ? `User #${id}` : "-");
+}
+
 function uomLabel(unitId: number | null | undefined, lots: LotOption[]) {
     if (!unitId) return "Not recorded";
     return lots.find((lot) => lot.uomId === unitId)?.uomName || `UOM #${unitId}`;
+}
+
+function productUomLabel(product: ProductOption) {
+    return product.uomName || product.uomShortcut || (product.uomId ? `UOM #${product.uomId}` : "UOM not configured");
+}
+
+function productTypeLabel(product: ProductOption) {
+    return getLotTransferProductTypeLabel(product.productTypeId, product.productTypeName);
+}
+
+function productTypeFilterKey(product: ProductOption) {
+    return getProductTypeFilterKey(product);
+}
+
+function productMatchesType(product: ProductOption | undefined, filterValue: string) {
+    if (!filterValue) return true;
+    if (!product) return false;
+    return productTypeFilterKey(product) === filterValue;
+}
+
+function isProductCompatibleWithLot(product: ProductOption | undefined, lot: LotOption | undefined) {
+    return Boolean(product && lot && lot.uomId !== null && product.uomId !== null && product.uomId === lot.uomId);
 }
 
 function statusClass(status: string) {
@@ -91,10 +132,6 @@ function StatusBadge({ status }: { status: string }) {
 
 function canCancelTransfer(status: LotTransferStatus) {
     return status === "Draft" || status === "Submitted" || status === "Approved" || status === "Rejected";
-}
-
-function canReverseTransfer(record: LotTransferController["records"][number]) {
-    return record.status === "Posted" && !record.linkedReversalId;
 }
 
 function CancelTransferAction({
@@ -147,63 +184,6 @@ function CancelTransferAction({
                 <div className="flex justify-end gap-2">
                     <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={controller.isActionLoading}>Keep request</Button>
                     <Button type="button" variant="destructive" onClick={() => void handleCancel()} disabled={controller.isActionLoading}><Ban />{controller.isActionLoading ? "Cancelling..." : "Cancel transfer"}</Button>
-                </div>
-            </DialogContent>
-        </Dialog>
-    </>;
-}
-
-function ReverseTransferAction({
-    controller,
-    record,
-    onSuccess
-}: {
-    controller: LotTransferController;
-    record: LotTransferController["records"][number];
-    onSuccess?: () => void;
-}) {
-    const [open, setOpen] = useState(false);
-    const [reason, setReason] = useState("");
-    const [localError, setLocalError] = useState<string | null>(null);
-
-    if (!canReverseTransfer(record)) return null;
-
-    const handleReverse = async () => {
-        const cleanReason = reason.trim();
-        if (!cleanReason) {
-            setLocalError("A reversal reason is required.");
-            return;
-        }
-        setLocalError(null);
-        const reversed = await controller.reverse(record.id, cleanReason);
-        if (!reversed) {
-            setLocalError("The transfer could not be reversed. Review the page error and retry if appropriate.");
-            return;
-        }
-        setReason("");
-        setOpen(false);
-        onSuccess?.();
-    };
-
-    return <>
-        <Button type="button" variant="outline" size="sm" onClick={() => { setLocalError(null); setOpen(true); }} disabled={controller.isActionLoading}>
-            <Undo2 />Reverse transfer
-        </Button>
-        <Dialog open={open} onOpenChange={(nextOpen) => { setOpen(nextOpen); if (!nextOpen) { setReason(""); setLocalError(null); } }}>
-            <DialogContent className="max-w-lg">
-                <DialogHeader>
-                    <DialogTitle>Reverse {record.requestNo}?</DialogTitle>
-                    <DialogDescription>The posted transfer remains immutable. This creates one linked Reversed record with compensating movements from the posted destination back to the posted source.</DialogDescription>
-                </DialogHeader>
-                {localError && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200">{localError}</div>}
-                <label>
-                    <FieldLabel required>Reversal reason</FieldLabel>
-                    <textarea className={textAreaClassName} value={reason} onChange={(event) => setReason(event.currentTarget.value)} maxLength={5000} placeholder="Explain why the posted transfer must be fully reversed..." />
-                </label>
-                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">The server revalidates destination availability, source capacity, UOM, QA, and every original movement pair before posting the reversal.</div>
-                <div className="flex justify-end gap-2">
-                    <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={controller.isActionLoading}>Keep posted</Button>
-                    <Button type="button" onClick={() => void handleReverse()} disabled={controller.isActionLoading}><Undo2 />{controller.isActionLoading ? "Reversing..." : "Reverse transfer"}</Button>
                 </div>
             </DialogContent>
         </Dialog>
@@ -417,7 +397,7 @@ function MovementHistoryTimeline({ controller, record }: { controller: LotTransf
     }, [record, result]);
 
     return (
-        <div className="mt-4 rounded-lg border bg-muted/20 p-3" aria-label="Inventory movement history">
+        <div className="mt-4 min-w-0 max-w-full rounded-lg border bg-muted/20 p-3" aria-label="Inventory movement history">
             <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                     <h3 className="text-sm font-semibold">Movement history</h3>
@@ -438,10 +418,10 @@ function MovementHistoryTimeline({ controller, record }: { controller: LotTransf
                                 <span>Paired lines: <strong className="text-foreground">{result.pairedLineCount}/{result.expectedLineCount}</strong></span>
                             </div>
                             {result.reconciliationRequired && <p role="alert" className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">Movement reconciliation is required: the recorded ledger rows do not form the expected canonical OUT/IN pair for every transfer line.</p>}
-                            {groups.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">No inventory movements are recorded for this transfer.</p> : <div className="mt-3 space-y-3">
+                            {groups.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">No inventory movements are recorded for this transfer.</p> : <div className="mt-3 min-w-0 max-w-full space-y-3">
                                 {groups.map((group) => <div key={group.label} className="rounded-lg border bg-background p-2">
                                     <h4 className="px-1 pb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</h4>
-                                    <div className="overflow-x-auto">
+                                    <div className="min-w-0 max-w-full overflow-x-auto">
                                         <table className="w-full min-w-[980px] text-left text-xs">
                                             <thead className="border-y bg-muted/40 text-[10px] uppercase tracking-wide text-muted-foreground"><tr><th className="px-2 py-2">Direction</th><th className="px-2 py-2">Transaction type</th><th className="px-2 py-2">Product</th><th className="px-2 py-2">MM lot</th><th className="px-2 py-2">Batch</th><th className="px-2 py-2">Quantity</th><th className="px-2 py-2">Created</th><th className="px-2 py-2">User</th><th className="px-2 py-2">Remarks</th></tr></thead>
                                             <tbody className="divide-y">{group.rows.map((movement) => <tr key={movement.movementId}>
@@ -534,7 +514,11 @@ function BatchSelect({
     disabled: boolean;
     source: boolean;
 }) {
-    const filtered = batches.filter((batch) => (source ? isSourceBatchChoice(batch, value) : batch.status.toUpperCase() === "ACTIVE"));
+    const filtered = batches.filter((batch) => (
+        source
+            ? isSourceBatchChoice(batch, value)
+            : batch.status.toUpperCase() === "ACTIVE" || String(batch.batchId) === value
+    ));
     return (
         <LotTransferSearchableSelect
             value={value}
@@ -544,6 +528,7 @@ function BatchSelect({
                 label: `${batch.batchNumber} | ${source ? `available ${formatQuantity(batch.quantity)}` : `on hand ${formatQuantity(batch.quantity)}`}`
             }))}
             placeholder={source ? "Select source batch..." : "Select target batch..."}
+            searchPlaceholder={source ? "Search source batches..." : "Search target batches..."}
             disabled={disabled}
             className={selectClassName}
         />
@@ -553,6 +538,10 @@ function BatchSelect({
 function RequestEditor({ controller, onClose }: { controller: LotTransferController; onClose: () => void }) {
     const { form } = controller;
     const [notice, setNotice] = useState<string | null>(null);
+    const [sourceLotSearch, setSourceLotSearch] = useState("");
+    const [targetLotSearch, setTargetLotSearch] = useState("");
+    const [sourceLotPage, setSourceLotPage] = useState(0);
+    const [targetLotPage, setTargetLotPage] = useState(0);
     const activeLots = useMemo(() => controller.lots.filter((lot) => {
         const branchMatches = !form.branchId || lot.branchId === 0 || lot.branchId === Number(form.branchId);
         return branchMatches && lot.status.toUpperCase() === "ACTIVE";
@@ -569,30 +558,38 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
     );
     const selectedTargetLot = targetLots.find((lot) => String(lot.lotId) === form.targetLotId);
     const sourceLotIdNumber = Number(form.sourceLotId) || 0;
-    const sourceBatchesLoading = sourceLotIdNumber > 0 && controller.batchesLoadingLotId === sourceLotIdNumber;
+    const sourceBatchesLoading = controller.batchesLoading || (sourceLotIdNumber > 0 && controller.batchesLoadingLotId === sourceLotIdNumber);
     const sourceBatches = useMemo(
         () => (sourceLotIdNumber > 0 ? (controller.batchesByLot[sourceLotIdNumber] || []) : []),
         [sourceLotIdNumber, controller.batchesByLot]
     );
-    const sourceProductOptions = useMemo(() => {
-        const totals = new Map<number, { quantity: number; uomName: string }>();
+    const sourceUomId = selectedSourceLot?.uomId ?? null;
+    const sourceProductChoices = useMemo(() => {
+        if (sourceUomId === null) return [];
+        const totals = new Map<number, { quantity: number; product: ProductOption }>();
         for (const batch of sourceBatches) {
             const productId = Number(batch.productId) || 0;
             if (productId <= 0 || !isSourceBatchChoice(batch, "")) continue;
-            const entry = totals.get(productId) || { quantity: 0, uomName: "" };
+            const product = controller.products.find((item) => Number(item.productId) === productId);
+            if (!product || !isProductCompatibleWithLot(product, selectedSourceLot)) continue;
+            const entry = totals.get(productId) || { quantity: 0, product };
             entry.quantity += batch.quantity;
-            if (!entry.uomName && batch.uomName) entry.uomName = batch.uomName;
             totals.set(productId, entry);
         }
-        return [...totals.entries()].map(([productId, entry]) => {
-            const product = controller.products.find((item) => Number(item.productId) === productId);
-            const name = product
-                ? `${product.productName}${product.skuCode ? ` | ${product.skuCode}` : ""}`
-                : `Product #${productId}`;
-            const unit = entry.uomName ? ` ${entry.uomName}` : "";
-            return { value: String(productId), label: `${name} — on hand ${formatQuantity(entry.quantity)}${unit}` };
-        });
-    }, [sourceBatches, controller.products]);
+        return [...totals.values()].sort((left, right) => left.product.productName.localeCompare(right.product.productName));
+    }, [sourceBatches, controller.products, selectedSourceLot, sourceUomId]);
+    const productTypeOptions = useMemo(() => {
+        const options = new Map<string, string>();
+        for (const product of controller.products) {
+            options.set(productTypeFilterKey(product), productTypeLabel(product));
+        }
+        return [
+            { value: "", label: "All Product Types" },
+            ...[...options.entries()]
+                .sort((left, right) => left[1].localeCompare(right[1]))
+                .map(([value, label]) => ({ value, label }))
+        ];
+    }, [controller.products]);
     const referenceProductId = useMemo(() => {
         const first = form.details.find((detail) => Number(detail.productId) > 0);
         return first ? Number(first.productId) : 0;
@@ -608,33 +605,56 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
         for (const lot of targetLots) {
             const batches = controller.batchesByLot[Number(lot.lotId)];
             if (!batches) continue;
-            let onHand = 0;
-            let occupied = 0;
-            let uomName = "";
-            for (const batch of batches) {
-                if (batch.status.toUpperCase() !== "ACTIVE" || !(batch.quantity > 0)) continue;
-                occupied += batch.quantity;
-                if (!uomName && batch.uomName) uomName = batch.uomName;
-                if (Number(batch.productId) === referenceProductId) onHand += batch.quantity;
-            }
+            const balance = calculateLotBalance(batches, Number(lot.lotId), lot.maxBatchCapacity, referenceProductId);
             figures.set(Number(lot.lotId), {
-                onHand,
-                free: lot.maxBatchCapacity > 0 ? lot.maxBatchCapacity - occupied : null,
-                uomName
+                onHand: balance.productOnHand,
+                free: balance.remainingCapacity,
+                uomName: balance.uomName
             });
         }
         return figures;
     }, [referenceProductId, targetLots, controller.batchesByLot]);
-    const { batchesByLot: cachedBatchesByLot, loadBatchesForLot: loadBatches } = controller;
-    useEffect(() => {
-        if (referenceProductId <= 0) return;
-        for (const lot of targetLots) {
-            const lotId = Number(lot.lotId) || 0;
-            if (lotId > 0 && !cachedBatchesByLot[lotId]) {
-                void loadBatches(lotId, { silent: true });
-            }
+    const lotBalances = useMemo(() => {
+        const balances = new Map<number, ReturnType<typeof calculateLotBalance>>();
+        for (const lot of activeLots) {
+            const lotId = Number(lot.lotId);
+            const batches = controller.batchesByLot[lotId];
+            if (!batches && !controller.allBatchesLoaded) continue;
+            balances.set(lotId, calculateLotBalance(batches || [], lotId, lot.maxBatchCapacity));
         }
-    }, [referenceProductId, targetLots, cachedBatchesByLot, loadBatches]);
+        return balances;
+    }, [activeLots, controller.allBatchesLoaded, controller.batchesByLot]);
+    const sourceLotsWithInventory = useMemo(
+        () => controller.allBatchesLoaded
+            ? activeLots.filter((lot) => (lotBalances.get(Number(lot.lotId))?.onHandQuantity || 0) > 0)
+            : [],
+        [activeLots, controller.allBatchesLoaded, lotBalances]
+    );
+    const filteredSourceLots = useMemo(
+        () => sourceLotsWithInventory.filter((lot) => lotMatchesSearch(lot, sourceLotSearch, controller.branches)),
+        [controller.branches, sourceLotSearch, sourceLotsWithInventory]
+    );
+    const filteredTargetLots = useMemo(
+        () => targetLots.filter((lot) => lotMatchesSearch(lot, targetLotSearch, controller.branches)),
+        [controller.branches, targetLotSearch, targetLots]
+    );
+    const sourceLotPageCount = Math.max(1, Math.ceil(filteredSourceLots.length / LOT_SELECTION_PAGE_SIZE));
+    const targetLotPageCount = Math.max(1, Math.ceil(filteredTargetLots.length / LOT_SELECTION_PAGE_SIZE));
+    const sourceLotPageIndex = Math.min(sourceLotPage, sourceLotPageCount - 1);
+    const targetLotPageIndex = Math.min(targetLotPage, targetLotPageCount - 1);
+    const visibleSourceLots = filteredSourceLots.slice(sourceLotPageIndex * LOT_SELECTION_PAGE_SIZE, (sourceLotPageIndex + 1) * LOT_SELECTION_PAGE_SIZE);
+    const visibleTargetLots = filteredTargetLots.slice(targetLotPageIndex * LOT_SELECTION_PAGE_SIZE, (targetLotPageIndex + 1) * LOT_SELECTION_PAGE_SIZE);
+    const { handleSourceLotChange, loadAllBatches } = controller;
+    useEffect(() => {
+        if (activeLots.length === 0 || controller.allBatchesLoaded || controller.batchesLoading || controller.batchesLoadError) return;
+        void loadAllBatches({ silent: true });
+    }, [activeLots.length, controller.allBatchesLoaded, controller.batchesLoadError, controller.batchesLoading, loadAllBatches]);
+    useEffect(() => {
+        if (!controller.allBatchesLoaded || controller.batchesLoading || controller.batchesLoadError || !form.sourceLotId) return;
+        const selectedSourceLotHasInventory = sourceLotsWithInventory.some((lot) => String(lot.lotId) === form.sourceLotId);
+        if (selectedSourceLotHasInventory) return;
+        handleSourceLotChange("");
+    }, [controller.allBatchesLoaded, controller.batchesLoadError, controller.batchesLoading, form.sourceLotId, handleSourceLotChange, sourceLotsWithInventory]);
     const targetCapacityConfigured = !selectedTargetLot || selectedTargetLot.maxBatchCapacity > 0;
     const totalQuantity = form.details.reduce((sum, detail) => sum + (Number(detail.quantity) || 0), 0);
     const currentPreview = controller.draftValidationIsCurrent ? controller.preview : null;
@@ -676,7 +696,13 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
                         <FieldLabel required>Branch</FieldLabel>
                         <LotTransferSearchableSelect
                             value={form.branchId}
-                            onValueChange={(value) => controller.setField("branchId", value)}
+                            onValueChange={(value) => {
+                                setSourceLotSearch("");
+                                setTargetLotSearch("");
+                                setSourceLotPage(0);
+                                setTargetLotPage(0);
+                                controller.setField("branchId", value);
+                            }}
                             options={controller.branches.map((branch) => ({ value: String(branch.id), label: `${branch.branchName} (${branch.branchCode})` }))}
                             placeholder="Select branch..."
                             className={selectClassName}
@@ -685,56 +711,180 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
                 )}
             </div>
             <div className="mt-4 grid gap-4 rounded-lg border bg-muted/20 p-3 md:grid-cols-2">
-                <div>
-                    <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><span className="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-800 dark:bg-red-950/40 dark:text-red-300">SOURCE</span>Move out</div>
-                    <label className="block"><FieldLabel required>Source lot</FieldLabel><LotTransferSearchableSelect value={form.sourceLotId} onValueChange={controller.handleSourceLotChange} options={activeLots.map((lot) => ({ value: String(lot.lotId), label: `${lot.lotName || `Lot #${lot.lotId}`} | UOM ${lot.uomName || (lot.uomId === null ? "not configured" : `#${lot.uomId}`)} | capacity ${lot.maxBatchCapacity > 0 ? formatQuantity(lot.maxBatchCapacity) : "not configured"}` }))} placeholder="Select source lot..." className={selectClassName} />{selectedSourceLot && !sourceUomConfigured && <p role="alert" className="mt-2 text-xs font-medium text-red-700 dark:text-red-300">Source lot UOM is not configured. Assign an explicit UOM before submitting this transfer.</p>}</label>
-                </div>
-                <div>
-                    <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">TARGET</span>Move in</div>
-                    <label className="block"><FieldLabel required>Target lot</FieldLabel><LotTransferSearchableSelect value={form.targetLotId} onValueChange={controller.handleTargetLotChange} options={targetLots.map((lot) => {
-                            const figures = targetProductFigures.get(Number(lot.lotId));
-                            const unit = figures?.uomName ? ` ${figures.uomName}` : "";
-                            const segment = figures && referenceProductName
-                                ? ` · ${referenceProductName} on hand ${formatQuantity(figures.onHand)}${unit}${figures.free === null ? "" : ` (${formatQuantity(figures.free)} free)`}`
-                                : "";
-                            return { value: String(lot.lotId), label: `${lot.lotName || `Lot #${lot.lotId}`} | UOM ${lot.uomName || (lot.uomId === null ? "not configured" : `#${lot.uomId}`)} | capacity ${lot.maxBatchCapacity > 0 ? formatQuantity(lot.maxBatchCapacity) : "not configured"}${segment}` };
-                        })} placeholder={form.sourceLotId && !sourceUomConfigured ? "Source UOM required first..." : "Select target lot..."} disabled={!form.sourceLotId || !sourceUomConfigured} className={selectClassName} /><p className="mt-1 text-xs text-muted-foreground">Choose an active destination lot with the same explicit UOM as the source, with configured capacity.</p>{selectedTargetLot && !targetCapacityConfigured && <p role="alert" className="mt-2 text-xs font-medium text-red-700 dark:text-red-300">Destination lot capacity is not configured. A positive capacity is required before this transfer can be submitted.</p>}</label>
-                </div>
+                <fieldset className="flex h-full min-w-0 flex-col">
+                    <legend className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                        <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-800 dark:bg-red-950/40 dark:text-red-300">SOURCE</span>
+                        Move out
+                    </legend>
+                    <FieldLabel required>Source lot</FieldLabel>
+                    <input
+                        type="search"
+                        className={`${inputClassName} mt-2`}
+                        value={sourceLotSearch}
+                        onChange={(event) => {
+                            setSourceLotSearch(event.currentTarget.value);
+                            setSourceLotPage(0);
+                        }}
+                        placeholder="Search source lots..."
+                        aria-label="Search source lots"
+                    />
+                    <div className="mt-2 grid flex-1 auto-rows-fr gap-3 xl:grid-cols-2">
+                        {activeLots.length === 0 ? (
+                            <p className="rounded-lg border border-dashed p-4 text-xs text-muted-foreground xl:col-span-2">
+                                No active storage lots are available for the selected branch.
+                            </p>
+                        ) : controller.batchesLoadError ? (
+                            <p role="alert" className="rounded-lg border border-dashed border-red-200 p-4 text-xs text-red-700 dark:border-red-900 dark:text-red-300 xl:col-span-2">
+                                Source-lot inventory could not be verified. Refresh and retry before selecting a source lot.
+                            </p>
+                        ) : !controller.allBatchesLoaded || controller.batchesLoading ? (
+                            <p className="rounded-lg border border-dashed p-4 text-xs text-muted-foreground xl:col-span-2">
+                                Loading source-lot inventory...
+                            </p>
+                        ) : sourceLotsWithInventory.length === 0 ? (
+                            <p className="rounded-lg border border-dashed p-4 text-xs text-muted-foreground xl:col-span-2">
+                                No active storage lots with positive on-hand inventory are available for the selected branch.
+                            </p>
+                        ) : filteredSourceLots.length === 0 ? (
+                            <p className="rounded-lg border border-dashed p-4 text-xs text-muted-foreground xl:col-span-2">
+                                No source lots match your search.
+                            </p>
+                        ) : visibleSourceLots.map((lot) => {
+                            const lotId = Number(lot.lotId);
+                            return (
+                                <LotSelectionCard
+                                    key={lotId}
+                                    lot={lot}
+                                    branchName={lot.branchId > 0 ? branchLabel(lot.branchId, controller.branches) : "Global lot"}
+                                    balance={lotBalances.get(lotId) || null}
+                                    loading={!lotBalances.has(lotId)}
+                                    occupancyError={!lotBalances.has(lotId) ? controller.batchesLoadError : null}
+                                    selected={form.sourceLotId === String(lotId)}
+                                    onSelect={() => {
+                                        setTargetLotPage(0);
+                                        handleSourceLotChange(String(lotId));
+                                    }}
+                                />
+                            );
+                        })}
+                    </div>
+                    {selectedSourceLot && !sourceUomConfigured && <p role="alert" className="mt-2 text-xs font-medium text-red-700 dark:text-red-300">Source lot UOM is not configured. Assign an explicit UOM before submitting this transfer.</p>}
+                    <div className="mt-auto">
+                        <LotSelectionPagination
+                            currentPage={sourceLotPageIndex}
+                            pageSize={LOT_SELECTION_PAGE_SIZE}
+                            totalItems={filteredSourceLots.length}
+                            label="source lots"
+                            onPageChange={(page) => setSourceLotPage(Math.min(Math.max(page, 0), sourceLotPageCount - 1))}
+                        />
+                    </div>
+                </fieldset>
+                <fieldset className="flex h-full min-w-0 flex-col">
+                    <legend className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">TARGET</span>
+                        Move in
+                    </legend>
+                    <FieldLabel required>Target lot</FieldLabel>
+                    <input
+                        type="search"
+                        className={`${inputClassName} mt-2`}
+                        value={targetLotSearch}
+                        onChange={(event) => {
+                            setTargetLotSearch(event.currentTarget.value);
+                            setTargetLotPage(0);
+                        }}
+                        placeholder="Search target lots..."
+                        aria-label="Search target lots"
+                    />
+                    <div className="mt-2 grid flex-1 auto-rows-fr gap-3 xl:grid-cols-2">
+                        {targetLots.length === 0 ? (
+                            <p className="rounded-lg border border-dashed p-4 text-xs text-muted-foreground xl:col-span-2">
+                                {form.sourceLotId && !sourceUomConfigured
+                                    ? "Target lots require an explicitly configured source-lot UOM."
+                                    : "No active destination lots with matching UOM and configured capacity are available."}
+                            </p>
+                        ) : filteredTargetLots.length === 0 ? (
+                            <p className="rounded-lg border border-dashed p-4 text-xs text-muted-foreground xl:col-span-2">
+                                No target lots match your search.
+                            </p>
+                        ) : visibleTargetLots.map((lot) => {
+                            const lotId = Number(lot.lotId);
+                            const figures = targetProductFigures.get(lotId);
+                            return (
+                                <LotSelectionCard
+                                    key={lotId}
+                                    lot={lot}
+                                    branchName={lot.branchId > 0 ? branchLabel(lot.branchId, controller.branches) : "Global lot"}
+                                    balance={lotBalances.get(lotId) || null}
+                                    loading={!lotBalances.has(lotId)}
+                                    occupancyError={!lotBalances.has(lotId) ? controller.batchesLoadError : null}
+                                    selected={form.targetLotId === String(lotId)}
+                                    disabled={!form.sourceLotId || !sourceUomConfigured}
+                                    disabledReason={!form.sourceLotId ? "Select a source lot first." : !sourceUomConfigured ? "Source lot UOM must be configured first." : undefined}
+                                    productName={figures && referenceProductName ? referenceProductName : undefined}
+                                    productOnHand={figures?.onHand}
+                                    productUomName={figures?.uomName}
+                                    onSelect={() => controller.handleTargetLotChange(String(lotId))}
+                                />
+                            );
+                        })}
+                    </div>
+                    {selectedTargetLot && !targetCapacityConfigured && <p role="alert" className="mt-2 text-xs font-medium text-red-700 dark:text-red-300">Destination lot capacity is not configured. A positive capacity is required before this transfer can be submitted.</p>}
+                    <div className="mt-auto">
+                        <LotSelectionPagination
+                            currentPage={targetLotPageIndex}
+                            pageSize={LOT_SELECTION_PAGE_SIZE}
+                            totalItems={filteredTargetLots.length}
+                            label="target lots"
+                            onPageChange={(page) => setTargetLotPage(Math.min(Math.max(page, 0), targetLotPageCount - 1))}
+                        />
+                    </div>
+                </fieldset>
             </div>
             <div className="mt-4 rounded-lg border p-3">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-sm font-semibold">Transfer detail lines</h3><p className="text-xs text-muted-foreground">Each line creates its own source OUT and destination IN movement pair.</p></div><Button type="button" size="sm" variant="outline" onClick={() => controller.addDetail()}><Plus />Add line</Button></div>
                 <div className="space-y-3">
                     {form.details.map((detail, index) => {
                         const sourceRows = (controller.batchesByLot[Number(form.sourceLotId)] || []).filter((batch) => batch.productId === Number(detail.productId) && (batch.quantity > 0 || String(batch.batchId) === detail.sourceInventoryLotId));
+                        const targetRows = (controller.batchesByLot[Number(form.targetLotId)] || []).filter((batch) => batch.productId === Number(detail.productId));
                         const sourceBatch = sourceRows.find((batch) => String(batch.batchId) === detail.sourceInventoryLotId);
+                        const targetBatch = targetRows.find((batch) => String(batch.batchId) === detail.targetInventoryLotId);
                         const linePreview = controller.preview?.linePreviews.find((line) => line.lineNo === detail.lineNo);
                         const destinationResolution = linePreview?.destinationBatchResolution;
-                        const productOptions = (() => {
-                            if (!detail.productId || sourceProductOptions.some((option) => option.value === String(detail.productId))) return sourceProductOptions;
+                        const compatibleProductChoices = sourceProductChoices.filter(({ product }) => productMatchesType(product, detail.productTypeId));
+                        const productOptions = compatibleProductChoices.map(({ product, quantity }) => ({
+                            value: String(product.productId),
+                            label: `${product.productName}${product.skuCode ? ` | ${product.skuCode}` : ""} — on hand ${formatQuantity(quantity)} | UOM ${productUomLabel(product)}`
+                        }));
+                        if (detail.productId && !productOptions.some((option) => option.value === String(detail.productId))) {
                             const hasActiveBatch = sourceBatches.some((batch) => Number(batch.productId) === Number(detail.productId) && batch.status.toUpperCase() === "ACTIVE");
-                            if (!hasActiveBatch) return sourceProductOptions;
                             const selected = controller.products.find((item) => String(item.productId) === String(detail.productId));
-                            return [...sourceProductOptions, {
-                                value: String(detail.productId),
-                                label: selected ? `${selected.productName}${selected.skuCode ? ` | ${selected.skuCode}` : ""}` : `Product #${detail.productId}`
-                            }];
-                        })();
+                            if (hasActiveBatch && isProductCompatibleWithLot(selected, selectedSourceLot) && productMatchesType(selected, detail.productTypeId)) {
+                                productOptions.push({
+                                    value: String(detail.productId),
+                                    label: selected ? `${selected.productName}${selected.skuCode ? ` | ${selected.skuCode}` : ""} | UOM ${productUomLabel(selected)}` : `Product #${detail.productId}`
+                                });
+                            }
+                        }
                         const productPlaceholder = !form.sourceLotId
                             ? "Select source lot first..."
                             : sourceBatchesLoading
                                 ? "Loading products..."
-                                : sourceProductOptions.length === 0
-                                    ? "No products with batches in this lot"
+                                : productOptions.length === 0
+                                    ? detail.productTypeId
+                                        ? "No products match this type and source-lot UOM/batches"
+                                        : "No products with active batches matching the source-lot UOM"
                                     : "Select product...";
                         return <div key={detail.detailId || `new-${detail.lineNo}`} className="rounded-lg border bg-muted/10 p-3">
                             <div className="mb-3 flex items-center justify-between gap-2"><strong className="text-sm">Line {detail.lineNo}</strong><Button type="button" variant="ghost" size="sm" onClick={() => controller.removeDetail(index)} disabled={form.details.length === 1}><Trash2 />Remove</Button></div>
-                            <div className="grid gap-3 lg:grid-cols-2">
-                                <label><FieldLabel required>Product</FieldLabel><LotTransferSearchableSelect value={detail.productId} onValueChange={(value) => controller.handleProductChange(value, index)} options={productOptions} placeholder={productPlaceholder} disabled={!form.sourceLotId || sourceBatchesLoading} className={selectClassName} /></label>
+                            <div className="grid gap-3 lg:grid-cols-3">
+                                <label><FieldLabel>Product Type</FieldLabel><LotTransferSearchableSelect value={detail.productTypeId} onValueChange={(value) => controller.handleProductTypeChange(value, index)} options={productTypeOptions} placeholder="All Product Types" disabled={!form.sourceLotId || sourceBatchesLoading || !sourceUomConfigured} className={selectClassName} /></label>
+                                <label><FieldLabel required>Product</FieldLabel><LotTransferSearchableSelect value={detail.productId} onValueChange={(value) => controller.handleProductChange(value, index)} options={productOptions} placeholder={productPlaceholder} disabled={!form.sourceLotId || sourceBatchesLoading || !sourceUomConfigured} className={selectClassName} />{form.sourceLotId && sourceUomConfigured && !sourceBatchesLoading && productOptions.length === 0 && <p className="mt-1 text-xs text-muted-foreground">Only products matching the selected type, source-lot UOM, and active batches can be transferred.</p>}</label>
                                 <label><FieldLabel required>Quantity</FieldLabel><input className={inputClassName} type="number" min="0.000001" step="any" value={detail.quantity} onChange={(event) => controller.updateDetail(index, { quantity: event.currentTarget.value })} placeholder="Enter quantity" /></label>
                                 <label><FieldLabel required>Source batch</FieldLabel><BatchSelect batches={sourceRows} value={detail.sourceInventoryLotId} onChange={(value) => controller.handleBatchChange(index, "source", value)} disabled={!form.sourceLotId || !detail.productId} source /></label>
-                                <div className="rounded-md border bg-background px-3 py-2 text-sm"><FieldLabel>Destination batch</FieldLabel><strong>{destinationResolution?.batchNo || sourceBatch?.batchNumber || "Derived from source batch"}</strong><p className="mt-1 text-xs text-muted-foreground">{destinationResolution?.action === "MERGE" ? "Merge existing compatible batch on posting." : destinationResolution?.action === "CREATE" ? "Create this batch on posting." : "The server will match or create this batch during posting."}</p></div>
+                                <label><FieldLabel>Target batch <span className="text-xs font-normal text-muted-foreground">(optional)</span></FieldLabel><BatchSelect batches={targetRows} value={detail.targetInventoryLotId} onChange={(value) => controller.handleBatchChange(index, "target", value)} disabled={!form.targetLotId || !detail.productId} source={false} /><p className="mt-1 text-xs text-muted-foreground">Leave blank to automatically match or create the source batch.</p><p className="mt-1 text-xs text-muted-foreground">Resolved destination: {destinationResolution?.batchNo || targetBatch?.batchNumber || sourceBatch?.batchNumber || "Automatic matching/creation"}</p><p className="mt-1 text-xs text-muted-foreground">{destinationResolution?.action === "MERGE" ? "Merge existing compatible batch on posting." : destinationResolution?.action === "CREATE" ? "Create this batch on posting." : "The server will match or create this batch during posting."}</p></label>
                             </div>
-                            {(sourceBatch || linePreview) && <div className="mt-3 grid gap-2 rounded-md bg-background p-2 text-xs sm:grid-cols-4"><span>Source available<br /><strong>{formatQuantity(linePreview?.source.availableQuantity ?? sourceBatch?.quantity)}</strong></span><span>Destination on hand<br /><strong>{formatQuantity(linePreview?.target.onHandBefore)}</strong></span><span>Source expiry<br /><strong>{formatDate(linePreview?.source.expiryDate ?? sourceBatch?.expirationDate)}</strong></span><span>Destination expiry<br /><strong>{formatDate(linePreview?.target.expiryDate ?? destinationResolution?.expiryDate)}</strong></span></div>}
+                            {(sourceBatch || linePreview) && <div className="mt-3 grid gap-2 rounded-md bg-background p-2 text-xs sm:grid-cols-5"><span>Source batch available (live)<br /><strong>{formatQuantity(linePreview?.source.availableQuantity ?? sourceBatch?.quantity)}</strong></span><span>Source lot occupancy<br /><strong>{formatQuantity(linePreview?.sourceLotOccupiedBefore)}</strong></span><span>Destination batch on hand<br /><strong>{formatQuantity(linePreview?.target.onHandBefore)}</strong></span><span>Source expiry<br /><strong>{formatDate(linePreview?.source.expiryDate ?? sourceBatch?.expirationDate)}</strong></span><span>Destination expiry<br /><strong>{formatDate(linePreview?.target.expiryDate ?? destinationResolution?.expiryDate)}</strong></span></div>}
                             <label className="mt-3 block"><FieldLabel>Line remarks</FieldLabel><textarea className={textAreaClassName} value={detail.lineRemarks} onChange={(event) => controller.updateDetail(index, { lineRemarks: event.currentTarget.value })} placeholder="Optional line-specific context..." /></label>
                             {linePreview && <div className="mt-3 space-y-1">{linePreview.checks.filter((check) => !check.passed).map((check) => <p key={check.key} role="alert" className="text-xs font-medium text-red-700 dark:text-red-300">{check.label}: {check.message}</p>)}</div>}
                         </div>;
@@ -747,7 +897,7 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
                     <span>Projected destination occupancy<br /><strong className={projectedDestinationRemaining !== null && projectedDestinationRemaining < 0 ? "text-red-700 dark:text-red-300" : "text-foreground"}>{projectedDestinationOccupancy === null ? "Validate to calculate" : `${formatQuantity(projectedDestinationOccupancy)}${projectedDestinationRemaining === null ? "" : ` (${formatQuantity(projectedDestinationRemaining)} remaining)`}`}</strong></span>
                 </div>
             </div>
-            <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground"><strong className="text-foreground">Live server validation</strong><br />Each product, batch, source availability, repeated-source aggregate, destination capacity, UOM, expiry, QA, and allergen check runs against the current detail lines. Save and submission require a complete detail set; submission is blocked when any line fails.</div>
+            <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground"><strong className="text-foreground">Live server validation</strong><br />Each product, exact batch balance, source-lot occupancy, repeated-source aggregate, destination-lot occupancy, capacity, UOM, expiry, QA, and allergen check runs against the current detail lines. Save and submission require a complete detail set; submission is blocked when any line fails.</div>
             <label className="mt-4 block"><FieldLabel required>Transfer reason</FieldLabel><textarea className={textAreaClassName} value={form.reason} onChange={(event) => controller.setField("reason", event.currentTarget.value)} placeholder="Explain why the stock is being moved..." /></label>
             <div className="mt-4 rounded-lg border p-3" aria-live="polite">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -763,12 +913,14 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
                     <div className="mt-3 grid gap-3 md:grid-cols-2">
                         <div className="rounded-lg border bg-muted/20 p-3 text-xs">
                             <strong>Source availability</strong>
-                            <p className="mt-1">On-hand: {formatQuantity(controller.preview.source.onHandBefore)} | Available: {formatQuantity(controller.preview.source.availableQuantity)}</p>
+                            <p className="mt-1">Batch on-hand: {formatQuantity(controller.preview.source.onHandBefore)} | Available: {formatQuantity(controller.preview.source.availableQuantity)}</p>
+                            <p className="mt-1">Source-lot occupancy: {formatQuantity(controller.preview.sourceLotOccupiedBefore)}</p>
                             <ProtectedAllocationBreakdown snapshot={controller.preview.source} />
                         </div>
                         <div className="rounded-lg border bg-muted/20 p-3 text-xs">
                             <strong>Destination occupancy</strong>
-                            <p className="mt-1">On-hand: {formatQuantity(controller.preview.target.onHandBefore)} | After: {formatQuantity(controller.preview.target.onHandAfter)}</p>
+                            <p className="mt-1">Batch on-hand: {formatQuantity(controller.preview.target.onHandBefore)} | After: {formatQuantity(controller.preview.target.onHandAfter)}</p>
+                            <p className="mt-1">Destination-lot occupancy: {formatQuantity(controller.preview.targetLotOccupiedBefore)}</p>
                             <ProtectedAllocationBreakdown snapshot={controller.preview.target} />
                         </div>
                     </div>
@@ -782,7 +934,7 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
                 {controller.selectedRecord && <CancelTransferAction controller={controller} record={controller.selectedRecord} onSuccess={onClose} />}
                 {controller.selectedId && controller.selectedRecord?.status === "Draft" && <Button type="button" variant="destructive" onClick={() => void handleDelete()} disabled={controller.isActionLoading}><Trash2 />Delete Draft</Button>}
                 <Button type="button" variant="outline" onClick={() => void handleSave()} disabled={controller.isActionLoading || controller.isLookupLoading || !controller.isDraftFormComplete}><Save />Save Draft</Button>
-                <Button type="button" onClick={() => void handleSubmit()} disabled={controller.isActionLoading || !controller.selectedId || controller.selectedRecord?.status !== "Draft" || !controller.draftValidationIsCurrent || controller.draftValidationStatus !== "valid" || !controller.preview?.canApprove}><Send />Submit for QA</Button>
+                <Button type="button" onClick={() => void handleSubmit()} disabled={controller.isActionLoading || (controller.selectedId !== null && controller.selectedRecord?.status !== "Draft") || !controller.isDraftFormComplete || !controller.draftValidationIsCurrent || controller.draftValidationStatus !== "valid" || !controller.preview?.canApprove}><Send />Submit for QA</Button>
             </div>
         </section>
     );
@@ -888,7 +1040,7 @@ function PostingReview({ controller }: { controller: LotTransferController }) {
                 <div className="mt-4"><h3 className="mb-2 text-sm font-semibold">Posting validation</h3><Checks preview={preview} /></div>
                 <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-sm"><strong>Reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reason}</p></div>
                 {notice && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">{notice}</div>}
-                <div className="mt-4 flex justify-end gap-2"><ReverseTransferAction controller={controller} record={record} /><CancelTransferAction controller={controller} record={record} />{record.status === "Approved" && <Button type="button" onClick={() => void handlePost()} disabled={controller.isActionLoading || !preview?.canPost}><Upload />Post transfer</Button>}</div>
+                <div className="mt-4 flex justify-end gap-2"><CancelTransferAction controller={controller} record={record} />{record.status === "Approved" && <Button type="button" onClick={() => void handlePost()} disabled={controller.isActionLoading || !preview?.canPost}><Upload />Post transfer</Button>}</div>
             </>}
         </section>
     );
@@ -1015,7 +1167,7 @@ function SummaryAudit({ controller, allowCancel = false }: { controller: LotTran
     };
 
     return (
-        <section className={panelClassName} aria-labelledby="lot-transfer-audit-heading">
+        <section className={`${panelClassName} min-w-0 w-full`} aria-labelledby="lot-transfer-audit-heading">
             {!record ? <EmptyState message="Select a terminal request to view its audit record." /> : <>
                 <div className="mb-4 flex items-center justify-between gap-3">
                     <div>
@@ -1037,19 +1189,17 @@ function SummaryAudit({ controller, allowCancel = false }: { controller: LotTran
                     <div><dt className="text-xs text-muted-foreground">UOM</dt><dd className="font-semibold">{uomLabel(record.unitId, controller.lots)}</dd></div>
                     <div><dt className="text-xs text-muted-foreground">Source movement</dt><dd className="font-semibold">{record.sourceMovementId || "Not posted"}</dd></div>
                     <div><dt className="text-xs text-muted-foreground">Target movement</dt><dd className="font-semibold">{record.targetMovementId || "Not posted"}</dd></div>
-                    <div><dt className="text-xs text-muted-foreground">Source balance</dt><dd>{formatQuantity(record.sourceBalanceBefore)} -&gt; {formatQuantity(record.sourceBalanceAfter)}</dd></div>
-                    <div><dt className="text-xs text-muted-foreground">Target balance</dt><dd>{formatQuantity(record.targetBalanceBefore)} -&gt; {formatQuantity(record.targetBalanceAfter)}</dd></div>
                     <div><dt className="text-xs text-muted-foreground">Effective expiry</dt><dd>{formatDate(record.effectiveExpiryDate)}</dd></div>
-                    <div><dt className="text-xs text-muted-foreground">Submitted by</dt><dd>{record.submittedBy || "System"}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Submitted by</dt><dd>{actorLabel(record.submittedByName, record.submittedBy)}</dd></div>
                     <div><dt className="text-xs text-muted-foreground">Submitted at</dt><dd>{formatDateTime(record.submittedAt)}</dd></div>
                     <div><dt className="text-xs text-muted-foreground">Approved at</dt><dd>{formatDateTime(record.approvedAt)}</dd></div>
                     <div><dt className="text-xs text-muted-foreground">Posted at</dt><dd>{formatDateTime(record.postedAt)}</dd></div>
-                    <div><dt className="text-xs text-muted-foreground">Posted by</dt><dd>{record.postedByName || record.postedBy || "Not posted"}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Posted by</dt><dd>{actorLabel(record.postedByName, record.postedBy)}</dd></div>
                     <div><dt className="text-xs text-muted-foreground">Cancelled at</dt><dd>{formatDateTime(record.cancelledAt)}</dd></div>
-                    <div><dt className="text-xs text-muted-foreground">Cancelled by</dt><dd>{record.cancelledByName || record.cancelledBy || "Not cancelled"}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Cancelled by</dt><dd>{actorLabel(record.cancelledByName, record.cancelledBy)}</dd></div>
                     {record.reversalOfId !== null && <div><dt className="text-xs text-muted-foreground">Reversal of</dt><dd className="font-semibold">Transfer #{record.reversalOfId}</dd></div>}
                     {record.reversedAt && <div><dt className="text-xs text-muted-foreground">Reversed at</dt><dd>{formatDateTime(record.reversedAt)}</dd></div>}
-                    {record.reversedAt && <div><dt className="text-xs text-muted-foreground">Reversed by</dt><dd>{record.reversedByName || record.reversedBy || "System"}</dd></div>}
+                    {record.reversedAt && <div><dt className="text-xs text-muted-foreground">Reversed by</dt><dd>{actorLabel(record.reversedByName, record.reversedBy)}</dd></div>}
                 </dl>
                 <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-sm">
                     <strong>Reason</strong>
@@ -1059,16 +1209,15 @@ function SummaryAudit({ controller, allowCancel = false }: { controller: LotTran
                     {record.reversalReason && <><strong className="mt-3 block">Reversal reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reversalReason}</p></>}
                     {record.postingError && <><strong className="mt-3 block text-red-700">Posting error</strong><p className="mt-1 whitespace-pre-wrap text-red-700">{record.postingError}</p></>}
                 </div>
-                <Tabs value={auditTab} onValueChange={handleAuditTabChange} className="mt-4" aria-label="Lot-transfer audit history">
+                <Tabs value={auditTab} onValueChange={handleAuditTabChange} className="mt-4 min-w-0 w-full" aria-label="Lot-transfer audit history">
                     <TabsList className="w-full sm:w-fit">
                         <TabsTrigger value="approval">Approval history</TabsTrigger>
                         <TabsTrigger value="movement">Movement history</TabsTrigger>
                     </TabsList>
-                    <TabsContent value="approval"><StatusHistoryTimeline controller={controller} record={record} /></TabsContent>
-                    <TabsContent value="movement"><MovementHistoryTimeline controller={controller} record={record} /></TabsContent>
+                    <TabsContent value="approval" className="min-w-0"><StatusHistoryTimeline controller={controller} record={record} /></TabsContent>
+                    <TabsContent value="movement" className="min-w-0"><MovementHistoryTimeline controller={controller} record={record} /></TabsContent>
                 </Tabs>
                 <div className="mt-4 flex justify-end gap-2">
-                    <ReverseTransferAction controller={controller} record={record} />
                     {allowCancel && <CancelTransferAction controller={controller} record={record} />}
                 </div>
             </>}
@@ -1164,7 +1313,7 @@ export default function LotTransferModule({ mode, userBranchId }: LotTransferMod
                 </DialogContent>
             </Dialog>}
             {mode === "request" && <Dialog open={requestStatusDialogOpen} onOpenChange={(open) => open ? setRequestStatusDialogOpen(true) : closeRequestStatusDialog()}>
-                <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+                <DialogContent className="max-h-[90vh] w-[95vw] max-w-6xl overflow-x-hidden overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>Lot transfer status</DialogTitle>
                         <DialogDescription>Read-only status and audit details for the selected transfer request.</DialogDescription>
@@ -1191,7 +1340,7 @@ export default function LotTransferModule({ mode, userBranchId }: LotTransferMod
                 </DialogContent>
             </Dialog>}
             {mode === "summary" && <Dialog open={summaryDialogOpen} onOpenChange={(open) => open ? setSummaryDialogOpen(true) : closeSummaryDialog()}>
-                <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+                <DialogContent className="max-h-[90vh] w-[95vw] max-w-6xl overflow-x-hidden overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>Lot transfer audit</DialogTitle>
                         <DialogDescription>Read-only details for the selected terminal transfer request.</DialogDescription>

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { Batch, BatchStatus, BatchQaStatus } from "@/modules/manufacturing-management/lot-management/types";
+import { movementQuantities } from "@/app/api/manufacturing/lots/_movement-quantity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -145,9 +146,7 @@ export async function GET(request: Request) {
             const lId = (hasInvId && matchedLot) ? parsedLotId : 0;
             const pId = Number(m.productId || m.product_id || 0);
             const bNo = String(m.batchNo || m.batch_no || "").trim();
-            const qIn = Number(m.quantityIn || m.quantity_in || 0);
-            const qOut = Number(m.quantityOut || m.quantity_out || 0);
-            const net = qIn - qOut;
+            const { quantityIn: qIn, quantityOut: qOut, net } = movementQuantities(m);
             const cost = Number(m.unitCost || m.unit_cost || 0);
             const invId = Number(m.inventoryLotId || m.inventory_lot_id || 0);
 
@@ -234,12 +233,11 @@ export async function GET(request: Request) {
 
             if (invId > 0) {
                 const cur = movementNetByInvLotId.get(invId) || { onhand: 0, totalIn: 0, totalOut: 0, unitCost: 0, count: 0 };
-                // Only use onhand snapshot if no movements were found
-                if (cur.count === 0) {
-                    cur.onhand = onhand;
-                    cur.totalIn = qIn;
-                    cur.totalOut = qOut;
-                }
+                // The live batch-onhand snapshot is authoritative for the current balance.
+                cur.onhand = onhand;
+                cur.totalIn = qIn;
+                cur.totalOut = qOut;
+                cur.count = Math.max(cur.count, 1);
                 if (mfgDate && !cur.mfgDate) cur.mfgDate = mfgDate;
                 if (expDate && !cur.expDate) cur.expDate = expDate;
                 movementNetByInvLotId.set(invId, cur);
@@ -265,12 +263,11 @@ export async function GET(request: Request) {
                     branchId: Number(oh.branchId || oh.branch_id || 1),
                     unitId: Number(oh.unitId || oh.unit_id || 1)
                 };
-                // Only use onhand snapshot if no movements were found
-                if (curBase.count === 0) {
-                    curBase.onhand = onhand;
-                    curBase.totalIn = qIn;
-                    curBase.totalOut = qOut;
-                }
+                // The live batch-onhand snapshot is authoritative for the current balance.
+                curBase.onhand = onhand;
+                curBase.totalIn = qIn;
+                curBase.totalOut = qOut;
+                curBase.count = Math.max(curBase.count, 1);
                 if (mfgDate && !curBase.mfgDate) curBase.mfgDate = mfgDate;
                 if (expDate && !curBase.expDate) curBase.expDate = expDate;
                 movementNetByLotProductBatch.set(baseKey, curBase);
@@ -287,11 +284,10 @@ export async function GET(request: Request) {
                         mfgDate,
                         expDate
                     };
-                    if (curDate.count === 0) {
-                        curDate.onhand = onhand;
-                        curDate.totalIn = qIn;
-                        curDate.totalOut = qOut;
-                    }
+                    curDate.onhand = onhand;
+                    curDate.totalIn = qIn;
+                    curDate.totalOut = qOut;
+                    curDate.count = Math.max(curDate.count, 1);
                     movementNetByLotProductBatchDate.set(dateKey, curDate);
                 }
             }
@@ -420,7 +416,7 @@ export async function GET(request: Request) {
                 : undefined;
             const movementByLotProdBatch = movementNetByLotProductBatch.get(`${lotId}_${productId}_${batchNumber.toLowerCase()}`);
             const movementByInvId = batchId > 0 ? movementNetByInvLotId.get(batchId) : undefined;
-            const movementInfo = movementByExactDates || movementByLotProdBatch || movementByInvId;
+            const movementInfo = movementByInvId || movementByExactDates || movementByLotProdBatch;
 
             const quantity = movementInfo !== undefined
                 ? Number(movementInfo.onhand || 0)

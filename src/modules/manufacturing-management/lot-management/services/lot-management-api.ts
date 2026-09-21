@@ -109,8 +109,9 @@ export async function fetchUoms(): Promise<UnitOfMeasure[]> {
 // ─── Batch API Functions ─────────────────────────────────────────────
 
 export async function fetchBatches(lotId?: number): Promise<Batch[]> {
-    const query = lotId ? `?lotId=${lotId}&_t=${Date.now()}` : `?_t=${Date.now()}`;
-    const res = await fetch(`/api/manufacturing/inventory-warehousing/lot-management/batches${query}`, { cache: "no-store" });
+    const params = new URLSearchParams({ source: "lot-transfer", _t: String(Date.now()) });
+    if (lotId) params.set("lotId", String(lotId));
+    const res = await fetch(`/api/manufacturing/lots/batches?${params.toString()}`, { cache: "no-store" });
     if (!res.ok) {
         throw new Error(await extractErrorMessage(res, "Failed to fetch batches from BFF"));
     }
@@ -163,20 +164,24 @@ export async function deleteBatch(batchId: number): Promise<{ success: boolean }
 export async function fetchInventoryMovements(params?: {
     branchId?: number;
     lotId?: number;
+    mmLotId?: number;
     productId?: number;
     batchNo?: string;
     direction?: string;
     transactionType?: string;
     referenceNo?: string;
+    includeLotTransfers?: boolean;
 }): Promise<InventoryMovement[]> {
     const searchParams = new URLSearchParams();
     if (params?.branchId) searchParams.append("branch", String(params.branchId));
-    if (params?.lotId) searchParams.append("lotId", String(params.lotId));
+    const canonicalLotId = params?.mmLotId ?? params?.lotId;
+    if (canonicalLotId) searchParams.append("mmLotId", String(canonicalLotId));
     if (params?.productId) searchParams.append("productId", String(params.productId));
     if (params?.batchNo) searchParams.append("batchNo", params.batchNo);
     if (params?.direction && params.direction !== "ALL") searchParams.append("direction", params.direction);
     if (params?.transactionType && params.transactionType !== "ALL") searchParams.append("transactionType", params.transactionType);
     if (params?.referenceNo) searchParams.append("referenceNo", params.referenceNo);
+    if (params?.includeLotTransfers) searchParams.append("includeLotTransfers", "true");
     searchParams.append("_t", String(Date.now()));
 
     const queryStr = searchParams.toString();
