@@ -99,3 +99,31 @@ export interface InventoryReportFilterState {
     status: "below_maintaining" | "out_of_stock" | "low_stock" | "healthy" | "zero_threshold" | "all";
     search: string;
 }
+
+export type LowStockAlertStatus = "low_stock" | "out_of_stock";
+
+export interface LowStockAlertConfig {
+    enabled?: boolean;
+    maxItems?: number;
+    statuses?: LowStockAlertStatus[];
+    autoScroll?: boolean;
+    autoScrollInterval?: number;
+    onProductClick?: (productId: number) => void;
+}
+
+export const moduleWidgets = {
+    inventoryReports: {
+        lowStockAlerts: true,
+    },
+    physicalInventory: {
+        lowStockAlerts: false,
+    },
+    lotManagement: {
+        lowStockAlerts: true,
+    },
+    stockAdjustment: {
+        lowStockAlerts: false,
+    },
+} as const;
+
+export type ModuleWidgetKey = keyof typeof moduleWidgets;

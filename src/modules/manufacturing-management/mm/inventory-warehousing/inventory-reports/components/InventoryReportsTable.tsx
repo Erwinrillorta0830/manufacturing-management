@@ -220,7 +220,8 @@ export function InventoryReportsTable({
                             return (
                                 <React.Fragment key={product.productId}>
                                     <tr
-                                        className={`group hover:bg-muted/30 transition-colors ${
+                                        id={`product-row-${product.productId}`}
+                                        className={`group hover:bg-muted/30 transition-colors scroll-mt-24 ${
                                             isCritical ? "bg-rose-500/[0.03]" : isLow ? "bg-amber-500/[0.02]" : ""
                                         }`}
                                     >
