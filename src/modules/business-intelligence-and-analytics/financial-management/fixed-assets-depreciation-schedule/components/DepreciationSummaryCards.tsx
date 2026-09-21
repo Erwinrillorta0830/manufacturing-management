@@ -1,20 +1,17 @@
 "use client";
 
-import React from "react";
+ 
 import { motion } from "framer-motion";
 import {
     Building2,
     PiggyBank,
     TrendingDown,
     Layers,
-    DollarSign,
-    CheckCircle2,
-    Clock,
-    AlertTriangle
+    DollarSign 
 } from "lucide-react";
-import { DepreciationScheduleSummary, AssetReportingStatus } from "../types";
+import { DepreciationScheduleSummary } from "../types";
 import { formatCurrency } from "../utils/depreciationCalculations";
-import { Badge } from "@/components/ui/badge";
+ 
 
 interface DepreciationSummaryCardsProps {
     summary: DepreciationScheduleSummary | null;

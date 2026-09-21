@@ -5,7 +5,6 @@ import { motion } from "framer-motion";
 import {
     Cpu,
     Sliders,
-    TrendingUp,
     AlertCircle,
     ArrowUpRight,
     ArrowDownRight,

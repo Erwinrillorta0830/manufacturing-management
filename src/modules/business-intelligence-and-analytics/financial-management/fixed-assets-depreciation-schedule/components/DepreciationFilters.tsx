@@ -12,11 +12,7 @@ import {
     ChevronsUpDown,
     Tag,
     Calculator,
-    Activity,
-    CheckCircle2,
-    Clock,
-    AlertTriangle,
-    AlertCircle
+    Activity 
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -41,7 +37,7 @@ import {
     SelectTrigger,
     SelectValue
 } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
+ 
 import { cn } from "@/lib/utils";
 import {
     DepreciationFiltersState,

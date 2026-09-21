@@ -5,12 +5,7 @@ import {
     Download,
     Printer,
     FileSpreadsheet,
-    FileText,
-    Building2,
-    Calendar,
-    Layers,
-    DollarSign,
-    CheckCircle2
+    FileText 
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,7 +21,7 @@ import {
     DialogTitle,
     DialogDescription
 } from "@/components/ui/dialog";
-import { Separator } from "@/components/ui/separator";
+ 
 import { toast } from "sonner";
 import { AssetDepreciationRecord, DepreciationScheduleSummary } from "../types";
 import {

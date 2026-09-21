@@ -3,12 +3,9 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import {
-    Calendar,
-    Building2,
-    RefreshCw,
+ 
     AlertCircle,
-    FileSpreadsheet,
-    ShieldCheck,
+ 
     Layers
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,7 +20,7 @@ import {
     DepreciationScheduleSummary,
     DepartmentOption,
     DepreciationFiltersState,
-    AssetReportingStatus
+ 
 } from "./types";
 import { formatDateString } from "./utils/depreciationCalculations";
 
