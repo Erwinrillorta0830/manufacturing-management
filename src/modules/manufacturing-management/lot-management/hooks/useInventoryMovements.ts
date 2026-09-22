@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { toast } from "sonner";
 import { InventoryMovement } from "../types";
 import { fetchInventoryMovements } from "../services/lot-management-api";
-import { resolveProductClassification } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
+import { resolveProductClassification } from "../services/lot-tracking.service";
 
 export function useInventoryMovements(
     selectedProductId: number | "ALL" = "ALL",

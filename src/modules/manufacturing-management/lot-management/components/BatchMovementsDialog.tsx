@@ -17,7 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Batch, InventoryMovement, Lot, Branch } from "../types";
 import { ArrowDownLeft, ArrowUpRight, History, Layers, Package, Warehouse, Loader2 } from "lucide-react";
-import { resolveProductClassification } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
+import { resolveProductClassification } from "../services/lot-tracking.service";
 
 interface BatchMovementsDialogProps {
     isOpen: boolean;

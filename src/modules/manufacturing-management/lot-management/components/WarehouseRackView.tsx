@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import { Pencil, Package, Calendar, AlertCircle, CheckCircle2, ShieldAlert, Boxes, History, ChevronDown, ChevronUp, Building2, AlertTriangle } from "lucide-react";
 import { Lot, Batch, BatchStatus } from "../types";
 import { getFefoPriorityMap, groupAndSumLotBatches, sortBatchesByFefo, sortLotsByFefoExpiry } from "../utils/fefoEngine";
-import { resolveProductClassification } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
+import { resolveProductClassification } from "../services/lot-tracking.service";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -355,13 +355,14 @@ export default function WarehouseRackView({
 
                     const uomLabel = lot.uomShortcut || lot.uomName || "";
 
-                    // Calculate stored inventory types in this lot
+                    // Calculate stored inventory types in this lot — only batches with positive quantity
                     const storedClassifications = (() => {
-                        if (allLotBatches.length === 0) {
+                        const positiveBatches = allLotBatches.filter((b) => Number(b.quantity || 0) > 0);
+                        if (positiveBatches.length === 0) {
                             return [{ code: "EMPTY", label: "Empty / Vacant", className: "bg-muted text-muted-foreground border-border/80" }];
                         }
                         const map = new Map<string, { code: string; label: string; className: string }>();
-                        allLotBatches.forEach((b) => {
+                        positiveBatches.forEach((b) => {
                             const cls = resolveProductClassification(
                                 b.productType,
                                 b.productCategory,

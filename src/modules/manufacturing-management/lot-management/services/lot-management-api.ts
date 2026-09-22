@@ -180,7 +180,7 @@ export async function fetchInventoryMovements(params?: {
     searchParams.append("_t", String(Date.now()));
 
     const queryStr = searchParams.toString();
-    const res = await fetch(`/api/manufacturing/inventory-warehousing/lot-management/inventory-movements?${queryStr}`, { cache: "no-store" });
+    const res = await fetch(`/api/manufacturing/inventory-movements?${queryStr}`, { cache: "no-store" });
     if (!res.ok) {
         throw new Error(await extractErrorMessage(res, "Failed to fetch inventory movements from server"));
     }

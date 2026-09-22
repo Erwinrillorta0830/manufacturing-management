@@ -44,7 +44,46 @@
 
 /tsconfig.json @Jakeeeey @ECuerdo @Xerman09 @Erwinrillorta0830
 
-// Fierrez Folder 
-# ─── Lot Management — owned exclusively by @Fierrez ───────────────────────────
+# ─── Fierrez Folders ───────────────────────────────────────────────────────────
+# Lot Management
 /src/modules/manufacturing-management/lot-management/ @Fierrez
 /src/app/api/manufacturing/inventory-warehousing/lot-management/ @Fierrez
+
+# Stock Adjustments (Registration, Manual, Posting, Summary)
+/src/modules/manufacturing-management/stock-adjustment-registration/ @Fierrez
+/src/modules/manufacturing-management/stock-adjustment-manual-registration/ @Fierrez
+/src/modules/manufacturing-management/stock-adjustment-posting/ @Fierrez
+/src/modules/manufacturing-management/stock-adjustment-summary/ @Fierrez
+/src/app/api/scm/inventory-management/stock-adjustment-registration/ @Fierrez
+/src/app/api/scm/inventory-management/stock-adjustment-manual-registration/ @Fierrez
+/src/app/api/scm/inventory-management/stock-adjustment-posting/ @Fierrez
+/src/app/api/scm/inventory-management/stock-adjustment-summary/ @Fierrez
+
+# Stock Transfer & Conversions
+/src/modules/manufacturing-management/stock-transfer/ @Fierrez
+/src/modules/manufacturing-management/stock-transfer-serialize/ @Fierrez
+/src/modules/manufacturing-management/stock-conversion/ @Fierrez
+/src/modules/manufacturing-management/stock-conversion-manual/ @Fierrez
+/src/app/api/scm/warehouse-management/stock-transfer/ @Fierrez
+/src/app/api/scm/warehouse-management/stock-transfer-serialize/ @Fierrez
+/src/app/api/scm/transfers/stock-conversion/ @Fierrez
+/src/app/api/scm/transfers/stock-conversion-manual/ @Fierrez
+
+# Invoicing & Billing
+/src/modules/manufacturing-management/invoicing-and-billing/ @Fierrez
+/src/app/api/manufacturing/invoicing-and-billing/ @Fierrez
+
+# Sales Management
+/src/modules/manufacturing-management/sales-management/ @Fierrez
+/src/app/api/manufacturing/sales-management/ @Fierrez
+
+# Product Tracing & Compliance
+/src/modules/manufacturing-management/product-tracing/ @Fierrez
+/src/app/api/scm/traceability-compliance/product-tracing/ @Fierrez
+
+# Asset Management
+/src/modules/manufacturing-management/asset-management/ @Fierrez
+/src/app/api/manufacturing/asset-management/ @Fierrez
+
+# Additional Modules
+/src/modules/manufacturing-management/lot-registry/ @Fierrez
