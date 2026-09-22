@@ -295,7 +295,7 @@ export function Step1BasicDetails({
             <div>
                 <div className="space-y-1">
                     <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
-                        Shift Option (Hours)
+                        Hours per Shift
                     </label>
                     <Input
                         type="number"
@@ -308,6 +308,9 @@ export function Step1BasicDetails({
                         placeholder="e.g. 8.0"
                         required
                     />
+                    <p className="text-[10px] text-muted-foreground">
+                        Used to convert the batch-adjusted runtime into estimated production days.
+                    </p>
                 </div>
             </div>
 

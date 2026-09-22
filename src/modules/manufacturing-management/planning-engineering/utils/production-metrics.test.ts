@@ -110,6 +110,14 @@ assert.equal(fullBatchSetup.routeMetrics[0].setupTimeHours, 0.5);
 assert.equal(fullBatchSetup.routeMetrics[0].plannedRunHours, 5);
 assert.equal(fullBatchSetup.routeMetrics[0].elapsedHours, 5.5);
 
+const multiBatchRuntime = calculateProductionMetrics({
+    targetQuantity: 12001,
+    baseQuantity: 6986.19,
+    routes: [{ sequence_order: 1, setup_time_hours: 0.25, run_time_hours: 17.4814, step_batch_size: 6986.19 }]
+});
+assert.equal(multiBatchRuntime.routeMetrics[0].effectiveBatchMultiplier, 2);
+assert.equal(formatProductionValue(multiBatchRuntime.lineLeadTimeHours), "35.2128");
+
 assert.throws(
     () => calculateProductionMetrics({
         targetQuantity: 100,

@@ -27,7 +27,6 @@ import { calculateContainerizationMetrics, formatHoursToHMS } from "../utils/con
 import { calculateProductionMetrics } from "../utils/production-metrics";
 import { calculateAggregateRunHours, calculateFullBatchTarget, calculateRequiredBatchCount, formatProductionValue, readUomId } from "../utils/production-timing";
 import { buildReleaseSummaryHtml, type ReleaseSummaryComponent, type ReleaseSummaryFinancials, type ReleaseSummaryRoutingStep } from "../utils/release-summary-print";
-import { calculateNetRunTime } from "../../finished-goods/costing";
 
 interface ReleaseJODialogProps {
     isConfirmOpen: boolean;
@@ -239,18 +238,16 @@ export function ReleaseJODialog({
                                 const requestedQuantity = targetQuantityProp > 0 ? targetQuantityProp : baseQty;
                                 setTargetQuantity(calculateFullBatchTarget(requestedQuantity, baseQty));
                             }
-                            const rawShift = data.bom.net_run_time ?? data.bom.shift_hours ?? data.bom.shift_option ?? data.bom.target_shift_hours;
-                            if (rawShift && Number(rawShift) > 0) {
-                                setShiftOption(String(Number(rawShift).toFixed(1)));
-                            } else {
-                                const netRunTime = calculateNetRunTime(
-                                    Number(data.bom.shift_hours) || 18,
-                                    Number(data.bom.shift_minutes) || 0,
-                                    Number(data.bom.downtime_minutes) || 16,
-                                    Number(data.bom.downtime_seconds) || 7
-                                ).netProductionHours;
-                                setShiftOption(netRunTime.toFixed(1));
-                            }
+                            // Shift option is the available production capacity per day.
+                            // Recipe net runtime is calculated separately and must not be
+                            // used here because it represents only one recipe batch.
+                            const configuredShiftHours = data.bom.shift_option ?? data.bom.target_shift_hours;
+                            const parsedShiftHours = Number(configuredShiftHours);
+                            setShiftOption(
+                                Number.isFinite(parsedShiftHours) && parsedShiftHours > 0 && parsedShiftHours <= 24
+                                    ? parsedShiftHours.toFixed(1)
+                                    : "8"
+                            );
                         }
                         setHasLoadedDetails(true);
                     }
@@ -889,7 +886,7 @@ export function ReleaseJODialog({
                                     <div>
                                         <div className="space-y-1">
                                             <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide flex items-center justify-between">
-                                                <span>Shift Option (Hours)</span>
+                                                <span>Hours per Shift</span>
                                                 {loadingDetails && (
                                                     <span className="text-[9px] text-muted-foreground font-normal flex items-center gap-1 lowercase">
                                                         <Loader2 className="h-2.5 w-2.5 animate-spin text-primary" />
@@ -907,9 +904,12 @@ export function ReleaseJODialog({
                                                     disabled={loadingDetails}
                                                     onChange={(e) => setShiftOption(e.target.value)}
                                                     className="h-9 font-semibold bg-card border-input text-foreground font-mono"
-                                                    placeholder={loadingDetails ? "Calculating from recipe..." : "e.g. 17.7"}
+                                                    placeholder={loadingDetails ? "Loading..." : "e.g. 8.0"}
                                                     required
                                                 />
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                    Used to convert the batch-adjusted runtime into estimated production days.
+                                                </p>
                                                 {loadingDetails && (
                                                     <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center">
                                                         <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />

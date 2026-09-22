@@ -16,7 +16,6 @@ import { SubmittingLoadingOverlay } from "./SubmittingLoadingOverlay";
 import { calculateContainerizationMetrics } from "../utils/containerization-helper";
 import { calculateProductionMetrics } from "../utils/production-metrics";
 import { calculateAggregateRunHours, calculateFullBatchTarget, readUomId } from "../utils/production-timing";
-import { calculateNetRunTime } from "../../finished-goods/costing";
 import { Step1BasicDetails } from "./buffer-jo/Step1BasicDetails";
 import { Step2BOMReview } from "./buffer-jo/Step2BOMReview";
 import { Step3Scheduling } from "./buffer-jo/Step3Scheduling";
@@ -326,18 +325,16 @@ export function CreateBufferJODialog({
                 } else {
                     setBomBaseQty(1);
                 }
-                const rawShift = verObj.net_run_time ?? verObj.shift_hours ?? verObj.shift_option ?? verObj.target_shift_hours;
-                if (rawShift && Number(rawShift) > 0) {
-                    setShiftOption(String(Number(rawShift).toFixed(1)));
-                } else {
-                    const netRunTime = calculateNetRunTime(
-                        Number(verObj.shift_hours) || 18,
-                        Number(verObj.shift_minutes) || 0,
-                        Number(verObj.downtime_minutes) || 16,
-                        Number(verObj.downtime_seconds) || 7
-                    ).netProductionHours;
-                    setShiftOption(netRunTime.toFixed(1));
-                }
+                // Shift option is the available production capacity per day.
+                // Recipe net runtime is calculated separately and must not be
+                // used here because it represents only one recipe batch.
+                const configuredShiftHours = verObj.shift_option ?? verObj.target_shift_hours;
+                const parsedShiftHours = Number(configuredShiftHours);
+                setShiftOption(
+                    Number.isFinite(parsedShiftHours) && parsedShiftHours > 0 && parsedShiftHours <= 24
+                        ? parsedShiftHours.toFixed(1)
+                        : "8.0"
+                );
             }
         } else {
             setBomBaseQty(1);
