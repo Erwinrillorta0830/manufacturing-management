@@ -1142,19 +1142,11 @@ export function useQAReceiving({
         const issues = [
             ...validateReceivingReceiptDate(receiptDate),
             ...validateReceivingReceiptNumber(receivingTicketNumber),
-            ...validateReceivingMetadata(selectedBranchId, lineItems.map(line => {
-                const row = inspectionRows[line.line_id];
-                return {
-                    lineId: line.line_id,
-                    productName: line.product_id?.product_name || `Item ${line.line_id}`,
-                    isPackaging: Boolean(row?.isPackaging),
-                    receivedQuantity: Number(row?.receivedQty || 0),
-                    acceptedQuantity: Number(row?.acceptedQty || 0),
-                    rejectedQuantity: Math.max(0, deriveRejectedQuantity(Number(row?.receivedQty || 0), Number(row?.acceptedQty || 0))),
-                    acceptedLotAllocations: row?.acceptedLotAllocations || [],
-                    rejectedLotAllocations: row?.rejectedLotAllocations || []
-                };
-            }))
+            // Lot, batch, UOM, product-type, capacity, and allocation-total
+            // validation is owned by the QA-specific allocation modal. Keep this
+            // metadata validation limited to the receiving branch here so the
+            // same rules are not duplicated outside the modal.
+            ...validateReceivingMetadata(selectedBranchId, [])
         ];
         const addIssue = (issue: ReceivingValidationIssue) => {
             if (!issues.some(existing => existing.field === issue.field && existing.lineId === issue.lineId && existing.message === issue.message)) {

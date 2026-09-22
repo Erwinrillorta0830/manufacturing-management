@@ -52,6 +52,7 @@ export interface WarehouseReceivingOrder {
     remarks: string;
     lines: WarehouseReceivingLine[];
     draft: WarehouseReceivingDraft | null;
+    pendingQaReceipt: WarehouseReceivingDraft | null;
 }
 
 export interface WarehouseReceivingQueueResponse {

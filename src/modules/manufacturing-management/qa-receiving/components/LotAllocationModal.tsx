@@ -3,9 +3,10 @@
 import React from "react";
 import { v4 as uuidv4 } from "uuid";
 import {
-    LotBatchSelectionModal as StockAdjustmentLotBatchSelectionModal,
     LotBatchSelectionResult,
-} from "@/modules/manufacturing-management/shared/components/LotBatchSelectionModal";
+    QAMultiLotBatchAllocationModal,
+} from "./QAMultiLotBatchAllocationModal";
+import type { FormSiblingAllocation } from "./QAMultiLotBatchAllocationModal";
 import type { LotAllocationGroup as SharedLotAllocationGroup, QAStatus } from "@/modules/manufacturing-management/shared/types/lot-tracking.types";
 import { ReceivingLotAllocationInput, StorageLot, StorageLotBatch } from "../types";
 
@@ -99,6 +100,8 @@ export interface LotAllocationModalProps {
     readOnly: boolean;
     batchDateDefaults: { manufacturingDate: string; expirationDate: string };
     loadStorageLotBatches: (productId: number, lotId: number, branchId?: number, disposition?: "accepted" | "rejected") => Promise<StorageLotBatch[]>;
+    siblingAllocations?: FormSiblingAllocation[];
+    onValidationChange?: (isValid: boolean, errors: string[]) => void;
     onChange: (allocations: ReceivingLotAllocationInput[]) => void;
 }
 
@@ -121,6 +124,8 @@ export function LotAllocationModal({
     expectedQuantity,
     storageLots,
     readOnly,
+    siblingAllocations,
+    onValidationChange,
     onChange,
 }: LotAllocationModalProps) {
     const allowedLotIds = React.useMemo(() => {
@@ -141,8 +146,7 @@ export function LotAllocationModal({
     );
     const existingFormAllocations = React.useMemo(() => {
         const siblingLotAllocations = toSharedLotAllocations(otherAllocations, storageLots, productUomName, disposition);
-        if (siblingLotAllocations.length === 0) return undefined;
-        return [{
+        const currentLineAllocations = siblingLotAllocations.length === 0 ? [] : [{
             product_id: productId,
             product_name: productName,
             product_code: productCode,
@@ -151,15 +155,21 @@ export function LotAllocationModal({
             category_name: categoryName,
             lot_allocations: siblingLotAllocations,
         }];
-    }, [categoryName, disposition, otherAllocations, productCategory, productCode, productId, productName, productType, productUomName, storageLots]);
+        const combined = [...(siblingAllocations || []), ...currentLineAllocations];
+        return combined.length > 0 ? combined : undefined;
+    }, [categoryName, disposition, otherAllocations, productCategory, productCode, productId, productName, productType, productUomName, siblingAllocations, storageLots]);
     const resolvedBranchId = branchId || storageLots.find(lot => lot.allocation_branch_id || lot.branch_id)?.allocation_branch_id || storageLots.find(lot => lot.branch_id)?.branch_id || undefined;
+    const initialValues = React.useMemo(
+        () => ({ qa_status: disposition === "rejected" ? "DAMAGED" as QAStatus : "GOOD" as QAStatus, total_quantity: expectedQuantity }),
+        [disposition, expectedQuantity],
+    );
 
     const handleConfirm = (result: LotBatchSelectionResult) => {
         onChange(fromSharedLotAllocations(result));
     };
 
     return (
-        <StockAdjustmentLotBatchSelectionModal
+        <QAMultiLotBatchAllocationModal
             open={open}
             onOpenChange={onOpenChange}
             branchId={resolvedBranchId || undefined}
@@ -176,10 +186,12 @@ export function LotAllocationModal({
             requireBatchDates={!isPackaging}
             mode="CREATE_OR_ASSIGN"
             readOnly={readOnly}
-            initialValues={{ qa_status: disposition === "rejected" ? "DAMAGED" : "GOOD", total_quantity: expectedQuantity }}
+            initialValues={initialValues}
             initialLotAllocations={initialLotAllocations}
             existingFormAllocations={existingFormAllocations}
             allowedLotIds={allowedLotIds}
+            qaStorageLots={storageLots}
+            onValidationChange={onValidationChange}
             onConfirm={handleConfirm}
         />
     );
@@ -205,6 +217,8 @@ export interface LotAllocationSectionProps {
     compact?: boolean;
     batchDateDefaults: { manufacturingDate: string; expirationDate: string };
     loadStorageLotBatches: (productId: number, lotId: number, branchId?: number, disposition?: "accepted" | "rejected") => Promise<StorageLotBatch[]>;
+    siblingAllocations?: FormSiblingAllocation[];
+    onValidationChange?: (isValid: boolean, errors: string[]) => void;
     onChange: (allocations: ReceivingLotAllocationInput[]) => void;
 }
 
@@ -228,13 +242,32 @@ export function LotAllocationSection({
     compact = false,
     batchDateDefaults,
     loadStorageLotBatches,
+    siblingAllocations,
+    onValidationChange,
     onChange,
 }: LotAllocationSectionProps) {
     const [open, setOpen] = React.useState(false);
+    const lastFallbackValidity = React.useRef<boolean | null>(null);
     const tone = disposition === "accepted"
         ? { label: "Accepted", text: "text-emerald-700", border: "border-emerald-500/30" }
         : { label: "Rejected", text: "text-red-700", border: "border-red-500/30" };
     const total = allocations.reduce((sum, allocation) => sum + Math.max(0, Number(allocation.quantity) || 0), 0);
+    const fallbackIsValid = expectedQuantity <= 0
+        ? allocations.length === 0
+        : allocations.length > 0
+            && Math.abs(total - expectedQuantity) <= 1e-9
+            && allocations.every(allocation => Boolean(allocation.batchNumber.trim())
+                && (isPackaging || Boolean(allocation.manufacturingDate && allocation.expirationDate)));
+
+    React.useEffect(() => {
+        if (open) {
+            lastFallbackValidity.current = null;
+            return;
+        }
+        if (lastFallbackValidity.current === fallbackIsValid) return;
+        lastFallbackValidity.current = fallbackIsValid;
+        onValidationChange?.(fallbackIsValid, []);
+    }, [fallbackIsValid, onValidationChange, open]);
 
     return (
         <div className={compact ? "space-y-1" : "space-y-2"}>
@@ -304,6 +337,8 @@ export function LotAllocationSection({
                 readOnly={readOnly}
                 batchDateDefaults={batchDateDefaults}
                 loadStorageLotBatches={loadStorageLotBatches}
+                siblingAllocations={siblingAllocations}
+                onValidationChange={onValidationChange}
                 onChange={onChange}
             />
         </div>

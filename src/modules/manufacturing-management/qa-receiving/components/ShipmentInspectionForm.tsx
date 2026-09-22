@@ -12,6 +12,8 @@ import { CreatableSelect } from "@/modules/manufacturing-management/finished-goo
 import { configuredBadStockBranchId } from "../services/qa-api";
 import { formatPhtTimestamp } from "../../shared/pht-date";
 import { LotAllocationSection } from "./LotAllocationModal";
+import type { FormSiblingAllocation } from "./QAMultiLotBatchAllocationModal";
+import type { LotAllocationGroup } from "../../shared/types/lot-tracking.types";
 import QAProductItemsAllocationTable from "./QAProductItemsAllocationTable";
 
 function relationNumber(value: unknown, keys: string[]): number | null {
@@ -26,6 +28,40 @@ function relationNumber(value: unknown, keys: string[]): number | null {
     }
     const parsed = Number(value);
     return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function toSiblingLotAllocations(
+    allocations: ReceivingLotAllocationInput[],
+    storageLots: StorageLot[],
+): LotAllocationGroup[] {
+    const groups = new Map<number, LotAllocationGroup>();
+    for (const allocation of allocations) {
+        const lotId = Number(allocation.storageLotId);
+        if (!Number.isSafeInteger(lotId) || lotId <= 0) continue;
+        const lot = storageLots.find(candidate => Number(candidate.lot_id) === lotId);
+        const group = groups.get(lotId) || {
+            lot_id: lotId,
+            lot_name: lot?.lot_name || `Lot ${lotId}`,
+            max_batch_capacity: Number(lot?.capacity ?? lot?.max_batch_capacity ?? 0),
+            unit_id: typeof lot?.unit_id === "number" ? lot.unit_id : null,
+            unit_name: undefined,
+            allocated_quantity: 0,
+            current_stock_quantity: Number(lot?.occupiedQuantity || 0),
+            batches: [],
+        };
+        const quantity = Number(allocation.quantity);
+        const normalizedQuantity = Number.isFinite(quantity) ? Math.max(0, quantity) : 0;
+        group.batches.push({
+            batch_no: allocation.batchNumber || "",
+            manufacturing_date: allocation.manufacturingDate || "",
+            expiry_date: allocation.expirationDate || "",
+            quantity: normalizedQuantity,
+            qa_status: "GOOD",
+        });
+        group.allocated_quantity += normalizedQuantity;
+        groups.set(lotId, group);
+    }
+    return Array.from(groups.values());
 }
 
 interface ShipmentInspectionFormProps {
@@ -136,6 +172,7 @@ export default function ShipmentInspectionForm({
     const [forceReceivedOpen, setForceReceivedOpen] = React.useState(false);
     const [batchDateDefaults, setBatchDateDefaults] = React.useState({ manufacturingDate: "", expirationDate: "" });
     const [batchDateError, setBatchDateError] = React.useState<string | null>(null);
+    const [allocationValidity, setAllocationValidity] = React.useState<Record<string, boolean>>({});
     const forceClosed = Boolean(selectedShipment.isForceReceived || isForceReceived(selectedShipment.forceReceivedAt));
     const historicalReceiptOnly = Boolean(
         selectedReceipt?.readOnly
@@ -155,7 +192,44 @@ export default function ShipmentInspectionForm({
     React.useEffect(() => {
         setBatchDateDefaults({ manufacturingDate: "", expirationDate: "" });
         setBatchDateError(null);
+        setAllocationValidity({});
     }, [isReplacement, selectedReceipt?.key, selectedShipment.shipment_id]);
+
+    const siblingFormAllocations = React.useMemo<FormSiblingAllocation[]>(() => {
+        return lineItems.flatMap(line => {
+            const product = line.product_id;
+            const productId = Number(product?.product_id);
+            const row = inspectionRows[line.line_id];
+            if (!row || !Number.isSafeInteger(productId) || productId <= 0) return [];
+
+            const storageLots = [
+                ...(storageLotsByProductId[productId] || []),
+                ...(rejectedStorageLotsByProductId[productId] || []),
+            ].filter((lot, index, lots) => lots.findIndex(candidate => Number(candidate.lot_id) === Number(lot.lot_id)) === index);
+            const lotAllocations = toSiblingLotAllocations(
+                [...(row.acceptedLotAllocations || []), ...(row.rejectedLotAllocations || [])],
+                storageLots,
+            );
+            if (lotAllocations.length === 0) return [];
+
+            return [{
+                product_id: productId,
+                product_name: product.product_name,
+                product_code: product.product_code,
+                product_type: line.category_type || product.category_type,
+                product_category: line.category_type || product.category_type,
+                category_name: line.category_type || product.category_type,
+                lot_allocations: lotAllocations,
+            }];
+        });
+    }, [inspectionRows, lineItems, rejectedStorageLotsByProductId, storageLotsByProductId]);
+
+    const handleAllocationValidationChange = React.useCallback((lineId: number, disposition: "accepted" | "rejected", isValid: boolean) => {
+        const key = `${lineId}:${disposition}`;
+        setAllocationValidity(previous => previous[key] === isValid
+            ? previous
+            : { ...previous, [key]: isValid });
+    }, []);
 
     const applyBatchDates = () => {
         const { manufacturingDate, expirationDate } = batchDateDefaults;
@@ -232,11 +306,8 @@ export default function ShipmentInspectionForm({
         const accepted = Number(row?.acceptedQty || 0);
         const allocations = row?.acceptedLotAllocations || [];
         if (accepted <= 0) return allocations.length > 0;
-        const total = allocations.reduce((sum, allocation) => sum + Number(allocation.quantity || 0), 0);
-        return allocations.length === 0
-            || Math.abs(total - accepted) > 1e-9
-            || allocations.some(allocation => !allocation.batchNumber.trim() || (!row?.isPackaging && (!allocation.manufacturingDate || !allocation.expirationDate)));
-    }), [inspectionRows, lineItems]);
+        return allocationValidity[`${line.line_id}:accepted`] !== true;
+    }), [allocationValidity, inspectionRows, lineItems]);
 
     const hasRejectedAllocationMismatch = React.useMemo(() => lineItems.some(line => {
         const row = inspectionRows[line.line_id];
@@ -247,11 +318,8 @@ export default function ShipmentInspectionForm({
             : 0;
         const allocations = row?.rejectedLotAllocations || [];
         if (rejected <= 0) return allocations.length > 0;
-        const total = allocations.reduce((sum, allocation) => sum + Number(allocation.quantity || 0), 0);
-        return allocations.length === 0
-            || Math.abs(total - rejected) > 1e-9
-            || allocations.some(allocation => !allocation.batchNumber.trim() || (!row?.isPackaging && (!allocation.manufacturingDate || !allocation.expirationDate)));
-    }), [inspectionRows, lineItems]);
+        return allocationValidity[`${line.line_id}:rejected`] !== true;
+    }), [allocationValidity, inspectionRows, lineItems]);
 
     const handleSelectProduct = (lineId: number) => {
         setDropdownOpen(false);
@@ -992,6 +1060,8 @@ export default function ShipmentInspectionForm({
                                                         compact
                                                         batchDateDefaults={batchDateDefaults}
                                                         loadStorageLotBatches={loadStorageLotBatches}
+                                                        siblingAllocations={siblingFormAllocations}
+                                                        onValidationChange={isValid => handleAllocationValidationChange(line.line_id, "accepted", isValid)}
                                                         onChange={allocations => handleUpdateAllocations(line.line_id, allocations)}
                                                     />
                                                 )}
@@ -1048,6 +1118,8 @@ export default function ShipmentInspectionForm({
                                                     readOnly={readOnly || !hasCurrentReceipt || lineRejectedStorageLotLookup.status !== "loaded"}
                                                     batchDateDefaults={batchDateDefaults}
                                                     loadStorageLotBatches={loadStorageLotBatches}
+                                                    siblingAllocations={siblingFormAllocations}
+                                                    onValidationChange={isValid => handleAllocationValidationChange(line.line_id, "rejected", isValid)}
                                                     onChange={allocations => handleUpdateRejectedAllocations(line.line_id, allocations)}
                                                 />
                                             </div>
