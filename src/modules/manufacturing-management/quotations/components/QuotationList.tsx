@@ -5,7 +5,7 @@ import {
     Folder, Loader2, ArrowRight, TrendingUp, TrendingDown, Layers, Clock, Search, ChevronLeft, ChevronRight, X, Printer
 } from "lucide-react";
 import { toast } from "sonner";
-import { QuotationHeader, QuotationSnapshotNode, Customer, Project } from "../types";
+import { QuotationHeader, QuotationSnapshotNode, Customer } from "../types";
 import { generateComparativePDF } from "../utils/exportComparativePDF";
 
 interface ProjectPortfolioItem {
@@ -20,7 +20,7 @@ interface ProjectPortfolioItem {
 }
 
 interface QuotationListProps {
-    quotes: QuotationHeader[];
+    quotes?: QuotationHeader[];
     loadingQuotes: boolean;
     loadQuotes: () => void;
     viewQuoteDetails: (quote: QuotationHeader) => void;
@@ -29,7 +29,6 @@ interface QuotationListProps {
 }
 
 export function QuotationList({
-    quotes,
     loadingQuotes,
     loadQuotes,
     viewQuoteDetails,
