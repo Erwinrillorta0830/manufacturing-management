@@ -83,7 +83,7 @@ export default function PickingWorkspaceModule({ batchNo }: PickingWorkspaceModu
         setPrinting(true);
         try {
             toast.info(`Generating Pick List for ${consolidation.consolidatorNo}...`);
-            const allocResult = await fetchAllocationsWithBatches(consolidation.id).catch(() => ({ allocations: [], availableBatches: [] }));
+            const allocResult = await fetchAllocationsWithBatches(consolidation.id, consolidation.branchId).catch(() => ({ allocations: [], availableBatches: [] }));
             const printAllocations = allocResult.allocations || [];
 
             const detailMap = new Map<number, {
