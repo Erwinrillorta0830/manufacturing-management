@@ -1,5 +1,5 @@
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
-import { DirectusOperation } from "@/modules/manufacturing-management/finished-goods/types";
+import { DirectusOperation } from "@/modules/manufacturing-management/finished-goods-master/types";
 
 
 export async function fetchAllOperations(): Promise<DirectusOperation[]> {

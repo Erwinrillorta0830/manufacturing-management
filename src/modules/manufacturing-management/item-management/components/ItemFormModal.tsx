@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { CreatableSelect } from "../../finished-goods/components/CreatableSelect";
+import { CreatableSelect } from "../../finished-goods-master/components/CreatableSelect";
 import { toast } from "sonner";
 
 import { CatalogItem, ItemType, ItemClassification } from "../types";
@@ -24,7 +24,7 @@ export default function ItemFormModal({
     item
 }: ItemFormModalProps) {
     const initialItemName = item?.item_name || "";
-    const initialTypeId = item?.item_type 
+    const initialTypeId = item?.item_type
         ? (typeof item.item_type === "object" ? String(item.item_type.id) : String(item.item_type))
         : "";
     const initialClassId = item?.item_classification
@@ -55,7 +55,7 @@ export default function ItemFormModal({
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         const trimmed = itemName.trim();
-        
+
         const newErrors = {
             itemName: !trimmed,
             itemType: !selectedTypeId,
@@ -101,8 +101,8 @@ export default function ItemFormModal({
                 </div>
 
                 {/* Form */}
-                <form 
-                    onSubmit={handleSubmit} 
+                <form
+                    onSubmit={handleSubmit}
                     onKeyDown={(e) => {
                         if (e.key === "Enter") {
                             e.preventDefault();
@@ -126,11 +126,10 @@ export default function ItemFormModal({
                                 }
                             }}
                             disabled={submitting}
-                            className={`w-full rounded-lg border bg-background px-3 py-2 text-xs text-foreground outline-none focus:ring-1 transition-all ${
-                                errors.itemName
+                            className={`w-full rounded-lg border bg-background px-3 py-2 text-xs text-foreground outline-none focus:ring-1 transition-all ${errors.itemName
                                     ? "border-destructive focus:ring-destructive"
                                     : "border-border focus:ring-primary"
-                            }`}
+                                }`}
                         />
                     </div>
 

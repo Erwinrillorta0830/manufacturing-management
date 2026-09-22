@@ -4,13 +4,13 @@ import React, { useState, useEffect, useMemo } from "react";
 import Image from "next/image";
 import { Plus, Search, Edit, DollarSign, Activity, Settings, Check, LayoutGrid, Image as ImageIcon, ChevronsLeft, ChevronsRight, RefreshCw, Info, Calendar, User, X, ChevronDown, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
-import { WorkCenter, AssetRecord, DepartmentRecord } from "@/modules/manufacturing-management/finished-goods/types";
-import { 
-    fetchWorkCenters, 
-    createWorkCenter, 
+import { WorkCenter, AssetRecord, DepartmentRecord } from "@/modules/manufacturing-management/finished-goods-master/types";
+import {
+    fetchWorkCenters,
+    createWorkCenter,
     saveWorkCenter
 } from "./services/work-stations-api";
-import { fetchAssets, fetchDepartments } from "@/modules/manufacturing-management/finished-goods/services/finished-goods-api";
+import { fetchAssets, fetchDepartments } from "@/modules/manufacturing-management/finished-goods-master/services/finished-goods-api";
 import { Button } from "@/components/ui/button";
 import {
     Select,
@@ -191,17 +191,17 @@ export default function WorkStationsModule() {
                 deptName = found ? found.department_name : (wc.department?.department_name || "");
             }
 
-            const matchesQuery = !query || 
+            const matchesQuery = !query ||
                 wc.work_center_name.toLowerCase().includes(query) ||
                 (typeof wc.asset?.item_id === 'object' ? wc.asset?.item_id?.item_name || "" : "").toLowerCase().includes(query) ||
                 (wc.asset?.rfid_code || "").toLowerCase().includes(query) ||
                 (wc.asset?.barcode || "").toLowerCase().includes(query) ||
                 (deptName ? deptName.toLowerCase().includes(query) : false);
 
-            const matchesStatus = statusFilter === "ALL" || 
+            const matchesStatus = statusFilter === "ALL" ||
                 (statusFilter === "ACTIVE" ? Boolean(wc.is_active) : !Boolean(wc.is_active));
 
-            const matchesDept = departmentFilter === "ALL" || 
+            const matchesDept = departmentFilter === "ALL" ||
                 (deptId !== null && deptId !== undefined && Number(deptId) === Number(departmentFilter));
 
             return matchesQuery && matchesStatus && matchesDept;
@@ -299,7 +299,7 @@ export default function WorkStationsModule() {
             return;
         }
 
-        const isDuplicate = workCenters.some(wc => 
+        const isDuplicate = workCenters.some(wc =>
             wc.work_center_name?.trim().toLowerCase() === trimmedName.toLowerCase() &&
             wc.work_center_id !== editingWorkCenter?.work_center_id
         );
@@ -430,7 +430,7 @@ export default function WorkStationsModule() {
                     <p className="text-xs text-muted-foreground mt-1 font-medium">Configure manufacturing lines, machinery associations, and standard capacity per hour.</p>
                 </div>
                 <div className="flex items-center gap-2">
-                    <Button 
+                    <Button
                         variant="outline"
                         size="icon"
                         onClick={loadData}
@@ -440,7 +440,7 @@ export default function WorkStationsModule() {
                     >
                         <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
                     </Button>
-                    <Button 
+                    <Button
                         onClick={handleOpenCreateModal}
                         className="inline-flex items-center gap-1.5 text-xs font-semibold px-4 py-2.5 rounded-lg shadow-md shadow-primary/20"
                     >
@@ -577,8 +577,8 @@ export default function WorkStationsModule() {
                         </thead>
                         <tbody>
                             {paginatedWorkCenters.map(wc => (
-                                <tr 
-                                    key={wc.work_center_id} 
+                                <tr
+                                    key={wc.work_center_id}
                                     onClick={() => handleOpenViewModal(wc)}
                                     className="border-b border-muted/40 hover:bg-muted/25 dark:hover:bg-muted/15 active:bg-muted/30 transition-colors cursor-pointer"
                                 >
@@ -603,8 +603,8 @@ export default function WorkStationsModule() {
                                                 return <span className="text-muted-foreground/50 italic">None linked</span>;
                                             }
                                             const matchedCatalogAsset = assets.find(a => a.id === wc.asset_id || a.id === linkedAsset.id);
-                                            const assetName = typeof linkedAsset.item_id === 'object' 
-                                                ? linkedAsset.item_id?.item_name || "" 
+                                            const assetName = typeof linkedAsset.item_id === 'object'
+                                                ? linkedAsset.item_id?.item_name || ""
                                                 : (typeof matchedCatalogAsset?.item_id === 'object' ? matchedCatalogAsset?.item_id?.item_name || "" : "");
                                             const rfidCode = linkedAsset.rfid_code || matchedCatalogAsset?.rfid_code || "";
                                             const barcodeCode = linkedAsset.barcode || matchedCatalogAsset?.barcode || "";
@@ -616,16 +616,16 @@ export default function WorkStationsModule() {
                                             return (
                                                 <div className="flex items-center gap-3">
                                                     {itemImage ? (
-                                                        <div 
+                                                        <div
                                                             className="w-10 h-10 rounded border border-border shrink-0 overflow-hidden relative cursor-zoom-in hover:scale-105 transition-transform"
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
                                                                 setPreviewImage(itemImage);
                                                             }}
                                                         >
-                                                            <Image 
-                                                                src={itemImage} 
-                                                                alt={assetName || "Asset"} 
+                                                            <Image
+                                                                src={itemImage}
+                                                                alt={assetName || "Asset"}
                                                                 fill
                                                                 unoptimized
                                                                 className="object-cover"
@@ -682,11 +682,10 @@ export default function WorkStationsModule() {
                                         })()}
                                     </td>
                                     <td className="p-4 align-middle">
-                                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide uppercase ${
-                                            Boolean(wc.is_active) 
-                                                ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" 
+                                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide uppercase ${Boolean(wc.is_active)
+                                                ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
                                                 : "bg-destructive/10 text-destructive border border-destructive/20"
-                                        }`}>
+                                            }`}>
                                             {Boolean(wc.is_active) ? "Active" : "Inactive"}
                                         </span>
                                     </td>
@@ -756,7 +755,7 @@ export default function WorkStationsModule() {
                         >
                             Previous
                         </Button>
-                        
+
                         <div className="flex items-center gap-1 px-2 font-semibold text-xs">
                             <span>Page</span>
                             <span className="text-foreground">{currentPage}</span>
@@ -946,9 +945,9 @@ export default function WorkStationsModule() {
                                                             <div className="flex items-center gap-2">
                                                                 {asset.item_image ? (
                                                                     <div className="w-7 h-7 rounded border border-border shrink-0 overflow-hidden relative">
-                                                                        <Image 
-                                                                            src={asset.item_image} 
-                                                                            alt={label} 
+                                                                        <Image
+                                                                            src={asset.item_image}
+                                                                            alt={label}
                                                                             fill
                                                                             unoptimized
                                                                             className="object-cover"
@@ -1067,11 +1066,10 @@ export default function WorkStationsModule() {
                                 </div>
                                 <div className="text-right space-y-1">
                                     <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">Status</span>
-                                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wide uppercase ${
-                                        Boolean(viewingWorkCenter.is_active) 
-                                            ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" 
+                                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wide uppercase ${Boolean(viewingWorkCenter.is_active)
+                                            ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
                                             : "bg-destructive/10 text-destructive border border-destructive/20"
-                                    }`}>
+                                        }`}>
                                         {Boolean(viewingWorkCenter.is_active) ? "Active" : "Inactive"}
                                     </span>
                                 </div>
@@ -1137,8 +1135,8 @@ export default function WorkStationsModule() {
                                         );
                                     }
                                     const matchedCatalogAsset = assets.find(a => a.id === viewingWorkCenter.asset_id || a.id === linkedAsset.id);
-                                    const assetName = typeof linkedAsset.item_id === 'object' 
-                                        ? linkedAsset.item_id?.item_name || "" 
+                                    const assetName = typeof linkedAsset.item_id === 'object'
+                                        ? linkedAsset.item_id?.item_name || ""
                                         : (typeof matchedCatalogAsset?.item_id === 'object' ? matchedCatalogAsset?.item_id?.item_name || "" : "");
                                     const rfidCode = linkedAsset.rfid_code || matchedCatalogAsset?.rfid_code || "N/A";
                                     const barcodeCode = linkedAsset.barcode || matchedCatalogAsset?.barcode || "N/A";
@@ -1156,52 +1154,52 @@ export default function WorkStationsModule() {
                                                 </div>
                                             )}
                                             <div className="border border-border/60 rounded-xl p-4 flex flex-col md:flex-row gap-4 bg-background">
-                                            {/* Left: Image Container */}
-                                            <div className="w-full md:w-1/3 shrink-0">
-                                                {itemImage ? (
-                                                    <div 
-                                                        className="w-full h-24 rounded-lg border border-border bg-muted/5 shrink-0 overflow-hidden relative cursor-zoom-in hover:scale-102 transition-transform"
-                                                        onClick={() => setPreviewImage(itemImage)}
-                                                    >
-                                                        <Image 
-                                                            src={itemImage} 
-                                                            alt={assetName || "Asset image"} 
-                                                            fill
-                                                            unoptimized
-                                                            className="object-cover"
-                                                        />
-                                                    </div>
-                                                ) : (
-                                                    <div className="w-full h-24 bg-muted/20 border border-dashed rounded-lg flex flex-col items-center justify-center text-muted-foreground/30 gap-1 shrink-0">
-                                                        <ImageIcon className="h-6 w-6" />
-                                                        <span className="text-[9px] font-semibold uppercase tracking-wider">No Image</span>
-                                                    </div>
-                                                )}
-                                            </div>
-                                            {/* Right: Info details */}
-                                            <div className="flex-1 space-y-2">
-                                                <div>
-                                                    <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">Asset/Item Name</span>
-                                                    <span className="font-bold text-foreground text-sm">{assetName || "Equipment Asset"}</span>
+                                                {/* Left: Image Container */}
+                                                <div className="w-full md:w-1/3 shrink-0">
+                                                    {itemImage ? (
+                                                        <div
+                                                            className="w-full h-24 rounded-lg border border-border bg-muted/5 shrink-0 overflow-hidden relative cursor-zoom-in hover:scale-102 transition-transform"
+                                                            onClick={() => setPreviewImage(itemImage)}
+                                                        >
+                                                            <Image
+                                                                src={itemImage}
+                                                                alt={assetName || "Asset image"}
+                                                                fill
+                                                                unoptimized
+                                                                className="object-cover"
+                                                            />
+                                                        </div>
+                                                    ) : (
+                                                        <div className="w-full h-24 bg-muted/20 border border-dashed rounded-lg flex flex-col items-center justify-center text-muted-foreground/30 gap-1 shrink-0">
+                                                            <ImageIcon className="h-6 w-6" />
+                                                            <span className="text-[9px] font-semibold uppercase tracking-wider">No Image</span>
+                                                        </div>
+                                                    )}
                                                 </div>
-                                                <div className="grid grid-cols-2 gap-2 text-[11px]">
+                                                {/* Right: Info details */}
+                                                <div className="flex-1 space-y-2">
                                                     <div>
-                                                        <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">RFID Code</span>
-                                                        <span className="font-semibold text-foreground truncate block">{rfidCode}</span>
+                                                        <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">Asset/Item Name</span>
+                                                        <span className="font-bold text-foreground text-sm">{assetName || "Equipment Asset"}</span>
                                                     </div>
-                                                    <div>
-                                                        <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">Barcode</span>
-                                                        <span className="font-semibold text-foreground truncate block">{barcodeCode}</span>
-                                                    </div>
-                                                    <div className="col-span-2">
-                                                        <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">Condition</span>
-                                                        <span className="font-semibold text-foreground">{condition}</span>
+                                                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                                                        <div>
+                                                            <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">RFID Code</span>
+                                                            <span className="font-semibold text-foreground truncate block">{rfidCode}</span>
+                                                        </div>
+                                                        <div>
+                                                            <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">Barcode</span>
+                                                            <span className="font-semibold text-foreground truncate block">{barcodeCode}</span>
+                                                        </div>
+                                                        <div className="col-span-2">
+                                                            <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">Condition</span>
+                                                            <span className="font-semibold text-foreground">{condition}</span>
+                                                        </div>
                                                     </div>
                                                 </div>
                                             </div>
                                         </div>
-                                    </div>
-                                );
+                                    );
                                 })()}
                             </div>
 
@@ -1251,11 +1249,11 @@ export default function WorkStationsModule() {
             )}
 
             {previewImage && (
-                <div 
+                <div
                     className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 backdrop-blur-md animate-in fade-in duration-200"
                     onClick={() => setPreviewImage(null)}
                 >
-                    <div 
+                    <div
                         className="relative max-w-5xl max-h-[90vh] p-2 bg-card border border-border/40 rounded-2xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-200"
                         onClick={e => e.stopPropagation()}
                     >
@@ -1267,7 +1265,7 @@ export default function WorkStationsModule() {
                         >
                             <X className="h-4 w-4" />
                         </button>
-                        
+
                         {/* Image */}
                         <Image
                             src={previewImage}

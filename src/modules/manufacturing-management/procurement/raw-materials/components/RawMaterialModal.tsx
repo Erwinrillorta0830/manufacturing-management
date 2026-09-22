@@ -1,8 +1,8 @@
 import React from "react";
 import { X, Plus, Trash2, Loader2, Layers } from "lucide-react";
 import {
-    RawMaterialItem, 
-    SupplierItem, 
+    RawMaterialItem,
+    SupplierItem,
     UnitOption,
     SelectOption,
     PackagingVariantFormState,
@@ -12,7 +12,7 @@ import {
     TaxRateOption,
     RawMaterialValidationErrors
 } from "../types/raw-materials.types";
-import { CreatableSelect } from "../../../finished-goods/components/CreatableSelect";
+import { CreatableSelect } from "../../../finished-goods-master/components/CreatableSelect";
 import { ProductImageField } from "./ProductImageField";
 import { PurchaseQaEditor } from "./PurchaseQaEditor";
 import { SupplierMultiSelect } from "./SupplierMultiSelect";
@@ -309,11 +309,10 @@ export function RawMaterialModal({
                                 onClick={() => setFormProductType(389)}
                                 disabled={classificationLocked}
                                 aria-disabled={classificationLocked}
-                                className={`px-4 py-1.5 rounded-lg border text-xs font-extrabold transition-all ${classificationLocked ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${
-                                    formProductType === 389 
-                                        ? "bg-amber-500/10 border-amber-500 text-amber-600 shadow-xs" 
+                                className={`px-4 py-1.5 rounded-lg border text-xs font-extrabold transition-all ${classificationLocked ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${formProductType === 389
+                                        ? "bg-amber-500/10 border-amber-500 text-amber-600 shadow-xs"
                                         : "bg-card border-border text-muted-foreground hover:text-foreground"
-                                }`}
+                                    }`}
                             >
                                 Raw Material / Ingredient
                             </button>
@@ -322,11 +321,10 @@ export function RawMaterialModal({
                                 onClick={() => setFormProductType(390)}
                                 disabled={classificationLocked}
                                 aria-disabled={classificationLocked}
-                                className={`px-4 py-1.5 rounded-lg border text-xs font-extrabold transition-all ${classificationLocked ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${
-                                    formProductType === 390 
-                                        ? "bg-purple-500/10 border-purple-500 text-purple-600 shadow-xs" 
+                                className={`px-4 py-1.5 rounded-lg border text-xs font-extrabold transition-all ${classificationLocked ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${formProductType === 390
+                                        ? "bg-purple-500/10 border-purple-500 text-purple-600 shadow-xs"
                                         : "bg-card border-border text-muted-foreground hover:text-foreground"
-                                }`}
+                                    }`}
                             >
                                 Packaging Material
                             </button>

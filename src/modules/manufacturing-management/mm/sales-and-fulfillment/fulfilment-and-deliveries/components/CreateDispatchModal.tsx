@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { PendingInvoice, Vehicle, User, Branch } from "../types";
 import { X, Truck, ListOrdered, Sparkles } from "lucide-react";
 import { toast } from "sonner";
-import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods/components/CreatableSelect";
+import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods-master/components/CreatableSelect";
 
 const cityCoordinates: Record<string, { lat: number; lng: number }> = {
     "urdaneta": { lat: 15.9761, lng: 120.5713 },
@@ -19,9 +19,9 @@ function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
     const R = 6371; // Earth radius in km
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = 
+    const a =
         Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
         Math.sin(dLon / 2) * Math.sin(dLon / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
@@ -78,11 +78,11 @@ export default function CreateDispatchModal({
     const [estDispatch, setEstDispatch] = useState("");
     const [estArrival, setEstArrival] = useState("");
     const [remarks, setRemarks] = useState("");
-    
+
     // Checked invoice stop details
     const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<number[]>([]);
     const [stopDetails, setStopDetails] = useState<Record<number, { sequence: number; distance: number; remarks: string }>>({});
-    
+
     // Helpers list
     const [selectedHelperIds, setSelectedHelperIds] = useState<number[]>([]);
 
@@ -116,14 +116,14 @@ export default function CreateDispatchModal({
         if (inv && inv.customer_latitude && inv.customer_longitude) {
             return { lat: Number(inv.customer_latitude), lng: Number(inv.customer_longitude) };
         }
-        
+
         const city = (inv?.customer_city || "").toLowerCase().trim();
         for (const key of Object.keys(cityCoordinates)) {
             if (city.includes(key)) {
                 return cityCoordinates[key];
             }
         }
-        
+
         // Fallback: Default near Urdaneta with a small random offset
         const offset = (Math.random() - 0.5) * 0.05;
         return { lat: 15.9761 + offset, lng: 120.5713 + offset };
@@ -139,7 +139,7 @@ export default function CreateDispatchModal({
         const selectedBranch = branches.find(b => String(b.id) === String(startingPoint));
         let currentLat = 15.9761;
         let currentLng = 120.5713;
-        
+
         if (selectedBranch) {
             const bName = (selectedBranch.branch_name || "").toLowerCase();
             if (bName.includes("lingayen")) {
@@ -162,7 +162,7 @@ export default function CreateDispatchModal({
         });
 
         const route: { id: number; coords: { lat: number; lng: number }; distance: number }[] = [];
-        
+
         // 3. Nearest neighbor loop
         while (unvisited.length > 0) {
             let closestIndex = 0;
@@ -210,7 +210,7 @@ export default function CreateDispatchModal({
         setStopDetails(updatedDetails);
         setSelectedInvoiceIds(route.map(item => item.id));
         setTotalDistance(Math.round(totalDistSum * 10) / 10);
-        
+
         toast.success(`Route optimized! Total distance: ${Math.round(totalDistSum * 10) / 10} km.`);
     };
 
@@ -253,7 +253,7 @@ export default function CreateDispatchModal({
         }
 
         setSubmitting(true);
-        
+
         // Sum up total planned distance from individual stops
         const computedDistance = Object.values(stopDetails).reduce((acc, curr) => acc + Number(curr.distance), 0);
 
@@ -298,7 +298,7 @@ export default function CreateDispatchModal({
                         <h3 className="text-sm font-black text-foreground uppercase tracking-wide">Generate New Dispatch Plan</h3>
                         <p className="text-[10px] text-muted-foreground mt-0.5">Bundle sales invoices into a scheduled delivery route.</p>
                     </div>
-                    <button 
+                    <button
                         onClick={onClose}
                         className="p-1 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground border-none cursor-pointer"
                     >
@@ -477,7 +477,7 @@ export default function CreateDispatchModal({
                                             <div className="flex-1 min-w-0 text-xs">
                                                 <div className="flex justify-between items-start">
                                                     <span className="font-bold text-foreground block">{inv.invoice_no}</span>
-                                                    <span className="font-black text-primary">₱{inv.net_amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                                                    <span className="font-black text-primary">₱{inv.net_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                                                 </div>
                                                 <p className="text-[9px] text-muted-foreground mt-0.5">
                                                     Customer: {inv.customer_name} ({inv.customer_code}) | Date: {new Date(inv.invoice_date).toLocaleDateString()}

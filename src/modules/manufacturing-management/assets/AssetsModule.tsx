@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { Plus, Settings } from "lucide-react";
 import { toast } from "sonner";
-import { AssetRecord, DepartmentRecord } from "@/modules/manufacturing-management/finished-goods/types";
+import { AssetRecord, DepartmentRecord } from "@/modules/manufacturing-management/finished-goods-master/types";
 import {
     fetchAssets,
     createAsset,
@@ -15,7 +15,7 @@ import {
     fetchItemClassifications,
     createItemType,
     createItemClassification
-} from "@/modules/manufacturing-management/finished-goods/services/finished-goods-api";
+} from "@/modules/manufacturing-management/finished-goods-master/services/finished-goods-api";
 import { Button } from "@/components/ui/button";
 import { AssetListTable } from "./components/AssetListTable";
 import { MaintenanceWorkOrderModal } from "./components/MaintenanceWorkOrderModal";

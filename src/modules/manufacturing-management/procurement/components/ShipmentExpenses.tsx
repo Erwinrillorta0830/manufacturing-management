@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { IncomingShipment, ShipmentLineItem, ShipmentExpense } from "../types";
-import { CreatableSelect } from "../../finished-goods/components/CreatableSelect";
+import { CreatableSelect } from "../../finished-goods-master/components/CreatableSelect";
 import { toast } from "sonner";
 import { resolveProductWeightBreakdown } from "../packaging-weight";
 import { LANDED_COST_METHOD_OPTIONS } from "../landed-cost-methods";
@@ -15,11 +15,11 @@ interface ShipmentExpensesProps {
     expenses: ShipmentExpense[];
     isModalOpen: boolean;
     setIsModalOpen: (open: boolean) => void;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     allocationForm: any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     setAllocationForm: React.Dispatch<React.SetStateAction<any>>;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     onAllocate: (e: React.FormEvent, shipmentId: number, status: string, lineItemUpdates?: any[]) => void;
     submitting?: boolean;
 }
@@ -35,9 +35,9 @@ export default function ShipmentExpenses({
     onAllocate,
     submitting = false
 }: ShipmentExpensesProps) {
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [receivedQuantities, setReceivedQuantities] = useState<Record<number, number>>({});
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const [overheadTypes, setOverheadTypes] = useState<any[]>([]);
 
     useEffect(() => {
@@ -192,7 +192,7 @@ export default function ShipmentExpenses({
                             Expenses are allocated across container items proportionally. Available methods:
                             <br />• <strong>Weight (KG)</strong>: Heavy items (e.g. raw vegetable oil) carry more trucking weight.
                             <br />• <strong>Volume (CBM)</strong>: Bulky items shoulder more sea freight volume.
-                             <br />• <strong>Hybrid</strong>: Raw Materials use Quantity, Packaging items use Gross Weight, and Finished Goods use Commercial Value.
+                            <br />• <strong>Hybrid</strong>: Raw Materials use Quantity, Packaging items use Gross Weight, and Finished Goods use Commercial Value.
                         </p>
                     </div>
                 </div>
@@ -298,7 +298,7 @@ export default function ShipmentExpenses({
                                         return;
                                     }
                                 }
-                                
+
                                 if (allocationForm.allocation_method === "Hybrid") {
                                     const missingWeight = lines.some((line) => {
                                         const isPackaging = line.category_type === "PACKAGING";
@@ -315,7 +315,7 @@ export default function ShipmentExpenses({
                                         return;
                                     }
                                 }
-                                
+
                                 onAllocate(e, shipment.shipment_id, "Received");
                             }}
                             className="space-y-4 overflow-y-auto pr-1 flex-1"
@@ -326,21 +326,21 @@ export default function ShipmentExpenses({
                                     {LANDED_COST_METHOD_OPTIONS.map(({ value, label, description }) => {
                                         const selected = allocationForm.allocation_method === value;
                                         return (
-                                        <button
-                                            key={value}
-                                            type="button"
-                                            aria-pressed={selected}
-                                            data-state={selected ? "active" : "inactive"}
-                                            title={description}
-                                            onClick={() => setAllocationForm({ ...allocationForm, allocation_method: value })}
-                                            className={`py-2 px-3 rounded-lg border text-xs font-bold transition-all inline-flex items-center justify-center gap-1.5 ${selected
+                                            <button
+                                                key={value}
+                                                type="button"
+                                                aria-pressed={selected}
+                                                data-state={selected ? "active" : "inactive"}
+                                                title={description}
+                                                onClick={() => setAllocationForm({ ...allocationForm, allocation_method: value })}
+                                                className={`py-2 px-3 rounded-lg border text-xs font-bold transition-all inline-flex items-center justify-center gap-1.5 ${selected
                                                     ? "bg-primary text-primary-foreground border-primary ring-2 ring-primary/40 shadow-md"
                                                     : "bg-background border-border hover:bg-muted"
-                                                }`}
-                                        >
-                                            {label}
-                                            {selected && <Check className="h-3.5 w-3.5" aria-hidden="true" />}
-                                        </button>
+                                                    }`}
+                                            >
+                                                {label}
+                                                {selected && <Check className="h-3.5 w-3.5" aria-hidden="true" />}
+                                            </button>
                                         );
                                     })}
                                 </div>
@@ -359,7 +359,7 @@ export default function ShipmentExpenses({
                                     </button>
                                 </div>
 
-                                 <div className="space-y-2">
+                                <div className="space-y-2">
                                     <div className="flex gap-3 text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">
                                         <div className="flex-1">Expense Type <span className="text-red-500">*</span></div>
                                         <div className="w-1/3">Amount (PHP) <span className="text-red-500">*</span></div>
@@ -407,37 +407,37 @@ export default function ShipmentExpenses({
                                                 </button>
                                             )}
                                         </div>
-                                     ))}
-                                 </div>
-                             </div>
+                                    ))}
+                                </div>
+                            </div>
 
-                             <LandedCostAttachments
-                                 purchaseOrderId={shipment.shipment_id}
-                                 allocationRule={allocationForm.allocation_method}
-                                 expenses={allocationForm.expenses}
-                                 expenseTypes={overheadTypes
-                                     .map((type) => ({ id: Number(type.id), label: String(type.overhead_name || "") }))
-                                     .filter((type) => type.id > 0 && type.label)}
-                                 exchangeRate={Number(shipment.exchange_rate) || 1}
-                                 sourceFlow="SHIPMENT_EXPENSES"
-                                 disabled={submitting}
-                             />
+                            <LandedCostAttachments
+                                purchaseOrderId={shipment.shipment_id}
+                                allocationRule={allocationForm.allocation_method}
+                                expenses={allocationForm.expenses}
+                                expenseTypes={overheadTypes
+                                    .map((type) => ({ id: Number(type.id), label: String(type.overhead_name || "") }))
+                                    .filter((type) => type.id > 0 && type.label)}
+                                exchangeRate={Number(shipment.exchange_rate) || 1}
+                                sourceFlow="SHIPMENT_EXPENSES"
+                                disabled={submitting}
+                            />
 
-                             <button
-                                 type="submit"
-                                 disabled={submitting || !allocationForm.allocation_method}
-                                 className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-wait py-3 text-xs font-bold text-white transition-all shadow-md shrink-0 mt-4"
-                             >
-                                 {submitting ? (
-                                     <>
-                                         <Loader2 className="h-4 w-4 animate-spin" /> Processing...
-                                     </>
-                                 ) : (
-                                     <>
-                                         <Check className="h-4.5 w-4.5" /> Commit Landed Costs & Close Cargo
-                                     </>
-                                 )}
-                             </button>
+                            <button
+                                type="submit"
+                                disabled={submitting || !allocationForm.allocation_method}
+                                className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-wait py-3 text-xs font-bold text-white transition-all shadow-md shrink-0 mt-4"
+                            >
+                                {submitting ? (
+                                    <>
+                                        <Loader2 className="h-4 w-4 animate-spin" /> Processing...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Check className="h-4.5 w-4.5" /> Commit Landed Costs & Close Cargo
+                                    </>
+                                )}
+                            </button>
                         </form>
                     </div>
                 </div>
