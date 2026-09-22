@@ -56,6 +56,44 @@ export interface ContainerizationBOMComponent {
     };
 }
 
+export interface ContainerizationProfile {
+    sacksPerMixEquivalent: number;
+    flourKgPerMix: number;
+}
+
+const CONTAINERIZATION_PROFILE_MARKER = "[MM-CONTAINERIZATION-V1]";
+
+/**
+ * Reads the optional recipe-specific containerization profile from the
+ * existing version remarks field. The marker is deliberately generic; the
+ * values remain master-data configuration rather than source-code constants.
+ */
+export function parseContainerizationProfile(remarks: unknown): ContainerizationProfile | null {
+    const text = String(remarks ?? "");
+    const markerIndex = text.indexOf(CONTAINERIZATION_PROFILE_MARKER);
+    if (markerIndex < 0) return null;
+
+    const payload = text.slice(markerIndex + CONTAINERIZATION_PROFILE_MARKER.length).trim();
+    const jsonStart = payload.indexOf("{");
+    const jsonEnd = payload.lastIndexOf("}");
+    if (jsonStart < 0 || jsonEnd <= jsonStart) return null;
+
+    try {
+        const parsed = JSON.parse(payload.slice(jsonStart, jsonEnd + 1)) as Record<string, unknown>;
+        const sacksPerMixEquivalent = Number(
+            parsed.sacksPerMixEquivalent ?? parsed.sacks_per_mix_equivalent
+        );
+        const flourKgPerMix = Number(parsed.flourKgPerMix ?? parsed.flour_kg_per_mix);
+
+        if (!Number.isFinite(sacksPerMixEquivalent) || sacksPerMixEquivalent <= 0) return null;
+        if (!Number.isFinite(flourKgPerMix) || flourKgPerMix <= 0) return null;
+
+        return { sacksPerMixEquivalent, flourKgPerMix };
+    } catch {
+        return null;
+    }
+}
+
 export function calculateContainerizationMetrics(
     productName: string,
     targetQuantity: number,
@@ -68,7 +106,8 @@ export function calculateContainerizationMetrics(
     baseBatchWeightPerSackParam?: number,
     components?: ContainerizationBOMComponent[],
     bomBaseQty?: number,
-    requestedTargetQuantity?: number
+    requestedTargetQuantity?: number,
+    containerizationProfile?: ContainerizationProfile | null
 ): ContainerizationMetrics {
     const sacksPerMix = Math.max(1, Number(sacksPerMixParam) || 4);
     const baseBatchWeightPerSack = Math.max(1, Number(baseBatchWeightPerSackParam) || 32892.5); // grams
@@ -104,7 +143,9 @@ export function calculateContainerizationMetrics(
     const requiredBatchCount = quantityPlan.requiredBatchCount;
     const effectiveTargetQuantity = quantityPlan.effectiveQuantity;
 
-    // Dynamic BOM Flour calculation if flour/grain component is present in BOM
+    // A recipe may define its production containerization in master-data
+    // remarks. This is preferred over inferring from a component UOM because
+    // a recipe-equivalent sack is not necessarily a physical inventory bag.
     let flourGramsTotal = 0;
     let sackCount = 0;
     let mixCount = 0;
@@ -112,7 +153,15 @@ export function calculateContainerizationMetrics(
     let requestedSackCount = 0;
     let requestedMixCount = requestedBatchRatio;
 
-    if (Array.isArray(components) && components.length > 0) {
+    if (containerizationProfile) {
+        requestedSackCount = requestedMixCount * containerizationProfile.sacksPerMixEquivalent;
+        sackCount = requiredBatchCount * containerizationProfile.sacksPerMixEquivalent;
+        requestedFlourGrams = requestedMixCount * containerizationProfile.flourKgPerMix * 1000;
+        flourGramsTotal = requiredBatchCount * containerizationProfile.flourKgPerMix * 1000;
+        mixCount = requiredBatchCount;
+    }
+
+    if (!containerizationProfile && Array.isArray(components) && components.length > 0) {
         const flourComp = components.find((c) => {
             const name = String(c.product_name || c.component_product_id?.product_name || c.title || "").toLowerCase();
             return name.includes("flour") || name.includes("harina") || name.includes("wheat") || name.includes("starch") || name.includes("rice");
@@ -149,7 +198,7 @@ export function calculateContainerizationMetrics(
     }
 
     // Fallback if no specific flour component was identified
-    if (mixCount <= 0) {
+    if (!containerizationProfile && mixCount <= 0) {
         const netPcsPerSack = (baseBatchWeightPerSack / cuttingUnitWeightGrams * yieldFactor) * (1 - scrapRate);
         const totalSacksNeeded = Math.ceil(targetNetPcs / Math.max(0.001, netPcsPerSack));
         mixCount = Math.ceil(totalSacksNeeded / sacksPerMix);

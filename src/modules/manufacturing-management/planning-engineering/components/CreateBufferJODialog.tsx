@@ -516,6 +516,7 @@ export function CreateBufferJODialog({
             const selectedVersion = versions.find((version) => String(version.version_id) === String(selectedVersionId));
             const metrics = calculateProductionMetrics({
                 targetQuantity: productionTargetQuantity,
+                timingTargetQuantity: targetQuantity,
                 baseQuantity: bomBaseQty,
                 targetUomId: readUomId(selectedProdObj?.unit_of_measurement ?? selectedProdObj?.uom_id ?? selectedProdObj?.uom),
                 baseUomId: readUomId(bomData?.uom_id ?? bomData?.unit_of_measurement ?? bomData?.uom),
@@ -586,7 +587,7 @@ export function CreateBufferJODialog({
 
     const containerMetrics = useMemo(() => {
         if (!selectedProdObj) return null;
-        const verObj = versions.find((v) => String(v.version_id) === String(selectedVersionId));
+        const verObj = bomData || versions.find((v) => String(v.version_id) === String(selectedVersionId));
         return calculateContainerizationMetrics(
             (selectedProdObj as any).product_name || selectedProdObj.title || selectedProdObj.sku || "Product",
             productionTargetQuantity,
@@ -599,9 +600,10 @@ export function CreateBufferJODialog({
             (verObj as any)?.batch_weight_per_sack || (verObj as any)?.base_batch_weight_grams,
             components,
             bomBaseQty,
-            targetQuantity
+            targetQuantity,
+            bomData?.containerization_profile || null
         );
-    }, [selectedProdObj, versions, selectedVersionId, productionTargetQuantity, targetQuantity, components, bomBaseQty]);
+    }, [selectedProdObj, versions, selectedVersionId, bomData, productionTargetQuantity, targetQuantity, components, bomBaseQty]);
 
     const cogsBreakdown = productionMetrics?.cogsBreakdown || null;
 
@@ -994,6 +996,7 @@ export function CreateBufferJODialog({
                     product_id: Number(selectedProductId),
                     product_name: selectedProduct?.product_name || `Product #${selectedProductId}`,
                     quantity: Number(productionTargetQuantity),
+                    requested_quantity: Number(targetQuantity),
                     due_date: dueDate,
                     start_date: plannedDate,
                     uom_id: Number(selectedProduct?.unit_of_measurement?.unit_id || selectedProduct?.unit_of_measurement || 0) || null,
@@ -1013,6 +1016,7 @@ export function CreateBufferJODialog({
                             product_id: Number(selectedProductId),
                             product_name: selectedProduct?.product_name || `Product #${selectedProductId}`,
                             quantity: Number(productionTargetQuantity),
+                            requested_quantity: Number(targetQuantity),
                             bom: {
                                 version_id: selectedVersionId ? Number(selectedVersionId) : null
                             }

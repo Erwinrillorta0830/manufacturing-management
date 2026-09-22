@@ -87,6 +87,7 @@ export interface ReleaseJOPayload {
         product_id: number;
         product_name: string;
         quantity: number;
+        requested_quantity?: number;
         due_date: string;
         start_date?: string;
         uom_id?: number | null;
@@ -103,6 +104,7 @@ export interface ReleaseJOPayload {
             product_id: number;
             product_name: string;
             quantity: number;
+            requested_quantity?: number;
             bom: {
                 version_id: number | null | undefined;
             };

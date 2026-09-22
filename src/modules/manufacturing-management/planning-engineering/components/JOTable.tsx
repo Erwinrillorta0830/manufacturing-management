@@ -8,6 +8,7 @@ import { resolveJobOrderJourney } from "../../shared/job-order-journey";
 import { JobOrderJourneyBar } from "../../shared/components/JobOrderJourneyBar";
 import { JobOrderStatusBadge } from "../../shared/components/JobOrderStatusBadge";
 import { isCancelledJobOrderStatus, isTerminatedJobOrder } from "../../job-order-status";
+import { calculateCumulativeRouteWorkloadHours, calculatePipelinedLineDurationHours } from "../utils/production-timing";
 
 export interface FamilyGroup {
     familyId: string;
@@ -95,12 +96,8 @@ export function JOTable({
                             if (tasks.length === 0) {
                                 return { leadTimeHours: 0, leadTimeDays: 0, cumulativeHours: 0, shiftHrs };
                             }
-                            const totalSetup = tasks.reduce((sum: number, t: any) => sum + Number(t.planned_setup_hours || 0), 0);
-                            const totalRun = tasks.reduce((sum: number, t: any) => sum + Number(t.planned_run_hours || 0), 0);
-                            const cumulativeHours = totalSetup + totalRun;
-                            const maxRun = Math.max(...tasks.map((t: any) => Number(t.planned_run_hours || 0)));
-                            const initialSetup = Number(tasks[0]?.planned_setup_hours || 0);
-                            const leadTimeHours = maxRun + initialSetup;
+                            const cumulativeHours = calculateCumulativeRouteWorkloadHours(tasks);
+                            const leadTimeHours = calculatePipelinedLineDurationHours(tasks);
                             const leadTimeDays = leadTimeHours / shiftHrs;
                             return { leadTimeHours, leadTimeDays, cumulativeHours, shiftHrs };
                         };

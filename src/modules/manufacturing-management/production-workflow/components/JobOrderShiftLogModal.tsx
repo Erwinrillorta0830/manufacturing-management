@@ -30,6 +30,7 @@ import { submitShiftRunLog, ShiftRunLogPayload, fetchRejectionReasons } from "..
 import { validateProductionYieldImage } from "../services/production-yield-image";
 import { AddReservedMaterialDialog, type TopUpTarget } from "./AddReservedMaterialDialog";
 import { toast } from "sonner";
+import { calculatePipelinedLineDurationHours } from "../../planning-engineering/utils/production-timing";
 
 interface JobOrderShiftLogModalProps {
     open: boolean;
@@ -85,10 +86,7 @@ export function JobOrderShiftLogModal({
     const [isWebcamReady, setIsWebcamReady] = useState(false);
     const [webcamError, setWebcamError] = useState<string | null>(null);
 
-    const totalPlannedHours = sortedTasks.reduce(
-        (sum, task) => sum + Number(task.planned_setup_hours || 0) + Number(task.planned_run_hours || 0),
-        0
-    );
+    const totalPlannedHours = calculatePipelinedLineDurationHours(sortedTasks);
     const shiftHours = Number(selectedJobOrder?.shiftOption || 8);
     const estDays = Math.ceil(totalPlannedHours / shiftHours) || 1;
 

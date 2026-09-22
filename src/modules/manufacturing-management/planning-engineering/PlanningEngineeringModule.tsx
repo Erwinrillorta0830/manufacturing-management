@@ -34,6 +34,7 @@ import { StatusLegendPopover } from "../shared/components/StatusLegendPopover";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { isCancelledJobOrderStatus, isJobOrderStatus, isTerminatedJobOrder, JOB_ORDER_STATUS, normalizeJobOrderStatus, displayJobOrderStatus } from "../job-order-status";
+import { calculateCumulativeRouteWorkloadHours, calculatePipelinedLineDurationHours } from "./utils/production-timing";
 import JsBarcode from "jsbarcode";
 import QRCode from "qrcode";
 import {
@@ -823,8 +824,7 @@ export default function PlanningEngineeringModule() {
         const worksheetPrintedAt = new Date().toLocaleString();
 
         const renderJoPrintBlock = async (jo: any, mats: any[], title: string, color: string) => {
-            const setup = jo?.routing_tasks?.reduce((sum: number, t: any) => sum + Number(t.planned_setup_hours || 0), 0) || 0;
-            const run = jo?.routing_tasks?.reduce((sum: number, t: any) => sum + Number(t.planned_run_hours || 0), 0) || 0;
+            const lineDuration = calculatePipelinedLineDurationHours(jo?.routing_tasks || []);
             const routingSteps: any[] = Array.isArray(jo?.routing_tasks) ? jo.routing_tasks : [];
             const joNo = String(jo.jo_id || "");
             const joBarcode = worksheetBarcodeSvg(joNo);
@@ -890,7 +890,7 @@ export default function PlanningEngineeringModule() {
                                 <td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">Primary Work Center</td>
                                 <td style="padding: 8px; border: 1px solid #e5e7eb;">${escapeWorksheetHtml(jo.primary_work_center_name || "")}</td>
                                 <td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">Est. Duration</td>
-                                <td style="padding: 8px; border: 1px solid #e5e7eb;">${(setup + run).toFixed(1)} hrs (Shift: ${jo.shiftOption || 8} hrs)</td>
+                                <td style="padding: 8px; border: 1px solid #e5e7eb;">${lineDuration.toFixed(1)} hrs (Shift: ${jo.shiftOption || 8} hrs)</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1655,10 +1655,8 @@ export default function PlanningEngineeringModule() {
                                                 {(() => {
                                                     const tasks = selectedUnreleasedJo?.routing_tasks || [];
                                                     const shiftHrs = Number(selectedUnreleasedJo?.shiftOption || selectedUnreleasedJo?.shift_option || 8) || 8;
-                                                    const maxRun = Math.max(0, ...tasks.map((t: any) => Number(t.planned_run_hours || 0)));
-                                                    const initialSetup = Number(tasks[0]?.planned_setup_hours || 0);
-                                                    const leadTime = maxRun + initialSetup;
-                                                    const totalWorkload = tasks.reduce((sum: number, t: any) => sum + Number(t.planned_setup_hours || 0) + Number(t.planned_run_hours || 0), 0);
+                                                    const leadTime = calculatePipelinedLineDurationHours(tasks);
+                                                    const totalWorkload = calculateCumulativeRouteWorkloadHours(tasks);
                                                     return `${(leadTime / shiftHrs).toFixed(1)} days (${leadTime.toFixed(1)} line hrs • ${totalWorkload.toFixed(1)} mach-hrs)`;
                                                 })()}
                                             </span>
@@ -1811,10 +1809,8 @@ export default function PlanningEngineeringModule() {
                                                         {(() => {
                                                             const tasks = childJo.routing_tasks || [];
                                                             const shiftHrs = Number(childJo.shiftOption || childJo.shift_option || 8) || 8;
-                                                            const maxRun = Math.max(0, ...tasks.map((t: any) => Number(t.planned_run_hours || 0)));
-                                                            const initialSetup = Number(tasks[0]?.planned_setup_hours || 0);
-                                                            const leadTime = maxRun + initialSetup;
-                                                            const totalWorkload = tasks.reduce((sum: number, t: any) => sum + Number(t.planned_setup_hours || 0) + Number(t.planned_run_hours || 0), 0);
+                                                            const leadTime = calculatePipelinedLineDurationHours(tasks);
+                                                            const totalWorkload = calculateCumulativeRouteWorkloadHours(tasks);
                                                             return `${(leadTime / shiftHrs).toFixed(1)} days (${leadTime.toFixed(1)} line hrs • ${totalWorkload.toFixed(1)} mach-hrs)`;
                                                         })()}
                                                     </span>
@@ -1910,7 +1906,7 @@ export default function PlanningEngineeringModule() {
                                             <span className="font-medium ml-1">
                                                 {(() => {
                                                     const tasks = activeFamilyJo?.routing_tasks || [];
-                                                    const total = tasks.reduce((sum: number, t: any) => sum + Number(t.planned_setup_hours || 0) + Number(t.planned_run_hours || 0), 0);
+                                                    const total = calculatePipelinedLineDurationHours(tasks);
                                                     if (total === 0) return "Not estimated";
                                                     const shiftHours = Number(activeFamilyJo?.shiftOption || 8) || 8;
                                                     const days = (total / shiftHours).toFixed(1);
