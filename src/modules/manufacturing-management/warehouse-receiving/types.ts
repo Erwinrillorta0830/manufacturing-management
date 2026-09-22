@@ -1,6 +1,6 @@
 export type WarehouseReceiptType = "full" | "partial";
 
-export type WarehouseReceivingStatus = "Approved" | "Partially Received" | "Warehouse Receiving" | "Receiving (QA)";
+export type WarehouseReceivingStatus = "Approved" | "Partially Received" | "Warehouse Receiving" | "Receiving (QA)" | "Received";
 
 export interface WarehouseReceivingSupplierOption {
     id: number;
@@ -30,6 +30,27 @@ export interface WarehouseReceivingDraft {
     postingStatus: string;
 }
 
+export type WarehouseReceiptHistoryStatus = "Current Draft" | "Awaiting QA" | "Posted" | "Legacy";
+
+export interface WarehouseReceivingReceiptHistoryLine {
+    lineId: number;
+    productId: number;
+    productName: string;
+    productCode: string;
+    receivedQuantity: number;
+}
+
+export interface WarehouseReceivingReceiptHistory {
+    id: number | null;
+    receiptNumber: string;
+    receiptDate: string | null;
+    receiptType: string | null;
+    status: WarehouseReceiptHistoryStatus;
+    isCurrent: boolean;
+    totalReceivedQuantity: number;
+    lines: WarehouseReceivingReceiptHistoryLine[];
+}
+
 export interface WarehouseReceivingOrder {
     id: number;
     poNumber: string;
@@ -51,6 +72,7 @@ export interface WarehouseReceivingOrder {
     warehouseReceivedBy: number | null;
     remarks: string;
     lines: WarehouseReceivingLine[];
+    receiptHistory: WarehouseReceivingReceiptHistory[];
     draft: WarehouseReceivingDraft | null;
     pendingQaReceipt: WarehouseReceivingDraft | null;
 }

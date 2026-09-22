@@ -112,6 +112,9 @@ export interface QaReceiptOption {
     receivingHeaderId: number | null;
     isCurrent: boolean;
     readOnly: boolean;
+    receivedQuantity: number;
+    acceptedQuantity: number;
+    rejectedQuantity: number;
 }
 
 export interface Product {

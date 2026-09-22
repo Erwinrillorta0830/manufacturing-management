@@ -25,7 +25,13 @@ function randomKey() {
     return `warehouse-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-export function useWarehouseReceiving() {
+interface UseWarehouseReceivingOptions {
+    mode?: "queue" | "detail";
+    purchaseOrderId?: number;
+}
+
+export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWarehouseReceivingOptions = {}) {
+    const isDetailMode = mode === "detail";
     const [orders, setOrders] = useState<WarehouseReceivingOrder[]>([]);
     const [selectedOrder, setSelectedOrder] = useState<WarehouseReceivingOrder | null>(null);
     const [quantities, setQuantities] = useState<Record<number, string>>({});
@@ -74,16 +80,17 @@ export function useWarehouseReceiving() {
     }, []);
 
     useEffect(() => {
+        if (isDetailMode) return;
         const timer = window.setTimeout(() => void loadQueue(1, filters), 200);
         return () => window.clearTimeout(timer);
-    }, [filters, loadQueue]);
+    }, [filters, isDetailMode, loadQueue]);
 
     useEffect(() => () => {
         queueController.current?.abort();
         detailController.current?.abort();
     }, []);
 
-    const selectOrder = useCallback(async (order: WarehouseReceivingOrder) => {
+    const loadOrder = useCallback(async (orderId: number) => {
         detailController.current?.abort();
         const controller = new AbortController();
         detailController.current = controller;
@@ -91,7 +98,7 @@ export function useWarehouseReceiving() {
         setDetailLoading(true);
         setDetailError(null);
         try {
-            const detail = await fetchWarehouseReceivingOrder(order.id, controller.signal);
+            const detail = await fetchWarehouseReceivingOrder(orderId, controller.signal);
             if (controller.signal.aborted) return;
             setSelectedOrder(detail);
             const receipt = detail.draft || detail.pendingQaReceipt;
@@ -106,6 +113,16 @@ export function useWarehouseReceiving() {
             if (!controller.signal.aborted) setDetailLoading(false);
         }
     }, []);
+
+    const selectOrder = useCallback(async (order: WarehouseReceivingOrder) => {
+        await loadOrder(order.id);
+    }, [loadOrder]);
+
+    useEffect(() => {
+        if (!isDetailMode || !purchaseOrderId) return;
+        void loadOrder(purchaseOrderId);
+        return () => detailController.current?.abort();
+    }, [isDetailMode, loadOrder, purchaseOrderId]);
 
     const updateQuantity = useCallback((lineId: number, value: string) => {
         setQuantities(previous => ({ ...previous, [lineId]: value }));
