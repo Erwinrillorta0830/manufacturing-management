@@ -1,4 +1,4 @@
-import PurchaseOrderApprovalPage from "../approval/_components/purchase-order-approval-page";
+import PurchaseOrderApprovalPage from "../../approval/_components/purchase-order-approval-page";
 import { redirect } from "next/navigation";
 
 export const runtime = "nodejs";
