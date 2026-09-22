@@ -7,3 +7,4 @@
 ## Markdown & Documentation Policy
 - **Do NOT stage, commit, or push `.md` files to Git**: All markdown documentation, guides, reports, or notes created during assistance must remain local and ignored by Git (except essential repository files `README.md` and `CLAUDE.md`).
 
+Read .agents\rules\manufacturing_guide.md then add task or checklist
