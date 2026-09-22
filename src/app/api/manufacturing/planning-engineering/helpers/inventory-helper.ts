@@ -36,6 +36,60 @@ const RESERVABLE_QA_STATUSES = new Set([
     "PARTIALLY_ACCEPTED"
 ]);
 
+const INVENTORY_MOVEMENT_REQUEST_CONCURRENCY = 2;
+
+async function fetchDirectusMovementFallback(
+    productIds: number[],
+    branchId: number
+): Promise<NormalizedMmInventoryMovement[]> {
+    if (productIds.length === 0) return [];
+
+    const filter = encodeURIComponent(JSON.stringify({
+        _and: [
+            { branch_id: { _eq: branchId } },
+            { product_id: { _in: productIds } }
+        ]
+    }));
+
+    try {
+        const response = await fetch(
+            `${DIRECTUS_URL}/items/inventory_movements?filter=${filter}&fields=*&limit=-1`,
+            { headers, cache: "no-store" }
+        );
+        if (!response.ok) return [];
+
+        const payload = await response.json().catch(() => null);
+        const rows = payload && typeof payload === "object" && Array.isArray((payload as any).data)
+            ? (payload as { data: Record<string, unknown>[] }).data
+            : [];
+
+        return rows.map((row) => normalizeDirectusStagingMovement(row) as unknown as NormalizedMmInventoryMovement);
+    } catch (error) {
+        console.warn("Directus inventory movement fallback could not be loaded:", error);
+        return [];
+    }
+}
+
+async function mapWithConcurrency<T, R>(
+    values: T[],
+    concurrency: number,
+    task: (value: T) => Promise<R>
+): Promise<R[]> {
+    const results = new Array<R>(values.length);
+    let nextIndex = 0;
+    const workerCount = Math.min(Math.max(1, concurrency), values.length);
+
+    await Promise.all(Array.from({ length: workerCount }, async () => {
+        while (nextIndex < values.length) {
+            const index = nextIndex;
+            nextIndex += 1;
+            results[index] = await task(values[index]);
+        }
+    }));
+
+    return results;
+}
+
 function relationId(value: unknown, keys: string[]): number | null {
     if (value === null || value === undefined || value === "") return null;
     if (typeof value === "object") {
@@ -384,6 +438,7 @@ export async function getProductInventoryAndSafetyStock(
     if (!branchId) {
         throw new Error("Missing required branchId in getProductInventoryAndSafetyStock");
     }
+    if (productIds.length === 0) return [];
     try {
         const bId = Number(branchId);
         const prodFilter = productIds.length > 0 ? `&filter[product_id][_in]=${productIds.join(",")}` : "";
@@ -442,22 +497,31 @@ export async function getProductInventoryAndSafetyStock(
         // Request only the products used by this BOM. Fetching the complete
         // branch ledger for a multi-material BOM can take longer than the
         // wizard's client timeout even though the final response is valid.
-        const movementRequests = allProductIds.length > 0
-            ? allProductIds.map((productId) => fetchMmInventoryMovements({
-                branch: bId,
-                product: productId,
-                productType: movementProductType
-            }))
-            : [fetchMmInventoryMovements({
+        const movementResponsesPromise = allProductIds.length > 0
+            ? mapWithConcurrency(
+                allProductIds,
+                INVENTORY_MOVEMENT_REQUEST_CONCURRENCY,
+                (productId) => fetchMmInventoryMovements({
+                    branch: bId,
+                    product: productId,
+                    productType: movementProductType
+                })
+            ).catch(async (error) => {
+                if (!(error instanceof MmInventoryMovementError) || error.status !== 429) throw error;
+
+                console.warn("Spring inventory movements are rate-limited; using the Directus movement fallback for the planning preview.");
+                return [await fetchDirectusMovementFallback(allProductIds, bId)];
+            })
+            : fetchMmInventoryMovements({
                 branch: bId,
                 product: null,
                 productType: movementProductType
-            })];
+            }).then((rows) => [rows]);
 
         const [recRes, yieldRes, movementResponses, versionsRes, unitsRes] = await Promise.all([
             fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?${recFilter}filter[branch_id][_eq]=${bId}&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?${yieldFilter}fields=*,job_order_id.product_id,job_order_id.job_order_no&limit=-1`, { headers, cache: "no-store" }),
-            Promise.all(movementRequests),
+            movementResponsesPromise,
             fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?filter=${versionFilter}&fields=product_id&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/units?limit=-1`, { headers, cache: "no-store" })
         ]);

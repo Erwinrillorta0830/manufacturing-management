@@ -24,8 +24,13 @@ import { OperatorSelect } from "./OperatorSelect";
 import { SearchableVersionSelect } from "./SearchableVersionSelect";
 import { SubmittingLoadingOverlay } from "./SubmittingLoadingOverlay";
 import { calculateContainerizationMetrics, formatHoursToHMS } from "../utils/containerization-helper";
+import {
+    calculateMaterialSpend,
+    formatManufacturingMoney,
+    getFactoryOverheadBasisLabel
+} from "../utils/cogs-helper";
 import { calculateProductionMetrics } from "../utils/production-metrics";
-import { calculateAggregateRunHours, calculateFullBatchTarget, calculateRequiredBatchCount, formatProductionValue, readUomId } from "../utils/production-timing";
+import { calculateAggregateRunHours, calculateMaterialRequirementPlan, calculatePerUnitMaterialRequirement, calculateFullBatchTarget, calculateRequiredBatchCount, formatProductionValue, readUomId } from "../utils/production-timing";
 import { buildReleaseSummaryHtml, type ReleaseSummaryComponent, type ReleaseSummaryFinancials, type ReleaseSummaryRoutingStep } from "../utils/release-summary-print";
 
 interface ReleaseJODialogProps {
@@ -219,7 +224,7 @@ export function ReleaseJODialog({
                     const pId = first.product_id.product_id;
                     const bId = first.bom_version_id;
                     const branchId = parseValidBranchId(selectedBranchId) || 1;
-                    const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${pId}&bomId=${bId || ""}&branchId=${branchId}&usePhysicalOnHand=true`;
+                    const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${pId}&bomId=${bId || ""}&branchId=${branchId}&usePhysicalOnHand=true&requestedQuantity=${encodeURIComponent(requestedTargetQuantity)}&plannedQuantity=${encodeURIComponent(targetQuantity)}`;
                     const res = await fetch(url);
                     if (res.ok) {
                         const data = await res.json();
@@ -259,7 +264,7 @@ export function ReleaseJODialog({
             };
             loadDetails();
         }
-    }, [isConfirmOpen, selectedLines, selectedBranchId, hasLoadedDetails, isMultiRelease, targetQuantityProp, setTargetQuantity]);
+    }, [isConfirmOpen, selectedLines, selectedBranchId, hasLoadedDetails, isMultiRelease, targetQuantityProp, requestedTargetQuantity, targetQuantity, setTargetQuantity]);
 
     const handleSubAssemblyVersionChange = async (subProdId: number, versionId: number) => {
         const branchId = parseValidBranchId(selectedBranchId);
@@ -295,7 +300,6 @@ export function ReleaseJODialog({
         }
     };
 
-    const bomQuantityScale = bomBaseQty > 0 ? targetQuantity / bomBaseQty : 0;
     const requiredBatchCount = bomBaseQty > 0 && targetQuantity > 0
         ? calculateRequiredBatchCount(targetQuantity, bomBaseQty)
         : 0;
@@ -305,7 +309,13 @@ export function ReleaseJODialog({
         const initialSelections: Record<string, boolean> = {};
         components.forEach((comp) => {
             const compProductId = comp.component_product_id?.product_id;
-            const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * bomQuantityScale;
+            const materialPlan = calculateMaterialRequirementPlan(
+                requestedTargetQuantity,
+                targetQuantity,
+                Number(comp.quantity_required || 0),
+                Number(comp.wastage_factor_percentage || 0)
+            );
+            const needed = materialPlan.plannedRequired;
             const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
             const shortfall = Math.max(0, needed - available);
 
@@ -318,7 +328,11 @@ export function ReleaseJODialog({
                     const children = subAssemblyBoms[Number(compProductId)] || [];
                     children.forEach((cc) => {
                         const ccId = cc.component_product_id?.product_id;
-                        const ccNeeded = Number(cc.quantity_required) * shortfall;
+                        const ccNeeded = calculatePerUnitMaterialRequirement(
+                            shortfall,
+                            Number(cc.quantity_required || 0),
+                            Number(cc.wastage_factor_percentage || 0)
+                        );
                         const ccAvailable = ccId ? (inventories[Number(ccId)]?.on_hand || 0) : 0;
                         const ccShortfall = Math.max(0, ccNeeded - ccAvailable);
                         if (ccShortfall > 0) {
@@ -368,7 +382,8 @@ export function ReleaseJODialog({
                 expectedYieldPercentage: bomData?.expected_yield_percentage
                     ?? (first as any)?.expected_yield_percentage
                     ?? product?.expected_yield_percentage,
-                targetSellingPrice: Number(product?.target_selling_price || product?.targetSellingPrice || 0)
+                targetSellingPrice: Number(product?.target_selling_price || product?.targetSellingPrice || 0),
+                materialCostPerUnit: bomData?.material_cost_per_unit
             });
             return { metrics, error: null };
         } catch (error) {
@@ -386,7 +401,12 @@ export function ReleaseJODialog({
     let subAssemblyEstimatedHours = 0;
     components.forEach((comp) => {
         const compProductId = Number(comp.component_product_id?.product_id || 0);
-        const needed = (Number(comp.quantity_required || 0) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * bomQuantityScale;
+        const needed = calculateMaterialRequirementPlan(
+            requestedTargetQuantity,
+            targetQuantity,
+            Number(comp.quantity_required || 0),
+            Number(comp.wastage_factor_percentage || 0)
+        ).plannedRequired;
         const available = compProductId ? Number(inventories[compProductId]?.on_hand || 0) : 0;
         const shortfall = Math.max(0, needed - available);
         const subRoute = compProductId ? (subAssemblyRoutings[compProductId] || (subAssemblyRoutings as any)[String(compProductId)]) : null;
@@ -423,15 +443,29 @@ export function ReleaseJODialog({
             verObj?.sacks_per_mix || verObj?.sacks_per_batch,
             verObj?.batch_weight_per_sack || verObj?.base_batch_weight_grams,
             components,
-            bomBaseQty
+            bomBaseQty,
+            requestedTargetQuantity
         );
-    }, [selectedLines, targetQuantity, components, bomBaseQty]);
+    }, [selectedLines, targetQuantity, requestedTargetQuantity, components, bomBaseQty]);
 
     const cogsBreakdown = productionMetrics?.cogsBreakdown || null;
 
+    const directMaterialSpend = useMemo(() => {
+        if (!cogsBreakdown) return null;
+        return {
+            requested: calculateMaterialSpend(cogsBreakdown.materialCostPerUnit, requestedTargetQuantity),
+            fullBatch: calculateMaterialSpend(cogsBreakdown.materialCostPerUnit, targetQuantity)
+        };
+    }, [cogsBreakdown, requestedTargetQuantity, targetQuantity]);
+
     const hasShortfalls = components.some((comp) => {
         const compProductId = comp.component_product_id?.product_id;
-        const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * bomQuantityScale;
+        const needed = calculateMaterialRequirementPlan(
+            requestedTargetQuantity,
+            targetQuantity,
+            Number(comp.quantity_required || 0),
+            Number(comp.wastage_factor_percentage || 0)
+        ).plannedRequired;
         const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
         return Math.max(0, needed - available) > 0;
     });
@@ -440,7 +474,13 @@ export function ReleaseJODialog({
 
     const releaseSummaryComponents = useMemo<ReleaseSummaryComponent[]>(() => components.map((comp) => {
         const compProductId = Number(comp.component_product_id?.product_id || 0);
-        const needed = (Number(comp.quantity_required || 0) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * bomQuantityScale;
+        const materialPlan = calculateMaterialRequirementPlan(
+            requestedTargetQuantity,
+            targetQuantity,
+            Number(comp.quantity_required || 0),
+            Number(comp.wastage_factor_percentage || 0)
+        );
+        const needed = materialPlan.plannedRequired;
         const available = compProductId ? Number(inventories[compProductId]?.on_hand || 0) : 0;
         const shortfall = Math.max(0, needed - available);
         return {
@@ -449,10 +489,11 @@ export function ReleaseJODialog({
             category: comp.component_product_id?.category_name || "Uncategorized",
             uom: comp.unit_of_measurement || "pcs",
             needed,
+            demandNeeded: materialPlan.demandRequired,
             available,
             sufficient: shortfall <= 0
         };
-    }), [components, inventories, targetQuantity, bomBaseQty]);
+    }), [components, inventories, requestedTargetQuantity, targetQuantity]);
 
     const releaseSummaryRouting = useMemo<ReleaseSummaryRoutingStep[]>(() => [...routings]
         .sort((left, right) => Number(left.sequence_order || 0) - Number(right.sequence_order || 0))
@@ -479,6 +520,7 @@ export function ReleaseJODialog({
         materials: Number(cogsBreakdown.materialCostPerUnit || 0),
         directLabor: Number(cogsBreakdown.directLaborCostPerUnit || 0),
         factoryOverhead: Number(cogsBreakdown.factoryOverheadCostPerUnit || 0),
+        factoryOverheadBasis: getFactoryOverheadBasisLabel(cogsBreakdown.factoryOverheadBasis),
         baseCogs: Number(cogsBreakdown.baseUnitCOGS || 0),
         adjustedCogs: Number(cogsBreakdown.adjustedUnitCOGS || 0)
     } : null, [cogsBreakdown]);
@@ -524,7 +566,12 @@ export function ReleaseJODialog({
         let tableRowsHtml = "";
         components.forEach((comp) => {
             const compProductId = comp.component_product_id?.product_id;
-            const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * bomQuantityScale;
+            const needed = calculateMaterialRequirementPlan(
+                requestedTargetQuantity,
+                targetQuantity,
+                Number(comp.quantity_required || 0),
+                Number(comp.wastage_factor_percentage || 0)
+            ).plannedRequired;
             const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
             const shortfall = Math.max(0, needed - available);
             const uom = comp.unit_of_measurement || "pcs";
@@ -551,7 +598,11 @@ export function ReleaseJODialog({
                 const children = subAssemblyBoms[Number(compProductId)] || [];
                 children.forEach((cc) => {
                     const ccId = cc.component_product_id?.product_id;
-                    const ccNeeded = Number(cc.quantity_required) * shortfall;
+                    const ccNeeded = calculatePerUnitMaterialRequirement(
+                        shortfall,
+                        Number(cc.quantity_required || 0),
+                        Number(cc.wastage_factor_percentage || 0)
+                    );
                     const ccAvailable = ccId ? (inventories[Number(ccId)]?.on_hand || 0) : 0;
                     const ccShortfall = Math.max(0, ccNeeded - ccAvailable);
                     const ccUom = cc.unit_of_measurement || "pcs";
@@ -1019,8 +1070,9 @@ export function ReleaseJODialog({
                                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-[11px]">
                                                     <div className="bg-background border border-border/60 rounded-lg p-2">
                                                         <span className="text-[10px] font-medium text-muted-foreground block">🌾 Batch Mix & Sacks</span>
-                                                        <span className="font-extrabold text-foreground text-xs">{containerMetrics.mixCount} Mixes</span>
-                                                        <span className="text-[10px] text-muted-foreground block">({containerMetrics.sackCount} Sacks / {(containerMetrics.flourGramsTotal / 1000).toLocaleString()} kg Flour)</span>
+                                                        <span className="font-extrabold text-foreground text-xs">{containerMetrics.mixCount} Full Mixes</span>
+                                                        <span className="text-[10px] text-muted-foreground block">Demand: {containerMetrics.requestedMixCount.toFixed(2)} mixes / {(containerMetrics.requestedFlourGrams / 1000).toFixed(2)} kg</span>
+                                                        <span className="text-[10px] text-muted-foreground block">Planned: {containerMetrics.sackCount} sacks / {(containerMetrics.flourGramsTotal / 1000).toFixed(2)} kg Flour</span>
                                                     </div>
                                                     <div className="bg-background border border-border/60 rounded-lg p-2">
                                                         <span className="text-[10px] font-medium text-muted-foreground block">🏭 Expected Net Pcs</span>
@@ -1065,8 +1117,9 @@ export function ReleaseJODialog({
                                                 <div className="grid grid-cols-3 gap-2 pt-1 text-[11px]">
                                                     <div className="bg-background border border-border/60 rounded-lg p-2">
                                                         <span className="text-[10px] font-medium text-muted-foreground block">🥦 Direct Materials</span>
-                                                         <span className="font-extrabold text-foreground text-xs">₱{formatProductionValue(cogsBreakdown.materialCostPerUnit)}</span>
-                                                        <span className="text-[9px] text-muted-foreground block">Raw Materials & Packaging</span>
+                                                        <span className="font-extrabold text-foreground text-xs">₱{formatManufacturingMoney(cogsBreakdown.materialCostPerUnit)} / unit</span>
+                                                        <span className="text-[9px] text-muted-foreground block">Demand: ₱{formatManufacturingMoney(directMaterialSpend?.requested)}</span>
+                                                        <span className="text-[9px] text-muted-foreground block">Full batch: ₱{formatManufacturingMoney(directMaterialSpend?.fullBatch)}</span>
                                                     </div>
                                                     <div className="bg-background border border-border/60 rounded-lg p-2">
                                                         <span className="text-[10px] font-medium text-muted-foreground block">👥 Direct Labor</span>
@@ -1079,7 +1132,7 @@ export function ReleaseJODialog({
                                                         <span className="text-[10px] font-medium text-muted-foreground block">🏭 Factory Overhead</span>
                                                          <span className="font-extrabold text-foreground text-xs">₱{formatProductionValue(cogsBreakdown.factoryOverheadCostPerUnit)}</span>
                                                         <span className="text-[9px] text-muted-foreground block">
-                                                            {cogsBreakdown.hasCustomOverhead ? "Machine rates + custom overhead" : "Machine rates × runtime"}
+                                                            {getFactoryOverheadBasisLabel(cogsBreakdown.factoryOverheadBasis)}
                                                         </span>
                                                     </div>
                                                 </div>
@@ -1113,7 +1166,7 @@ export function ReleaseJODialog({
                                                             <tr className="bg-muted text-muted-foreground border-b border-border font-bold uppercase tracking-wider text-[9px]">
                                                                 <th className="p-2.5 w-8 text-center">PR</th>
                                                                 <th className="p-2.5">Raw Material / Component</th>
-                                                                <th className="p-2.5 text-center">Needed</th>
+                                                                <th className="p-2.5 text-center">Planned / Demand</th>
                                                                 <th className="p-2.5 text-center">On Hand</th>
                                                                 <th className="p-2.5 text-center">Shortfall</th>
                                                                 <th className="p-2.5 text-right">Status</th>
@@ -1122,7 +1175,13 @@ export function ReleaseJODialog({
                                                         <tbody>
                                                             {components.map((comp, index) => {
                                                                 const compProductId = comp.component_product_id?.product_id;
-                                                                const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * bomQuantityScale;
+                                                                const materialPlan = calculateMaterialRequirementPlan(
+                                                                    requestedTargetQuantity,
+                                                                    targetQuantity,
+                                                                    Number(comp.quantity_required || 0),
+                                                                    Number(comp.wastage_factor_percentage || 0)
+                                                                );
+                                                                const needed = materialPlan.plannedRequired;
                                                                 const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
                                                                 const shortfall = Math.max(0, needed - available);
                                                                 const isSufficient = shortfall === 0;
@@ -1226,7 +1285,10 @@ export function ReleaseJODialog({
                                                                                 )}
                                                                             </td>
                                                                             <td className="p-2.5 text-center font-semibold text-foreground">
-                                                                                {needed.toLocaleString(undefined, {maximumFractionDigits:2})} <span className="text-[9px] text-muted-foreground font-normal">{uom}</span>
+                                                                                <div>{needed.toLocaleString(undefined, {maximumFractionDigits:2})} <span className="text-[9px] text-muted-foreground font-normal">{uom}</span></div>
+                                                                                <div className="text-[9px] font-normal text-muted-foreground">
+                                                                                    Demand: {materialPlan.demandRequired.toLocaleString(undefined, {maximumFractionDigits:2})} {uom}
+                                                                                </div>
                                                                             </td>
                                                                             <td className="p-2.5 text-center text-muted-foreground">
                                                                                 {available.toLocaleString(undefined, {maximumFractionDigits:2})} <span className="text-[9px] text-muted-foreground font-normal">{uom}</span>
@@ -1258,10 +1320,11 @@ export function ReleaseJODialog({
                                                                         {/* Indented child raw materials for Sub-Assemblies */}
                                                                         {isSubAssembly && children.length > 0 && children.map((cc: any, subIndex: number) => {
                                                                             const ccId = cc.component_product_id?.product_id;
-                                                                            const subBaseQty = Number(cc.base_quantity);
-                                                                            const ccNeeded = subBaseQty > 0
-                                                                                ? (Number(cc.quantity_required) * (1 + (Number(cc.wastage_factor_percentage || 0) / 100))) * (shortfall / subBaseQty)
-                                                                                : 0;
+                                                                            const ccNeeded = calculatePerUnitMaterialRequirement(
+                                                                                shortfall,
+                                                                                Number(cc.quantity_required || 0),
+                                                                                Number(cc.wastage_factor_percentage || 0)
+                                                                            );
                                                                             const ccAvailable = ccId ? (inventories[Number(ccId)]?.on_hand || 0) : 0;
                                                                             const ccShortfall = Math.max(0, ccNeeded - ccAvailable);
                                                                             const ccUom = cc.unit_of_measurement || "pcs";
@@ -1539,14 +1602,17 @@ export function ReleaseJODialog({
                                                 <>
                                                     <div className="flex justify-between">
                                                         <span className="text-muted-foreground">Direct Materials / unit</span>
-                                                        <span className="font-mono font-semibold text-foreground">₱{formatProductionValue(releaseSummaryFinancials.materials)}</span>
+                                                        <span className="font-mono font-semibold text-foreground">₱{formatManufacturingMoney(releaseSummaryFinancials.materials)}</span>
                                                     </div>
                                                     <div className="flex justify-between">
                                                         <span className="text-muted-foreground">Direct Labor / unit</span>
                                                         <span className="font-mono font-semibold text-foreground">₱{formatProductionValue(releaseSummaryFinancials.directLabor)}</span>
                                                     </div>
                                                     <div className="flex justify-between">
-                                                        <span className="text-muted-foreground">Factory Overhead / unit</span>
+                                                        <span className="text-muted-foreground">
+                                                            Factory Overhead / unit
+                                                            <span className="ml-1 text-[10px]">({releaseSummaryFinancials.factoryOverheadBasis})</span>
+                                                        </span>
                                                         <span className="font-mono font-semibold text-foreground">₱{formatProductionValue(releaseSummaryFinancials.factoryOverhead)}</span>
                                                     </div>
                                                     <div className="flex justify-between border-t border-border/60 pt-1">

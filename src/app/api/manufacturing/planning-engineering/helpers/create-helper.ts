@@ -11,7 +11,11 @@ import {
 import { deleteJobOrder } from "./delete-helper";
 import { calculateProductionMetrics } from "@/modules/manufacturing-management/planning-engineering/utils/production-metrics";
 import {
-    calculateBatchScaledMaterialRequirement,
+    calculateRecipeMaterialCostPerUnit,
+    roundManufacturingMoney
+} from "@/modules/manufacturing-management/planning-engineering/utils/cogs-helper";
+import {
+    calculatePerUnitMaterialRequirement,
     calculateFullBatchTarget,
     readUomId,
     roundProductionValue
@@ -334,9 +338,8 @@ export async function createJobOrder(
                     if (!Number.isFinite(baseQuantity) || baseQuantity <= 0) {
                         throw new Error(`Recipe base quantity is required for Product '${p.product_name}'.`);
                     }
-                    const quantityRequired = calculateBatchScaledMaterialRequirement(
+                    const quantityRequired = calculatePerUnitMaterialRequirement(
                         productionQty,
-                        baseQuantity,
                         Number(bItem.quantity_required || 0),
                         Number(bItem.wastage_factor_percentage || 0)
                     );
@@ -500,6 +503,13 @@ export async function createJobOrder(
                 productionQty = calculateFullBatchTarget(productionQty, baseQuantity);
             }
             const costingComponents = (routes || []).flatMap((route) => route.bom_items || []);
+            const materialCostPerUnit = roundManufacturingMoney(calculateRecipeMaterialCostPerUnit(
+                costingComponents.map((component: any) => ({
+                    quantity_required: Number(component.quantity_required || 0),
+                    wastage_factor_percentage: Number(component.wastage_factor_percentage || 0),
+                    cost_per_unit: Number(component.cost_per_unit || 0)
+                }))
+            ));
             const productionMetrics = routes && routes.length > 0
                 ? calculateProductionMetrics({
                     targetQuantity: productionQty,
@@ -525,7 +535,8 @@ export async function createJobOrder(
                     laborPositions: version?.labor_positions || [],
                     overheadItems: version?.overhead_items || [],
                     customOverhead: version?.custom_overhead,
-                    expectedYieldPercentage: version?.expected_yield_percentage
+                    expectedYieldPercentage: version?.expected_yield_percentage,
+                    materialCostPerUnit
                 })
                 : null;
 
@@ -633,9 +644,8 @@ export async function createJobOrder(
                             if (!Number.isFinite(baseQuantity) || baseQuantity <= 0) {
                                 throw new Error(`Recipe base quantity is required for Product '${p.product_name}'.`);
                             }
-                            const quantityRequired = calculateBatchScaledMaterialRequirement(
+                            const quantityRequired = calculatePerUnitMaterialRequirement(
                                 productionQty,
-                                baseQuantity,
                                 Number(bItem.quantity_required || 0),
                                 Number(bItem.wastage_factor_percentage || 0)
                             );

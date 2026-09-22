@@ -33,6 +33,8 @@ export interface ProductionMetricsInput {
     customOverhead?: number | null;
     expectedYieldPercentage?: number | null;
     targetSellingPrice?: number;
+    /** Recipe Master direct-material cost already normalized per finished unit. */
+    materialCostPerUnit?: number | null;
 }
 
 export interface ProductionMetrics {
@@ -105,7 +107,9 @@ export function calculateProductionMetrics(input: ProductionMetricsInput): Produ
             routeStepsForCosting,
             input.targetSellingPrice,
             input.laborPositions || [],
-            input.overheadItems || []
+            input.overheadItems || [],
+            input.materialCostPerUnit,
+            targetQuantity
         )
     };
 }
