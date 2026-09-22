@@ -211,11 +211,20 @@ export async function fetchAllocations(batchId: number): Promise<LotAllocation[]
     return data.allocations ?? [];
 }
 
-export async function fetchAllocationsWithBatches(batchId: number): Promise<{
+export async function fetchAllocationsWithBatches(batchId: number, branchId?: number): Promise<{
     allocations: LotAllocation[];
     availableBatches: import("./consolidation-types").AvailableLotBatchItem[];
 }> {
-    const res = await fetchWithSessionRetry(`${LEGACY}/allocations?batchId=${batchId}`);
+    const qs = new URLSearchParams({ batchId: String(batchId) });
+    if (branchId) qs.set("branchId", String(branchId));
+
+    const primaryUrl = `${BASE}/consolidation-picking/allocations?${qs.toString()}`;
+    const legacyUrl = `${LEGACY}/allocations?${qs.toString()}`;
+
+    let res = await fetchWithSessionRetry(primaryUrl);
+    if (!res.ok && res.status === 404) {
+        res = await fetchWithSessionRetry(legacyUrl);
+    }
     const data = await handleResponse(res, "Failed to load allocations");
     return {
         allocations: data.allocations ?? [],

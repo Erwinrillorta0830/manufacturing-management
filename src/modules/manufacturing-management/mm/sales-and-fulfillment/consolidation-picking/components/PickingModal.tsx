@@ -124,7 +124,7 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
         setLoadingAllocations(true);
         Promise.all([
             fetchConsolidationByNo(batch.consolidatorNo).catch(() => batch),
-            fetchAllocationsWithBatches(batch.id).catch(() => ({ allocations: [], availableBatches: [] })),
+            fetchAllocationsWithBatches(batch.id, batch.branchId).catch(() => ({ allocations: [], availableBatches: [] })),
         ])
             .then(([freshBatch, allocResult]) => {
                 const b = freshBatch || batch;
@@ -379,6 +379,13 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
             return;
         }
 
+        // Branch validation: strictly verify candidate belongs to this batch's branch
+        if (candidate.branchId && activeBatch?.branchId && Number(candidate.branchId) !== Number(activeBatch.branchId)) {
+            const currentBranch = activeBatch.branchName || `Branch #${activeBatch.branchId}`;
+            toast.error(`Cannot add batch from another branch. Only batches for ${currentBranch} can be picked.`);
+            return;
+        }
+
         // Check if already in allocations
         const exists = allocations.some(
             (a) =>
@@ -603,7 +610,7 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
 
             let printAllocations = allocations;
             if (printAllocations.length === 0) {
-                const allocResult = await fetchAllocationsWithBatches(activeBatch.id).catch(() => ({ allocations: [], availableBatches: [] }));
+                const allocResult = await fetchAllocationsWithBatches(activeBatch.id, activeBatch.branchId).catch(() => ({ allocations: [], availableBatches: [] }));
                 printAllocations = allocResult.allocations || [];
             }
 
@@ -773,8 +780,12 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                             const isItemDone = !hasNoAllocation && effectiveMaxPickable > 0 && currentPicked >= effectiveMaxPickable;
 
                             // Available warehouse batches for this product that haven't been added yet and have available stock (> 0)
+                            // Strictly filtered to the consolidation batch's respective branch
                             const availableForProduct = availableBatches.filter(
-                                (b) => b.productId === prodItem.productId && Number(b.availableQuantity || 0) > 0
+                                (b) =>
+                                    b.productId === prodItem.productId &&
+                                    Number(b.availableQuantity || 0) > 0 &&
+                                    (!b.branchId || !activeBatch?.branchId || Number(b.branchId) === Number(activeBatch.branchId))
                             );
                             const unallocatedBatches = availableForProduct.filter((b) => {
                                 return !prodAllocations.some(
@@ -783,12 +794,13 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                                         (a.lotId && a.lotId === b.lotId && a.batchNo === b.batchNo)
                                 );
                             });
+                            const branchLabel = activeBatch.branchName || `Branch #${activeBatch.branchId}`;
                             const availableBatchOptions: SearchableSelectOption[] = unallocatedBatches
                                 .filter((b) => Number(b.availableQuantity || 0) > 0)
                                 .map((b) => ({
                                     value: `${b.inventoryLotId || 0}:${b.batchNo}:${b.lotId}`,
                                     label: `${b.lotName || `Lot #${b.lotId}`} - Batch: ${b.batchNo || "N/A"}`,
-                                    subLabel: `Available: ${b.availableQuantity} | Exp: ${b.expiryDate ? new Date(b.expiryDate).toLocaleDateString() : "No Expiry"}`,
+                                    subLabel: `${branchLabel} | Available: ${b.availableQuantity} | Exp: ${b.expiryDate ? new Date(b.expiryDate).toLocaleDateString() : "No Expiry"}`,
                                     badge: `${b.availableQuantity} avail`,
                                 }));
 
@@ -888,9 +900,9 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                                                         <SearchableSelect
                                                             options={availableBatchOptions}
                                                             value=""
-                                                            placeholder="+ Add Lot / Batch..."
-                                                            searchPlaceholder="Search available lot or batch..."
-                                                            emptyMessage="No more lots available"
+                                                            placeholder={`+ Add Lot / Batch (${activeBatch.branchName || `Branch #${activeBatch.branchId}`})...`}
+                                                            searchPlaceholder={`Search available lot in ${activeBatch.branchName || `Branch #${activeBatch.branchId}`}...`}
+                                                            emptyMessage={`No more lots available in ${activeBatch.branchName || `Branch #${activeBatch.branchId}`}`}
                                                             onValueChange={(val) => {
                                                                 if (val) handleAddAlternativeLot(prodItem.productId, val);
                                                             }}
@@ -1044,9 +1056,9 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                                                             <SearchableSelect
                                                                 options={availableBatchOptions}
                                                                 value=""
-                                                                placeholder="+ Add Warehouse Lot..."
-                                                                searchPlaceholder="Search lot or batch..."
-                                                                emptyMessage="No more lots available"
+                                                                placeholder={`+ Add ${activeBatch.branchName || `Branch #${activeBatch.branchId}`} Lot...`}
+                                                                searchPlaceholder={`Search lot in ${activeBatch.branchName || `Branch #${activeBatch.branchId}`}...`}
+                                                                emptyMessage={`No more lots available in ${activeBatch.branchName || `Branch #${activeBatch.branchId}`}`}
                                                                 onValueChange={(val) => {
                                                                     if (val) handleAddAlternativeLot(prodItem.productId, val);
                                                                 }}
@@ -1055,7 +1067,7 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                                                         </div>
                                                     </div>
                                                 ) : (
-                                                    <p className="text-[11px] text-muted-foreground">No available warehouse lots found for this product.</p>
+                                                    <p className="text-[11px] text-muted-foreground">No available warehouse lots found for this product in {activeBatch.branchName || `Branch #${activeBatch.branchId}`}.</p>
                                                 )}
                                             </div>
                                         )}

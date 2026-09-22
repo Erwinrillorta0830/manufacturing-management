@@ -84,7 +84,7 @@ export default function PickingQueueModule() {
 
             const [fullBatch, allocResult] = await Promise.all([
                 fetchConsolidationByNo(batch.consolidatorNo).catch(() => batch),
-                fetchAllocationsWithBatches(batch.id).catch(() => ({ allocations: [], availableBatches: [] })),
+                fetchAllocationsWithBatches(batch.id, batch.branchId).catch(() => ({ allocations: [], availableBatches: [] })),
             ]);
 
             const targetBatch = fullBatch || batch;
