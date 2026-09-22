@@ -43,3 +43,8 @@
 /postcss.config.mjs @Jakeeeey @ECuerdo @Xerman09 @Erwinrillorta0830
 
 /tsconfig.json @Jakeeeey @ECuerdo @Xerman09 @Erwinrillorta0830
+
+// Fierrez Folder 
+# ─── Lot Management — owned exclusively by @Fierrez ───────────────────────────
+/src/modules/manufacturing-management/lot-management/ @Fierrez
+/src/app/api/manufacturing/inventory-warehousing/lot-management/ @Fierrez
