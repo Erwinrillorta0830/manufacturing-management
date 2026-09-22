@@ -3,7 +3,7 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { Sliders, RefreshCw, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
-import { fetchProducts, fetchVersions, fetchBOMDetails } from "@/modules/manufacturing-management/finished-goods/services/finished-goods-api";
+import { fetchProducts, fetchVersions, fetchBOMDetails } from "@/modules/manufacturing-management/finished-goods-master/services/finished-goods-api";
 
 // Re-using mock product model internally
 interface BOMItem {
@@ -716,8 +716,8 @@ export default function MarginSimulatorModule() {
                                                                     setSearchTerm("");
                                                                 }}
                                                                 className={`w-full text-left px-3 py-2 rounded-md text-xs transition-colors flex items-center justify-between cursor-pointer ${isSelected
-                                                                        ? "bg-primary text-primary-foreground font-bold"
-                                                                        : "hover:bg-muted"
+                                                                    ? "bg-primary text-primary-foreground font-bold"
+                                                                    : "hover:bg-muted"
                                                                     }`}
                                                             >
                                                                 <div className="truncate pr-2">
@@ -917,10 +917,10 @@ export default function MarginSimulatorModule() {
                                 const isLoss = simulatedMarginPercent < 0;
                                 return (
                                     <div className={`rounded-xl border p-4 space-y-3 transition-colors ${isLoss
-                                            ? "bg-destructive/5 border-destructive/30 text-destructive-foreground"
-                                            : isLow
-                                                ? "bg-amber-500/5 border-amber-500/30"
-                                                : "bg-emerald-500/5 border-emerald-500/30"
+                                        ? "bg-destructive/5 border-destructive/30 text-destructive-foreground"
+                                        : isLow
+                                            ? "bg-amber-500/5 border-amber-500/30"
+                                            : "bg-emerald-500/5 border-emerald-500/30"
                                         }`}>
                                         <div className="flex justify-between items-center">
                                             <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Simulated What-If</span>

@@ -8,7 +8,7 @@ import { INVENTORY_STATUS } from "@/app/api/manufacturing/procurement/_domain";
 import type { ReceivingValidationIssue } from "../receiving-metadata";
 import ProductQaChecklist from "./ProductQaChecklist";
 import ForceReceivedDialog from "./ForceReceivedDialog";
-import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods/components/CreatableSelect";
+import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods-master/components/CreatableSelect";
 import { configuredBadStockBranchId } from "../services/qa-api";
 import { formatPhtTimestamp } from "../../shared/pht-date";
 import { LotAllocationSection } from "./LotAllocationModal";
@@ -709,8 +709,8 @@ export default function ShipmentInspectionForm({
                                 key={line.line_id}
                                 id={`line-card-${line.line_id}`}
                                 className={`border rounded-xl p-4 bg-muted/5 space-y-3.5 relative transition-all duration-300 ${isHighlighted
-                                        ? "ring-2 ring-primary bg-primary/5 border-primary scale-[1.01]"
-                                        : "border-border"
+                                    ? "ring-2 ring-primary bg-primary/5 border-primary scale-[1.01]"
+                                    : "border-border"
                                     }`}
                             >
                                 {/* Header info with optional Product Image */}
@@ -751,8 +751,8 @@ export default function ShipmentInspectionForm({
                                         <div
                                             aria-label="Product Category Type"
                                             className={`px-2.5 py-1 rounded-lg text-[8px] uppercase font-extrabold border transition-all ${row.isPackaging
-                                                    ? "bg-purple-500/10 text-purple-600 border-purple-500/20"
-                                                    : "bg-amber-500/10 text-amber-600 border-amber-500/20"
+                                                ? "bg-purple-500/10 text-purple-600 border-purple-500/20"
+                                                : "bg-amber-500/10 text-amber-600 border-amber-500/20"
                                                 }`}
                                         >
                                             {row.isPackaging ? "Packaging (Lot Req)" : "Raw Material (Expiry Req)"}
@@ -798,67 +798,67 @@ export default function ShipmentInspectionForm({
                                     <span>PO physical balance: <strong className="text-foreground">{remainingVal.toLocaleString()}</strong></span>
                                 </div>
 
-                                 {/* QA Inputs Grid - Touch Optimized layout */}
-                                 {(() => {
-                                     const convFactor = Number(line.product_id?.unit_of_measurement_count || 1);
-                                     const childUom = line.product_id?.unit_of_measurement?.unit_shortcut || "PCS";
-                                     const parentObj = line.product_id?.parent_id;
-                                     const parentUom = parentObj && typeof parentObj === "object" 
-                                         ? (parentObj as { unit_of_measurement?: { unit_shortcut?: string } }).unit_of_measurement?.unit_shortcut 
-                                         : null;
-                                     const baseUom = parentUom || childUom;
+                                {/* QA Inputs Grid - Touch Optimized layout */}
+                                {(() => {
+                                    const convFactor = Number(line.product_id?.unit_of_measurement_count || 1);
+                                    const childUom = line.product_id?.unit_of_measurement?.unit_shortcut || "PCS";
+                                    const parentObj = line.product_id?.parent_id;
+                                    const parentUom = parentObj && typeof parentObj === "object"
+                                        ? (parentObj as { unit_of_measurement?: { unit_shortcut?: string } }).unit_of_measurement?.unit_shortcut
+                                        : null;
+                                    const baseUom = parentUom || childUom;
 
                                     const receivedEquiv = receivedVal * convFactor;
                                     const acceptedEquiv = acceptedVal * convFactor;
                                     const rejectedEquiv = rejectedVal * convFactor;
 
-                                     return (
-                                         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-                                             {/* Received Quantity Stepper */}
-                                             <div className="space-y-1">
-                                                 <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                                       This Receipt - Received Quantity {!readOnly && receivedVal > 0 && <span className="text-red-500">*</span>}
-                                                 </label>
-                                                 <div className="flex items-center">
-                                                     <button
-                                                         type="button"
-                                                         onClick={() => handleUpdateRow(line.line_id, "receivedQty", Math.max(0, receivedVal - 1))}
-                                                         disabled={lineInputDisabled}
-                                                         className="w-10 h-10 border border-r-0 bg-background text-foreground rounded-l-lg hover:bg-muted font-extrabold flex items-center justify-center transition-colors text-base select-none shrink-0"
-                                                     >
-                                                         <Minus className="h-3.5 w-3.5" />
-                                                     </button>
-                                                     <input
-                                                         type="number"
-                                                         min="0"
-                                                         step="any"
-                                                         placeholder="Manually count"
+                                    return (
+                                        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                                            {/* Received Quantity Stepper */}
+                                            <div className="space-y-1">
+                                                <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                                    This Receipt - Received Quantity {!readOnly && receivedVal > 0 && <span className="text-red-500">*</span>}
+                                                </label>
+                                                <div className="flex items-center">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleUpdateRow(line.line_id, "receivedQty", Math.max(0, receivedVal - 1))}
+                                                        disabled={lineInputDisabled}
+                                                        className="w-10 h-10 border border-r-0 bg-background text-foreground rounded-l-lg hover:bg-muted font-extrabold flex items-center justify-center transition-colors text-base select-none shrink-0"
+                                                    >
+                                                        <Minus className="h-3.5 w-3.5" />
+                                                    </button>
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        step="any"
+                                                        placeholder="Manually count"
                                                         value={row.receivedQty}
                                                         onChange={e => handleUpdateRow(line.line_id, "receivedQty", e.target.value === "" ? "" : Number(e.target.value))}
                                                         disabled={lineInputDisabled}
-                                                         aria-invalid={!readOnly && Boolean(quantityIssue)}
+                                                        aria-invalid={!readOnly && Boolean(quantityIssue)}
                                                         className="w-full h-10 border border-border bg-background text-center text-xs font-semibold text-foreground outline-none focus:ring-0 transition-all"
-                                                     />
-                                                     <button
-                                                         type="button"
-                                                         onClick={() => handleUpdateRow(line.line_id, "receivedQty", receivedVal + 1)}
-                                                         disabled={lineInputDisabled}
-                                                         className="w-10 h-10 border border-l-0 bg-background text-foreground rounded-r-lg hover:bg-muted font-extrabold flex items-center justify-center transition-colors text-base select-none shrink-0"
-                                                     >
-                                                         <Plus className="h-3.5 w-3.5" />
-                                                     </button>
-                                                 </div>
-                                                 {receivedEquiv > 0 && convFactor !== 1 && (
-                                                     <span className="text-[9px] text-primary font-bold block mt-1 bg-primary/5 px-2 py-0.5 rounded border border-primary/10 w-fit select-none">
-                                                         = {receivedEquiv.toLocaleString()} {baseUom}
-                                                     </span>
-                                                 )}
-                                             </div>
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleUpdateRow(line.line_id, "receivedQty", receivedVal + 1)}
+                                                        disabled={lineInputDisabled}
+                                                        className="w-10 h-10 border border-l-0 bg-background text-foreground rounded-r-lg hover:bg-muted font-extrabold flex items-center justify-center transition-colors text-base select-none shrink-0"
+                                                    >
+                                                        <Plus className="h-3.5 w-3.5" />
+                                                    </button>
+                                                </div>
+                                                {receivedEquiv > 0 && convFactor !== 1 && (
+                                                    <span className="text-[9px] text-primary font-bold block mt-1 bg-primary/5 px-2 py-0.5 rounded border border-primary/10 w-fit select-none">
+                                                        = {receivedEquiv.toLocaleString()} {baseUom}
+                                                    </span>
+                                                )}
+                                            </div>
 
                                             {/* Accepted Quantity Stepper */}
                                             <div className="space-y-1">
                                                 <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                                      This Receipt - Accepted Quantity {!readOnly && receivedVal > 0 && <span className="text-red-500">*</span>}
+                                                    This Receipt - Accepted Quantity {!readOnly && receivedVal > 0 && <span className="text-red-500">*</span>}
                                                 </label>
                                                 <div className="flex items-center">
                                                     <button
@@ -878,8 +878,8 @@ export default function ShipmentInspectionForm({
                                                         value={row.acceptedQty}
                                                         onChange={e => handleUpdateRow(line.line_id, "acceptedQty", e.target.value === "" ? "" : Number(e.target.value))}
                                                         disabled={lineInputDisabled}
-                                                         aria-invalid={!readOnly && (!quantitiesReconcile || Boolean(quantityIssue))}
-                                                         className={`w-full h-10 border bg-background text-center text-xs font-semibold text-foreground outline-none focus:ring-0 ${!readOnly && !quantitiesReconcile ? "border-red-500 bg-red-500/5" : ""}`}
+                                                        aria-invalid={!readOnly && (!quantitiesReconcile || Boolean(quantityIssue))}
+                                                        className={`w-full h-10 border bg-background text-center text-xs font-semibold text-foreground outline-none focus:ring-0 ${!readOnly && !quantitiesReconcile ? "border-red-500 bg-red-500/5" : ""}`}
                                                     />
                                                     <button
                                                         type="button"
@@ -900,7 +900,7 @@ export default function ShipmentInspectionForm({
                                             {/* Rejected Quantity */}
                                             <div className="space-y-1">
                                                 <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                                     This Receipt - Rejected Quantity <span className="text-[8px] normal-case font-semibold text-muted-foreground">(calculated)</span>
+                                                    This Receipt - Rejected Quantity <span className="text-[8px] normal-case font-semibold text-muted-foreground">(calculated)</span>
                                                 </label>
                                                 <div
                                                     role="status"
@@ -916,9 +916,9 @@ export default function ShipmentInspectionForm({
                                                     </span>
                                                 )}
                                             </div>
-                                         {quantityIssue && <p className="sm:col-span-3 text-[9px] font-semibold text-red-600" role="alert">{quantityIssue.message}</p>}
-                                         </div>
-                                     );
+                                            {quantityIssue && <p className="sm:col-span-3 text-[9px] font-semibold text-red-600" role="alert">{quantityIssue.message}</p>}
+                                        </div>
+                                    );
                                 })()}
 
                                 {receivedVal > 0 && (acceptedVal > 0 || rejectedVal > 0) && (
@@ -1005,30 +1005,30 @@ export default function ShipmentInspectionForm({
                                                         <p className="text-[10px] text-muted-foreground">Rejected stock follows the same Lot → Batch → Dates → Quantity sequence.</p>
                                                     </div>
                                                 </div>
-                                        {lineRejectedStorageLotLookup.status === "loading" && (
-                                            <p className="flex items-center gap-1.5 text-[9px] font-semibold text-muted-foreground" role="status">
-                                                <Loader2 className="h-3 w-3 animate-spin" /> Loading active Bad Order storage lots...
-                                            </p>
-                                        )}
-                                        {lineRejectedStorageLotLookup.status === "error" && (
-                                            <div className="flex flex-wrap items-center gap-2 rounded-md border border-red-500/30 bg-red-500/5 px-2 py-2 text-[9px] text-red-700" role="alert">
-                                                <span>{lineRejectedStorageLotLookup.error || "Unable to load Bad Order storage lots. This is a lookup failure, not an empty lot list."}</span>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => onRetryStorageLots(productId, "rejected")}
-                                                    className="inline-flex h-7 items-center gap-1 rounded-md border border-red-500/40 bg-background px-2 font-extrabold hover:bg-red-500/10"
-                                                >
-                                                    <RefreshCw className="h-3 w-3" /> Retry
-                                                </button>
-                                            </div>
-                                        )}
-                                        {lineRejectedStorageLotLookup.status === "loaded" && lineRejectedStorageLots.length === 0 && (
-                                            <p className="text-[9px] font-semibold text-amber-700" role="alert">
-                                                {hasConfiguredBadOrderBranch
-                                                    ? "No compatible storage lots are available on the configured Bad Order branch. Standard Empty / Vacant lots are valid targets; the lot category flag is not required. Lots must match this product's UOM and product scope and have available capacity."
-                                                    : "The receiving branch has no active Bad Order / quarantine branch configured, so rejected quantity cannot be mapped to storage lots."}
-                                            </p>
-                                        )}
+                                                {lineRejectedStorageLotLookup.status === "loading" && (
+                                                    <p className="flex items-center gap-1.5 text-[9px] font-semibold text-muted-foreground" role="status">
+                                                        <Loader2 className="h-3 w-3 animate-spin" /> Loading active Bad Order storage lots...
+                                                    </p>
+                                                )}
+                                                {lineRejectedStorageLotLookup.status === "error" && (
+                                                    <div className="flex flex-wrap items-center gap-2 rounded-md border border-red-500/30 bg-red-500/5 px-2 py-2 text-[9px] text-red-700" role="alert">
+                                                        <span>{lineRejectedStorageLotLookup.error || "Unable to load Bad Order storage lots. This is a lookup failure, not an empty lot list."}</span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => onRetryStorageLots(productId, "rejected")}
+                                                            className="inline-flex h-7 items-center gap-1 rounded-md border border-red-500/40 bg-background px-2 font-extrabold hover:bg-red-500/10"
+                                                        >
+                                                            <RefreshCw className="h-3 w-3" /> Retry
+                                                        </button>
+                                                    </div>
+                                                )}
+                                                {lineRejectedStorageLotLookup.status === "loaded" && lineRejectedStorageLots.length === 0 && (
+                                                    <p className="text-[9px] font-semibold text-amber-700" role="alert">
+                                                        {hasConfiguredBadOrderBranch
+                                                            ? "No compatible storage lots are available on the configured Bad Order branch. Standard Empty / Vacant lots are valid targets; the lot category flag is not required. Lots must match this product's UOM and product scope and have available capacity."
+                                                            : "The receiving branch has no active Bad Order / quarantine branch configured, so rejected quantity cannot be mapped to storage lots."}
+                                                    </p>
+                                                )}
                                                 <LotAllocationSection
                                                     branchId={Number(lineRejectedStorageLots[0]?.allocation_branch_id || lineRejectedStorageLots[0]?.branch_id || configuredBadStockBranchId(branches.find(branch => Number(branch.id) === Number(selectedBranchId || selectedShipment.branch_id))) || 0) || undefined}
                                                     productId={productId}
@@ -1091,11 +1091,11 @@ export default function ShipmentInspectionForm({
                                 {/* Remarks field */}
                                 <div className="space-y-1 pt-1">
                                     <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                         Remarks / Rejection Notes {!readOnly && isRemarksMandatory && <span className="text-red-500">*</span>}
+                                        Remarks / Rejection Notes {!readOnly && isRemarksMandatory && <span className="text-red-500">*</span>}
                                     </label>
                                     <input
                                         type="text"
-                                         required={!readOnly && isRemarksMandatory}
+                                        required={!readOnly && isRemarksMandatory}
                                         placeholder={isRemarksMandatory ? "Logistics discrepancy or bad order explanation is mandatory" : "Reason for discrepancy or failure"}
                                         value={row.rejectionReason}
                                         onChange={e => handleUpdateRow(line.line_id, "rejectionReason", e.target.value)}
@@ -1108,15 +1108,15 @@ export default function ShipmentInspectionForm({
                                 </div>
 
                                 {/* Discrepancy warnings */}
-                                 {!readOnly && receivedVal > 0 && receivedVal !== remainingVal && (
-                                     <div className="bg-amber-500/5 border border-amber-500/10 rounded-lg p-2.5 flex items-center gap-2 text-[10px] text-amber-600 animate-in fade-in duration-200">
-                                         <AlertTriangle className="h-4 w-4 shrink-0" />
-                                         <span>{overDeliveryQuantity > 1e-9
-                                             ? `Over-delivery warning: received ${receivedVal.toLocaleString()} vs expected ${remainingVal.toLocaleString()} (excess ${overDeliveryQuantity.toLocaleString()}).`
-                                             : `Logistics discrepancy detected: received ${receivedVal.toLocaleString()} vs expected ${remainingVal.toLocaleString()}.`}</span>
-                                     </div>
-                                 )}
-                                 {!readOnly && !quantitiesReconcile && (receivedVal > 0 || acceptedVal > 0 || rejectedVal > 0) && (
+                                {!readOnly && receivedVal > 0 && receivedVal !== remainingVal && (
+                                    <div className="bg-amber-500/5 border border-amber-500/10 rounded-lg p-2.5 flex items-center gap-2 text-[10px] text-amber-600 animate-in fade-in duration-200">
+                                        <AlertTriangle className="h-4 w-4 shrink-0" />
+                                        <span>{overDeliveryQuantity > 1e-9
+                                            ? `Over-delivery warning: received ${receivedVal.toLocaleString()} vs expected ${remainingVal.toLocaleString()} (excess ${overDeliveryQuantity.toLocaleString()}).`
+                                            : `Logistics discrepancy detected: received ${receivedVal.toLocaleString()} vs expected ${remainingVal.toLocaleString()}.`}</span>
+                                    </div>
+                                )}
+                                {!readOnly && !quantitiesReconcile && (receivedVal > 0 || acceptedVal > 0 || rejectedVal > 0) && (
                                     <div className="bg-red-500/5 border border-red-500/10 rounded-lg p-2.5 flex items-center gap-2 text-[10px] text-red-600 animate-in fade-in duration-200">
                                         <AlertTriangle className="h-4 w-4 shrink-0" />
                                         <span>{acceptedVal > receivedVal
@@ -1124,7 +1124,7 @@ export default function ShipmentInspectionForm({
                                             : "Enter valid received and accepted quantities."}</span>
                                     </div>
                                 )}
-                                 {!readOnly && rejectedVal > 0 && (
+                                {!readOnly && rejectedVal > 0 && (
                                     <div className="bg-red-500/5 border border-red-500/10 rounded-lg p-2.5 flex items-center gap-2 text-[10px] text-red-500 animate-in fade-in duration-200">
                                         <AlertTriangle className="h-4 w-4 shrink-0" />
                                         <span>Warning: {rejectedVal} units are marked rejected. Remarks are mandatory.</span>
@@ -1207,33 +1207,33 @@ export default function ShipmentInspectionForm({
                     </div>
                 )}
                 <div className="flex justify-end gap-3">
-                <button
-                    type="button"
-                    onClick={onCancel}
-                    className="px-5 py-2.5 border rounded-xl text-xs font-bold text-muted-foreground hover:bg-muted h-11 flex items-center justify-center cursor-pointer"
-                >
-                    {readOnly ? "Back to Inbound QA Queue" : "Cancel Inspection"}
-                </button>
-                {canForceReceive && (
                     <button
                         type="button"
-                        onClick={() => setForceReceivedOpen(true)}
-                        disabled={forceReceivedSubmitting || loadingLines}
-                        className="px-5 py-2.5 border border-violet-300 text-violet-700 rounded-xl text-xs font-bold h-11 flex items-center justify-center cursor-pointer hover:bg-violet-500/10 disabled:opacity-60"
+                        onClick={onCancel}
+                        className="px-5 py-2.5 border rounded-xl text-xs font-bold text-muted-foreground hover:bg-muted h-11 flex items-center justify-center cursor-pointer"
                     >
-                        Force Received
+                        {readOnly ? "Back to Inbound QA Queue" : "Cancel Inspection"}
                     </button>
-                )}
-                {!readOnly && (
-                    <button
-                        type={hasPreview ? "button" : "submit"}
-                        onClick={hasPreview ? onReviewPreview : undefined}
-                        disabled={loadingLines || validatingInspection || Boolean(qaSubmissionBlockReason) || receivingValidationIssues.length > 0 || hasQuantityMismatch || hasAllocationMismatch || hasRejectedAllocationMismatch}
-                        className="px-5 py-2.5 bg-primary text-primary-foreground rounded-xl text-xs font-bold flex items-center gap-1.5 shadow h-11 justify-center cursor-pointer disabled:opacity-60 disabled:cursor-wait"
-                    >
-                        {validatingInspection ? <><Loader2 className="h-4 w-4 animate-spin" /> Generating...</> : qaSubmissionBlockReason ? <><AlertTriangle className="h-4 w-4" /> QA Configuration Required</> : receivingValidationIssues.length > 0 ? <><AlertTriangle className="h-4 w-4" /> Complete Required Fields</> : hasPreview ? <><ReceiptText className="h-4 w-4" /> Review Movement Preview</> : previewError ? <><RefreshCw className="h-4 w-4" /> Retry Preview</> : <><CheckCircle2 className="h-4 w-4" /> Preview QA & Routes</>}
-                    </button>
-                )}
+                    {canForceReceive && (
+                        <button
+                            type="button"
+                            onClick={() => setForceReceivedOpen(true)}
+                            disabled={forceReceivedSubmitting || loadingLines}
+                            className="px-5 py-2.5 border border-violet-300 text-violet-700 rounded-xl text-xs font-bold h-11 flex items-center justify-center cursor-pointer hover:bg-violet-500/10 disabled:opacity-60"
+                        >
+                            Force Received
+                        </button>
+                    )}
+                    {!readOnly && (
+                        <button
+                            type={hasPreview ? "button" : "submit"}
+                            onClick={hasPreview ? onReviewPreview : undefined}
+                            disabled={loadingLines || validatingInspection || Boolean(qaSubmissionBlockReason) || receivingValidationIssues.length > 0 || hasQuantityMismatch || hasAllocationMismatch || hasRejectedAllocationMismatch}
+                            className="px-5 py-2.5 bg-primary text-primary-foreground rounded-xl text-xs font-bold flex items-center gap-1.5 shadow h-11 justify-center cursor-pointer disabled:opacity-60 disabled:cursor-wait"
+                        >
+                            {validatingInspection ? <><Loader2 className="h-4 w-4 animate-spin" /> Generating...</> : qaSubmissionBlockReason ? <><AlertTriangle className="h-4 w-4" /> QA Configuration Required</> : receivingValidationIssues.length > 0 ? <><AlertTriangle className="h-4 w-4" /> Complete Required Fields</> : hasPreview ? <><ReceiptText className="h-4 w-4" /> Review Movement Preview</> : previewError ? <><RefreshCw className="h-4 w-4" /> Retry Preview</> : <><CheckCircle2 className="h-4 w-4" /> Preview QA & Routes</>}
+                        </button>
+                    )}
                 </div>
             </div>
             {onForceReceived && (

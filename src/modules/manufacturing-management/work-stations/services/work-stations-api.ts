@@ -1,4 +1,4 @@
-import type { WorkCenter } from "../../finished-goods/types";
+import type { WorkCenter } from "../../finished-goods-master/types";
 
 export async function fetchWorkCenters(): Promise<WorkCenter[]> {
     const res = await fetch("/api/manufacturing/work-stations", { cache: "no-store" });

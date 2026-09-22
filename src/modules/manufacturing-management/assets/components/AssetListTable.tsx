@@ -10,7 +10,7 @@ import {
     ChevronsLeft,
     ChevronsRight
 } from "lucide-react";
-import { AssetRecord, DepartmentRecord } from "@/modules/manufacturing-management/finished-goods/types";
+import { AssetRecord, DepartmentRecord } from "@/modules/manufacturing-management/finished-goods-master/types";
 import { Button } from "@/components/ui/button";
 import {
     Select,
@@ -175,7 +175,7 @@ export function AssetListTable({
                                     >
                                         <td className="p-4 pl-6 align-middle">
                                             {asset.item_image ? (
-                                                <div 
+                                                <div
                                                     className="w-10 h-10 rounded-md border border-border overflow-hidden shrink-0 relative cursor-zoom-in hover:scale-105 transition-transform"
                                                     onClick={(e) => {
                                                         e.stopPropagation();

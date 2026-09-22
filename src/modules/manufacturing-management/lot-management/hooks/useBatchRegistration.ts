@@ -18,7 +18,7 @@ import {
     fetchProducts
 } from "../services/lot-management-api";
 import { getFefoPriorityMap, evaluateBatchEligibility, sortBatchesForDisplay } from "../utils/fefoEngine";
-import { resolveProductClassification } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
+import { resolveProductClassification } from "../services/lot-tracking.service";
 
 export function useBatchRegistration(
     lots: Lot[],

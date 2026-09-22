@@ -3,7 +3,7 @@ import {
   fetchMmInventoryMovements,
   movementErrorStatus,
   type MmInventoryMovement
-} from "@/app/api/manufacturing/services/mm-inventory-movements.service";
+} from "./mm-inventory-movements.service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

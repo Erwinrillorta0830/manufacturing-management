@@ -7,7 +7,7 @@ import {
     RefreshCw
 } from "lucide-react";
 import { toast } from "sonner";
-import { fetchProducts, fetchVersions, fetchBOMDetails } from "@/modules/manufacturing-management/finished-goods/services/finished-goods-api";
+import { fetchProducts, fetchVersions, fetchBOMDetails } from "@/modules/manufacturing-management/finished-goods-master/services/finished-goods-api";
 import {
     BOMItem,
     Product,
@@ -777,33 +777,30 @@ export default function BiAndFinancialsModule() {
                 <button
                     type="button"
                     onClick={() => setActiveTab("overview")}
-                    className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${
-                        activeTab === "overview"
+                    className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${activeTab === "overview"
                             ? "border-primary text-primary bg-background rounded-t-lg shadow-xs"
                             : "border-transparent text-muted-foreground hover:text-foreground"
-                    }`}
+                        }`}
                 >
                     Overview
                 </button>
                 <button
                     type="button"
                     onClick={() => setActiveTab("costing")}
-                    className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${
-                        activeTab === "costing"
+                    className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${activeTab === "costing"
                             ? "border-primary text-primary bg-background rounded-t-lg shadow-xs"
                             : "border-transparent text-muted-foreground hover:text-foreground"
-                    }`}
+                        }`}
                 >
                     Costing Analytics
                 </button>
                 <button
                     type="button"
                     onClick={() => setActiveTab("margin")}
-                    className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${
-                        activeTab === "margin"
+                    className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${activeTab === "margin"
                             ? "border-primary text-primary bg-background rounded-t-lg shadow-xs"
                             : "border-transparent text-muted-foreground hover:text-foreground"
-                    }`}
+                        }`}
                 >
                     Margin Analysis
                 </button>

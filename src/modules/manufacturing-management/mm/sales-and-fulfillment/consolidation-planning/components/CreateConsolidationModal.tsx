@@ -2450,18 +2450,9 @@ export default function CreateConsolidationModal({
                                                     </h3>
                                                 </div>
                                                 <div className="flex items-center gap-2">
-                                                    <Button
-                                                        type="button"
-                                                        variant="outline"
-                                                        size="sm"
-                                                        onClick={handlePrintPicklist}
-                                                        className="h-7 px-2.5 text-[10px] font-bold rounded-lg border-border/60 hover:bg-muted/40 gap-1.5"
-                                                        title="Print Consolidation Picklist (Portrait PDF)"
-                                                    >
-                                                        <Printer className="h-3.5 w-3.5 text-primary" />
-                                                        Print Picklist
-                                                    </Button>
+                   
                                                     <div className="flex items-center gap-1 bg-muted/40 p-0.5 rounded-xl border border-border/60">
+                                                        
                                                         <Button
                                                             variant="ghost"
                                                             size="sm"

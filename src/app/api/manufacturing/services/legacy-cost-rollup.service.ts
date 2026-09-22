@@ -1,6 +1,6 @@
 // VOS ERP - Legacy Cost Rollup Directus API Service
 
-import { calculateCostBreakdown, calculateMaterialCost, calculateMarginSummary, calculateOverheadSummary, calculateRouteBreakdown } from "@/modules/manufacturing-management/finished-goods/costing";
+import { calculateCostBreakdown, calculateMaterialCost, calculateMarginSummary, calculateOverheadSummary, calculateRouteBreakdown } from "@/modules/manufacturing-management/finished-goods-master/costing";
 import { DIRECTUS_URL, headers } from "./core-api.service";
 import { fetchAllProducts, type DirectusProduct, type CostRollupResult, type CostNode } from "./finished-goods-catalog-api.service";
 import { getActiveBOMForProduct, getLatestLandedCost } from "./bom-costing-api.service";
@@ -176,7 +176,7 @@ export async function calculateLegacyRollupCost(
         expectedYieldPercentage: bom.expected_yield_percentage
     });
     const overheadSummary = calculateOverheadSummary(breakdown.customOverheadCost);
-    
+
     const targetPrice = currentProduct.price_per_unit || 0;
     const margin = calculateMarginSummary(
         targetPrice,

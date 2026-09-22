@@ -10,7 +10,7 @@ import PurchaseAmountPostingModule from "./components/PurchaseAmountPostingModul
 import LandedCostAuditSummary from "./components/LandedCostAuditSummary";
 import { useProcurement } from "./hooks/useProcurement";
 import type { IncomingShipment } from "./types";
-import { CreatableSelect } from "../finished-goods/components/CreatableSelect";
+import { CreatableSelect } from "../finished-goods-master/components/CreatableSelect";
 
 interface ProcurementModuleProps {
     initialTab?: string;
@@ -73,48 +73,48 @@ export default function ProcurementModule({ initialTab = "suppliers", hideNavTab
             {!hideNavTabs && (
                 /* Module Tabs Navigation */
                 <div className="flex border-b border-border/60 gap-1 bg-muted/20 px-4 pt-2 shrink-0 overflow-x-auto">
-                <button
-                    type="button"
-                    onClick={() => setActiveTab("suppliers")}
-                    className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${activeTab === "suppliers" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"}`}
-                >
-                    Suppliers Directory
-                </button>
-                <button
-                    type="button"
-                    onClick={() => setActiveTab("incoming-shipments")}
-                    className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${activeTab === "incoming-shipments" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"}`}
-                >
-                    Incoming Shipments
-                </button>
-                <button
-                    type="button"
-                    onClick={() => setActiveTab("shipment-expenses")}
-                    className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${activeTab === "shipment-expenses" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"}`}
-                >
-                    Shipment Expenses
-                </button>
-                <button
-                    type="button"
-                    onClick={() => setActiveTab("raw-materials")}
-                    className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${activeTab === "raw-materials" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"}`}
-                >
-                    Raw Materials Master
-                </button>
-                <button
-                    type="button"
-                    onClick={() => setActiveTab("forex")}
-                    className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${activeTab === "forex" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"}`}
-                >
-                    Forex Rates
-                </button>
-                <button
-                    type="button"
-                    onClick={() => setActiveTab("posting")}
-                    className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${activeTab === "posting" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"}`}
-                >
-                    Purchase Postings
-                </button>
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab("suppliers")}
+                        className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${activeTab === "suppliers" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+                    >
+                        Suppliers Directory
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab("incoming-shipments")}
+                        className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${activeTab === "incoming-shipments" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+                    >
+                        Incoming Shipments
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab("shipment-expenses")}
+                        className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${activeTab === "shipment-expenses" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+                    >
+                        Shipment Expenses
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab("raw-materials")}
+                        className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${activeTab === "raw-materials" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+                    >
+                        Raw Materials Master
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab("forex")}
+                        className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${activeTab === "forex" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+                    >
+                        Forex Rates
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab("posting")}
+                        className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${activeTab === "posting" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+                    >
+                        Purchase Postings
+                    </button>
                 </div>
             )}
 

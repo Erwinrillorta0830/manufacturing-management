@@ -2,7 +2,7 @@
 
 import React from "react";
 import { ShoppingCart } from "lucide-react";
-import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods/components/CreatableSelect";
+import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods-master/components/CreatableSelect";
 
 import { PurchaseOrderHeader } from "./types";
 import type { IncomingShipment } from "@/modules/manufacturing-management/procurement/types";

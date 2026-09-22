@@ -19,7 +19,7 @@ import {
 import {
     ProductRequiredFieldsError,
     validateProductEditDetails
-} from "@/modules/manufacturing-management/finished-goods/product-validation";
+} from "@/modules/manufacturing-management/finished-goods-master/product-validation";
 import {
     ProductIdentityError,
     ensureProductIdentityAvailable,

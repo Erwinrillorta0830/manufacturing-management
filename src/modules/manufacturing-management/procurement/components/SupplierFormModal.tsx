@@ -4,7 +4,7 @@ import { Building2, AlertCircle, UserSquare2, Plus, Trash2, Globe } from "lucide
 import { motion, AnimatePresence } from "framer-motion";
 import { fetchActiveSupplierCurrencies, fetchPHProvinces, fetchPHCities, fetchPHBarangays } from "../services/supplier.service";
 import { SUPPLIER_COUNTRY_OPTIONS, isPhilippinesCountry } from "../supplier-country";
-import { CreatableSelect } from "../../finished-goods/components/CreatableSelect";
+import { CreatableSelect } from "../../finished-goods-master/components/CreatableSelect";
 import { SearchableCountrySelect } from "@/app/(manufacturing-management)/mm/suppliers/_components/SearchableCountrySelect";
 import { PURCHASE_ORDER_DELIVERY_TERMS } from "../../purchase-order/commercial-terms";
 import { toast } from "sonner";
@@ -294,13 +294,13 @@ export default function SupplierFormModal({
     return (
         <AnimatePresence>
             {isOpen && (
-                <motion.div 
+                <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                     className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto"
                 >
-                    <motion.div 
+                    <motion.div
                         initial={{ scale: 0.95, y: 15 }}
                         animate={{ scale: 1, y: 0 }}
                         exit={{ scale: 0.95, y: 15 }}
@@ -336,7 +336,7 @@ export default function SupplierFormModal({
                                         required
                                         placeholder="e.g. Nabati Foods Philippines Inc."
                                         value={supplierForm.supplier_name}
-                                        onChange={e => setSupplierForm({...supplierForm, supplier_name: e.target.value})}
+                                        onChange={e => setSupplierForm({ ...supplierForm, supplier_name: e.target.value })}
                                         className="w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary font-medium"
                                     />
                                 </div>
@@ -348,7 +348,7 @@ export default function SupplierFormModal({
                                         required
                                         placeholder="e.g. NFPI"
                                         value={supplierForm.supplier_shortcut}
-                                        onChange={e => setSupplierForm({...supplierForm, supplier_shortcut: e.target.value})}
+                                        onChange={e => setSupplierForm({ ...supplierForm, supplier_shortcut: e.target.value })}
                                         className="w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary font-medium"
                                     />
                                 </div>
@@ -359,7 +359,7 @@ export default function SupplierFormModal({
                                         type="text"
                                         placeholder="e.g. 009-003-737-000"
                                         value={supplierForm.tin_number}
-                                        onChange={e => setSupplierForm({...supplierForm, tin_number: e.target.value})}
+                                        onChange={e => setSupplierForm({ ...supplierForm, tin_number: e.target.value })}
                                         className="w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary font-medium"
                                     />
                                 </div>
@@ -421,7 +421,7 @@ export default function SupplierFormModal({
                                             <Plus className="h-3 w-3" /> Add Representative
                                         </button>
                                     </div>
-                                    
+
                                     <div className="space-y-3 max-h-[220px] overflow-y-auto pr-1">
                                         {(supplierForm.representatives || []).map((rep, idx) => (
                                             <div key={idx} className="bg-muted/30 border rounded-lg p-3 relative space-y-2.5">
@@ -435,7 +435,7 @@ export default function SupplierFormModal({
                                                 >
                                                     <Trash2 className="h-4 w-4" />
                                                 </button>
-                                                
+
                                                 <div className="grid grid-cols-2 gap-3">
                                                     <div className="space-y-1">
                                                         <label className="text-[9px] font-bold text-muted-foreground uppercase">First Name <span className="text-red-500">*</span></label>
@@ -526,7 +526,7 @@ export default function SupplierFormModal({
                                                 </div>
                                             </div>
                                         ))}
-                                        
+
                                         {(supplierForm.representatives || []).length === 0 && (
                                             <div className="text-center py-4 border border-dashed rounded-lg bg-muted/10">
                                                 <span className="text-xs text-muted-foreground italic">No representatives added yet.</span>
@@ -541,7 +541,7 @@ export default function SupplierFormModal({
                                         type="text"
                                         placeholder="e.g. 0917-123-4567"
                                         value={supplierForm.phone_number}
-                                        onChange={e => setSupplierForm({...supplierForm, phone_number: e.target.value})}
+                                        onChange={e => setSupplierForm({ ...supplierForm, phone_number: e.target.value })}
                                         className="w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary font-medium"
                                     />
                                 </div>
@@ -552,7 +552,7 @@ export default function SupplierFormModal({
                                         type="email"
                                         placeholder="e.g. caezar@nabati.com"
                                         value={supplierForm.email_address}
-                                        onChange={e => setSupplierForm({...supplierForm, email_address: e.target.value})}
+                                        onChange={e => setSupplierForm({ ...supplierForm, email_address: e.target.value })}
                                         className="w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary font-medium"
                                     />
                                 </div>
@@ -564,7 +564,7 @@ export default function SupplierFormModal({
                                         required
                                         placeholder="e.g. San Nicolas, City of Tarlac"
                                         value={supplierForm.address}
-                                        onChange={e => setSupplierForm({...supplierForm, address: e.target.value})}
+                                        onChange={e => setSupplierForm({ ...supplierForm, address: e.target.value })}
                                         className="w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary font-medium"
                                     />
                                 </div>
@@ -650,7 +650,7 @@ export default function SupplierFormModal({
                                                     type="text"
                                                     placeholder="e.g. California"
                                                     value={supplierForm.state_province}
-                                                    onChange={e => setSupplierForm({...supplierForm, state_province: e.target.value})}
+                                                    onChange={e => setSupplierForm({ ...supplierForm, state_province: e.target.value })}
                                                     className="w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary font-medium"
                                                 />
                                             </div>
@@ -661,7 +661,7 @@ export default function SupplierFormModal({
                                                     type="text"
                                                     placeholder="e.g. Los Angeles"
                                                     value={supplierForm.city}
-                                                    onChange={e => setSupplierForm({...supplierForm, city: e.target.value})}
+                                                    onChange={e => setSupplierForm({ ...supplierForm, city: e.target.value })}
                                                     className="w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary font-medium"
                                                 />
                                             </div>
@@ -686,11 +686,10 @@ export default function SupplierFormModal({
                                                         default_currency: "PHP",
                                                         currency: "PHP"
                                                     }))}
-                                                    className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold border transition-all flex items-center justify-center gap-1 cursor-pointer ${
-                                                        Number(supplierForm.is_foreign) === 0
+                                                    className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold border transition-all flex items-center justify-center gap-1 cursor-pointer ${Number(supplierForm.is_foreign) === 0
                                                             ? "bg-emerald-500/15 text-emerald-700 border-emerald-500/40 shadow-sm"
                                                             : "bg-background text-muted-foreground border-input hover:text-foreground"
-                                                    }`}
+                                                        }`}
                                                 >
                                                     <Building2 className="h-3 w-3" /> Local (PHP)
                                                 </button>
@@ -703,11 +702,10 @@ export default function SupplierFormModal({
                                                         default_currency: preferredForeignCurrency?.currency_code.toUpperCase() || "",
                                                         currency: preferredForeignCurrency?.currency_code.toUpperCase() || ""
                                                     }))}
-                                                    className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold border transition-all flex items-center justify-center gap-1 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 ${
-                                                        Number(supplierForm.is_foreign) === 1
+                                                    className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold border transition-all flex items-center justify-center gap-1 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 ${Number(supplierForm.is_foreign) === 1
                                                             ? "bg-amber-500/15 text-amber-700 border-amber-500/40 shadow-sm"
                                                             : "bg-background text-muted-foreground border-input hover:text-foreground"
-                                                    }`}
+                                                        }`}
                                                 >
                                                     <Globe className="h-3 w-3" /> {foreignLabelCode ? `Foreign Import (${foreignLabelCode})` : "Foreign Import (Unavailable)"}
                                                 </button>
@@ -760,7 +758,7 @@ export default function SupplierFormModal({
                                     <select
                                         required
                                         value={supplierForm.payment_terms}
-                                        onChange={e => setSupplierForm({...supplierForm, payment_terms: e.target.value})}
+                                        onChange={e => setSupplierForm({ ...supplierForm, payment_terms: e.target.value })}
                                         className="w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary text-foreground font-semibold font-medium"
                                     >
                                         <option value="">-- Select Payment Terms --</option>
@@ -777,7 +775,7 @@ export default function SupplierFormModal({
                                     <select
                                         required
                                         value={supplierForm.delivery_terms}
-                                        onChange={e => setSupplierForm({...supplierForm, delivery_terms: e.target.value})}
+                                        onChange={e => setSupplierForm({ ...supplierForm, delivery_terms: e.target.value })}
                                         className="w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary text-foreground font-semibold font-medium"
                                     >
                                         <option value="">-- Select Delivery Terms --</option>
@@ -792,7 +790,7 @@ export default function SupplierFormModal({
                                     <textarea
                                         placeholder="e.g. Any standard notes or terms of contracts..."
                                         value={supplierForm.notes_or_comments}
-                                        onChange={e => setSupplierForm({...supplierForm, notes_or_comments: e.target.value})}
+                                        onChange={e => setSupplierForm({ ...supplierForm, notes_or_comments: e.target.value })}
                                         className="w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary font-medium min-h-[60px]"
                                     />
                                 </div>
@@ -802,14 +800,14 @@ export default function SupplierFormModal({
                                         <input
                                             type="checkbox"
                                             checked={supplierForm.nonBuy === true || supplierForm.nonBuy === 1}
-                                            onChange={e => setSupplierForm({...supplierForm, nonBuy: e.target.checked})}
+                                            onChange={e => setSupplierForm({ ...supplierForm, nonBuy: e.target.checked })}
                                             className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
                                         />
                                         <span className="text-xs font-bold text-foreground">Mark as Non-Buy Supplier</span>
                                     </label>
                                     <p className="text-[10px] text-muted-foreground leading-relaxed pl-6">
-                                        <strong>Legend:</strong> If this is ticked, the supplier is marked as <em>Non-Buy</em>. 
-                                        This means you cannot create or process purchase orders for them. They are retained 
+                                        <strong>Legend:</strong> If this is ticked, the supplier is marked as <em>Non-Buy</em>.
+                                        This means you cannot create or process purchase orders for them. They are retained
                                         in the system purely for reference, historical data, or non-procurement purposes.
                                     </p>
                                 </div>

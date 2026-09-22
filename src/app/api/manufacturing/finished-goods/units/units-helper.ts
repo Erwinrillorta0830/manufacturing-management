@@ -1,5 +1,5 @@
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
-import { DirectusUnit } from "@/modules/manufacturing-management/finished-goods/types";
+import { DirectusUnit } from "@/modules/manufacturing-management/finished-goods-master/types";
 import { getDensityRequirement } from "@/modules/manufacturing-management/procurement/raw-materials/density-policy";
 
 export async function fetchAllUnits(): Promise<DirectusUnit[]> {

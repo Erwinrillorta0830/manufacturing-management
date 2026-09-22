@@ -1,6 +1,6 @@
 import { ImagePlus, Loader2, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { getProductImageUrl, uploadProductImage } from "../../../finished-goods/services/product-image";
+import { getProductImageUrl, uploadProductImage } from "../../../finished-goods-master/services/product-image";
 
 /* The file preview is served by the app API with a query-string file id. */
 /* eslint-disable @next/next/no-img-element */

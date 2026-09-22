@@ -1,7 +1,7 @@
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { getBOMDetailsForVersion } from "../versions-helper";
 import { syncRoutesAndBOM, syncVersionOverheadItems } from "../../bom-details/bom-details-helper";
-import { materialTypeFromProduct, isMaterialTypeCompatible, type MaterialType } from "@/modules/manufacturing-management/finished-goods/material-types";
+import { materialTypeFromProduct, isMaterialTypeCompatible, type MaterialType } from "@/modules/manufacturing-management/finished-goods-master/material-types";
 
 /**
  * ============================================================================
@@ -285,7 +285,7 @@ export async function getActiveDraftsForProduct(
                             status: "Cancelled",
                             cancellation_reason: "Superseded by newer draft revision"
                         })
-                    }).catch(() => {});
+                    }).catch(() => { });
                 }
             }
         }
@@ -1155,7 +1155,7 @@ export async function saveDraftDetails(
                 updated_by: userId || null,
                 updated_at: nowIso
             })
-        }).catch(() => {});
+        }).catch(() => { });
     }
 
     const updatedDraft = await getDraftById(draftId, { includeDeleted: false });
@@ -1366,7 +1366,7 @@ export async function applyApprovedDraft(
                         updated_by: userId || null,
                         updated_at: now
                     })
-                }).catch(() => {});
+                }).catch(() => { });
             }
         }
 
@@ -1480,7 +1480,7 @@ export async function applyApprovedDraft(
             await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version/${newVersionId}`, {
                 method: "DELETE",
                 headers
-            }).catch(() => {});
+            }).catch(() => { });
             throw syncErr;
         }
 

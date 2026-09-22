@@ -9,7 +9,7 @@ import {
 import { IncomingShipment, PurchaseOrderPaymentMode, RawMaterial } from "../../types";
 import { RawProductSelector } from "./RawProductSelector";
 import { formatMoney } from "./ShipmentBadges";
-import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods/components/CreatableSelect";
+import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods-master/components/CreatableSelect";
 import { normalizeProductRelationId } from "../../product-relation";
 import { PURCHASE_ORDER_DELIVERY_TERMS } from "../../../purchase-order/commercial-terms";
 import { calculatePercentageDiscount } from "../../discount-calculation";
@@ -372,7 +372,7 @@ export function ShipmentFormModal({
                                         readOnly={canonicalDrafting}
                                         placeholder={canonicalDrafting ? "Assigned on submit" : "e.g. BL-2026-004"}
                                         value={canonicalDrafting ? (editingShipmentId ? activeShipment?.purchase_order_no || "" : "") : shipmentForm.reference_number}
-                                        onChange={e => setShipmentForm({...shipmentForm, reference_number: e.target.value})}
+                                        onChange={e => setShipmentForm({ ...shipmentForm, reference_number: e.target.value })}
                                         className={`w-full rounded-lg border px-2.5 py-1.5 text-xs font-medium outline-none focus:ring-1 focus:ring-primary ${canonicalDrafting ? "bg-muted text-muted-foreground" : "bg-background"}`}
                                     />
                                 </div>
@@ -385,7 +385,7 @@ export function ShipmentFormModal({
                                             maxLength={255}
                                             placeholder="Quote/Logistics Ref"
                                             value={shipmentForm.reference_number}
-                                            onChange={e => setShipmentForm({...shipmentForm, reference_number: e.target.value})}
+                                            onChange={e => setShipmentForm({ ...shipmentForm, reference_number: e.target.value })}
                                             className="w-full rounded-lg border bg-background px-2.5 py-1.5 text-xs font-medium outline-none focus:ring-1 focus:ring-primary"
                                         />
                                     </div>
@@ -439,8 +439,8 @@ export function ShipmentFormModal({
                                         )}
                                         {isFinanceManager && !canonicalDrafting && (
                                             <label className="flex items-center gap-1 text-[9px] text-primary cursor-pointer select-none">
-                                                <input 
-                                                    type="checkbox" 
+                                                <input
+                                                    type="checkbox"
                                                     checked={isOverridden}
                                                     onChange={e => setIsOverridden(e.target.checked)}
                                                     className="rounded border"
@@ -455,14 +455,13 @@ export function ShipmentFormModal({
                                         readOnly={canonicalDrafting ? shipmentForm.currency_code === "PHP" || shipmentForm.currency_code === "USD" || Boolean(editingShipmentId) : !isOverridden || !isFinanceManager}
                                         aria-readonly={canonicalDrafting && shipmentForm.currency_code === "USD" ? true : undefined}
                                         value={String(shipmentForm.exchange_rate)}
-                                        onChange={e => setShipmentForm({...shipmentForm, exchange_rate: e.target.value})}
-                                        className={`w-full rounded-lg border px-2.5 py-1.5 text-xs font-mono font-bold ${
-                                            (canonicalDrafting
+                                        onChange={e => setShipmentForm({ ...shipmentForm, exchange_rate: e.target.value })}
+                                        className={`w-full rounded-lg border px-2.5 py-1.5 text-xs font-mono font-bold ${(canonicalDrafting
                                                 ? shipmentForm.currency_code === "PHP" || shipmentForm.currency_code === "USD" || Boolean(editingShipmentId)
                                                 : !isOverridden || !isFinanceManager)
                                                 ? "bg-muted text-muted-foreground cursor-not-allowed"
                                                 : "bg-background text-foreground"
-                                        }`}
+                                            }`}
                                     />
                                     {canonicalDrafting && shipmentForm.currency_code === "USD" && fxRateStatus === "error" && (
                                         <p className="text-[10px] font-medium text-destructive" role="alert">{fxRateError}</p>
@@ -473,7 +472,7 @@ export function ShipmentFormModal({
                                     <label className="text-[10px] font-bold text-muted-foreground uppercase">Branch *</label>
                                     <select
                                         value={shipmentForm.branch_id ? String(shipmentForm.branch_id) : ""}
-                                        onChange={e => setShipmentForm({...shipmentForm, branch_id: e.target.value ? parseInt(e.target.value) : null})}
+                                        onChange={e => setShipmentForm({ ...shipmentForm, branch_id: e.target.value ? parseInt(e.target.value) : null })}
                                         className="w-full rounded-lg border bg-background px-2.5 py-1.5 text-xs font-semibold h-8"
                                     >
                                         <option value="" disabled hidden>Select Branch...</option>
@@ -496,7 +495,7 @@ export function ShipmentFormModal({
                                     <label className="text-[10px] font-bold text-muted-foreground uppercase">Payment Arrangement *</label>
                                     <select
                                         value={shipmentForm.payment_type !== null ? String(shipmentForm.payment_type) : ""}
-                                        onChange={e => setShipmentForm({...shipmentForm, payment_type: e.target.value ? parseInt(e.target.value) : null})}
+                                        onChange={e => setShipmentForm({ ...shipmentForm, payment_type: e.target.value ? parseInt(e.target.value) : null })}
                                         className="w-full rounded-lg border bg-background px-2.5 py-1.5 text-xs font-semibold h-8"
                                     >
                                         <option value="" disabled hidden>Select Arrangement...</option>
@@ -576,7 +575,7 @@ export function ShipmentFormModal({
                                             type="date"
                                             required
                                             value={shipmentForm.date_received || ""}
-                                            onChange={e => setShipmentForm({...shipmentForm, date_received: e.target.value})}
+                                            onChange={e => setShipmentForm({ ...shipmentForm, date_received: e.target.value })}
                                             className="w-full rounded-lg border bg-background px-2.5 py-1.5 text-xs font-medium h-8"
                                         />
                                     </div>
@@ -687,17 +686,16 @@ export function ShipmentFormModal({
                                                 const subtotal = DecimalValue.from(grossForeign)
                                                     .subtract(discount)
                                                     .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
-                                                 const materialType = line.material_type || "";
-                                                 const isRowEditing = canonicalDrafting || activeRowEdit?.index === idx;
-                                                 const hasActiveRowEdit = !canonicalDrafting && activeRowEdit !== null;
-                                                 const isFocusedRowEdit = !canonicalDrafting && activeRowEdit?.index === idx;
+                                                const materialType = line.material_type || "";
+                                                const isRowEditing = canonicalDrafting || activeRowEdit?.index === idx;
+                                                const hasActiveRowEdit = !canonicalDrafting && activeRowEdit !== null;
+                                                const isFocusedRowEdit = !canonicalDrafting && activeRowEdit?.index === idx;
 
                                                 return (
                                                     <tr
-                                                        key={idx} 
-                                                        className={`grid grid-cols-2 overflow-hidden rounded-xl border border-border/60 bg-card transition-colors group hover:bg-muted/30 xl:table-row xl:rounded-none xl:border-0 xl:bg-transparent ${
-                                                            hasSubmitted && lineErrors.length > 0 ? "bg-red-500/5" : ""
-                                                        } ${isFocusedRowEdit ? "bg-primary/5" : ""}`}
+                                                        key={idx}
+                                                        className={`grid grid-cols-2 overflow-hidden rounded-xl border border-border/60 bg-card transition-colors group hover:bg-muted/30 xl:table-row xl:rounded-none xl:border-0 xl:bg-transparent ${hasSubmitted && lineErrors.length > 0 ? "bg-red-500/5" : ""
+                                                            } ${isFocusedRowEdit ? "bg-primary/5" : ""}`}
                                                     >
                                                         {/* Row Index */}
                                                         <td className="col-span-2 flex min-w-0 items-center justify-between overflow-hidden border-b bg-muted/20 p-2 text-left font-mono text-[10px] font-bold text-muted-foreground xl:table-cell xl:border-b-0 xl:border-r xl:text-center">
@@ -774,7 +772,7 @@ export function ShipmentFormModal({
                                                                 onSelect={(selected) => {
                                                                     const isDuplicate = linesForm.some((l, i) => i !== idx && String(l.product_id) === String(selected.product_id));
                                                                     if (isDuplicate) return;
-                                                                    
+
                                                                     const finalSelected: ManifestLineFormItem = {
                                                                         ...selected,
                                                                         quantity_ordered: line.quantity_ordered,
@@ -891,7 +889,7 @@ export function ShipmentFormModal({
                                                         {/* Qty Ordered */}
                                                         <td className="col-span-1 min-w-0 overflow-hidden border-r p-1.5 align-middle xl:table-cell">
                                                             <ResponsiveCellLabel>Qty <span className="text-red-500">*</span></ResponsiveCellLabel>
-                                                                                                                               <input
+                                                            <input
                                                                 id={`qty-input-${idx}`}
                                                                 type="number"
                                                                 required
@@ -949,12 +947,12 @@ export function ShipmentFormModal({
                                                                         handleLineFormChange(idx, "base_unit_cost_php", normalized);
                                                                     }
                                                                 }}
-                                                                                                                               className={`w-full min-w-0 overflow-hidden text-ellipsis whitespace-nowrap rounded-md border px-1.5 py-1 text-right text-[10px] font-mono font-bold outline-none focus:ring-1 focus:ring-primary ${canonicalDrafting && hasConfiguredPrice(priceControlCostsMap[Number(line.product_id)]) ? "bg-muted text-muted-foreground" : "bg-background"}`}
-                                                                                                                           />
-                                                                                                                            {hasSubmitted && lineErrors.filter(error => error.includes("Unit Price") || error.includes("Price Control")).map(error => (
-                                                                                                                                <p key={error} className="mt-1 text-left text-[9px] font-semibold leading-tight text-red-600">{error}</p>
-                                                                                                                            ))}
-                                                                                                                       </td>
+                                                                className={`w-full min-w-0 overflow-hidden text-ellipsis whitespace-nowrap rounded-md border px-1.5 py-1 text-right text-[10px] font-mono font-bold outline-none focus:ring-1 focus:ring-primary ${canonicalDrafting && hasConfiguredPrice(priceControlCostsMap[Number(line.product_id)]) ? "bg-muted text-muted-foreground" : "bg-background"}`}
+                                                            />
+                                                            {hasSubmitted && lineErrors.filter(error => error.includes("Unit Price") || error.includes("Price Control")).map(error => (
+                                                                <p key={error} className="mt-1 text-left text-[9px] font-semibold leading-tight text-red-600">{error}</p>
+                                                            ))}
+                                                        </td>
 
                                                         {/* Calculated Gross */}
                                                         <td className="col-span-1 min-w-0 overflow-hidden border-r bg-muted/10 p-1.5 text-right font-mono font-extrabold text-foreground align-middle xl:table-cell">
@@ -993,19 +991,19 @@ export function ShipmentFormModal({
                                                                     className="w-full min-w-0 rounded-md border bg-background px-1.5 py-1 text-[10px] font-medium outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
                                                                 >
                                                                     <option value="">No Discount (0%)</option>
-                                                                     {discountTypes?.map(dt => {
-                                                                         const discountName = dt.discount_type.trim();
-                                                                         const optionLabel = discountName.includes("%")
-                                                                             ? discountName
-                                                                             : `${discountName} (${Number(dt.total_percent).toString()}%)`;
-                                                                         return (
-                                                                             <option key={dt.id} value={String(dt.id)}>
-                                                                                 {optionLabel}
-                                                                             </option>
-                                                                         );
-                                                                     })}
-                                                                 </select>
-                                                             </div>
+                                                                    {discountTypes?.map(dt => {
+                                                                        const discountName = dt.discount_type.trim();
+                                                                        const optionLabel = discountName.includes("%")
+                                                                            ? discountName
+                                                                            : `${discountName} (${Number(dt.total_percent).toString()}%)`;
+                                                                        return (
+                                                                            <option key={dt.id} value={String(dt.id)}>
+                                                                                {optionLabel}
+                                                                            </option>
+                                                                        );
+                                                                    })}
+                                                                </select>
+                                                            </div>
                                                         </td>
 
                                                         {/* Discount Value */}
@@ -1018,7 +1016,7 @@ export function ShipmentFormModal({
                                                                 {formatMoney(discount, currencyCode)}
                                                             </output>
                                                             {!isHistoricalFixedDiscount && (
-                                                                    <p className="mt-1 break-words text-right text-[9px] text-muted-foreground">
+                                                                <p className="mt-1 break-words text-right text-[9px] text-muted-foreground">
                                                                     {Number(line.discount_percent || 0).toFixed(2)}% of gross
                                                                 </p>
                                                             )}
@@ -1057,64 +1055,64 @@ export function ShipmentFormModal({
 
                                                         {!canonicalDrafting && (
                                                             <>
-                                                        {/* Actions */}
-                                                        <td className="col-span-2 min-w-0 p-1.5 text-center align-middle xl:table-cell">
-                                                            <ResponsiveCellLabel>Actions</ResponsiveCellLabel>
-                                                            <div className="flex min-w-0 flex-wrap items-center justify-center gap-1">
-                                                                {isRowEditing ? (
-                                                                    <>
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={() => handleSaveRow(idx)}
-                                                                            aria-label="Save Row"
-                                                                            title="Save Row"
-                                                                            className="inline-flex items-center gap-1 rounded-lg bg-primary px-2 py-1 text-[10px] font-bold text-primary-foreground transition-colors hover:bg-primary/90"
-                                                                        >
-                                                                            <Check className="h-3 w-3" /> Save Row
-                                                                        </button>
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={() => handleCancelRowEdit(idx)}
-                                                                            aria-label="Cancel Row"
-                                                                            title="Cancel Row"
-                                                                            className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-bold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                                                                        >
-                                                                            <X className="h-3 w-3" /> Cancel Row
-                                                                        </button>
-                                                                    </>
-                                                                ) : (
-                                                                    <>
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={() => handleStartRowEdit(idx)}
-                                                                            disabled={hasActiveRowEdit}
-                                                                            aria-label="Edit Row"
-                                                                            title="Edit Row"
-                                                                            className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-bold text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
-                                                                        >
-                                                                            <Pencil className="h-3 w-3" /> Edit Row
-                                                                        </button>
-                                                                        {linesForm.length > 1 && (
-                                                                            <button
-                                                                                type="button"
-                                                                                onClick={() => handleRemoveLineForm(idx)}
-                                                                                disabled={hasActiveRowEdit}
-                                                                                aria-label="Delete Row"
-                                                                                title="Delete Row"
-                                                                                className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-bold text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-50"
-                                                                            >
-                                                                                <Trash2 className="h-3 w-3" /> Delete Row
-                                                                            </button>
+                                                                {/* Actions */}
+                                                                <td className="col-span-2 min-w-0 p-1.5 text-center align-middle xl:table-cell">
+                                                                    <ResponsiveCellLabel>Actions</ResponsiveCellLabel>
+                                                                    <div className="flex min-w-0 flex-wrap items-center justify-center gap-1">
+                                                                        {isRowEditing ? (
+                                                                            <>
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => handleSaveRow(idx)}
+                                                                                    aria-label="Save Row"
+                                                                                    title="Save Row"
+                                                                                    className="inline-flex items-center gap-1 rounded-lg bg-primary px-2 py-1 text-[10px] font-bold text-primary-foreground transition-colors hover:bg-primary/90"
+                                                                                >
+                                                                                    <Check className="h-3 w-3" /> Save Row
+                                                                                </button>
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => handleCancelRowEdit(idx)}
+                                                                                    aria-label="Cancel Row"
+                                                                                    title="Cancel Row"
+                                                                                    className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-bold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                                                                                >
+                                                                                    <X className="h-3 w-3" /> Cancel Row
+                                                                                </button>
+                                                                            </>
+                                                                        ) : (
+                                                                            <>
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => handleStartRowEdit(idx)}
+                                                                                    disabled={hasActiveRowEdit}
+                                                                                    aria-label="Edit Row"
+                                                                                    title="Edit Row"
+                                                                                    className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-bold text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                                >
+                                                                                    <Pencil className="h-3 w-3" /> Edit Row
+                                                                                </button>
+                                                                                {linesForm.length > 1 && (
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        onClick={() => handleRemoveLineForm(idx)}
+                                                                                        disabled={hasActiveRowEdit}
+                                                                                        aria-label="Delete Row"
+                                                                                        title="Delete Row"
+                                                                                        className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-bold text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                                    >
+                                                                                        <Trash2 className="h-3 w-3" /> Delete Row
+                                                                                    </button>
+                                                                                )}
+                                                                            </>
                                                                         )}
-                                                                    </>
-                                                                )}
-                                                            </div>
-                                                            {isRowEditing && rowEditError && (
-                                                                <p role="alert" className="mt-1 text-left text-[9px] font-semibold leading-tight text-red-600">
-                                                                    {rowEditError}
-                                                                </p>
-                                                            )}
-                                                        </td>
+                                                                    </div>
+                                                                    {isRowEditing && rowEditError && (
+                                                                        <p role="alert" className="mt-1 text-left text-[9px] font-semibold leading-tight text-red-600">
+                                                                            {rowEditError}
+                                                                        </p>
+                                                                    )}
+                                                                </td>
                                                             </>
                                                         )}
                                                     </tr>
@@ -1221,10 +1219,10 @@ export function ShipmentFormModal({
                             <button
                                 id="register-shipment-btn"
                                 type="submit"
-                    disabled={loading || listLoading || (canonicalDrafting && (
-                        (priceControlStatus !== "ready" && priceControlStatus !== "warning")
-                        || (!editingShipmentId && shipmentForm.currency_code === "USD" && fxRateStatus !== "ready")
-                    ))}
+                                disabled={loading || listLoading || (canonicalDrafting && (
+                                    (priceControlStatus !== "ready" && priceControlStatus !== "warning")
+                                    || (!editingShipmentId && shipmentForm.currency_code === "USD" && fxRateStatus !== "ready")
+                                ))}
                                 className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-2 text-xs font-bold text-primary-foreground hover:bg-primary/95 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 {loading ? (

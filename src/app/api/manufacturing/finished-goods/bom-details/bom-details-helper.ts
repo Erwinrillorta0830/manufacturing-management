@@ -6,7 +6,7 @@ import {
     isMaterialTypeCompatible,
     materialTypeFromProduct,
     MaterialType
-} from "@/modules/manufacturing-management/finished-goods/material-types";
+} from "@/modules/manufacturing-management/finished-goods-master/material-types";
 
 export { getBOMDetailsForVersion };
 
@@ -98,83 +98,83 @@ export async function validateRoutesAndBOM(routes: any[]): Promise<void> {
     }
 
     const bomRows = routes.flatMap((route: any, routeIndex: number) =>
-            (route.bom_items || route.ingredients || []).map((item: any, rowIndex: number) => ({
-                item,
-                routeId: Number(route.route_id || route.id || 0),
-                routeIndex,
-                rowNumber: rowIndex + 1
-            }))
-        );
+        (route.bom_items || route.ingredients || []).map((item: any, rowIndex: number) => ({
+            item,
+            routeId: Number(route.route_id || route.id || 0),
+            routeIndex,
+            rowNumber: rowIndex + 1
+        }))
+    );
     const productIds = [...new Set(
-            bomRows
-                .map(({ item }) => Number(item.product_id || item.productId || 0))
-                .filter(productId => Number.isFinite(productId) && productId > 0)
-        )];
+        bomRows
+            .map(({ item }) => Number(item.product_id || item.productId || 0))
+            .filter(productId => Number.isFinite(productId) && productId > 0)
+    )];
 
     const missingSelection = bomRows.find(({ item }) =>
-            !isMaterialType(item.material_type) ||
-            !Number.isFinite(Number(item.product_id || item.productId)) ||
-            Number(item.product_id || item.productId) <= 0
-        );
+        !isMaterialType(item.material_type) ||
+        !Number.isFinite(Number(item.product_id || item.productId)) ||
+        Number(item.product_id || item.productId) <= 0
+    );
     if (missingSelection) {
-            const materialTypeSelected = isMaterialType(missingSelection.item.material_type);
-            throw new BOMValidationError(
-                `Route ${missingSelection.routeId || missingSelection.routeIndex + 1}, BOM row ${missingSelection.rowNumber}: ${materialTypeSelected ? "select a material" : "select a Material Type"} before saving.`,
-                {
-                    routeId: missingSelection.routeId || missingSelection.routeIndex + 1,
-                    rowNumber: missingSelection.rowNumber,
-                    field: materialTypeSelected ? "product_id" : "material_type"
-                }
-            );
+        const materialTypeSelected = isMaterialType(missingSelection.item.material_type);
+        throw new BOMValidationError(
+            `Route ${missingSelection.routeId || missingSelection.routeIndex + 1}, BOM row ${missingSelection.rowNumber}: ${materialTypeSelected ? "select a material" : "select a Material Type"} before saving.`,
+            {
+                routeId: missingSelection.routeId || missingSelection.routeIndex + 1,
+                rowNumber: missingSelection.rowNumber,
+                field: materialTypeSelected ? "product_id" : "material_type"
+            }
+        );
     }
 
     if (productIds.length > 0) {
-            const productFilter = encodeURIComponent(JSON.stringify({ product_id: { _in: productIds } }));
-            const [productsRes, versionsRes] = await Promise.all([
-                fetch(`${DIRECTUS_URL}/items/products?filter=${productFilter}&fields=product_id,product_type&limit=-1`, { headers, cache: "no-store" }),
-                fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?filter=${productFilter}&fields=product_id&limit=-1`, { headers, cache: "no-store" })
-            ]);
+        const productFilter = encodeURIComponent(JSON.stringify({ product_id: { _in: productIds } }));
+        const [productsRes, versionsRes] = await Promise.all([
+            fetch(`${DIRECTUS_URL}/items/products?filter=${productFilter}&fields=product_id,product_type&limit=-1`, { headers, cache: "no-store" }),
+            fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?filter=${productFilter}&fields=product_id&limit=-1`, { headers, cache: "no-store" })
+        ]);
         if (!productsRes.ok || !versionsRes.ok) {
-                throw new BOMValidationError("Unable to validate BOM material classifications.", { field: "product_id" });
+            throw new BOMValidationError("Unable to validate BOM material classifications.", { field: "product_id" });
         }
 
         const productData = (await productsRes.json()).data || [];
         const versionData = (await versionsRes.json()).data || [];
         const productMap = new Map<number, { product_type?: number | null }>(
-                productData.map((product: { product_id?: number; product_type?: number | null }) => [
-                    Number(product.product_id),
-                    product
-                ])
-            );
+            productData.map((product: { product_id?: number; product_type?: number | null }) => [
+                Number(product.product_id),
+                product
+            ])
+        );
         const versionedProductIds = new Set<number>(
-                versionData
-                    .map((version: { product_id?: number }) => Number(version.product_id))
-                    .filter((productId: number) => Number.isFinite(productId) && productId > 0)
-            );
+            versionData
+                .map((version: { product_id?: number }) => Number(version.product_id))
+                .filter((productId: number) => Number.isFinite(productId) && productId > 0)
+        );
 
         const mismatchedRow = bomRows.find(({ item }) => {
-                const productId = Number(item.product_id || item.productId);
-                const product = productMap.get(productId);
-                const expectedType = product
-                    ? materialTypeFromProduct(product.product_type, versionedProductIds.has(productId))
-                    : null;
-                return !product || !expectedType || !isMaterialTypeCompatible(
-                    item.material_type as MaterialType,
-                    product.product_type,
-                    versionedProductIds.has(productId)
-                );
-            });
+            const productId = Number(item.product_id || item.productId);
+            const product = productMap.get(productId);
+            const expectedType = product
+                ? materialTypeFromProduct(product.product_type, versionedProductIds.has(productId))
+                : null;
+            return !product || !expectedType || !isMaterialTypeCompatible(
+                item.material_type as MaterialType,
+                product.product_type,
+                versionedProductIds.has(productId)
+            );
+        });
         if (mismatchedRow) {
-                const productId = Number(mismatchedRow.item.product_id || mismatchedRow.item.productId);
-                throw new BOMValidationError(
-                    `Route ${mismatchedRow.routeId || mismatchedRow.routeIndex + 1}, BOM row ${mismatchedRow.rowNumber}: selected Material Type does not match the selected material.`,
-                    {
-                        routeId: mismatchedRow.routeId || mismatchedRow.routeIndex + 1,
-                        rowNumber: mismatchedRow.rowNumber,
-                        productId,
-                        field: "material_type"
-                    }
-                );
+            const productId = Number(mismatchedRow.item.product_id || mismatchedRow.item.productId);
+            throw new BOMValidationError(
+                `Route ${mismatchedRow.routeId || mismatchedRow.routeIndex + 1}, BOM row ${mismatchedRow.rowNumber}: selected Material Type does not match the selected material.`,
+                {
+                    routeId: mismatchedRow.routeId || mismatchedRow.routeIndex + 1,
+                    rowNumber: mismatchedRow.rowNumber,
+                    productId,
+                    field: "material_type"
+                }
+            );
         }
     }
 }
@@ -198,7 +198,7 @@ export async function syncVersionLaborPositions(
 
         const existingPositions: { id: number }[] = (resGet && resGet.ok) ? (await resGet.json()).data || [] : [];
         for (const pos of existingPositions) {
-            await fetch(`${DIRECTUS_URL}/items/${collectionName}/${pos.id}`, { method: "DELETE", headers }).catch(() => {});
+            await fetch(`${DIRECTUS_URL}/items/${collectionName}/${pos.id}`, { method: "DELETE", headers }).catch(() => { });
         }
 
         for (const pItem of laborPositions) {
@@ -289,7 +289,7 @@ export async function syncRoutesAndBOM(
             const defaultManpower = positions.length > 0
                 ? positions.reduce((sum: number, p: any) => sum + Math.max(1, Number(p.manpower_count || 1)), 0)
                 : Math.max(1, Number(step.default_manpower || 1));
-            
+
             const runHours = Number(step.run_time_hours || step.durationHours || 0);
             const expectedLaborCost = positions.length > 0
                 ? positions.reduce((sum: number, p: any) => sum + (Math.max(1, Number(p.manpower_count || 1)) * Number(p.hourly_rate || 0) * runHours), 0)
@@ -459,7 +459,7 @@ export async function syncVersionOverheadItems(versionId: number, overheadItems:
         const existingData = existingRes.ok ? (await existingRes.json()).data || [] : [];
 
         for (const item of existingData) {
-            await fetch(`${DIRECTUS_URL}/items/product_version_overheads/${item.id}`, { method: "DELETE", headers }).catch(() => {});
+            await fetch(`${DIRECTUS_URL}/items/product_version_overheads/${item.id}`, { method: "DELETE", headers }).catch(() => { });
         }
 
         // Fetch available overhead types to dynamically map overhead_type_id by name if missing
