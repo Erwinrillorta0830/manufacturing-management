@@ -166,7 +166,7 @@ export async function fetchMovements(filters: ProductTracingFiltersType): Promis
     }
 
     params.set("_t", String(Date.now()));
-
+    //src\app\api\manufacturing\invoicing-and-billing\invoicing\inventory-movements
     const requestUrl = `/api/manufacturing/inventory-movements?${params.toString()}`;
 
     const res = await fetch(requestUrl, {

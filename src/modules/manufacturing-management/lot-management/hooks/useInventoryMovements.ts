@@ -3,7 +3,6 @@ import { toast } from "sonner";
 import { InventoryMovement } from "../types";
 import { fetchInventoryMovements } from "../services/lot-management-api";
 import { resolveProductClassification } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
-import { movementMmLotId } from "../movement-reference";
 
 export function useInventoryMovements(
     selectedProductId: number | "ALL" = "ALL",
@@ -48,7 +47,7 @@ export function useInventoryMovements(
         setLoadingMovements(true);
         setMovementError(null);
         try {
-            const list = await fetchInventoryMovements({ includeLotTransfers: true });
+            const list = await fetchInventoryMovements();
             setMovements(list);
             setMovementError(null);
         } catch (e) {
@@ -66,7 +65,7 @@ export function useInventoryMovements(
         queueMicrotask(() => {
             if (isMounted) setMovementError(null);
         });
-        fetchInventoryMovements({ includeLotTransfers: true })
+        fetchInventoryMovements()
             .then((list) => {
                 if (isMounted) {
                     setMovements(list);
@@ -167,11 +166,14 @@ export function useInventoryMovements(
 
                 // Storage Lot filter
                 if (lotFilter !== "ALL") {
-                    const mLotId = movementMmLotId(m);
+                    const rawInvId = m.inventoryLotId ?? (m as { inventory_lot_id?: unknown }).inventory_lot_id;
+                    const hasInvId = rawInvId !== null && rawInvId !== undefined && Number(rawInvId) > 0;
+                    const rawLotId = m.mmLotId ?? m.lotId;
+                    const mLotId = (hasInvId && rawLotId) ? Number(rawLotId) : 0;
 
                     if (Array.isArray(lotFilter)) {
-                        if (lotFilter.length > 0 && (mLotId === null || !lotFilter.includes(mLotId))) return false;
-                    } else if (mLotId === null || mLotId !== Number(lotFilter)) return false;
+                        if (lotFilter.length > 0 && !lotFilter.includes(mLotId)) return false;
+                    } else if (mLotId !== Number(lotFilter)) return false;
                 }
 
                 // Product filter

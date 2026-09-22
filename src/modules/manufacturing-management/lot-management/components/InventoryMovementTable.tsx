@@ -13,7 +13,6 @@ import {
     RefreshCw
 } from "lucide-react";
 import { InventoryMovement, Lot, ProductItem } from "../types";
-import { movementMmLotId } from "../movement-reference";
 import { SearchableLotSelect } from "./SearchableLotSelect";
 import {
     Table,
@@ -277,20 +276,18 @@ export default function InventoryMovementTable({
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {paginatedMovements.map((m, idx) => {
+                            {paginatedMovements.map((m) => {
                                 const isDirectionIn = (m.movementDirection || "").toUpperCase() === "IN";
-                                const effectiveLotId = movementMmLotId(m) ?? 0;
+                                const rawInvId = m.inventoryLotId ?? m.inventory_lot_id;
+                                const hasInvId = rawInvId !== null && rawInvId !== undefined && Number(rawInvId) > 0;
+                                const rawLotId = m.mmLotId ?? m.lotId;
+                                const effectiveLotId = (hasInvId && rawLotId) ? Number(rawLotId) : 0;
                                 const matchedLot = lots.find((l) => Number(l.lotId) === Number(effectiveLotId));
                                 const resolvedLotName = matchedLot?.lotName || (Number(effectiveLotId) === 0 ? "Unassigned / Pending Storage Rack (Ghost Rack)" : (m.lotName || `Lot #${effectiveLotId}`));
                                 const qty = isDirectionIn ? Number(m.quantityIn || 0) : Number(m.quantityOut || 0);
-                                const movementId = m.movementId ?? m.movement_id;
-                                const movementKey = m.movementKey ?? m.movement_key;
-                                const rowKey = movementId !== null && movementId !== undefined && movementId > 0
-                                    ? `movement-${movementId}`
-                                    : `${movementKey || "movement"}-${m.displayNumber ?? idx}`;
 
                                 return (
-                                    <TableRow key={rowKey}>
+                                    <TableRow key={m.movementKey || m.displayNumber}>
                                         <TableCell className="text-xs text-muted-foreground font-medium">{m.displayNumber}</TableCell>
                                         <TableCell>
                                             <div className="flex flex-col min-w-[130px]">
