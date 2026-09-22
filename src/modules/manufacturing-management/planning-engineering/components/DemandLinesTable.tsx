@@ -136,14 +136,14 @@ export function DemandLinesTable({
                                                     aria-label={`Select detail #${line.detail_id} for ${line.order_no}`}
                                                 />
                                             </TableCell>
-                                            <TableCell className="py-3 text-xs min-w-[150px]">
+                                            <TableCell className="py-3 text-xs whitespace-normal">
                                                 <div className="font-bold text-foreground">{line.order_no}</div>
-                                                <div className="text-[10px] text-muted-foreground truncate max-w-[160px]">{line.customer_name}</div>
+                                                <div className="text-[10px] text-muted-foreground truncate max-w-[160px]" title={line.customer_name}>{line.customer_name}</div>
                                             </TableCell>
-                                            <TableCell className="py-3 text-xs min-w-[220px]">
+                                            <TableCell className="py-3 text-xs whitespace-normal">
                                                 <div>
                                                     <div className="font-semibold text-foreground flex items-center gap-1.5 flex-wrap">
-                                                        <span>{line.product_id?.product_name || "Unknown product"}</span>
+                                                        <span className="min-w-0 max-w-[220px] truncate" title={line.product_id?.product_name || "Unknown product"}>{line.product_id?.product_name || "Unknown product"}</span>
                                                         <span className="text-[10px] font-semibold text-primary bg-primary/10 border border-primary/20 px-1.5 py-0.5 rounded">
                                                             {line.product_id?.uom || "Pieces"}{line.product_id?.uom_count && line.product_id.uom_count > 1 ? ` (${line.product_id.uom_count} pcs)` : ""}
                                                         </span>
@@ -151,30 +151,30 @@ export function DemandLinesTable({
                                                     <div className="text-[10px] font-medium text-primary">Ver: {line.bom_version_name || "No Version"}</div>
                                                 </div>
                                             </TableCell>
-                                            <TableCell className="py-3 text-xs min-w-[130px]">
+                                            <TableCell className="py-3 text-xs whitespace-normal">
                                                 <span className={isSchedulable ? "font-semibold text-amber-700 dark:text-amber-400" : "font-semibold text-blue-700 dark:text-blue-400"}>
                                                     {line.is_partially_scheduled ? "Partially scheduled" : line.is_scheduled ? "Fully scheduled" : line.parent_order_status || "For Production"}
                                                 </span>
                                             </TableCell>
-                                            <TableCell className="py-3 text-xs min-w-[150px]">
+                                            <TableCell className="py-3 text-xs whitespace-normal">
                                                 {line.linkedJobOrders && line.linkedJobOrders.length > 0 ? (
                                                     <div className="space-y-1">
                                                         {line.linkedJobOrders.map((jobOrder) => (
                                                             <div key={jobOrder.jobOrderId}>
-                                                                <div className="font-mono font-semibold text-foreground">{jobOrder.jobOrderNo}</div>
+                                                                <div className="font-mono font-semibold text-foreground truncate max-w-[160px]" title={jobOrder.jobOrderNo}>{jobOrder.jobOrderNo}</div>
                                                                 <div className="text-[10px] text-muted-foreground">{displayJobOrderStatus(jobOrder.status)}</div>
                                                             </div>
                                                         ))}
                                                     </div>
                                                 ) : <span className="text-muted-foreground">—</span>}
                                             </TableCell>
-                                            <TableCell className="py-3 text-right font-bold text-xs min-w-[100px]">
+                                            <TableCell className="py-3 text-right font-bold text-xs">
                                                 <span>{Number(line.ordered_quantity || 0).toLocaleString()} <span className="text-[10px] text-muted-foreground font-normal lowercase">{line.product_id?.uom || "pcs"}</span></span>
                                             </TableCell>
-                                            <TableCell className="py-3 text-right font-semibold text-xs text-amber-700 min-w-[90px]">
+                                            <TableCell className="py-3 text-right font-semibold text-xs text-amber-700">
                                                 <span>{Number(line.planned_quantity || 0).toLocaleString()}</span>
                                             </TableCell>
-                                            <TableCell className="py-3 text-right font-bold text-xs text-emerald-700 min-w-[105px]">
+                                            <TableCell className="py-3 text-right font-bold text-xs text-emerald-700">
                                                 <span>{remainingQuantity(line).toLocaleString()} <span className="text-[10px] text-muted-foreground font-normal lowercase">{line.product_id?.uom || "pcs"}</span></span>
                                             </TableCell>
                                         </TableRow>

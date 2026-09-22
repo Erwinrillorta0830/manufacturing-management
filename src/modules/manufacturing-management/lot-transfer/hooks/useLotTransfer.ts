@@ -8,6 +8,7 @@ import {
     deleteLotTransfer,
     fetchBranches,
     fetchBatches,
+    fetchLotTransfer,
     fetchLotTransfers,
     fetchLotTransferMovementHistory,
     fetchLotTransferStatusHistory,
@@ -39,11 +40,12 @@ import type {
     LotTransferStatusHistory,
     UserOption
 } from "../types";
-import { DEFAULT_LOT_TRANSFER_REPORT_FILTERS, EMPTY_LOT_TRANSFER_FORM as emptyForm } from "../types";
+import { DEFAULT_LOT_TRANSFER_REPORT_FILTERS, EMPTY_LOT_TRANSFER_FORM as emptyForm, getProductTypeFilterKey } from "../types";
 
 interface UseLotTransferOptions {
     mode: LotTransferMode;
     userBranchId?: number | null;
+    transferId?: number | null;
 }
 
 const WORKFLOW_VISIBLE_STATUSES: LotTransferStatus[] = ["Draft", "Submitted", "Approved", "Posted", "Rejected", "Cancelled", "Reversed"];
@@ -69,6 +71,7 @@ function formFromRecord(record: LotTransfer, fallbackBranchId?: number | null): 
         details: details.map((detail) => ({
             detailId: detail.detailId || undefined,
             lineNo: detail.lineNo,
+            productTypeId: "",
             productId: String(detail.productId || ""),
             sourceInventoryLotId: String(detail.sourceInventoryLotId || ""),
             sourceBatchNo: detail.sourceBatchNo,
@@ -86,6 +89,7 @@ function initialForm(userBranchId?: number | null): LotTransferForm {
         branchId: userBranchId && userBranchId > 0 ? String(userBranchId) : "",
         details: [{
             lineNo: 1,
+            productTypeId: "",
             productId: "",
             sourceInventoryLotId: "",
             sourceBatchNo: "",
@@ -121,7 +125,7 @@ function isCompleteDraftForm(form: LotTransferForm): boolean {
 
 type DraftValidationStatus = "idle" | "stale" | "loading" | "valid" | "invalid" | "error";
 
-export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
+export function useLotTransfer({ mode, userBranchId, transferId }: UseLotTransferOptions) {
     const [records, setRecords] = useState<LotTransfer[]>([]);
     const [totalCount, setTotalCount] = useState(0);
     const [form, setForm] = useState<LotTransferForm>(() => initialForm(userBranchId));
@@ -140,6 +144,10 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     const [users, setUsers] = useState<UserOption[]>([]);
     const [batchesByLot, setBatchesByLot] = useState<Record<number, BatchOption[]>>({});
     const [batchesLoadingLotId, setBatchesLoadingLotId] = useState<number | null>(null);
+    const [batchesLoading, setBatchesLoading] = useState(false);
+    const [allBatchesLoaded, setAllBatchesLoaded] = useState(false);
+    const [allBatchesLoadAttempted, setAllBatchesLoadAttempted] = useState(false);
+    const [batchesLoadError, setBatchesLoadError] = useState<string | null>(null);
     const [reportFilters, setReportFilters] = useState<LotTransferReportFilters>(() => ({
         ...DEFAULT_LOT_TRANSFER_REPORT_FILTERS,
         statuses: [...DEFAULT_LOT_TRANSFER_REPORT_FILTERS.statuses]
@@ -175,6 +183,10 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     }, [markDraftValidationStale]);
 
     const refresh = useCallback(async () => {
+        if (mode === "create" || mode === "edit" || mode === "detail") {
+            setIsLoading(false);
+            return;
+        }
         setIsLoading(true);
         try {
             const workflowStatuses = mode === "summary"
@@ -215,7 +227,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     }, [refresh]);
 
     useEffect(() => {
-        if (mode !== "request" || !isCompleteDraftForm(form)) return;
+        if ((mode !== "request" && mode !== "create" && mode !== "edit") || !isCompleteDraftForm(form)) return;
         let cancelled = false;
         const currentKey = draftFormKey;
         const timer = window.setTimeout(async () => {
@@ -292,6 +304,71 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
             setBatchesLoadingLotId((current) => (current === lotId ? null : current));
         }
     }, [batchesByLot]);
+
+    const loadAllBatches = useCallback(async (opts?: { silent?: boolean }): Promise<BatchOption[] | null> => {
+        if (allBatchesLoaded) return Object.values(batchesByLot).flat();
+        if (batchesLoading) return null;
+        if (allBatchesLoadAttempted && batchesLoadError) return null;
+        setAllBatchesLoadAttempted(true);
+        setBatchesLoadError(null);
+        setBatchesLoading(true);
+        try {
+            const rows = await fetchBatches();
+            const grouped = rows.reduce<Record<number, BatchOption[]>>((result, row) => {
+                const lotId = Number(row.lotId) || 0;
+                if (lotId <= 0) return result;
+                (result[lotId] ||= []).push(row);
+                return result;
+            }, {});
+            setBatchesByLot((current) => ({ ...current, ...grouped }));
+            setAllBatchesLoaded(true);
+            setBatchesLoadError(null);
+            return rows;
+        } catch (loadError) {
+            const message = loadError instanceof Error ? loadError.message : "Unable to load lot occupancy.";
+            setBatchesLoadError(message);
+            if (!opts?.silent) setError(message);
+            return null;
+        } finally {
+            setBatchesLoading(false);
+        }
+    }, [allBatchesLoadAttempted, allBatchesLoaded, batchesByLot, batchesLoadError, batchesLoading]);
+
+    useEffect(() => {
+        const sourceLotId = Number(form.sourceLotId) || 0;
+        if (sourceLotId <= 0 || !Object.prototype.hasOwnProperty.call(batchesByLot, sourceLotId)) return;
+        const sourceLot = lots.find((lot) => Number(lot.lotId) === sourceLotId);
+        const sourceBatches = batchesByLot[sourceLotId] || [];
+        const compatibleProductIds = new Set(
+            sourceBatches
+                .filter((batch) => batch.quantity > 0 && batch.status.toUpperCase() === "ACTIVE")
+                .map((batch) => products.find((product) => Number(product.productId) === Number(batch.productId)))
+                .filter((product): product is ProductOption => Boolean(
+                    product
+                    && sourceLot
+                    && sourceLot.uomId !== null
+                    && product.uomId !== null
+                    && product.uomId === sourceLot.uomId
+                ))
+                .map((product) => Number(product.productId))
+        );
+        const hasIncompatibleSelection = form.details.some((detail) => {
+            const productId = Number(detail.productId) || 0;
+            return productId > 0 && !compatibleProductIds.has(productId);
+        });
+        if (!hasIncompatibleSelection) return;
+        markDraftValidationStale();
+        setForm((current) => ({
+            ...current,
+            details: current.details.map((detail) => {
+                const productId = Number(detail.productId) || 0;
+                return productId > 0 && !compatibleProductIds.has(productId)
+                    ? { ...detail, productId: "", sourceInventoryLotId: "", sourceBatchNo: "", targetInventoryLotId: "", targetBatchNo: "" }
+                    : detail;
+            })
+        }));
+        setError("One or more products were cleared because their UOM does not match the selected source lot.");
+    }, [batchesByLot, form.details, form.sourceLotId, lots, markDraftValidationStale, products]);
 
     const setField = useCallback(<K extends keyof LotTransferForm>(field: K, value: LotTransferForm[K]) => {
         updateForm((current) => ({ ...current, [field]: value }));
@@ -381,10 +458,31 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         }
     }, [loadBatchesForLot, loadStatusHistory, markDraftValidationStale, mode, userBranchId]);
 
+    useEffect(() => {
+        if ((mode !== "edit" && mode !== "detail") || transferId === null || transferId === undefined) return;
+        let active = true;
+        const loadTransferRecord = async () => {
+            setIsLoading(true);
+            try {
+                const record = await fetchLotTransfer(transferId);
+                if (!active) return;
+                await selectRecord(record);
+            } catch (loadError) {
+                if (!active) return;
+                setError(loadError instanceof Error ? loadError.message : "Unable to load the lot-transfer request.");
+            } finally {
+                if (active) setIsLoading(false);
+            }
+        };
+        void loadTransferRecord();
+        return () => { active = false; };
+    }, [mode, transferId, selectRecord]);
+
     const handleSourceLotChange = useCallback((lotId: string) => {
         updateForm((current) => ({
             ...current,
             sourceLotId: lotId,
+            targetLotId: current.sourceLotId === lotId ? current.targetLotId : "",
             details: current.details.map((detail) => ({
                 ...detail,
                 sourceInventoryLotId: "",
@@ -450,6 +548,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
             ...current,
             details: [...current.details, {
                 lineNo: current.details.length + 1,
+                productTypeId: "",
                 productId: "",
                 sourceInventoryLotId: "",
                 sourceBatchNo: "",
@@ -468,6 +567,30 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         }));
     }, [updateForm]);
 
+    const handleProductTypeChange = useCallback((productTypeId: string, index = 0) => {
+        const detail = form.details[index];
+        const selectedProduct = detail?.productId
+            ? products.find((product) => String(product.productId) === String(detail.productId))
+            : undefined;
+        const selectedProductMatchesType = !selectedProduct
+            || !productTypeId
+            || getProductTypeFilterKey(selectedProduct) === productTypeId;
+
+        updateDetail(index, {
+            productTypeId,
+            ...(selectedProduct && !selectedProductMatchesType
+                ? {
+                    productId: "",
+                    sourceInventoryLotId: "",
+                    sourceBatchNo: "",
+                    targetInventoryLotId: "",
+                    targetBatchNo: ""
+                }
+                : {})
+        });
+        setError(null);
+    }, [form.details, products, updateDetail]);
+
     const handleProductChange = useCallback((productId: string, index = 0) => {
         updateDetail(index, {
             productId,
@@ -476,6 +599,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
             targetInventoryLotId: "",
             targetBatchNo: ""
         });
+        setError(null);
     }, [updateDetail]);
 
     const handleBatchChange = useCallback((index: number, side: "source" | "target", inventoryLotId: string) => {
@@ -543,8 +667,8 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     }, [clearSelection, refresh, selectedId]);
 
     const submit = useCallback(async () => {
-        if (!selectedId) {
-            setError("Save the lot-transfer request as a Draft before submitting it for QA approval.");
+        if (selectedId && selectedRecord?.status !== "Draft") {
+            setError("Only Draft lot-transfer requests can be submitted for QA approval.");
             return null;
         }
         if (hasSameLotSelection(form)) {
@@ -557,7 +681,15 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         }
         setIsActionLoading(true);
         try {
-            const submitted = await submitLotTransfer(selectedId);
+            let transferId = selectedId;
+            if (!transferId) {
+                const created = await createLotTransfer(form);
+                transferId = created.id;
+                setSelectedId(created.id);
+                setSelectedRecord(created);
+                setForm(formFromRecord(created, userBranchId));
+            }
+            const submitted = await submitLotTransfer(transferId);
             await refresh();
             clearSelection();
             setError(null);
@@ -568,7 +700,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         } finally {
             setIsActionLoading(false);
         }
-    }, [clearSelection, draftValidationIsCurrent, draftValidationStatus, form, preview, refresh, selectedId]);
+    }, [clearSelection, draftValidationIsCurrent, draftValidationStatus, form, preview, refresh, selectedId, selectedRecord?.status, userBranchId]);
 
     const approve = useCallback(async () => {
         if (!selectedId) return null;
@@ -720,7 +852,11 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         users,
         batchesByLot,
         batchesLoadingLotId,
+        batchesLoading,
+        allBatchesLoaded,
+        batchesLoadError,
         loadBatchesForLot,
+        loadAllBatches,
         sourceBatches,
         targetBatches,
         draftValidationStatus,
@@ -741,6 +877,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         updateDetail,
         addDetail,
         removeDetail,
+        handleProductTypeChange,
         handleProductChange,
         handleSourceLotChange,
         handleTargetLotChange,

@@ -87,6 +87,7 @@ export function mapTransferRow(row: RecordValue): LotTransferRecord {
         requestedAt: nullableString(row.requested_at),
         transferDate: nullableString(row.transfer_date),
         submittedBy: relationId(row.submitted_by, ["user_id"]) || null,
+        submittedByName: relationName(row.submitted_by, ["name", "user_name", "user_fname", "email"]),
         submittedAt: nullableString(row.submitted_at),
         approvedBy: relationId(approvedByValue, ["user_id"]),
         approvedByName: relationName(approvedByValue, ["name", "user_name", "user_fname", "email"]),

@@ -132,6 +132,7 @@ export interface LotTransferRecord {
     requestedAt: string | null;
     transferDate: string | null;
     submittedBy: number | null;
+    submittedByName: string | null;
     submittedAt: string | null;
     approvedBy: number | null;
     approvedByName: string | null;

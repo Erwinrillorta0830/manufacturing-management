@@ -1,258 +1,215 @@
-export interface InvoicingCandidate {
-    order_id: number;
-    order_no: string;
-    po_no: string;
+export interface Salesman {
+    id: number;
+    salesman_code: string;
+    salesman_name: string;
+    price_type: string | null;
+    division_id: number | null;
+}
+
+export interface Branch {
+    id: number;
+    branch_name: string;
+}
+
+export interface Supplier {
+    id: number;
+    supplier_shortcut: string | null;
+    supplier_name: string | null;
+}
+
+export interface DiscountType {
+    id: number;
+    discount_type: string;
+    total_percent: number;
+}
+
+export interface Customer {
+    id: number;
     customer_code: string;
     customer_name: string;
-    customer_tin?: string;
-    customer_address?: string;
-    salesman_name?: string;
-    payment_term_name?: string;
-    branch_id: number;
-    branch_name?: string;
-    order_status: string;
-    order_date: string;
-    net_amount?: number;
-    total_amount?: number;
-    details: InvoicingLine[];
-    stockStatus?: StockStatus;
-    for_invoicing_at?: string;
-}
-
-export interface InvoicingLine {
-    detail_id: number;
-    product_id: number | { product_id: number; product_name: string; product_code: string; description?: string; uom?: string };
-    ordered_quantity: number;
-    unit_price: number;
-    net_amount: number;
-    bom_version_name?: string;
-}
-
-export interface LineBatchAllocation {
-    inventoryLotId?: number;
-    lotId?: number;
-    batchNo?: string;
-    quantity: number;
-}
-
-export interface LineAllocationPayload {
-    productId: number;
-    quantity: number;
-    batchAllocations?: LineBatchAllocation[];
-}
-
-export interface CreateInvoicePayload {
-    salesOrderId: number;
-    invoiceNo: string;
-    invoiceTypeId: number;
-    invoiceDate: string;
-    dueDate: string;
-    remarks?: string;
-    lineAllocations?: LineAllocationPayload[];
 }
 
 export interface ReceiptType {
     id: number;
     type: string;
-    isOfficial: boolean;
-    maxLength: number;
+    isOfficial?: number | string | null;
 }
 
-export interface CreatedInvoiceResult {
-    invoiceId: number;
-    invoiceNo: string;
-    transactionStatus: "Prepared";
-    itemCount?: number;
-    reservationCount?: number;
+export interface PaymentTerm {
+    id: number;
+    payment_days: number;
+    payment_terms: string;
 }
 
-export interface PrintableInvoiceLine {
-    detailId: number;
-    productCode: string;
-    productName: string;
-    quantity: number;
-    unit: string;
-    unitPrice: number;
-    discountAmount: number;
-    grossAmount: number;
-    netAmount: number;
+export interface SalesOrder {
+    order_id: number;
+    order_no: string;
+    po_no: string;
+    order_date: string;
+    created_date: string | null;
+    total_amount: number | null;
+    allocated_amount: number | null;
+    order_status: string;
+    
+    // New fields for Modal
+    receipt_type: {
+        id: number;
+        type: string;
+        isOfficial?: number | string | null;
+    } | null;
+    net_amount: number | null;
+    discount_amount: number | null;
+    remarks: string | null;
+    
+    for_approval_at: string | null;
+    for_consolidation_at: string | null;
+    for_picking_at: string | null;
+    for_invoicing_at: string | null;
+    for_loading_at: string | null;
+    for_shipping_at: string | null;
+    delivered_at: string | null;
+    not_fulfilled_at: string | null;
+
+    // Recycled order — pre-existing invoice data
+    existing_invoice_no: number | null;           // invoice_id (integer FK for details)
+    existing_invoice_display_no: string | null;   // invoice_no string shown in UI
+    existing_invoices?: { id: number; display_no: string }[]; // Full list of linked invoices
+
+    // Void re-invoicing — voided invoice that needs replacement
+    void_invoices?: { id: number; display_no: string }[];
+
+    // Relationships (nested from Directus)
+    supplier_id: Supplier | null;
+    customer_code: Customer | null;
+    salesman_id: Salesman | null;
+    branch_id: Branch | null;
+    payment_terms: PaymentTerm | null;
+    sales_type: string | null;
 }
 
-export interface ORFieldConfig {
-    x: number;
-    y: number;
-    fontSize?: number;
-    fontFamily?: 'courier' | 'helvetica' | 'times';
-    fontWeight?: 'normal' | 'bold';
-    label?: string;
-    charSpacing?: number;
-    scaleX?: number;
-    maxWidth?: number;
-    lineHeight?: number;
-    hidden?: boolean;
-    barcodeHeight?: number;
-    barcodeModuleWidth?: number;
-    hideBarcodeText?: boolean;
+export interface InvoicingFilters {
+    orderNo?: string;
+    poNo?: string;
+    customer?: string;
+    salesman?: string;
+    branch?: string;
+    fromDate?: string;
+    toDate?: string;
+    status?: 'All' | 'Normal' | 'Recycled' | 'Void';
 }
 
-export interface ORTableSettings {
-    startY: number;
-    rowHeight: number;
-    fontSize: number;
-    product_name_width?: number;
-    columns?: {
-        barcode?: { x: number };
-        product_name?: { x: number };
-        quantity?: { x: number };
-        unit_price?: { x: number };
-        discount?: { x: number };
-        net_amount?: { x: number };
-    };
+export interface ComboboxOption {
+    value: string;
+    label: string;
 }
 
-export interface ORTemplate {
-    id?: string;
-    name?: string;
-    width: number;
-    height: number;
-    backgroundImage?: string;
-    fields: Record<string, ORFieldConfig>;
-    tableSettings: ORTableSettings;
-}
-
-export interface CompanyInfo {
-    companyId?: number;
-    companyName: string;
-    companyTin: string;
-    companyAddress: string;
-}
-
-export interface PrintableInvoice {
-    invoiceId: number;
-    invoiceNo: string;
-    invoiceDate: string;
-    dueDate: string;
-    transactionStatus: string;
-    receiptType: ReceiptType;
-    orderNo: string;
-    poNo: string;
-    customerName: string;
-    storeName: string;
-    customerTin: string;
-    customerAddress: string;
-    salesmanName: string;
-    paymentTermName: string;
-    lines: PrintableInvoiceLine[];
-    totals: { gross: number; discount: number; vat: number; net: number };
-    templateConfig?: ORTemplate;
-    companyInfo?: CompanyInfo;
+export interface LogisticsData {
+    pdp_no: string | null;
+    consolidation_no: string | null;
+    dispatch_no: string | null;
+    dispatch_date?: string | null; // Added for sorting and identification
+    is_direct?: boolean;
+    error?: string;
 }
 
 export interface CustomerGroup {
     customer_code: string;
     customer_name: string;
-    order_count: number;
+    orders: SalesOrder[];
     total_amount: number;
-    orders: InvoicingCandidate[];
+    order_count: number;
 }
 
-export interface InvoicingFilters {
-    search: string;
-    customerCode: string;
-    branchId: string;
-    dateFrom: string;
-    dateTo: string;
-}
-
-export interface BatchSiblingOrder {
-    orderId: number;
-    orderNo: string;
-    customerCode?: string;
-    customerName?: string;
-    reservedQuantity: number;
-    pickedQuantity?: number;
-    isInvoiced?: boolean;
-}
-
-export interface BatchItem {
-    inventoryLotId?: number;
-    lotId: number;
-    lotName?: string | null;
+export interface BatchOnhandInfo {
     batchNo: string;
-    inventoryCondition: string;
-    manufacturingDate?: string | null;
+    onhandQuantity: number;
     expirationDate?: string | null;
-    onhandQuantity: number;
-    pickedQuantity?: number;
-    totalBatchPickedPool?: number;
-    thisOrderReserved?: number;
-    siblingOrders?: BatchSiblingOrder[];
+    lotName?: string | null;
+    inventoryCondition?: string;
 }
 
-export interface SiblingConsolidatedOrder {
-    orderId: number;
-    orderNo: string;
-    customerCode?: string;
-    customerName?: string;
-    orderedQuantity: number;
-    isInvoiced?: boolean;
-}
-
-export interface LineAvailability {
-    productId: number;
-    productName: string;
-    productCode: string;
-    unitId?: number;
-    requiredQuantity: number;
-    onhandQuantity: number;
-    pickedQuantity?: number;
-    totalPoolQuantity?: number;
-    siblingInvoicedQuantity?: number;
-    isAvailable: boolean;
-    isPicked?: boolean;
-    batches: BatchItem[];
-    siblingOrders?: SiblingConsolidatedOrder[];
-    isConsolidated?: boolean;
-    totalBatchPicked?: number;
-    alreadyInvoicedAcrossBatch?: number;
-    remainingBatchPool?: number;
-    remainingOrderQuantity?: number;
-    shortfall?: number;
-}
-
-export interface RawSalesOrderReservation {
-    reservation_id: number;
-    sales_order_detail_id: number;
+export interface ConversionItem {
     product_id: number;
-    inventory_lot_id: number;
-    reserved_quantity: number;
+    product_name: string;
+    consolidator_no: string;
+    order_no: string;
+    ordered_quantity: number;
+    allocated_quantity: number;
+    total_allocated_quantity: number;
     picked_quantity: number;
-    status: "Reserved" | "Released" | "Picked" | "Consumed" | string;
-    created_at?: string;
-    created_by?: number;
-    updated_at?: string;
-    updated_by?: number;
+    applied_quantity: number;
+    remaining_quantity: number;
+    unit_price: number;
+    discount_type: number | null;
+    discount_amount: number;
+    net_amount: number;
+    unit_shortcut: string;
+    barcode?: string;
+    onhand_quantity?: number | null;
+    available_batches?: BatchOnhandInfo[];
 }
 
-export interface SalesOrderAvailability {
-    salesOrderId: number;
-    branchId: number;
-    consolidatorNo?: string;
-    consolidatorId?: number;
-    isFullyAvailable: boolean;
-    isFullyPicked?: boolean;
-    lines: LineAvailability[];
-    siblingOrders?: SiblingConsolidatedOrder[];
-    rawReservations?: RawSalesOrderReservation[];
-    rawDetails?: Array<{ detail_id: number; product_id: number; ordered_quantity: number }>;
+export interface ConversionData {
+    items: ConversionItem[];
+    max_receipt_length: number;
+    is_official?: number | string | null;
+    discount_types: DiscountType[];
+    customer?: {
+        customer_name: string;
+        store_name?: string;
+        customer_tin: string;
+        province: string;
+        city: string;
+        brgy: string;
+    };
+    payment_name?: string;
+    total_allocated_quantity?: number;
+    total_picked_quantity?: number;
+    consolidator_no?: string | null;
+    is_direct?: boolean;
+    consolidation_error?: string | null;
 }
 
-export type StockStatus = "Available" | "Partial" | "Unavailable";
+export interface ORFieldConfig {
+    x: number;
+    y: number;
+    fontSize: number;
+    fontFamily: 'courier' | 'helvetica' | 'times';
+    fontWeight: 'normal' | 'bold';
+    label: string;
+    charSpacing?: number; // spacing in points (jsPDF unit)
+    scaleX?: number;      // horizontal scaling (1.0 = 100%)
+    
+    // Multi-line and Wrapping settings
+    maxWidth?: number;    // in mm
+    lineHeight?: number;  // multiplier e.g. 1.2
+    hidden?: boolean;     // visibility toggle
 
-export interface Branch {
-    id: number;
-    branchName?: string;
-    branch_name?: string;
-    branchCode?: string;
-    branch_code?: string;
+    // Barcode settings
+    barcodeHeight?: number;
+    barcodeModuleWidth?: number;
+    hideBarcodeText?: boolean;
+}
+
+export interface ORTemplate {
+    id: string;
+    name: string;
+    width: number;
+    height: number;
+    backgroundImage?: string; // base64
+    fields: Record<string, ORFieldConfig>;
+    tableSettings: {
+        startY: number;
+        rowHeight: number;
+        fontSize: number;
+        product_name_width?: number; // width in mm
+        columns?: {
+            barcode?: { x: number };
+            product_name?: { x: number };
+            quantity?: { x: number };
+            unit_price?: { x: number };
+            discount?: { x: number };
+            net_amount?: { x: number };
+        };
+    };
 }

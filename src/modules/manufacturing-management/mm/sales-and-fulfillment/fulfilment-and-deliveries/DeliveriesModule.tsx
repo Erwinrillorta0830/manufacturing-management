@@ -3,7 +3,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { motion, Variants } from "framer-motion";
+import { motion, AnimatePresence, Variants } from "framer-motion";
 import { useDeliveries } from "./hooks/useDeliveries";
 import DeliveryClearanceModal from "./components/DeliveryClearanceModal";
 import {
@@ -138,7 +138,7 @@ export default function DeliveriesModule() {
     };
 
     return (
-        <div className="flex flex-col min-h-0 min-w-0 flex-1 p-3 sm:p-5 space-y-4 text-foreground">
+        <div className="flex flex-col min-h-full min-w-0 flex-1 p-3 sm:p-5 space-y-4 text-foreground">
             {/* Header Title Section */}
             <section className="rounded-xl border bg-card shadow-sm p-5 sm:p-6">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -184,7 +184,7 @@ export default function DeliveriesModule() {
             {/* 4 Direct Summary KPI Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 {/* 1. Total Dispatched */}
-                <div className="p-4 rounded-xl border bg-card shadow-xs flex items-center justify-between">
+                <div className="p-4 sm:p-5 rounded-xl border bg-card shadow-xs flex items-center justify-between min-h-[96px]">
                     <div className="space-y-1">
                         <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">
                             Total Dispatched Runs
@@ -202,7 +202,7 @@ export default function DeliveriesModule() {
                 </div>
 
                 {/* 2. Pending Clearance */}
-                <div className="p-4 rounded-xl border bg-card shadow-xs flex items-center justify-between">
+                <div className="p-4 sm:p-5 rounded-xl border bg-card shadow-xs flex items-center justify-between min-h-[96px]">
                     <div className="space-y-1">
                         <span className="text-[10px] font-black uppercase tracking-wider text-amber-600 dark:text-amber-400">
                             Pending Clearance
@@ -220,7 +220,7 @@ export default function DeliveriesModule() {
                 </div>
 
                 {/* 3. Fully Fulfilled */}
-                <div className="p-4 rounded-xl border bg-card shadow-xs flex items-center justify-between">
+                <div className="p-4 sm:p-5 rounded-xl border bg-card shadow-xs flex items-center justify-between min-h-[96px]">
                     <div className="space-y-1">
                         <span className="text-[10px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
                             Fulfilled Deliveries
@@ -238,7 +238,7 @@ export default function DeliveriesModule() {
                 </div>
 
                 {/* 4. Returns & Concerns */}
-                <div className="p-4 rounded-xl border bg-card shadow-xs flex items-center justify-between">
+                <div className="p-4 sm:p-5 rounded-xl border bg-card shadow-xs flex items-center justify-between min-h-[96px]">
                     <div className="space-y-1">
                         <span className="text-[10px] font-black uppercase tracking-wider text-rose-600 dark:text-rose-400">
                             Returns & Concerns
@@ -290,53 +290,72 @@ export default function DeliveriesModule() {
                                             : branches.find((b) => String(b.id) === selectedBranchId)?.branch_name || "Select Branch"}
                                     </span>
                                 </div>
-                                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                <ChevronDown
+                                    className={`h-3.5 w-3.5 text-muted-foreground shrink-0 transition-transform duration-200 ${
+                                        branchPopoverOpen ? "rotate-180" : ""
+                                    }`}
+                                />
                             </button>
                         </PopoverTrigger>
-                        <PopoverContent className="w-[220px] p-0 shadow-lg rounded-xl overflow-hidden" align="start">
-                            <Command>
-                                <div className="sticky top-0 z-10 bg-popover border-b">
-                                    <CommandInput placeholder="Search branch..." className="h-9 text-xs" />
-                                </div>
-                                <CommandList className="max-h-56 overflow-y-auto">
-                                    <CommandEmpty className="py-2.5 text-center text-xs text-muted-foreground">
-                                        No branch found.
-                                    </CommandEmpty>
-                                    <CommandGroup>
-                                        <CommandItem
-                                            value="All Branches all"
-                                            onSelect={() => {
-                                                setSelectedBranchId("All");
-                                                setPage(0);
-                                                setBranchPopoverOpen(false);
-                                            }}
-                                            className="text-xs cursor-pointer flex items-center justify-between"
-                                        >
-                                            <span>All Branches</span>
-                                            {selectedBranchId === "All" && <Check className="h-3.5 w-3.5 text-primary" />}
-                                        </CommandItem>
-                                        {branches.map((b) => {
-                                            const isSelected = selectedBranchId === String(b.id);
-                                            return (
-                                                <CommandItem
-                                                    key={b.id}
-                                                    value={`${b.branch_name} ${b.branch_code}`}
-                                                    onSelect={() => {
-                                                        setSelectedBranchId(String(b.id));
-                                                        setPage(0);
-                                                        setBranchPopoverOpen(false);
-                                                    }}
-                                                    className="text-xs cursor-pointer flex items-center justify-between"
-                                                >
-                                                    <span className="truncate">{b.branch_name}</span>
-                                                    {isSelected && <Check className="h-3.5 w-3.5 text-primary" />}
-                                                </CommandItem>
-                                            );
-                                        })}
-                                    </CommandGroup>
-                                </CommandList>
-                            </Command>
-                        </PopoverContent>
+                        <AnimatePresence>
+                            {branchPopoverOpen && (
+                                <PopoverContent
+                                    forceMount
+                                    className="w-[220px] p-0 shadow-lg rounded-xl overflow-hidden"
+                                    align="start"
+                                >
+                                    <motion.div
+                                        initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                                        exit={{ opacity: 0, scale: 0.95, y: -4 }}
+                                        transition={{ duration: 0.15, ease: "easeOut" }}
+                                    >
+                                        <Command>
+                                            <div className="sticky top-0 z-10 bg-popover border-b">
+                                                <CommandInput placeholder="Search branch..." className="h-9 text-xs" />
+                                            </div>
+                                            <CommandList className="max-h-56 overflow-y-auto">
+                                                <CommandEmpty className="py-2.5 text-center text-xs text-muted-foreground">
+                                                    No branch found.
+                                                </CommandEmpty>
+                                                <CommandGroup>
+                                                    <CommandItem
+                                                        value="All Branches all"
+                                                        onSelect={() => {
+                                                            setSelectedBranchId("All");
+                                                            setPage(0);
+                                                            setBranchPopoverOpen(false);
+                                                        }}
+                                                        className="text-xs cursor-pointer flex items-center justify-between"
+                                                    >
+                                                        <span>All Branches</span>
+                                                        {selectedBranchId === "All" && <Check className="h-3.5 w-3.5 text-primary" />}
+                                                    </CommandItem>
+                                                    {branches.map((b) => {
+                                                        const isSelected = selectedBranchId === String(b.id);
+                                                        return (
+                                                            <CommandItem
+                                                                key={b.id}
+                                                                value={`${b.branch_name} ${b.branch_code}`}
+                                                                onSelect={() => {
+                                                                    setSelectedBranchId(String(b.id));
+                                                                    setPage(0);
+                                                                    setBranchPopoverOpen(false);
+                                                                }}
+                                                                className="text-xs cursor-pointer flex items-center justify-between"
+                                                            >
+                                                                <span className="truncate">{b.branch_name}</span>
+                                                                {isSelected && <Check className="h-3.5 w-3.5 text-primary" />}
+                                                            </CommandItem>
+                                                        );
+                                                    })}
+                                                </CommandGroup>
+                                            </CommandList>
+                                        </Command>
+                                    </motion.div>
+                                </PopoverContent>
+                            )}
+                        </AnimatePresence>
                     </Popover>
 
                     {/* Status Searchable Combobox */}
@@ -352,54 +371,73 @@ export default function DeliveriesModule() {
                                         {statusOptions.find((s) => s.value === statusFilter)?.label || "Select Status"}
                                     </span>
                                 </div>
-                                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                <ChevronDown
+                                    className={`h-3.5 w-3.5 text-muted-foreground shrink-0 transition-transform duration-200 ${
+                                        statusPopoverOpen ? "rotate-180" : ""
+                                    }`}
+                                />
                             </button>
                         </PopoverTrigger>
-                        <PopoverContent className="w-[220px] p-0 shadow-lg rounded-xl overflow-hidden" align="start">
-                            <Command>
-                                <div className="sticky top-0 z-10 bg-popover border-b">
-                                    <CommandInput placeholder="Search status..." className="h-9 text-xs" />
-                                </div>
-                                <CommandList className="max-h-56 overflow-y-auto">
-                                    <CommandEmpty className="py-2.5 text-center text-xs text-muted-foreground">
-                                        No status found.
-                                    </CommandEmpty>
-                                    <CommandGroup>
-                                        {statusOptions.map((st) => {
-                                            const isSelected = statusFilter === st.value;
-                                            return (
-                                                <CommandItem
-                                                    key={st.value}
-                                                    value={st.label}
-                                                    onSelect={() => {
-                                                        setStatusFilter(st.value);
-                                                        setPage(0);
-                                                        setStatusPopoverOpen(false);
-                                                    }}
-                                                    className="text-xs cursor-pointer flex items-center justify-between"
-                                                >
-                                                    <span>{st.label}</span>
-                                                    {isSelected && <Check className="h-3.5 w-3.5 text-primary" />}
-                                                </CommandItem>
-                                            );
-                                        })}
-                                    </CommandGroup>
-                                </CommandList>
-                            </Command>
-                        </PopoverContent>
+                        <AnimatePresence>
+                            {statusPopoverOpen && (
+                                <PopoverContent
+                                    forceMount
+                                    className="w-[220px] p-0 shadow-lg rounded-xl overflow-hidden"
+                                    align="start"
+                                >
+                                    <motion.div
+                                        initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                                        exit={{ opacity: 0, scale: 0.95, y: -4 }}
+                                        transition={{ duration: 0.15, ease: "easeOut" }}
+                                    >
+                                        <Command>
+                                            <div className="sticky top-0 z-10 bg-popover border-b">
+                                                <CommandInput placeholder="Search status..." className="h-9 text-xs" />
+                                            </div>
+                                            <CommandList className="max-h-56 overflow-y-auto">
+                                                <CommandEmpty className="py-2.5 text-center text-xs text-muted-foreground">
+                                                    No status found.
+                                                </CommandEmpty>
+                                                <CommandGroup>
+                                                    {statusOptions.map((st) => {
+                                                        const isSelected = statusFilter === st.value;
+                                                        return (
+                                                            <CommandItem
+                                                                key={st.value}
+                                                                value={st.label}
+                                                                onSelect={() => {
+                                                                    setStatusFilter(st.value);
+                                                                    setPage(0);
+                                                                    setStatusPopoverOpen(false);
+                                                                }}
+                                                                className="text-xs cursor-pointer flex items-center justify-between"
+                                                            >
+                                                                <span>{st.label}</span>
+                                                                {isSelected && <Check className="h-3.5 w-3.5 text-primary" />}
+                                                            </CommandItem>
+                                                        );
+                                                    })}
+                                                </CommandGroup>
+                                            </CommandList>
+                                        </Command>
+                                    </motion.div>
+                                </PopoverContent>
+                            )}
+                        </AnimatePresence>
                     </Popover>
                 </div>
             </div>
 
             {/* Main Table Area */}
-            <div className="flex-1 min-h-0 relative bg-card border rounded-xl shadow-sm flex flex-col overflow-hidden">
+            <div className="flex-1 min-h-[520px] relative bg-card border rounded-xl shadow-sm flex flex-col overflow-hidden">
                 {loading && (
                     <div className="absolute inset-0 bg-background/50 backdrop-blur-sm z-30 flex items-center justify-center">
                         <Loader2 className="h-8 w-8 animate-spin text-primary" />
                     </div>
                 )}
 
-                <div className="flex-1 overflow-auto min-h-0">
+                <div className="w-full overflow-x-auto flex-1">
                     {records.length === 0 && !loading ? (
                         <div className="text-center py-16 px-4">
                             <ClipboardCheck className="h-12 w-12 text-muted-foreground/30 mx-auto" />
@@ -416,14 +454,14 @@ export default function DeliveriesModule() {
                         <table className="w-full text-left border-collapse text-xs">
                             <thead>
                                 <tr className="border-b bg-muted/30 sticky top-0 z-10 backdrop-blur-sm">
-                                    <th className="p-3 w-10 text-center"></th>
-                                    <th className="p-3 font-bold text-muted-foreground uppercase text-[10px]">Consolidator No</th>
-                                    <th className="p-3 font-bold text-muted-foreground uppercase text-[10px]">Origin Branch</th>
-                                    <th className="p-3 font-bold text-muted-foreground uppercase text-[10px]">Dispatch Date</th>
-                                    <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] text-center">Orders Count</th>
-                                    <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] text-right">Manifest Value</th>
-                                    <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] text-center">Consolidation Status</th>
-                                    <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] text-center">Action</th>
+                                    <th className="py-3 px-3 sm:py-3.5 sm:px-3.5 w-10 text-center"></th>
+                                    <th className="py-3 px-3 sm:py-3.5 sm:px-3.5 font-bold text-muted-foreground uppercase text-[10px]">Consolidator No</th>
+                                    <th className="py-3 px-3 sm:py-3.5 sm:px-3.5 font-bold text-muted-foreground uppercase text-[10px]">Origin Branch</th>
+                                    <th className="py-3 px-3 sm:py-3.5 sm:px-3.5 font-bold text-muted-foreground uppercase text-[10px]">Dispatch Date</th>
+                                    <th className="py-3 px-3 sm:py-3.5 sm:px-3.5 font-bold text-muted-foreground uppercase text-[10px] text-center">Orders Count</th>
+                                    <th className="py-3 px-3 sm:py-3.5 sm:px-3.5 font-bold text-muted-foreground uppercase text-[10px] text-right">Manifest Value</th>
+                                    <th className="py-3 px-3 sm:py-3.5 sm:px-3.5 font-bold text-muted-foreground uppercase text-[10px] text-center">Consolidation Status</th>
+                                    <th className="py-3 px-3 sm:py-3.5 sm:px-3.5 font-bold text-muted-foreground uppercase text-[10px] text-center">Action</th>
                                 </tr>
                             </thead>
                             <motion.tbody
@@ -445,23 +483,23 @@ export default function DeliveriesModule() {
                                                     isExpanded ? "bg-muted/10" : ""
                                                 }`}
                                             >
-                                                <td className="p-3 text-center">
+                                                <td className="py-3.5 px-3 text-center">
                                                     <button
                                                         type="button"
                                                         onClick={() => toggleRow(record.consolidator_id)}
                                                         className="p-1 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors border-none bg-transparent cursor-pointer"
                                                         title="Expand Order Breakdown"
                                                     >
-                                                        {isExpanded ? (
-                                                            <ChevronDown className="h-4 w-4 text-primary" />
-                                                        ) : (
-                                                            <ChevronRight className="h-4 w-4" />
-                                                        )}
+                                                        <ChevronDown
+                                                            className={`h-4 w-4 transition-transform duration-200 ${
+                                                                isExpanded ? "rotate-0 text-primary" : "-rotate-90 text-muted-foreground"
+                                                            }`}
+                                                        />
                                                     </button>
                                                 </td>
 
                                                 {/* Consolidator No */}
-                                                <td className="p-3 font-black text-foreground">
+                                                <td className="py-3.5 px-3 font-black text-foreground">
                                                     <div className="flex items-center gap-1.5">
                                                         <Truck className="h-3.5 w-3.5 text-primary" />
                                                         <span>{record.consolidator_no}</span>
@@ -469,7 +507,7 @@ export default function DeliveriesModule() {
                                                 </td>
 
                                                 {/* Origin Branch */}
-                                                <td className="p-3 font-bold text-muted-foreground">
+                                                <td className="py-3.5 px-3 font-bold text-muted-foreground">
                                                     <div className="flex items-center gap-1">
                                                         <Building2 className="h-3 w-3 text-muted-foreground" />
                                                         {record.branch_name}
@@ -477,7 +515,7 @@ export default function DeliveriesModule() {
                                                 </td>
 
                                                 {/* Dispatch Date */}
-                                                <td className="p-3 text-muted-foreground">
+                                                <td className="py-3.5 px-3 text-muted-foreground">
                                                     <span className="flex items-center gap-1">
                                                         <Calendar className="h-3 w-3" />
                                                         {new Date(record.dispatch_date).toLocaleDateString(undefined, {
@@ -487,7 +525,7 @@ export default function DeliveriesModule() {
                                                 </td>
 
                                                 {/* Orders Count */}
-                                                <td className="p-3 text-center">
+                                                <td className="py-3.5 px-3 text-center">
                                                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-bold text-xs bg-muted/60 text-foreground">
                                                         <Receipt className="h-3 w-3 text-muted-foreground" />
                                                         {record.total_orders} Orders
@@ -495,12 +533,12 @@ export default function DeliveriesModule() {
                                                 </td>
 
                                                 {/* Amount */}
-                                                <td className="p-3 text-right font-black text-foreground">
+                                                <td className="py-3.5 px-3 text-right font-black text-foreground">
                                                     ₱{record.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                 </td>
 
                                                 {/* Consolidation Status Badge */}
-                                                <td className="p-3 text-center">
+                                                <td className="py-3.5 px-3 text-center">
                                                     <span
                                                         className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${
                                                             consolidationStatusStyles[record.status] || "bg-muted text-muted-foreground border-border"
@@ -515,7 +553,7 @@ export default function DeliveriesModule() {
                                                 </td>
 
                                                 {/* Action Button */}
-                                                <td className="p-3 text-center">
+                                                <td className="py-3.5 px-3 text-center">
                                                     <button
                                                         type="button"
                                                         onClick={() => openClearanceModal(record)}
@@ -531,137 +569,144 @@ export default function DeliveriesModule() {
                                                 </td>
                                             </motion.tr>
 
-                                            {/* Expandable Multi-Row Sales Order Breakdown */}
-                                            {isExpanded && (
-                                                <tr className="bg-muted/15 border-b">
-                                                    <td colSpan={8} className="p-3 sm:p-4">
-                                                        <motion.div
-                                                            initial={{ opacity: 0, y: -6 }}
-                                                            animate={{ opacity: 1, y: 0 }}
-                                                            exit={{ opacity: 0, y: -6 }}
-                                                            className="rounded-xl border bg-card p-3 sm:p-4 space-y-3 shadow-inner"
-                                                        >
-                                                            <div className="flex items-center justify-between">
-                                                                <div className="flex items-center gap-2">
-                                                                    <Boxes className="h-4 w-4 text-primary" />
-                                                                    <span className="text-[10px] font-black uppercase text-foreground tracking-wider">
-                                                                        Consolidated Sales Orders Breakdown ({record.orders.length} Invoices)
-                                                                    </span>
-                                                                </div>
-                                                                <div className="text-[10px] text-muted-foreground">
-                                                                    Consolidator No: <b>{record.consolidator_no}</b> | Origin: <b>{record.branch_name}</b> | Status: <b>{record.status}</b>
-                                                                </div>
-                                                            </div>
+                                            {/* Expandable Multi-Row Sales Order Breakdown with Motion on Close */}
+                                            <AnimatePresence initial={false}>
+                                                {isExpanded && (
+                                                    <tr className="bg-muted/15 border-b">
+                                                        <td colSpan={8} className="p-0">
+                                                            <motion.div
+                                                                initial={{ opacity: 0, height: 0 }}
+                                                                animate={{ opacity: 1, height: "auto" }}
+                                                                exit={{ opacity: 0, height: 0 }}
+                                                                transition={{ duration: 0.22, ease: "easeInOut" }}
+                                                                className="overflow-hidden"
+                                                            >
+                                                                <div className="p-3 sm:p-4">
+                                                                    <div className="rounded-xl border bg-card p-3 sm:p-4 space-y-3 shadow-inner">
+                                                                        <div className="flex items-center justify-between">
+                                                                            <div className="flex items-center gap-2">
+                                                                                <Boxes className="h-4 w-4 text-primary" />
+                                                                                <span className="text-[10px] font-black uppercase text-foreground tracking-wider">
+                                                                                    Consolidated Sales Orders Breakdown ({record.orders.length} Invoices)
+                                                                                </span>
+                                                                            </div>
+                                                                            <div className="text-[10px] text-muted-foreground">
+                                                                                Consolidator No: <b>{record.consolidator_no}</b> | Origin: <b>{record.branch_name}</b> | Status: <b>{record.status}</b>
+                                                                            </div>
+                                                                        </div>
 
-                                                            {record.orders.length === 0 ? (
-                                                                <p className="text-center text-[10px] text-muted-foreground py-3">
-                                                                    No individual sales orders found for this consolidation manifest.
-                                                                </p>
-                                                            ) : (
-                                                                <div className="border rounded-lg overflow-hidden bg-background">
-                                                                    <table className="w-full text-left text-xs">
-                                                                        <thead>
-                                                                            <tr className="border-b bg-muted/30">
-                                                                                <th className="p-2.5 font-bold text-muted-foreground uppercase text-[9px]">Status</th>
-                                                                                <th className="p-2.5 font-bold text-muted-foreground uppercase text-[9px]">Order No</th>
-                                                                                <th className="p-2.5 font-bold text-muted-foreground uppercase text-[9px]">Invoice No</th>
-                                                                                <th className="p-2.5 font-bold text-muted-foreground uppercase text-[9px]">Invoice Date</th>
-                                                                                <th className="p-2.5 font-bold text-muted-foreground uppercase text-[9px]">Customer</th>
-                                                                                <th className="p-2.5 font-bold text-muted-foreground uppercase text-[9px] text-right">Amount</th>
-                                                                                <th className="p-2.5 font-bold text-muted-foreground uppercase text-[9px]">Linked Return</th>
-                                                                                <th className="p-2.5 font-bold text-muted-foreground uppercase text-[9px]">Remarks</th>
-                                                                            </tr>
-                                                                        </thead>
-                                                                        <tbody className="divide-y">
-                                                                            {record.orders.map((ord, ordIdx) => (
-                                                                                <tr key={ord.invoice_id || ordIdx} className="hover:bg-muted/10">
-                                                                                    <td className="p-2.5">
-                                                                                        <span
-                                                                                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase border ${
-                                                                                                statusBadgeStyles[ord.fulfillment_status] || statusBadgeStyles.Pending
-                                                                                            }`}
-                                                                                        >
-                                                                                            {ord.fulfillment_status}
-                                                                                        </span>
-                                                                                    </td>
-                                                                                    <td className="p-2.5 font-bold text-foreground">
-                                                                                        {ord.order_no}
-                                                                                    </td>
-                                                                                    <td className="p-2.5 font-mono text-[10px]">
-                                                                                        {ord.invoice_no && ord.invoice_no !== "---" ? (
-                                                                                            <span className="font-bold text-primary">{ord.invoice_no}</span>
-                                                                                        ) : (
-                                                                                            <span className="text-muted-foreground font-bold">---</span>
-                                                                                        )}
-                                                                                    </td>
-                                                                                    <td className="p-2.5 text-muted-foreground text-[10px]">
-                                                                                        {ord.invoice_date && ord.invoice_date !== "---" && !isNaN(new Date(ord.invoice_date).getTime()) ? (
-                                                                                            new Date(ord.invoice_date).toLocaleDateString(undefined, {
-                                                                                                dateStyle: "medium",
-                                                                                            })
-                                                                                        ) : (
-                                                                                            <span className="font-mono">---</span>
-                                                                                        )}
-                                                                                    </td>
-                                                                                    <td className="p-2.5 text-foreground font-semibold">
-                                                                                        {ord.customer_name}
-                                                                                    </td>
-                                                                                    <td className="p-2.5 text-right font-black text-foreground">
-                                                                                        ₱{ord.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                                                                    </td>
-                                                                                    <td className="p-2.5 text-[10px]">
-                                                                                        {ord.linked_sales_return ? (
-                                                                                            <button
-                                                                                                type="button"
-                                                                                                onClick={(e) => {
-                                                                                                    e.stopPropagation();
-                                                                                                    const returnNo = ord.linked_sales_return?.return_number;
-                                                                                                    if (returnNo) {
-                                                                                                        if (typeof window !== "undefined") {
-                                                                                                            localStorage.removeItem("scm_dispatch_return_data");
-                                                                                                        }
-                                                                                                        window.open(
-                                                                                                            `/mm/sales-and-fulfillment/sales-return-and-credit-notes?fromClearance=true&editReturnNo=${encodeURIComponent(returnNo)}`,
-                                                                                                            "_blank"
-                                                                                                        );
-                                                                                                    }
-                                                                                                }}
-                                                                                                title="Click to view/edit Sales Return"
-                                                                                                className={`inline-flex items-center gap-1 font-bold cursor-pointer hover:underline text-[10px] ${
-                                                                                                    ord.linked_sales_return.status === "Received" ||
-                                                                                                    ord.linked_sales_return.status === "Approved" ||
-                                                                                                    ord.linked_sales_return.is_received
-                                                                                                        ? "text-emerald-600 dark:text-emerald-400"
-                                                                                                        : "text-amber-600 dark:text-amber-400"
-                                                                                                }`}
-                                                                                            >
-                                                                                                {ord.linked_sales_return.status === "Received" ||
-                                                                                                ord.linked_sales_return.status === "Approved" ||
-                                                                                                ord.linked_sales_return.is_received ? (
-                                                                                                    <CheckCircle2 className="h-3 w-3" />
-                                                                                                ) : (
-                                                                                                    <AlertCircle className="h-3 w-3" />
-                                                                                                )}
-                                                                                                Linked: {ord.linked_sales_return.return_number} ({ord.linked_sales_return.status || "Pending"})
-                                                                                                <ExternalLink className="h-2.5 w-2.5 ml-0.5 opacity-70" />
-                                                                                            </button>
-                                                                                        ) : (
-                                                                                            <span className="text-muted-foreground font-mono text-[10px]">---</span>
-                                                                                        )}
-                                                                                    </td>
-                                                                                    <td className="p-2.5 text-muted-foreground text-[10px]">
-                                                                                        {ord.remarks || "—"}
-                                                                                    </td>
-                                                                                </tr>
-                                                                            ))}
-                                                                        </tbody>
-                                                                    </table>
+                                                                        {record.orders.length === 0 ? (
+                                                                            <p className="text-center text-[10px] text-muted-foreground py-3">
+                                                                                No individual sales orders found for this consolidation manifest.
+                                                                            </p>
+                                                                        ) : (
+                                                                            <div className="border rounded-lg overflow-hidden bg-background">
+                                                                                <table className="w-full text-left text-xs">
+                                                                                    <thead>
+                                                                                        <tr className="border-b bg-muted/30">
+                                                                                            <th className="p-2.5 font-bold text-muted-foreground uppercase text-[9px]">Status</th>
+                                                                                            <th className="p-2.5 font-bold text-muted-foreground uppercase text-[9px]">Order No</th>
+                                                                                            <th className="p-2.5 font-bold text-muted-foreground uppercase text-[9px]">Invoice No</th>
+                                                                                            <th className="p-2.5 font-bold text-muted-foreground uppercase text-[9px]">Invoice Date</th>
+                                                                                            <th className="p-2.5 font-bold text-muted-foreground uppercase text-[9px]">Customer</th>
+                                                                                            <th className="p-2.5 font-bold text-muted-foreground uppercase text-[9px] text-right">Amount</th>
+                                                                                            <th className="p-2.5 font-bold text-muted-foreground uppercase text-[9px]">Linked Return</th>
+                                                                                            <th className="p-2.5 font-bold text-muted-foreground uppercase text-[9px]">Remarks</th>
+                                                                                        </tr>
+                                                                                    </thead>
+                                                                                    <tbody className="divide-y">
+                                                                                        {record.orders.map((ord, ordIdx) => (
+                                                                                            <tr key={ord.invoice_id || ordIdx} className="hover:bg-muted/10">
+                                                                                                <td className="p-2.5">
+                                                                                                    <span
+                                                                                                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase border ${
+                                                                                                            statusBadgeStyles[ord.fulfillment_status] || statusBadgeStyles.Pending
+                                                                                                        }`}
+                                                                                                    >
+                                                                                                        {ord.fulfillment_status}
+                                                                                                    </span>
+                                                                                                </td>
+                                                                                                <td className="p-2.5 font-bold text-foreground">
+                                                                                                    {ord.order_no}
+                                                                                                </td>
+                                                                                                <td className="p-2.5 font-mono text-[10px]">
+                                                                                                    {ord.invoice_no && ord.invoice_no !== "---" ? (
+                                                                                                        <span className="font-bold text-primary">{ord.invoice_no}</span>
+                                                                                                    ) : (
+                                                                                                        <span className="text-muted-foreground font-bold">---</span>
+                                                                                                    )}
+                                                                                                </td>
+                                                                                                <td className="p-2.5 text-muted-foreground text-[10px]">
+                                                                                                    {ord.invoice_date && ord.invoice_date !== "---" && !isNaN(new Date(ord.invoice_date).getTime()) ? (
+                                                                                                        new Date(ord.invoice_date).toLocaleDateString(undefined, {
+                                                                                                            dateStyle: "medium",
+                                                                                                        })
+                                                                                                    ) : (
+                                                                                                        <span className="font-mono">---</span>
+                                                                                                    )}
+                                                                                                </td>
+                                                                                                <td className="p-2.5 text-foreground font-semibold">
+                                                                                                    {ord.customer_name}
+                                                                                                </td>
+                                                                                                <td className="p-2.5 text-right font-black text-foreground">
+                                                                                                    ₱{ord.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                                                                </td>
+                                                                                                <td className="p-2.5 text-[10px]">
+                                                                                                    {ord.linked_sales_return ? (
+                                                                                                        <button
+                                                                                                            type="button"
+                                                                                                            onClick={(e) => {
+                                                                                                                e.stopPropagation();
+                                                                                                                const returnNo = ord.linked_sales_return?.return_number;
+                                                                                                                if (returnNo) {
+                                                                                                                    if (typeof window !== "undefined") {
+                                                                                                                        localStorage.removeItem("scm_dispatch_return_data");
+                                                                                                                    }
+                                                                                                                    window.open(
+                                                                                                                        `/mm/sales-and-fulfillment/sales-return-and-credit-notes?fromClearance=true&editReturnNo=${encodeURIComponent(returnNo)}`,
+                                                                                                                        "_blank"
+                                                                                                                    );
+                                                                                                                }
+                                                                                                            }}
+                                                                                                            title="Click to view/edit Sales Return"
+                                                                                                            className={`inline-flex items-center gap-1 font-bold cursor-pointer hover:underline text-[10px] ${
+                                                                                                                ord.linked_sales_return.status === "Received" ||
+                                                                                                                ord.linked_sales_return.status === "Approved" ||
+                                                                                                                ord.linked_sales_return.is_received
+                                                                                                                    ? "text-emerald-600 dark:text-emerald-400"
+                                                                                                                    : "text-amber-600 dark:text-amber-400"
+                                                                                                            }`}
+                                                                                                        >
+                                                                                                            {ord.linked_sales_return.status === "Received" ||
+                                                                                                            ord.linked_sales_return.status === "Approved" ||
+                                                                                                            ord.linked_sales_return.is_received ? (
+                                                                                                                <CheckCircle2 className="h-3 w-3" />
+                                                                                                            ) : (
+                                                                                                                <AlertCircle className="h-3 w-3" />
+                                                                                                            )}
+                                                                                                            Linked: {ord.linked_sales_return.return_number} ({ord.linked_sales_return.status || "Pending"})
+                                                                                                            <ExternalLink className="h-2.5 w-2.5 ml-0.5 opacity-70" />
+                                                                                                        </button>
+                                                                                                    ) : (
+                                                                                                        <span className="text-muted-foreground font-mono text-[10px]">---</span>
+                                                                                                    )}
+                                                                                                </td>
+                                                                                                <td className="p-2.5 text-muted-foreground text-[10px]">
+                                                                                                    {ord.remarks || "—"}
+                                                                                                </td>
+                                                                                            </tr>
+                                                                                        ))}
+                                                                                    </tbody>
+                                                                                </table>
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
                                                                 </div>
-                                                            )}
-                                                        </motion.div>
-                                                    </td>
-                                                </tr>
-                                            )}
+                                                            </motion.div>
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                            </AnimatePresence>
                                         </React.Fragment>
                                     );
                                 })}
@@ -671,7 +716,7 @@ export default function DeliveriesModule() {
                 </div>
 
                 {/* Data Grid Table Footer Pagination Controls */}
-                <div className="p-3 border-t bg-muted/20 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-muted-foreground shrink-0">
+                <div className="p-3 border-t bg-muted/20 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-muted-foreground shrink-0 mt-auto">
                     <div className="flex items-center gap-2">
                         <span>Rows per page:</span>
                         <Select

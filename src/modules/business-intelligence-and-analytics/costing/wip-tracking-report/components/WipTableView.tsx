@@ -108,7 +108,7 @@ export function WipTableView({
         <div className="space-y-3">
             {/* Table Container */}
             <div className="rounded-xl border border-border/70 bg-card overflow-hidden shadow-xs">
-                <div className="overflow-auto max-h-[calc(100vh-270px)] min-h-[420px] relative">
+                <div className="overflow-x-auto relative">
                     <table className="w-full text-left text-xs border-collapse">
                         <thead className="sticky top-0 z-20 bg-muted/95 backdrop-blur-xs border-b border-border/80 shadow-xs">
                             <tr className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
@@ -217,7 +217,7 @@ export function WipTableView({
                                                             </span>
                                                         </div>
                                                         <div
-                                                            onClick={(e) => {
+                                                            onClick={(e: React.MouseEvent) => {
                                                                 e.stopPropagation();
                                                                 onOpenDetail(job, "stages");
                                                             }}
@@ -284,7 +284,7 @@ export function WipTableView({
                                                     <Button
                                                         variant="outline"
                                                         size="sm"
-                                                        onClick={(e) => {
+                                                        onClick={(e: React.MouseEvent) => {
                                                             e.stopPropagation();
                                                             onOpenDetail(job, "stages");
                                                         }}
@@ -296,7 +296,7 @@ export function WipTableView({
                                                         variant="ghost"
                                                         size="sm"
                                                         asChild
-                                                        onClick={(e) => e.stopPropagation()}
+                                                        onClick={(e: React.MouseEvent) => e.stopPropagation()}
                                                         className="h-7 px-2 text-[11px] font-medium text-primary hover:text-primary hover:bg-primary/10 gap-0.5"
                                                     >
                                                         <Link href={`/mm/production-workflow?id=${encodeURIComponent(job.job_order_id)}&jo=${encodeURIComponent(job.job_order_no)}`}>

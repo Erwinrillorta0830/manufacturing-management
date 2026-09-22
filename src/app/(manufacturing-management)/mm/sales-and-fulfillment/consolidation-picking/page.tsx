@@ -31,6 +31,10 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
         return null;
     }
 }
+export const metadata = {
+    title: "Consolidation Picking | MM",
+    description: "Pick consolidated shipments for better delivery efficiency."
+};
 
 function pickString(obj: Record<string, unknown> | null | undefined, keys: string[]): string {
     for (const k of keys) {

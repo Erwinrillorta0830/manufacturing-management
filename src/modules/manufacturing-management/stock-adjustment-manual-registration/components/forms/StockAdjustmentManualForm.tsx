@@ -778,7 +778,7 @@ export function StockAdjustmentManualForm({
       doc.setDrawColor(148, 163, 184);
 
       // Prepared By
-      doc.text("PREPARED BY:", margins.left, sigY);
+      doc.text("CREATED BY:", margins.left, sigY);
       doc.line(margins.left, sigY + 12, margins.left + 50, sigY + 12);
       doc.setFontSize(9);
       doc.setFont("helvetica", "bold");
@@ -789,12 +789,9 @@ export function StockAdjustmentManualForm({
       doc.setFontSize(8);
       doc.setFont("helvetica", "normal");
       doc.setTextColor(100, 116, 139);
-      doc.text("APPROVED BY:", pageWidth / 2 - 25, sigY);
+      doc.text("POSTED BY:", pageWidth / 2 - 25, sigY);
       doc.line(pageWidth / 2 - 25, sigY + 12, pageWidth / 2 + 25, sigY + 12);
-
-      // Received By
-      doc.text("RECEIVED BY:", pageWidth - margins.right - 50, sigY);
-      doc.line(pageWidth - margins.right - 50, sigY + 12, pageWidth - margins.right, sigY + 12);
+      
     });
 
     doc.save(`StockAdjustmentManual_${values.doc_no}.pdf`);
@@ -1201,7 +1198,16 @@ export function StockAdjustmentManualForm({
             await updateAdjustment(id, values);
             toast.success("Adjustment Saved Successfully");
           } else {
-            await createAdjustment(values);
+            let finalValues = values;
+            const expectedPrefix = values.type === "OUT" ? "SAOUT" : "SAIN";
+            if (!values.doc_no || !values.doc_no.startsWith(expectedPrefix)) {
+              const correctDocNo = await fetchNextDocNo(values.type);
+              if (correctDocNo) {
+                finalValues = { ...values, doc_no: correctDocNo };
+                form.setValue("doc_no", correctDocNo);
+              }
+            }
+            await createAdjustment(finalValues);
             toast.success("Adjustment Created Successfully");
           }
           initialValuesRef.current = JSON.stringify(values);
@@ -1223,7 +1229,7 @@ export function StockAdjustmentManualForm({
       },
       onInvalid
     )();
-  }, [id, createAdjustment, updateAdjustment, router, form, pendingExitAction]);
+  }, [id, createAdjustment, updateAdjustment, router, form, pendingExitAction, fetchNextDocNo]);
 
   // ——————————————————————————————————————————————————————————————————————————————
   const onSubmit = useCallback(
@@ -1282,7 +1288,16 @@ export function StockAdjustmentManualForm({
           initialValuesRef.current = JSON.stringify(values);
           onSuccess?.();
         } else {
-          await createAdjustment(values);
+          let finalValues = values;
+          const expectedPrefix = values.type === "OUT" ? "SAOUT" : "SAIN";
+          if (!values.doc_no || !values.doc_no.startsWith(expectedPrefix)) {
+            const correctDocNo = await fetchNextDocNo(values.type);
+            if (correctDocNo) {
+              finalValues = { ...values, doc_no: correctDocNo };
+              form.setValue("doc_no", correctDocNo);
+            }
+          }
+          await createAdjustment(finalValues);
           toast.success("Adjustment Created Successfully");
           await handleClearForm();
         }
@@ -1293,7 +1308,7 @@ export function StockAdjustmentManualForm({
         setLoading(false);
       }
     },
-    [id, createAdjustment, updateAdjustment, onSuccess, handleClearForm]
+    [id, createAdjustment, updateAdjustment, onSuccess, handleClearForm, fetchNextDocNo, form]
   );
 
   // ——————————————————————————————————————————————————————————————————————————————
@@ -1502,6 +1517,7 @@ export function StockAdjustmentManualForm({
                   <Input
                     id="doc_no"
                     {...form.register("doc_no")}
+                    value={watchedDocNo || ""}
                     readOnly
                     className="bg-muted/50 border-input h-11 text-xs font-semibold"
                   />
@@ -1651,7 +1667,16 @@ export function StockAdjustmentManualForm({
               </Label>
               <RadioGroup
                 value={watchedType}
-                onValueChange={(v) => form.setValue("type", v as "IN" | "OUT")}
+                onValueChange={async (v) => {
+                  const newType = v as "IN" | "OUT";
+                  form.setValue("type", newType, { shouldValidate: true, shouldDirty: true });
+                  if (!id) {
+                    const nextDoc = await fetchNextDocNo(newType);
+                    if (nextDoc) {
+                      form.setValue("doc_no", nextDoc, { shouldValidate: true, shouldDirty: true });
+                    }
+                  }
+                }}
                 className="flex gap-4 pt-1"
                 disabled={isReadOnly || !!id}
               >

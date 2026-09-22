@@ -13,7 +13,7 @@ import {
 } from "../types";
 import SearchableSelect from "./SearchableSelect";
 import { formatQty, formatMoney } from "./PhysicalInventoryList";
-import { ArrowLeft, Plus, Save, Send, Trash2, RotateCcw, AlertTriangle, Layers, LayoutGrid, List, Tag, Loader2, GitCompare, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, Plus, Save, Send, Trash2, RotateCcw, AlertTriangle, Layers, LayoutGrid, List, Tag, Loader2, GitCompare, CheckCircle2, Printer } from "lucide-react";
 
 interface Props {
     sheet?: MmPhysicalInventorySheet | null;
@@ -47,6 +47,7 @@ interface Props {
     onSubmit: () => void;
     onReturnToDraft?: () => void;
     onCommit?: () => void;
+    onPrintCountSheet?: (sheet: MmPhysicalInventorySheet, filterLot?: number | string | null) => void;
 }
 
 export default function PhysicalInventoryForm({
@@ -66,6 +67,7 @@ export default function PhysicalInventoryForm({
     onSaveDraftBatch,
     onSubmit,
     onReturnToDraft,
+    onPrintCountSheet,
 }: Props) {
     const isNew = !sheet || !sheet.physical_inventory_id;
     const isDraft = sheet?.status === "DRAFT" || isNew;
@@ -482,6 +484,18 @@ export default function PhysicalInventoryForm({
                 </div>
 
                 <div className="flex items-center gap-2">
+                    {!isNew && sheet && onPrintCountSheet && (
+                        <button
+                            type="button"
+                            onClick={() => onPrintCountSheet(sheet)}
+                            className="flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold text-foreground bg-card hover:bg-accent border border-border rounded-lg transition-colors shadow-xs cursor-pointer"
+                            title="Print Physical Inventory Count Sheet"
+                        >
+                            <Printer className="h-4 w-4" />
+                            <span>Print Sheet</span>
+                        </button>
+                    )}
+
                     {isDraft && !isNew && (
                         <>
                             <button
@@ -1028,6 +1042,22 @@ export default function PhysicalInventoryForm({
                                                         <span className="text-muted-foreground text-[10px] uppercase font-semibold">Diff Cost:</span>
                                                         <span className="font-bold">{formatMoney(lotDiffCost)}</span>
                                                     </div>
+
+                                                    {!isNew && sheet && onPrintCountSheet && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                const lId = typeof group.lotObj === "object" && group.lotObj !== null ? (group.lotObj as { lot_id?: number; id?: number }).lot_id || (group.lotObj as { id?: number }).id || 0 : Number(group.lotObj || 0);
+                                                                onPrintCountSheet(sheet, lId > 0 ? lId : group.lotName);
+                                                            }}
+                                                            className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-foreground bg-background hover:bg-accent border border-border rounded-md transition-colors shadow-xs cursor-pointer ml-1"
+                                                            title={`Print Count Sheet for ${group.lotName} only`}
+                                                        >
+                                                            <Printer className="h-3.5 w-3.5 text-primary" />
+                                                            <span>Print Lot</span>
+                                                        </button>
+                                                    )}
+
                                                     {isDraft && (
                                                         <button
                                                             type="button"

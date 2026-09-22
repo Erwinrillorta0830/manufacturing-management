@@ -49,7 +49,7 @@ export async function generateConsolidationPDF(data: PrintData) {
     const autoTableModule = await import("jspdf-autotable");
     const autoTable = (autoTableModule.default || autoTableModule) as unknown as typeof import("jspdf-autotable").default;
 
-    const doc = new JsPDFClass({ orientation: "landscape", unit: "mm", format: "a4" });
+    const doc = new JsPDFClass({ orientation: "portrait", unit: "mm", format: "a4" });
 
     const pageWidth = doc.internal.pageSize.width;
 
@@ -58,43 +58,43 @@ export async function generateConsolidationPDF(data: PrintData) {
     doc.text("WAREHOUSE PICK LIST", pageWidth / 2, 10, { align: "center" });
 
     doc.setFontSize(7).setFont("helvetica", "normal");
-    doc.text("Vertex Terminal - Manufacturing", pageWidth / 2, 14, { align: "center" });
+    doc.text("Manufacturing", pageWidth / 2, 14, { align: "center" });
 
     // ── Batch Info Block ──
     doc.setFontSize(8).setFont("helvetica", "bold");
-    doc.text(`Batch No:`, 8, 21);
+    doc.text(`Batch No:`, 10, 20);
     doc.setFont("helvetica", "normal");
-    doc.text(data.consolidatorNo, 27, 21);
+    doc.text(data.consolidatorNo, 26, 20);
 
     doc.setFont("helvetica", "bold");
-    doc.text(`Branch:`, 108, 21);
+    doc.text(`Branch:`, 110, 20);
     doc.setFont("helvetica", "normal");
-    doc.text(data.branchName, 124, 21);
+    doc.text(data.branchName, 126, 20);
 
     doc.setFont("helvetica", "bold");
-    doc.text(`Status:`, 8, 26);
+    doc.text(`Status:`, 10, 24);
     doc.setFont("helvetica", "normal");
-    doc.text(data.status, 27, 26);
+    doc.text(data.status, 26, 24);
 
     doc.setFont("helvetica", "bold");
-    doc.text(`Created:`, 108, 26);
+    doc.text(`Created:`, 110, 24);
     doc.setFont("helvetica", "normal");
-    doc.text(new Date(data.createdAt).toLocaleDateString(), 124, 26);
+    doc.text(new Date(data.createdAt).toLocaleDateString(), 126, 24);
 
     doc.setFont("helvetica", "bold");
-    doc.text(`Orders:`, 8, 31);
+    doc.text(`Orders:`, 10, 28);
     doc.setFont("helvetica", "normal");
-    doc.text(`${data.totalInvoices}`, 27, 31);
+    doc.text(`${data.totalInvoices}`, 26, 28);
 
     doc.setFont("helvetica", "bold");
-    doc.text(`Products:`, 108, 31);
+    doc.text(`Products:`, 110, 28);
     doc.setFont("helvetica", "normal");
-    doc.text(`${data.details.length}`, 124, 31);
+    doc.text(`${data.details.length}`, 126, 28);
 
     doc.setFont("helvetica", "bold");
-    doc.text("Printed:", pageWidth - 63, 31);
+    doc.text("Printed:", pageWidth - 55, 28);
     doc.setFont("helvetica", "normal");
-    doc.text(new Date().toLocaleString(), pageWidth - 46, 31);
+    doc.text(new Date().toLocaleString(), pageWidth - 42, 28);
 
     // ── Product Lines Table ──
     const sortedDetails = [...data.details].sort((a, b) =>
@@ -108,10 +108,9 @@ export async function generateConsolidationPDF(data: PrintData) {
         return [
             detail?.productCode || "-",
             detail?.productName || allocation.productName,
-            `${detail?.brand || "Unbranded"}\n${detail?.category || "Uncategorized"}`,
+            `${detail?.brand || "-"}`,
             allocation.lotName,
             allocation.batchNo,
-            allocation.manufacturingDate || "-",
             allocation.expiryDate || "-",
             detail?.unit || "-",
             String(allocation.quantity),
@@ -120,42 +119,41 @@ export async function generateConsolidationPDF(data: PrintData) {
     });
 
     autoTable(doc, {
-        startY: 35,
-        margin: { left: 8, right: 8 },
-        head: [["CODE", "PRODUCT", "BRAND / CATEGORY", "STORAGE LOT", "BATCH", "MFG DATE", "EXPIRY", "UOM", "PLAN QTY", "ACTUAL"]],
+        startY: 32,
+        margin: { left: 10, right: 10 },
+        head: [["CODE", "PRODUCT", "BRAND / CATEGORY", "LOT / RACK", "BATCH", "EXPIRY", "UOM", "PICKED QTY", "ACTUAL"]],
         body: bodyRows,
         theme: "grid",
         headStyles: {
             textColor: [0, 0, 0],
             fontStyle: "bold",
-            fontSize: 7,
+            fontSize: 6.5,
             fillColor: [240, 240, 240],
             cellPadding: 1,
             halign: "center",
         },
         styles: {
-            fontSize: 7,
-            cellPadding: 1.2,
+            fontSize: 6.5,
+            cellPadding: 1,
             textColor: [0, 0, 0],
         },
         columnStyles: {
-            0: { cellWidth: 22 },
+            0: { cellWidth: 20 },
             1: { cellWidth: "auto" },
-            2: { cellWidth: 38 },
-            3: { cellWidth: 27 },
-            4: { cellWidth: 30 },
-            5: { cellWidth: 23, halign: "center" },
-            6: { cellWidth: 23, halign: "center" },
-            7: { cellWidth: 14, halign: "center" },
-            8: { cellWidth: 18, halign: "center" },
-            9: { cellWidth: 18, halign: "center" },
+            2: { cellWidth: 28 },
+            3: { cellWidth: 24 },
+            4: { cellWidth: 24 },
+            5: { cellWidth: 18, halign: "center" },
+            6: { cellWidth: 12, halign: "center" },
+            7: { cellWidth: 16, halign: "center" },
+            8: { cellWidth: 16, halign: "center" },
         },
         didDrawPage: (d: { pageNumber: number }) => {
             doc.setFontSize(7).setTextColor(161, 161, 170);
             doc.text(
                 `${data.consolidatorNo} | Page ${d.pageNumber}`,
-                14,
-                doc.internal.pageSize.height - 8
+                10,
+                doc.internal.pageSize.height - 6
             );
         },
     });
@@ -164,15 +162,13 @@ export async function generateConsolidationPDF(data: PrintData) {
     let currentY = extDoc.lastAutoTable.finalY + 6;
 
     // ── Order Summary Section ──
-    currentY = currentY + 2;
-
-    if (currentY > 165) {
+    if (currentY > 230) {
         doc.addPage();
-        currentY = 20;
+        currentY = 16;
     }
 
     doc.setFontSize(8).setFont("helvetica", "bold").setTextColor(0, 0, 0);
-    doc.text("ORDER SUMMARY", 8, currentY);
+    doc.text("ORDER SUMMARY", 10, currentY);
     currentY += 2;
 
     const invoiceRows = data.invoices.flatMap((invoice) => {
@@ -191,7 +187,7 @@ export async function generateConsolidationPDF(data: PrintData) {
 
     autoTable(doc, {
         startY: currentY,
-        margin: { left: 8, right: 8, bottom: 10 },
+        margin: { left: 10, right: 10, bottom: 10 },
         head: [["ORDER", "CUSTOMER", "PRODUCT", "CODE", "QTY"]],
         body: invoiceRows,
         theme: "grid",
@@ -211,27 +207,26 @@ export async function generateConsolidationPDF(data: PrintData) {
             overflow: "linebreak",
         },
         columnStyles: {
-            0: { cellWidth: 38 },
-            1: { cellWidth: 45 },
+            0: { cellWidth: 32 },
+            1: { cellWidth: 38 },
             2: { cellWidth: "auto" },
-            3: { cellWidth: 35 },
-            4: { cellWidth: 18, halign: "center" },
+            3: { cellWidth: 28 },
+            4: { cellWidth: 16, halign: "center" },
         },
         didDrawPage: (pageData: { pageNumber: number }) => {
             doc.setFontSize(7).setTextColor(161, 161, 170);
             doc.text(
                 `${data.consolidatorNo} | Page ${pageData.pageNumber}`,
-                14,
-                doc.internal.pageSize.height - 8
+                10,
+                doc.internal.pageSize.height - 6
             );
         },
     });
 
-    currentY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 6;
+    currentY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
 
     // ── Signature Lines ──
-    currentY = Math.max(currentY + 8, extDoc.lastAutoTable.finalY + 10);
-    if (currentY > 180) {
+    if (currentY > 250) {
         doc.addPage();
         currentY = 20;
     }
@@ -239,39 +234,39 @@ export async function generateConsolidationPDF(data: PrintData) {
     doc.setDrawColor(0, 0, 0).setLineWidth(0.3);
 
     // Prepared by
-    doc.line(14, currentY, 130, currentY);
-    doc.setFontSize(8).setFont("helvetica", "bold").setTextColor(0, 0, 0);
-    doc.text("PREPARED BY", 14, currentY + 4);
-    doc.setFontSize(7).setFont("helvetica", "normal").setTextColor(80, 80, 80);
-    doc.text("Name & Signature", 14, currentY + 8);
-    doc.text("Date:", 14, currentY + 12);
+    doc.line(10, currentY, 95, currentY);
+    doc.setFontSize(7.5).setFont("helvetica", "bold").setTextColor(0, 0, 0);
+    doc.text("PREPARED BY", 10, currentY + 3.5);
+    doc.setFontSize(6.5).setFont("helvetica", "normal").setTextColor(80, 80, 80);
+    doc.text("Name & Signature", 10, currentY + 7);
+    doc.text("Date:", 10, currentY + 10.5);
 
     // Checked by
-    doc.line(160, currentY, 283, currentY);
-    doc.setFontSize(8).setFont("helvetica", "bold").setTextColor(0, 0, 0);
-    doc.text("CHECKED BY", 160, currentY + 4);
-    doc.setFontSize(7).setFont("helvetica", "normal").setTextColor(80, 80, 80);
-    doc.text("Name & Signature", 160, currentY + 8);
-    doc.text("Date:", 160, currentY + 12);
+    doc.line(115, currentY, 200, currentY);
+    doc.setFontSize(7.5).setFont("helvetica", "bold").setTextColor(0, 0, 0);
+    doc.text("CHECKED BY", 115, currentY + 3.5);
+    doc.setFontSize(6.5).setFont("helvetica", "normal").setTextColor(80, 80, 80);
+    doc.text("Name & Signature", 115, currentY + 7);
+    doc.text("Date:", 115, currentY + 10.5);
 
-    currentY += 18;
+    currentY += 15;
 
     // Approved by
-    if (currentY + 18 < doc.internal.pageSize.height - 10) {
-        doc.line(14, currentY, 130, currentY);
-        doc.setFontSize(8).setFont("helvetica", "bold").setTextColor(0, 0, 0);
-        doc.text("APPROVED BY", 14, currentY + 4);
-        doc.setFontSize(7).setFont("helvetica", "normal").setTextColor(80, 80, 80);
-        doc.text("Name & Signature", 14, currentY + 8);
-        doc.text("Date:", 14, currentY + 12);
+    if (currentY + 15 < doc.internal.pageSize.height - 8) {
+        doc.line(10, currentY, 95, currentY);
+        doc.setFontSize(7.5).setFont("helvetica", "bold").setTextColor(0, 0, 0);
+        doc.text("APPROVED BY", 10, currentY + 3.5);
+        doc.setFontSize(6.5).setFont("helvetica", "normal").setTextColor(80, 80, 80);
+        doc.text("Name & Signature", 10, currentY + 7);
+        doc.text("Date:", 10, currentY + 10.5);
 
-        doc.line(160, currentY, 283, currentY);
-        doc.setFontSize(8).setFont("helvetica", "bold").setTextColor(0, 0, 0);
-        doc.text("RECEIVED BY", 160, currentY + 4);
-        doc.setFontSize(7).setFont("helvetica", "normal").setTextColor(80, 80, 80);
-        doc.text("Name & Signature", 160, currentY + 8);
-        doc.text("Date:", 160, currentY + 12);
+        doc.line(115, currentY, 200, currentY);
+        doc.setFontSize(7.5).setFont("helvetica", "bold").setTextColor(0, 0, 0);
+        doc.text("RECEIVED BY", 115, currentY + 3.5);
+        doc.setFontSize(6.5).setFont("helvetica", "normal").setTextColor(80, 80, 80);
+        doc.text("Name & Signature", 115, currentY + 7);
+        doc.text("Date:", 115, currentY + 10.5);
     }
 
-    doc.save(`WORKSHEET_${data.consolidatorNo}.pdf`);
+    doc.save(`PICKLIST_${data.consolidatorNo}.pdf`);
 }

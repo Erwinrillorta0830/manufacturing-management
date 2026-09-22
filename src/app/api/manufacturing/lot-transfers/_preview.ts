@@ -14,6 +14,7 @@ import {
     readDestinationBatchCandidates,
     resolveDestinationBatch
 } from "./_destination-batch";
+import { readLiveLotBalance, type LiveLotBalance } from "./_live-balance";
 import {
     movementsForBatch,
     movementsForLot,
@@ -46,10 +47,10 @@ import {
     normalizedBatch,
     nullableNumeric,
     numeric,
+    productUnitId,
     positiveCapacity,
     productId,
     profilesEqual,
-    sumMovementQuantities,
     unitId,
     validDate
 } from "./_values";
@@ -73,6 +74,7 @@ export interface TransferContext {
     targetBatchMovements: RecordValue[];
     sourceLotMovements: RecordValue[];
     targetLotMovements: RecordValue[];
+    liveBalance: LiveLotBalance;
     sourceProtectedAllocations: ProtectedAllocationSummary;
     targetProtectedAllocations: ProtectedAllocationSummary;
 }
@@ -88,23 +90,36 @@ export async function loadTransferContext(record: LotTransferRecord, excludeTran
         readProduct(record.productId)
     ]);
     const sourceInventoryLot = sourceInventoryLotLookup.row;
+    const targetBatchNo = record.targetBatchNo.trim() || record.sourceBatchNo.trim();
     const targetInventoryLotCandidates = await readDestinationBatchCandidates({
         lotId: record.targetLotId,
         productId: record.productId,
-        batchNo: record.targetBatchNo,
+        batchNo: targetBatchNo,
         readRows: directusRows
     });
     const targetInventoryLot = targetInventoryLotCandidates[0] || providedTargetInventoryLotLookup?.row || {};
     const targetInventoryLotLookup = targetInventoryLotCandidates[0]
         ? { row: targetInventoryLotCandidates[0], collection: MM_INVENTORY_LOT_COLLECTION }
         : providedTargetInventoryLotLookup;
+    const targetInventoryLotId = inventoryLotId(targetInventoryLot);
 
     const excludedTransfer = excludeTransferMovements ? { id: record.id, requestNo: record.requestNo } : undefined;
-    const [sourceMovements, targetBatchMovements, sourceLotMovements, targetLotMovements, sourceProtectedAllocations, targetProtectedAllocations] = await Promise.all([
+    const [sourceMovements, targetBatchMovements, sourceLotMovements, targetLotMovements, liveBalance, sourceProtectedAllocations, targetProtectedAllocations] = await Promise.all([
         movementsForBatch({ productId: record.productId, branchId: record.branchId, lotId: record.sourceLotId, batchNo: record.sourceBatchNo }, excludedTransfer),
-        movementsForBatch({ productId: record.productId, branchId: record.branchId, lotId: record.targetLotId, batchNo: record.targetBatchNo }, excludedTransfer),
+        movementsForBatch({ productId: record.productId, branchId: record.branchId, lotId: record.targetLotId, batchNo: targetBatchNo }, excludedTransfer),
         movementsForLot({ branchId: record.branchId, lotId: record.sourceLotId }, excludedTransfer),
         movementsForLot({ branchId: record.branchId, lotId: record.targetLotId }, excludedTransfer),
+        readLiveLotBalance({
+            branchId: record.branchId,
+            sourceLotId: record.sourceLotId,
+            sourceProductId: record.productId,
+            sourceInventoryLotId: record.sourceInventoryLotId,
+            sourceBatchNo: record.sourceBatchNo,
+            targetLotId: record.targetLotId,
+            targetProductId: record.productId,
+            targetInventoryLotId,
+            targetBatchNo
+        }),
         protectedAllocationsForInventoryLot({
             branchId: record.branchId,
             productId: record.productId,
@@ -146,6 +161,7 @@ export async function loadTransferContext(record: LotTransferRecord, excludeTran
         targetBatchMovements,
         sourceLotMovements,
         targetLotMovements,
+        liveBalance,
         sourceProtectedAllocations,
         targetProtectedAllocations
     };
@@ -200,10 +216,10 @@ export async function buildSingleLinePreview(record: LotTransferRecord, options:
     const targetBranchIdValue = branchId(context.targetInventoryLot) || branchId(context.targetLot);
     const sourceLotBranchId = branchId(context.sourceLot);
     const targetLotBranchId = branchId(context.targetLot);
-    const sourceQuantityBefore = sumMovementQuantities(context.sourceMovements);
-    const targetQuantityBefore = sumMovementQuantities(context.targetBatchMovements);
-    const sourceLotOccupiedBefore = Math.max(0, sumMovementQuantities(context.sourceLotMovements));
-    const targetLotOccupiedBefore = Math.max(0, sumMovementQuantities(context.targetLotMovements));
+    const sourceQuantityBefore = context.liveBalance.sourceBatchOnHand;
+    const targetQuantityBefore = context.liveBalance.targetBatchOnHand;
+    const sourceLotOccupiedBefore = context.liveBalance.sourceLotOccupied;
+    const targetLotOccupiedBefore = context.liveBalance.targetLotOccupied;
     const sourceReserved = context.sourceProtectedAllocations.totalQuantity;
     const targetReserved = context.targetProtectedAllocations.totalQuantity;
     const sourceExpiry = dateValue(context.sourceInventoryLot, ["expiry_date", "expiration_date", "expiryDate"]);
@@ -214,6 +230,7 @@ export async function buildSingleLinePreview(record: LotTransferRecord, options:
     const targetUnitCost = destinationBatchResolution.unitCost;
     const sourceUnitId = unitId(context.sourceLot);
     const targetUnitId = unitId(context.targetLot);
+    const sourceProductUnitId = productUnitId(context.sourceProduct);
     const sourceCapacity = nullableNumeric(firstValue(context.sourceLot, ["max_batch_capacity", "capacity"]));
     const targetCapacity = positiveCapacity(firstValue(context.targetLot, ["max_batch_capacity", "capacity"]));
     const targetCapacityRemaining = targetCapacity === null ? null : Math.max(0, targetCapacity - targetLotOccupiedBefore);
@@ -221,8 +238,11 @@ export async function buildSingleLinePreview(record: LotTransferRecord, options:
     const effectiveExpiry = earliestDate(sourceExpiry, targetExpiry);
     const today = manilaCalendarDate();
     const targetReferenceMatches = !record.targetInventoryLotId || record.targetInventoryLotId === targetInventoryLotIdValue;
+    const sameProductTransfer = sourceProductIdValue === record.productId
+        && (!targetInventoryLotIdValue || targetProductIdValue === record.productId);
     const targetRecordIsActive = destinationBatchResolution.action === "CREATE"
         || normalizeStatus(context.targetInventoryLot.status) === "ACTIVE";
+    const sourceAvailability = Math.max(0, sourceQuantityBefore - sourceReserved);
     const checks: ValidationCheck[] = [
         check("branch", "Same branch", record.branchId > 0 && sourceBranchIdValue === record.branchId && targetBranchIdValue === record.branchId && sourceLotBranchId === record.branchId && targetLotBranchId === record.branchId, "Source and destination records must belong to the requested branch."),
         check("product", "Same product", record.productId > 0 && sourceProductIdValue === record.productId && (!targetInventoryLotIdValue || targetProductIdValue === record.productId), "Source and destination batches must belong to the requested product."),
@@ -239,7 +259,9 @@ export async function buildSingleLinePreview(record: LotTransferRecord, options:
                 ? "All active protected allocations have an exact source identity."
                 : `Protected allocation reconciliation is required: ${context.sourceProtectedAllocations.unresolved.join(" ")}`
         ),
-        check("source-availability", "Source availability", Math.max(0, sourceQuantityBefore - sourceReserved) + LOT_TRANSFER_EPSILON >= record.quantity, `Available source quantity is ${Math.max(0, sourceQuantityBefore - sourceReserved)} after ${formatProtectedAllocationQuantity(sourceReserved)} of protected allocations.`),
+        check("source-live-balance", "Live source batch balance", context.liveBalance.sourceBatchFound, context.liveBalance.sourceBatchFound ? "The selected source batch was matched in the live batch-on-hand projection." : "The selected source batch could not be matched in the live batch-on-hand projection. Refresh and retry."),
+        check("source-lot-stock", "Source lot inventory", sourceLotOccupiedBefore > LOT_TRANSFER_EPSILON, sourceLotOccupiedBefore > LOT_TRANSFER_EPSILON ? `Source lot has ${formatProtectedAllocationQuantity(sourceLotOccupiedBefore)} on hand.` : "Source lot has no positive on-hand inventory. Select a source lot with available stock."),
+        check("source-availability", "Source availability", context.liveBalance.sourceBatchFound && sourceAvailability + LOT_TRANSFER_EPSILON >= record.quantity, context.liveBalance.sourceBatchFound ? `Available source quantity is ${formatProtectedAllocationQuantity(sourceAvailability)} after ${formatProtectedAllocationQuantity(sourceReserved)} of protected allocations.` : "Live source stock could not be verified for the selected batch."),
         check("target-capacity", "Target capacity", targetCapacityConfigured && (targetCapacityRemaining ?? 0) + LOT_TRANSFER_EPSILON >= record.quantity, targetCapacityConfigured ? `Destination lot currently contains ${targetLotOccupiedBefore}; configured capacity is ${targetCapacity}; remaining capacity is ${targetCapacityRemaining}.` : "Destination lot capacity is not configured. Set a positive max_batch_capacity before transferring stock."),
         check(
             "uom",
@@ -251,7 +273,21 @@ export async function buildSingleLinePreview(record: LotTransferRecord, options:
                     ? "Source and destination lots use the same UOM."
                     : `Source UOM ${sourceUnitId} and destination UOM ${targetUnitId} are incompatible; UOM conversion is not supported.`
         ),
-        check("allergen", "Allergen profile match", context.sourceAllergens.available && context.targetAllergens.available && profilesEqual(context.sourceAllergens.values, context.targetAllergens.values), context.sourceAllergens.available && context.targetAllergens.available ? "Source and destination allergen profiles match." : "Allergen profiles are unavailable; QA approval is blocked."),
+        check(
+            "product-uom",
+            "Product UOM compatibility",
+            sourceProductUnitId !== null
+                && sourceProductUnitId === sourceUnitId
+                && sourceProductUnitId === targetUnitId,
+            sourceProductUnitId === null
+                ? "The selected product has no configured UOM."
+                : sourceUnitId === null || targetUnitId === null
+                    ? "Source and destination lots must have explicit UOMs matching the selected product."
+                    : sourceProductUnitId === sourceUnitId && sourceProductUnitId === targetUnitId
+                        ? "Product and source/destination lots use the same UOM."
+                        : `Product UOM ${sourceProductUnitId} does not match source UOM ${sourceUnitId} and destination UOM ${targetUnitId}; UOM conversion is not supported.`
+        ),
+        check("allergen", "Allergen profile match", sameProductTransfer || (context.sourceAllergens.available && context.targetAllergens.available && profilesEqual(context.sourceAllergens.values, context.targetAllergens.values)), sameProductTransfer ? "Same product selected; allergen profile comparison is not required." : context.sourceAllergens.available && context.targetAllergens.available ? "Source and destination allergen profiles match." : "Allergen profiles are unavailable for a cross-product transfer."),
         check("dates", "Valid manufacturing and expiry dates", validDate(sourceMfg) && validDate(targetMfg) && validDate(sourceExpiry) && validDate(targetExpiry) && (!effectiveExpiry || dateOnly(effectiveExpiry)! >= today) && (!sourceMfg || !sourceExpiry || dateOnly(sourceMfg)! <= dateOnly(sourceExpiry)!) && (!targetMfg || !targetExpiry || dateOnly(targetMfg)! <= dateOnly(targetExpiry)!), "Manufacturing and expiry values must be valid, chronological, and not expired."),
         check("different-lot", "Different source and destination lots", record.sourceLotId !== record.targetLotId, "Source and destination lot IDs must be different."),
         check("different-batch", "Different source and destination batch", record.sourceLotId !== record.targetLotId || record.sourceInventoryLotId !== targetInventoryLotIdValue || normalizedBatch(record.sourceBatchNo) !== normalizedBatch(destinationBatchResolution.batchNo), "Source and destination must not be the same inventory batch.")

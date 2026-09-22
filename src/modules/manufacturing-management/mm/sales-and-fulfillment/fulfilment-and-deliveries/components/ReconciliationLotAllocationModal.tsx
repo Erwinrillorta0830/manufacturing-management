@@ -1,7 +1,7 @@
 // src/modules/manufacturing-management/mm/sales-and-fulfillment/fulfilment-and-deliveries/components/ReconciliationLotAllocationModal.tsx
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { LineItemReservation } from "../types";
@@ -11,11 +11,9 @@ import {
     Check,
     CheckCircle2,
     AlertTriangle,
- 
- 
     ArrowDownToLine,
     ShieldAlert,
- 
+
 } from "lucide-react";
 
 export interface ReconciliationLotAllocationModalProps {
@@ -29,6 +27,124 @@ export interface ReconciliationLotAllocationModalProps {
     reservations: LineItemReservation[];
     onConfirm: (updatedReservations: LineItemReservation[]) => void;
 }
+
+interface AllocationBatchRowProps {
+    resv: LineItemReservation;
+    originalIndex: number;
+    maxLimit: number;
+    onQtyChange: (originalIndex: number, rawVal: string) => void;
+    onFillMax: (originalIndex: number) => void;
+}
+
+const AllocationBatchRow = React.memo(function AllocationBatchRow({
+    resv,
+    originalIndex,
+    maxLimit,
+    onQtyChange,
+    onFillMax,
+}: AllocationBatchRowProps) {
+    const currentAlloc = Number(resv.returned_quantity || 0);
+    const [rawVal, setRawVal] = useState<string>("");
+    const [isFocused, setIsFocused] = useState<boolean>(false);
+
+    const displayVal = isFocused
+        ? rawVal
+        : currentAlloc === 0
+            ? ""
+            : String(currentAlloc);
+
+    const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+        setIsFocused(true);
+        setRawVal(currentAlloc === 0 ? "" : String(currentAlloc));
+        e.target.select();
+    };
+
+    const handleClick = (e: React.MouseEvent<HTMLInputElement>) => {
+        if (!isFocused) {
+            setIsFocused(true);
+            setRawVal(currentAlloc === 0 ? "" : String(currentAlloc));
+            (e.target as HTMLInputElement).select();
+        }
+    };
+
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const val = e.target.value;
+        if (val === "" || /^\d+$/.test(val)) {
+            setRawVal(val);
+            if (val !== "") {
+                onQtyChange(originalIndex, val);
+            }
+        }
+    };
+
+    const handleBlur = () => {
+        setIsFocused(false);
+        if (rawVal === "" || isNaN(parseInt(rawVal, 10))) {
+            setRawVal("");
+            onQtyChange(originalIndex, "0");
+        } else {
+            const parsed = parseInt(rawVal, 10);
+            const clamped = Math.max(0, Math.min(maxLimit, parsed));
+            setRawVal(clamped === 0 ? "" : String(clamped));
+            onQtyChange(originalIndex, String(clamped));
+        }
+    };
+
+    return (
+        <tr key={resv.reservation_id || originalIndex} className="hover:bg-muted/10 transition-colors">
+            {/* Batch Info */}
+            <td className="py-2.5 px-4 align-middle">
+                <div className="font-mono font-bold text-foreground text-xs">
+                    {resv.batch_no || "Standard Batch"}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-0.5">
+                    Status: <span className="font-medium text-foreground">{resv.status}</span>
+                </div>
+            </td>
+
+            {/* Picked Qty */}
+            <td className="py-2.5 px-3 text-center align-middle font-bold text-foreground">
+                {maxLimit}
+            </td>
+
+            {/* Return Qty Input */}
+            <td className="py-2.5 px-4 text-center align-middle">
+                <input
+                    type="number"
+                    min={0}
+                    max={maxLimit}
+                    value={displayVal}
+                    placeholder="0"
+                    onFocus={handleFocus}
+                    onClick={handleClick}
+                    onChange={handleChange}
+                    onBlur={handleBlur}
+                    className="w-24 h-8 text-center bg-background border border-rose-500/40 focus:border-rose-500 rounded-lg px-2 text-xs font-black text-foreground outline-none shadow-xs mx-auto"
+                />
+            </td>
+
+            {/* Quick Fill Max */}
+            <td className="py-2.5 px-3 text-center align-middle">
+                <button
+                    type="button"
+                    onClick={() => onFillMax(originalIndex)}
+                    disabled={currentAlloc === maxLimit}
+                    className="text-[10px] font-bold text-primary hover:text-primary/80 disabled:opacity-40 disabled:hover:text-primary transition-colors flex items-center justify-center gap-1 mx-auto cursor-pointer"
+                    title="Fill maximum allowed from this batch"
+                >
+                    <ArrowDownToLine className="h-3 w-3" /> Max
+                </button>
+            </td>
+        </tr>
+    );
+});
+
+const getReservationPickedQty = (r: LineItemReservation): number => {
+    if (r.picked_quantity !== undefined && r.picked_quantity !== null && !isNaN(Number(r.picked_quantity))) {
+        return Number(r.picked_quantity);
+    }
+    return Number(r.reserved_quantity || 0);
+};
 
 export default function ReconciliationLotAllocationModal({
     open,
@@ -56,14 +172,13 @@ export default function ReconciliationLotAllocationModal({
     if (open !== prevOpen || reservations !== prevReservations) {
         setPrevOpen(open);
         setPrevReservations(reservations);
-        if (open) {
-            setAllocations(
-                (reservations || []).map((r) => ({
-                    ...r,
-                    returned_quantity: Number(r.returned_quantity || 0),
-                }))
-            );
-        }
+        setAllocations(
+            (reservations || []).map((r) => ({
+                ...r,
+                returned_quantity: Number(r.returned_quantity || 0),
+            }))
+        );
+        setShowUnbalancedConfirm(false);
     }
 
     // Group allocations by Lot
@@ -71,7 +186,7 @@ export default function ReconciliationLotAllocationModal({
         const groups = new Map<
             string,
             {
-                lotId: number;
+                lotId?: number;
                 lotName: string;
                 lotNumber: string;
                 items: Array<{ reservation: LineItemReservation; originalIndex: number }>;
@@ -79,10 +194,10 @@ export default function ReconciliationLotAllocationModal({
         >();
 
         allocations.forEach((resv, idx) => {
-            const lotId = Number(resv.lot_id || 0);
-            const lotName = resv.lot_name || resv.lot_number || (lotId > 0 ? `Lot #${lotId}` : "Originating Lot");
-            const lotNumber = resv.lot_number || (lotId > 0 ? `LOT-${lotId}` : "");
-            const groupKey = `${lotId}:${lotName}`;
+            const lotId = resv.lot_id ? Number(resv.lot_id) : undefined;
+            const lotName = resv.lot_name || resv.lot_number || (lotId ? `Lot #${lotId}` : "Standard Lot");
+            const lotNumber = resv.lot_number || (lotId ? `LOT-${lotId}` : "");
+            const groupKey = `${lotId || 0}:${lotName}`;
 
             if (!groups.has(groupKey)) {
                 groups.set(groupKey, {
@@ -98,66 +213,42 @@ export default function ReconciliationLotAllocationModal({
         return Array.from(groups.values());
     }, [allocations]);
 
-    // Mass balance calculations
+    // Derived summary calculations
     const totalAllocated = useMemo(() => {
         return allocations.reduce((sum, r) => sum + (Number(r.returned_quantity) || 0), 0);
     }, [allocations]);
 
-    const remainingQty = requestedQuantity - totalAllocated;
+    const remainingQty = Math.max(0, requestedQuantity - totalAllocated);
     const isBalanced = totalAllocated === requestedQuantity;
     const isOverAllocated = totalAllocated > requestedQuantity;
 
-    // Auto-allocate action (prioritizes sequential originating batches)
-    // const handleAutoAllocate = () => {
-    //     let remainingToFill = requestedQuantity;
-    //     const next = allocations.map((resv) => {
-    //         const maxPick = Number(resv.picked_quantity || resv.reserved_quantity || 0);
-    //         const alloc = Math.min(maxPick, remainingToFill);
-    //         remainingToFill = Math.max(0, remainingToFill - alloc);
-    //         return {
-    //             ...resv,
-    //             returned_quantity: alloc,
-    //         };
-    //     });
-    //     setAllocations(next);
-    //     toast.info(`Auto-allocated ${requestedQuantity} ${uomName} across originating batches.`);
-    // };
 
-    // // Reset action
-    // const handleReset = () => {
-    //     setAllocations(
-    //         allocations.map((r) => ({
-    //             ...r,
-    //             returned_quantity: 0,
-    //         }))
-    //     );
-    //     toast.info("Cleared all batch return allocations.");
-    // };
 
     // Quick fill max for a single batch
-    const handleFillMax = (targetIndex: number) => {
-        const target = allocations[targetIndex];
-        const maxPick = Number(target.picked_quantity || target.reserved_quantity || 0);
-        const currentOtherAlloc = totalAllocated - (Number(target.returned_quantity) || 0);
-        const needed = Math.max(0, requestedQuantity - currentOtherAlloc);
-        const alloc = Math.min(maxPick, needed);
-
-        setAllocations((prev) =>
-            prev.map((r, idx) => (idx === targetIndex ? { ...r, returned_quantity: alloc } : r))
-        );
-    };
+    const handleFillMax = useCallback((targetIndex: number) => {
+        setAllocations((prev) => {
+            const target = prev[targetIndex];
+            if (!target) return prev;
+            const maxPick = getReservationPickedQty(target);
+            const currentTotal = prev.reduce((sum, r) => sum + (Number(r.returned_quantity) || 0), 0);
+            const currentOtherAlloc = currentTotal - (Number(target.returned_quantity) || 0);
+            const needed = Math.max(0, requestedQuantity - currentOtherAlloc);
+            const alloc = Math.min(maxPick, needed);
+            return prev.map((r, idx) => (idx === targetIndex ? { ...r, returned_quantity: alloc } : r));
+        });
+    }, [requestedQuantity]);
 
     // Quantity change handler for a single batch with empty-input grace period
-    const handleQtyChange = (targetIndex: number, rawVal: string) => {
+    const handleQtyChange = useCallback((targetIndex: number, rawVal: string) => {
         const parsed = rawVal === "" ? 0 : parseInt(rawVal, 10);
-        const target = allocations[targetIndex];
-        const maxPick = Number(target.picked_quantity || target.reserved_quantity || 0);
-        const validVal = isNaN(parsed) ? 0 : Math.max(0, Math.min(maxPick, parsed));
-
-        setAllocations((prev) =>
-            prev.map((r, idx) => (idx === targetIndex ? { ...r, returned_quantity: validVal } : r))
-        );
-    };
+        setAllocations((prev) => {
+            const target = prev[targetIndex];
+            if (!target) return prev;
+            const maxPick = getReservationPickedQty(target);
+            const validVal = isNaN(parsed) ? 0 : Math.max(0, Math.min(maxPick, parsed));
+            return prev.map((r, idx) => (idx === targetIndex ? { ...r, returned_quantity: validVal } : r));
+        });
+    }, []);
 
     // Confirm & Apply Allocation
     const handleConfirm = () => {
@@ -289,31 +380,6 @@ export default function ReconciliationLotAllocationModal({
                                 }}
                             />
                         </div>
-
-                        {/* Quick Strategy Actions */}
-                        {/* <div className="flex items-center justify-between pt-1">
-                            <div className="flex items-center gap-2">
-                                <button
-                                    type="button"
-                                    onClick={handleAutoAllocate}
-                                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-primary/10 text-primary hover:bg-primary/20 transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                                >
-                                    <Layers className="h-3.5 w-3.5" />
-                                    Auto-Allocate ({allocations.length > 1 ? "Originating Batches" : "Batch"})
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={handleReset}
-                                    className="px-3 py-1.5 rounded-lg text-xs font-semibold border bg-background hover:bg-muted text-muted-foreground hover:text-foreground transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                                >
-                                    <RotateCcw className="h-3 w-3" />
-                                    Clear
-                                </button>
-                            </div>
-                            <span className="text-[11px] text-muted-foreground font-medium">
-                                Originating Batches: <strong className="text-foreground">{allocations.length}</strong>
-                            </span>
-                        </div> */}
                     </div>
 
                     {/* Multi-Lot & Batch List */}
@@ -335,11 +401,6 @@ export default function ReconciliationLotAllocationModal({
                                             <span className="font-bold text-foreground text-xs">
                                                 {group.lotName}
                                             </span>
-                                            {group.lotNumber && (
-                                                <span className="text-[10px] text-muted-foreground font-mono bg-background px-1.5 py-0.5 rounded border">
-                                                    {group.lotNumber}
-                                                </span>
-                                            )}
                                         </div>
                                         <span className="text-[10px] text-muted-foreground font-medium">
                                             {group.items.length} {group.items.length === 1 ? "batch" : "batches"}
@@ -358,63 +419,17 @@ export default function ReconciliationLotAllocationModal({
                                         </thead>
                                         <tbody className="divide-y">
                                             {group.items.map(({ reservation: resv, originalIndex }) => {
-                                                const maxLimit = Number(
-                                                    resv.picked_quantity || resv.reserved_quantity || 0
-                                                );
-                                                const currentAlloc = Number(resv.returned_quantity || 0);
+                                                const maxLimit = getReservationPickedQty(resv);
 
                                                 return (
-                                                    <tr key={resv.reservation_id || originalIndex} className="hover:bg-muted/10 transition-colors">
-                                                        {/* Batch Info */}
-                                                        <td className="py-2.5 px-4 align-middle">
-                                                            <div className="font-mono font-bold text-foreground text-xs">
-                                                                {resv.batch_no || "Standard Batch"}
-                                                            </div>
-                                                            <div className="text-[10px] text-muted-foreground mt-0.5">
-                                                                Status: <span className="font-medium text-foreground">{resv.status}</span>
-                                                            </div>
-                                                        </td>
-
-                                                        {/* Picked Qty */}
-                                                        <td className="py-2.5 px-3 text-center align-middle font-bold text-foreground">
-                                                            {maxLimit}
-                                                        </td>
-
-                                                        {/* Return Qty Input */}
-                                                        <td className="py-2.5 px-4 text-center align-middle">
-                                                            <input
-                                                                type="number"
-                                                                min={0}
-                                                                max={maxLimit}
-                                                                value={currentAlloc === 0 ? "" : currentAlloc}
-                                                                placeholder="0"
-                                                                onFocus={(e) => e.target.select()}
-                                                                onClick={(e) => (e.target as HTMLInputElement).select()}
-                                                                onChange={(e) =>
-                                                                    handleQtyChange(originalIndex, e.target.value)
-                                                                }
-                                                                onBlur={(e) => {
-                                                                    if (e.target.value === "" || isNaN(parseInt(e.target.value, 10))) {
-                                                                        handleQtyChange(originalIndex, "0");
-                                                                    }
-                                                                }}
-                                                                className="w-24 h-8 text-center bg-background border border-rose-500/40 focus:border-rose-500 rounded-lg px-2 text-xs font-black text-foreground outline-none shadow-xs mx-auto"
-                                                            />
-                                                        </td>
-
-                                                        {/* Quick Fill Max */}
-                                                        <td className="py-2.5 px-3 text-center align-middle">
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => handleFillMax(originalIndex)}
-                                                                disabled={currentAlloc === maxLimit}
-                                                                className="text-[10px] font-bold text-primary hover:text-primary/80 disabled:opacity-40 disabled:hover:text-primary transition-colors flex items-center justify-center gap-1 mx-auto cursor-pointer"
-                                                                title="Fill maximum allowed from this batch"
-                                                            >
-                                                                <ArrowDownToLine className="h-3 w-3" /> Max
-                                                            </button>
-                                                        </td>
-                                                    </tr>
+                                                    <AllocationBatchRow
+                                                        key={resv.reservation_id || originalIndex}
+                                                        resv={resv}
+                                                        originalIndex={originalIndex}
+                                                        maxLimit={maxLimit}
+                                                        onQtyChange={handleQtyChange}
+                                                        onFillMax={handleFillMax}
+                                                    />
                                                 );
                                             })}
                                         </tbody>

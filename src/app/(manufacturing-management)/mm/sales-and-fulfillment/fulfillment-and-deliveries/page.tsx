@@ -18,6 +18,11 @@ export const dynamic = "force-dynamic";
 
 const COOKIE_NAME = "vos_access_token";
 
+export const metadata = {
+    title: "Fulfilment & Deliveries | MM",
+    description: "Fulfilment & Deliveries"
+};
+
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
     try {
         const parts = token.split(".");

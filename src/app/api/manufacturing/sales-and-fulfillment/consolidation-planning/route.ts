@@ -130,12 +130,19 @@ export async function GET(req: NextRequest) {
         const allInvoiceIds = [...new Set(invJunctions.map((j) => Number(j.invoice_id)).filter(Boolean))];
         let salesOrderMap = new Map<number, { order_id: number; order_no: string; branch_id: number; total_amount: number; net_amount: number; customer_code: string; created_date: string }>();
         let customerNameMap = new Map<string, string>();
+        const sodByOrder = new Map<number, Array<{ detail_id: number; order_id: number; product_id: number; ordered_quantity: number }>>();
 
         if (allInvoiceIds.length > 0) {
-            const soRes = await fetch(
-                `${DIRECTUS_URL}/items/sales_order?filter[order_id][_in]=${allInvoiceIds.join(",")}&fields=order_id,order_no,branch_id,total_amount,net_amount,customer_code,created_date&limit=-1`,
-                { headers: directusHeaders, cache: "no-store" }
-            );
+            const [soRes, sodRes] = await Promise.all([
+                fetch(
+                    `${DIRECTUS_URL}/items/sales_order?filter[order_id][_in]=${allInvoiceIds.join(",")}&fields=order_id,order_no,branch_id,total_amount,net_amount,customer_code,created_date&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                ),
+                fetch(
+                    `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_in]=${allInvoiceIds.join(",")}&fields=detail_id,order_id,product_id,ordered_quantity&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                ),
+            ]);
             if (soRes.ok) {
                 const soData: { order_id: number; order_no: string; branch_id: number; total_amount: number; net_amount: number; customer_code: string; created_date: string }[] = (await soRes.json()).data || [];
                 salesOrderMap = new Map(soData.map((s) => [s.order_id, s]));
@@ -152,9 +159,22 @@ export async function GET(req: NextRequest) {
                     }
                 }
             }
+            if (sodRes.ok) {
+                const sodData: Array<{ detail_id: number; order_id: number; product_id: number; ordered_quantity: number }> = (await sodRes.json()).data || [];
+                for (const sod of sodData) {
+                    const list = sodByOrder.get(Number(sod.order_id)) || [];
+                    list.push(sod);
+                    sodByOrder.set(Number(sod.order_id), list);
+                }
+            }
         }
 
-        const allProductIds = [...new Set(detJunctions.map((d) => d.product_id).filter(Boolean))];
+        const allProductIds = [
+            ...new Set([
+                ...detJunctions.map((d) => d.product_id),
+                ...Array.from(sodByOrder.values()).flatMap((rows) => rows.map((r) => r.product_id)),
+            ].filter(Boolean)),
+        ];
         let productMap = new Map<number, { product_name: string; product_code: string }>();
         if (allProductIds.length > 0) {
             const prodRes = await fetch(
@@ -175,6 +195,18 @@ export async function GET(req: NextRequest) {
                 .filter((j) => j.invoice_id !== null)
                 .map((j) => {
                     const so = salesOrderMap.get(j.invoice_id);
+                    const orderDetails = sodByOrder.get(j.invoice_id) || [];
+                    const prods = orderDetails.map((od) => {
+                        const prod = productMap.get(Number(od.product_id));
+                        return {
+                            productId: Number(od.product_id),
+                            productName: prod?.product_name || `Product #${od.product_id}`,
+                            productCode: prod?.product_code || "",
+                            quantity: Number(od.ordered_quantity || 0),
+                            versionId: null,
+                            versionName: null,
+                        };
+                    });
                     return {
                         id: j.id,
                         consolidatorId: j.consolidator_id,
@@ -183,6 +215,7 @@ export async function GET(req: NextRequest) {
                         branchId: so?.branch_id ?? c.branch_id,
                         customerName: (so?.customer_code && customerNameMap.get(so.customer_code)) || so?.customer_code || "Standard Fulfillment",
                         createdAt: so?.created_date || j.created_at,
+                        products: prods,
                     };
                 });
 
@@ -497,15 +530,29 @@ export async function POST(req: NextRequest) {
                     };
                 }),
                 dispatches: [],
-                invoices: siData.map((s) => ({
-                    id: 0,
-                    consolidatorId: newId,
-                    invoiceId: s.invoice_id,
-                    invoiceNo: s.invoice_no,
-                    branchId: s.branch_id,
-                    customerName: customerMap.get(s.customer_code) || s.customer_code || "",
-                    createdAt: new Date().toISOString(),
-                })),
+                invoices: siData.map((s) => {
+                    const orderProds = detCheck.filter((d) => d.invoice_no === s.invoice_id);
+                    return {
+                        id: 0,
+                        consolidatorId: newId,
+                        invoiceId: s.invoice_id,
+                        invoiceNo: s.invoice_no,
+                        branchId: s.branch_id,
+                        customerName: customerMap.get(s.customer_code) || s.customer_code || "",
+                        createdAt: new Date().toISOString(),
+                        products: orderProds.map((d) => {
+                            const prod = productMap.get(d.product_id);
+                            return {
+                                productId: d.product_id,
+                                productName: prod?.product_name || `Product #${d.product_id}`,
+                                productCode: prod?.product_code || "",
+                                quantity: Number(d.quantity || 0),
+                                versionId: null,
+                                versionName: null,
+                            };
+                        }),
+                    };
+                }),
             });
         } catch (e) {
             // Rollback on failure

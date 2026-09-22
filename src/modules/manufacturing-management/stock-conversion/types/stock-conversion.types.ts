@@ -33,6 +33,7 @@ export interface StockConversionProduct {
   inventoryError?: boolean;
   parentId?: number | null;
   isParent?: boolean;
+  productType?: number | string | { id?: number; name?: string; type_name?: string } | null;
   availableUnits?: UnitTarget[];
 }
 

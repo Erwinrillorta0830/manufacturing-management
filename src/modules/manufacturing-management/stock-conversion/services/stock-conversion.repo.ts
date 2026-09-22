@@ -77,7 +77,7 @@ interface StockAdjustmentHeaderPayload {
 export const stockConversionRepo = {
   async fetchProducts(limit: number, offset: number, filters?: string) {
     const headers = getHeaders();
-    const url = `${DIRECTUS_API}/items/products?limit=${limit}&offset=${offset}&meta=filter_count&fields=product_id,product_name,description,product_code,parent_id,unit_of_measurement,unit_of_measurement_count,product_brand,product_category,cost_per_unit,price_per_unit,product_supplier.id,product_supplier.supplier_name,product_supplier.supplier_shortcut,product_per_supplier.supplier_id.id,product_per_supplier.supplier_id.supplier_name,product_per_supplier.supplier_id.supplier_shortcut&sort=product_name${filters ? `&${filters}` : ""}`;
+    const url = `${DIRECTUS_API}/items/products?limit=${limit}&offset=${offset}&meta=filter_count&fields=product_id,product_name,description,product_code,parent_id,unit_of_measurement,unit_of_measurement_count,product_brand,product_category,product_type,cost_per_unit,price_per_unit,product_supplier.id,product_supplier.supplier_name,product_supplier.supplier_shortcut,product_per_supplier.supplier_id.id,product_per_supplier.supplier_id.supplier_name,product_per_supplier.supplier_id.supplier_shortcut&sort=product_name${filters ? `&${filters}` : ""}`;
     
     // console.log(`[Repo] Fetching products from Directus: ${url}`);
     const res = await fetchWithTimeout(url, { headers, cache: "no-store" });
@@ -159,7 +159,7 @@ export const stockConversionRepo = {
     return res.ok ? (await res.json()).data : [];
   },
 
-  async fetchInventory(token?: string, branchId?: number, queryParams?: string) {
+  async fetchInventory(token?: string, branchId?: number, queryParams?: string): Promise<Record<string, number>> {
     if (!SPRING_API) return {};
 
     // Cache inventory per branch for 60 seconds to prevent redundant slow Spring calls
@@ -168,14 +168,14 @@ export const stockConversionRepo = {
 
     // Only use cache for branch-level fetches (not product-specific queries)
     if (!queryParams) {
-      const cached = getCached<Record<number, number>>(CACHE_KEY);
+      const cached = getCached<Record<string, number>>(CACHE_KEY);
       if (cached) {
         // console.log(`[Repo] Inventory cache HIT for branch ${branchId}`);
         return cached;
       }
     }
 
-    const invMap: Record<number, number> = {};
+    const invMap: Record<string, number> = {};
 
     // Use Spring Boot /api/mm-product-onhand — authoritative aggregated on-hand per product
     try {
@@ -200,10 +200,48 @@ export const stockConversionRepo = {
         params.append("branch", String(branchId));
       }
 
-      // Parse productIds from queryParams if present
+      // Parse product / unit filters from queryParams if present
       if (queryParams) {
         const qp = new URLSearchParams(queryParams);
+        const singleProduct = qp.get("product") || qp.get("product_id") || qp.get("productId");
+        const singleUnit = qp.get("unit") || qp.get("unit_id") || qp.get("unitId");
         const productIds = qp.get("productIds");
+
+        if (singleProduct) {
+          params.set("product", singleProduct);
+          if (singleUnit) {
+            params.set("unit", singleUnit);
+          }
+          const url = `${SPRING_API}/api/mm-product-onhand/filter?${params.toString()}`;
+          try {
+            const res = await fetchWithTimeout(url, {
+              headers: { "Content-Type": "application/json", "Accept": "application/json", ...(effectiveToken ? { Authorization: `Bearer ${effectiveToken}` } : {}) },
+              cache: "no-store",
+            }, 15000);
+            if (res.ok) {
+              const data = await res.json();
+              const items = Array.isArray(data) ? data : (data?.data || []);
+              items.forEach((item: Record<string, unknown>) => {
+                const pId = Number(item.productId || item.product_id || 0);
+                const uId = Number(item.unitId || item.unit_id || 0);
+                const onhand = Number(item.onhandQuantity ?? item.onhand_quantity ?? 0);
+                if (pId > 0) {
+                  const cleanOnhand = Math.max(0, onhand);
+                  if (uId > 0) {
+                    invMap[`${pId}:${uId}`] = cleanOnhand;
+                  }
+                  if (!singleUnit || Number(singleUnit) === uId) {
+                    invMap[pId] = (invMap[pId] || 0) + cleanOnhand;
+                  }
+                }
+              });
+            }
+          } catch {
+            // ignore per-product failure
+          }
+          return invMap;
+        }
+
         if (productIds) {
           // If querying specific products, call product-onhand for each
           const ids = productIds.split(",").map(Number).filter(Boolean);
@@ -220,8 +258,15 @@ export const stockConversionRepo = {
                 const items = Array.isArray(data) ? data : (data?.data || []);
                 items.forEach((item: Record<string, unknown>) => {
                   const pId = Number(item.productId || item.product_id || 0);
+                  const uId = Number(item.unitId || item.unit_id || 0);
                   const onhand = Number(item.onhandQuantity ?? item.onhand_quantity ?? 0);
-                  if (pId > 0) invMap[pId] = Math.max(0, onhand);
+                  if (pId > 0) {
+                    const cleanOnhand = Math.max(0, onhand);
+                    if (uId > 0) {
+                      invMap[`${pId}:${uId}`] = cleanOnhand;
+                    }
+                    invMap[pId] = (invMap[pId] || 0) + cleanOnhand;
+                  }
                 });
               }
             } catch {
@@ -229,7 +274,6 @@ export const stockConversionRepo = {
             }
             params.delete("product");
           }
-          // console.log(`[StockConversionRepo] Product-onhand map (specific products):`, Object.entries(invMap).map(([p, q]) => `Product ${p}: ${q}`));
           return invMap;
         }
       }
@@ -248,12 +292,19 @@ export const stockConversionRepo = {
         // console.log(`[StockConversionRepo] Product-onhand entries from Spring: ${items.length} (Branch: ${branchId || 'All'})`);
         items.forEach((item: Record<string, unknown>) => {
           const pId = Number(item.productId || item.product_id || 0);
+          const uId = Number(item.unitId || item.unit_id || 0);
           const itemBranchId = item.branchId ?? item.branch_id;
           if (branchId !== undefined && itemBranchId !== undefined && Number(itemBranchId) !== Number(branchId)) {
             return;
           }
           const onhand = Number(item.onhandQuantity ?? item.onhand_quantity ?? 0);
-          if (pId > 0) invMap[pId] = Math.max(0, onhand);
+          if (pId > 0) {
+            const cleanOnhand = Math.max(0, onhand);
+            if (uId > 0) {
+              invMap[`${pId}:${uId}`] = cleanOnhand;
+            }
+            invMap[pId] = Math.max(invMap[pId] || 0, cleanOnhand);
+          }
         });
         // console.log(`[StockConversionRepo] Final inventory balance map:`, Object.entries(invMap).map(([p, q]) => `Product ${p}: ${q}`));
       } else {

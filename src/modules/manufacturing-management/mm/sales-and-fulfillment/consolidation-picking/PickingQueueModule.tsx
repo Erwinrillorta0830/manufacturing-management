@@ -1,12 +1,14 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Search, ScanLine, Building2 } from "lucide-react";
+import { Search, ScanLine, Building2, Printer, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { InvoiceConsolidation, Branch } from "../shared/consolidation-types";
-import { fetchPickingQueue, fetchBranches } from "../shared/consolidation-api";
+import { fetchPickingQueue, fetchBranches, fetchAllocationsWithBatches, fetchConsolidationByNo } from "../shared/consolidation-api";
+import { generateConsolidationPDF } from "../consolidation-planning/utils/ConsolidationSummaryPrint";
 import PickingModal from "./components/PickingModal";
 import {
     ConsolidationEmptyState,
@@ -26,6 +28,7 @@ export default function PickingQueueModule() {
     const [debouncedSearch, setDebouncedSearch] = useState("");
     const [selectedBatch, setSelectedBatch] = useState<InvoiceConsolidation | null>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [printingBatchId, setPrintingBatchId] = useState<number | null>(null);
 
     useEffect(() => {
         const handler = setTimeout(() => setDebouncedSearch(searchQuery), 400);
@@ -73,6 +76,86 @@ export default function PickingQueueModule() {
 
     const pickedTotal = (batch: InvoiceConsolidation) => batch.details?.reduce((s, d) => s + d.pickedQuantity, 0) || 0;
     const orderedTotal = (batch: InvoiceConsolidation) => batch.details?.reduce((s, d) => s + d.orderedQuantity, 0) || 0;
+
+    const handlePrintBatch = async (batch: InvoiceConsolidation) => {
+        setPrintingBatchId(batch.id);
+        try {
+            toast.info(`Generating Pick List for ${batch.consolidatorNo}...`);
+
+            const [fullBatch, allocResult] = await Promise.all([
+                fetchConsolidationByNo(batch.consolidatorNo).catch(() => batch),
+                fetchAllocationsWithBatches(batch.id).catch(() => ({ allocations: [], availableBatches: [] })),
+            ]);
+
+            const targetBatch = fullBatch || batch;
+            const printAllocations = allocResult.allocations || [];
+
+            const detailMap = new Map<number, {
+                productId: number;
+                productCode: string;
+                productName: string;
+                brand: string;
+                category: string;
+                unit: string;
+                orderedQuantity: number;
+                pickedQuantity: number;
+            }>();
+
+            for (const d of targetBatch.details || []) {
+                const existing = detailMap.get(d.productId);
+                if (existing) {
+                    existing.orderedQuantity += d.orderedQuantity;
+                    existing.pickedQuantity += Number(d.pickedQuantity || 0);
+                } else {
+                    detailMap.set(d.productId, {
+                        productId: d.productId,
+                        productCode: d.productCode,
+                        productName: d.productName,
+                        brand: d.brand || "Unbranded",
+                        category: d.category || "Uncategorized",
+                        unit: d.unit || "-",
+                        orderedQuantity: d.orderedQuantity,
+                        pickedQuantity: Number(d.pickedQuantity || 0),
+                    });
+                }
+            }
+
+            await generateConsolidationPDF({
+                consolidatorNo: targetBatch.consolidatorNo,
+                branchName: targetBatch.branchName || `Branch #${targetBatch.branchId}`,
+                status: targetBatch.status,
+                createdAt: targetBatch.createdAt,
+                details: Array.from(detailMap.values()),
+                invoices: (targetBatch.invoices || []).map((inv) => ({
+                    invoiceNo: inv.invoiceNo,
+                    customerName: inv.customerName,
+                    products: (inv.products || []).map((p) => ({
+                        productName: p.productName,
+                        productCode: p.productCode,
+                        quantity: p.quantity,
+                    })),
+                })),
+                totalInvoices: targetBatch.invoices?.length || 0,
+                allocations: printAllocations.map((a) => ({
+                    productId: a.productId,
+                    productName: a.productName,
+                    lotName: a.lotName || `Lot #${a.lotId}`,
+                    batchNo: a.batchNo || "N/A",
+                    manufacturingDate: a.manufacturingDate || null,
+                    expiryDate: a.expiryDate || null,
+                    quantity: Number(a.quantity || 0),
+                })),
+            });
+
+            toast.success(`Pick List generated for ${batch.consolidatorNo}`);
+        } catch (err: unknown) {
+            console.error("Failed to print pick list:", err);
+            const message = err instanceof Error ? err.message : "Failed to print pick list";
+            toast.error(message);
+        } finally {
+            setPrintingBatchId(null);
+        }
+    };
 
     return (
         <ConsolidationShell>
@@ -128,11 +211,13 @@ export default function PickingQueueModule() {
                                 const picked = pickedTotal(batch);
                                 const ordered = orderedTotal(batch);
                                 return (
-                                    <button
-                                        type="button"
+                                    <div
+                                        role="button"
+                                        tabIndex={0}
                                         key={batch.id}
                                         onClick={() => handleBatchClick(batch)}
-                                        className="group rounded-xl border bg-card p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-blue-500/40 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"
+                                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") handleBatchClick(batch); }}
+                                        className="group rounded-xl border bg-card p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-blue-500/40 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 cursor-pointer"
                                     >
                                         <div className="flex items-start justify-between mb-4">
                                             <div className="min-w-0 flex-1">
@@ -156,15 +241,34 @@ export default function PickingQueueModule() {
                                             </div>
                                         </div>
 
-                                        <div className="mt-4 flex items-center justify-between">
+                                        <div className="mt-4 flex items-center justify-between pt-2 border-t border-border/40">
                                             <span className="text-[10px] font-bold text-muted-foreground">
                                                 {batch.invoices?.length || 0} invoice(s)
                                             </span>
-                                            <span className="text-[9px] font-black uppercase tracking-widest text-blue-600 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
-                                                Open &rarr;
-                                            </span>
+                                            <div className="flex items-center gap-2">
+                                                <button
+                                                    type="button"
+                                                    title="Print Warehouse Pick List"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handlePrintBatch(batch);
+                                                    }}
+                                                    disabled={printingBatchId === batch.id}
+                                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-border/70 hover:border-primary/40 bg-muted/40 hover:bg-primary/10 text-muted-foreground hover:text-primary text-[10px] font-bold transition-all cursor-pointer"
+                                                >
+                                                    {printingBatchId === batch.id ? (
+                                                        <Loader2 className="h-3 w-3 animate-spin text-primary" />
+                                                    ) : (
+                                                        <Printer className="h-3 w-3 text-primary" />
+                                                    )}
+                                                    <span>Print</span>
+                                                </button>
+                                                <span className="text-[9px] font-black uppercase tracking-widest text-blue-600 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                                                    Open &rarr;
+                                                </span>
+                                            </div>
                                         </div>
-                                    </button>
+                                    </div>
                                 );
                         })}
                     </div>

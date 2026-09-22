@@ -1,19 +1,34 @@
 import { NextResponse } from "next/server";
-import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
-import { getUserIdFromToken } from "@/app/api/manufacturing/invoice-consolidation/_auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const DIRECTUS_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "").replace(/\/+$/, "");
+const DIRECTUS_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "";
+
+function directusHeaders() {
+    const h: Record<string, string> = { "Content-Type": "application/json" };
+    if (DIRECTUS_TOKEN) h.Authorization = `Bearer ${DIRECTUS_TOKEN}`;
+    return h;
+}
+
 export async function GET() {
-    if (!(await getUserIdFromToken())) return NextResponse.json({ error: "Authentication is required." }, { status: 401 });
-    const response = await fetch(`${DIRECTUS_URL}/items/sales_invoice_type?fields=id,type,isOfficial,max_length&sort=type&limit=-1`, { headers, cache: "no-store" });
-    if (!response.ok) return NextResponse.json({ error: "Failed to load receipt types." }, { status: 503 });
-    const rows = (await response.json()).data || [];
-    return NextResponse.json(rows.map((row: Record<string, unknown>) => ({
-        id: Number(row.id),
-        type: String(row.type || "Invoice"),
-        isOfficial: row.isOfficial === true || row.isOfficial === 1 || row.isOfficial === "1",
-        maxLength: Number(row.max_length || 0),
-    })));
+    try {
+        const url = `${DIRECTUS_BASE}/items/sales_invoice_type?sort=type`;
+        
+        const response = await fetch(url, {
+            cache: "no-store",
+            headers: directusHeaders(),
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            return NextResponse.json({ error: "Failed to fetch invoice types", details: errorText }, { status: response.status });
+        }
+
+        const data = await response.json();
+        return NextResponse.json(data.data || []);
+    } catch (err: unknown) {
+        return NextResponse.json({ error: "Internal Server Error", details: err instanceof Error ? err.message : String(err) }, { status: 500 });
+    }
 }

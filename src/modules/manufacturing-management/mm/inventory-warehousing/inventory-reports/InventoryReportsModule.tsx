@@ -5,9 +5,11 @@ import { motion } from "framer-motion";
 import { ShieldAlert } from "lucide-react";
 import { useInventoryReports } from "./hooks/useInventoryReports";
 import { ReportSummaryCards } from "./components/ReportSummaryCards";
+// import { LowStockCarousel } from "./components/LowStockCarousel";
 import { ReportFilters } from "./components/ReportFilters";
 import { InventoryReportsTable } from "./components/InventoryReportsTable";
 import { InventoryReportExportModal } from "./components/InventoryReportExportModal";
+// import { moduleWidgets } from "./types";
 
 export default function InventoryReportsModule() {
     const {
@@ -80,6 +82,30 @@ export default function InventoryReportsModule() {
             <motion.div variants={itemVariants}>
                 <ReportSummaryCards metrics={metrics} loading={loading} />
             </motion.div>
+
+            {/* Low Stock & Critical Stock Alerts Carousel (Full Width) */}
+            {/* {moduleWidgets.inventoryReports.lowStockAlerts && (
+                <motion.div variants={itemVariants}>
+                    <LowStockCarousel
+                        config={{
+                            enabled: true,
+                            maxItems: 16,
+                            statuses: ["out_of_stock", "low_stock"],
+                            onProductClick: (productId) => {
+                                if (!expandedProductIds.has(productId)) {
+                                    toggleProductExpand(productId);
+                                }
+                                const rowEl = document.getElementById(`product-row-${productId}`);
+                                if (rowEl) {
+                                    rowEl.scrollIntoView({ behavior: "smooth", block: "center" });
+                                }
+                            },
+                        }}
+                        products={products}
+                        loading={loading}
+                    />
+                </motion.div>
+            )} */}
 
             {/* Filters Toolbar */}
             <motion.div variants={itemVariants}>

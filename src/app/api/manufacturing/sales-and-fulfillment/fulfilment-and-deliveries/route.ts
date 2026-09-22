@@ -20,6 +20,7 @@ export interface LineItemReservation {
     picked_quantity: number;
     returned_quantity?: number;
     status: string;
+    created_at?: string;
 }
 
 interface DirectusConsolidator {
@@ -371,6 +372,19 @@ export async function GET(req: NextRequest) {
             const chunk = candidateStringKeys.slice(i, i + chunkSize);
             fetchPromises.push(
                 fetch(
+                    `${DIRECTUS_URL}/items/sales_invoice_details?filter[order_id][_in]=${chunk.map((x) => encodeURIComponent(x)).join(",")}&fields=detail_id,order_id,invoice_no,product_id,quantity&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                )
+                    .then((res) => (res.ok ? res.json() : { data: [] }))
+                    .then((json) => {
+                        if (json.data && Array.isArray(json.data)) {
+                            rawSidList.push(...json.data);
+                        }
+                    })
+                    .catch((err) => console.warn("[fulfilment-and-deliveries API] Error fetching sales_invoice_details by string order_id:", err))
+            );
+            fetchPromises.push(
+                fetch(
                     `${DIRECTUS_URL}/items/sales_invoice?filter[order_id][_in]=${chunk.map((x) => encodeURIComponent(x)).join(",")}&fields=*&limit=-1`,
                     { headers: directusHeaders, cache: "no-store" }
                 )
@@ -434,7 +448,20 @@ export async function GET(req: NextRequest) {
         // Deduplicate and index invoices with relational unwrap
         const invoiceMapById = new Map<number, DirectusInvoice>();
         const invoiceMapByOrderKey = new Map<string, DirectusInvoice>();
+        const invoicesByOrderKey = new Map<string, DirectusInvoice[]>();
         const invoiceMapByInvoiceNo = new Map<string, DirectusInvoice>();
+
+        const addInvoiceToOrder = (key: string, inv: DirectusInvoice) => {
+            const k = key.toLowerCase().trim();
+            if (!invoicesByOrderKey.has(k)) {
+                invoicesByOrderKey.set(k, []);
+            }
+            const list = invoicesByOrderKey.get(k)!;
+            const targetId = Number(inv.invoice_id || inv.id);
+            if (!list.some((existing) => Number(existing.invoice_id || existing.id) === targetId)) {
+                list.push(inv);
+            }
+        };
 
         for (const rawInv of allInvoices) {
             const invId = Number(rawInv.invoice_id || rawInv.id);
@@ -463,12 +490,15 @@ export async function GET(req: NextRequest) {
 
             if (ordIdStr) {
                 invoiceMapByOrderKey.set(ordIdStr, rawInv);
+                addInvoiceToOrder(ordIdStr, rawInv);
             }
             if (ordIdNum) {
                 invoiceMapByOrderKey.set(String(ordIdNum), rawInv);
+                addInvoiceToOrder(String(ordIdNum), rawInv);
             }
             if (ordNoFromRel) {
                 invoiceMapByOrderKey.set(ordNoFromRel, rawInv);
+                addInvoiceToOrder(ordNoFromRel, rawInv);
             }
 
             // Extract invoice_no
@@ -483,8 +513,11 @@ export async function GET(req: NextRequest) {
         // Cross-index invoices linked through sales_invoice_details
         for (const [orderKey, invId] of orderIdToInvoiceIdMap.entries()) {
             const targetInv = invoiceMapById.get(invId);
-            if (targetInv && !invoiceMapByOrderKey.has(orderKey)) {
-                invoiceMapByOrderKey.set(orderKey, targetInv);
+            if (targetInv) {
+                addInvoiceToOrder(orderKey, targetInv);
+                if (!invoiceMapByOrderKey.has(orderKey)) {
+                    invoiceMapByOrderKey.set(orderKey, targetInv);
+                }
             }
         }
 
@@ -558,8 +591,31 @@ export async function GET(req: NextRequest) {
                 invoiceProductQtyMap.set(key, (invoiceProductQtyMap.get(key) || 0) + qty);
             }
             if (sid.order_id) {
-                const oKey = `${String(sid.order_id).trim().toLowerCase()}:${pId}`;
-                invoiceProductQtyMap.set(oKey, (invoiceProductQtyMap.get(oKey) || 0) + qty);
+                const ordRaw = String(sid.order_id).trim();
+                const ordLower = ordRaw.toLowerCase();
+                invoiceProductQtyMap.set(`${ordLower}:${pId}`, (invoiceProductQtyMap.get(`${ordLower}:${pId}`) || 0) + qty);
+                const pNum = Number(ordRaw);
+                if (!isNaN(pNum)) {
+                    invoiceProductQtyMap.set(`${pNum}:${pId}`, (invoiceProductQtyMap.get(`${pNum}:${pId}`) || 0) + qty);
+                }
+            }
+        }
+
+        // Bridge string order_no and numeric order_id across invoiceProductQtyMap
+        for (const so of salesOrderMap.values()) {
+            const numId = Number(so.order_id);
+            const strNo = String(so.order_no || "").toLowerCase().trim();
+            if (numId && strNo) {
+                for (const sod of salesOrderDetails.filter((d) => Number(d.order_id) === numId)) {
+                    const pId = Number(sod.product_id);
+                    const qtyFromStr = invoiceProductQtyMap.get(`${strNo}:${pId}`);
+                    const qtyFromNum = invoiceProductQtyMap.get(`${numId}:${pId}`);
+                    if (qtyFromStr !== undefined && qtyFromNum === undefined) {
+                        invoiceProductQtyMap.set(`${numId}:${pId}`, qtyFromStr);
+                    } else if (qtyFromNum !== undefined && qtyFromStr === undefined) {
+                        invoiceProductQtyMap.set(`${strNo}:${pId}`, qtyFromNum);
+                    }
+                }
             }
         }
 
@@ -999,13 +1055,14 @@ export async function GET(req: NextRequest) {
                     reserved_quantity?: number | string;
                     picked_quantity?: number | string;
                     status?: string;
+                    created_at?: string;
                 }
 
                 const rawReservations: RawReservationRecord[] = [];
                 for (let i = 0; i < allSodDetailIds.length; i += chunkSize) {
                     const chunk = allSodDetailIds.slice(i, i + chunkSize);
                     const resvRes = await fetch(
-                        `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${chunk.join(",")}&filter[status][_neq]=Cancelled&limit=-1`,
+                        `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${chunk.join(",")}&filter[status][_in]=Picked,Consumed&fields=reservation_id,sales_order_detail_id,product_id,inventory_lot_id,reserved_quantity,picked_quantity,status,created_at&limit=-1`,
                         { headers: directusHeaders, cache: "no-store" }
                     );
                     if (resvRes.ok) {
@@ -1098,6 +1155,7 @@ export async function GET(req: NextRequest) {
                         reserved_quantity: Number(r.reserved_quantity || 0),
                         picked_quantity: Number(r.picked_quantity || 0),
                         status: r.status || "Reserved",
+                        created_at: r.created_at ? String(r.created_at) : undefined,
                     };
 
                     const existing = sodReservationMap.get(sodId) || [];
@@ -1105,9 +1163,15 @@ export async function GET(req: NextRequest) {
                     sodReservationMap.set(sodId, existing);
                 }
             } catch (resvErr) {
-                console.warn("[fulfilment-and-deliveries GET] Error fetching reservations:", resvErr);
-            }
+            console.warn("[fulfilment-and-deliveries GET] Error fetching reservations:", resvErr);
         }
+    }
+
+        const parseDateMs = (ts?: string | null) => {
+            if (!ts) return 0;
+            const str = String(ts).trim();
+            return new Date(str.endsWith("Z") ? str : str + "Z").getTime();
+        };
 
                 // 11. Transform each Consolidator into a ConsolidatedDeliveryRecord with strict Gatekeeping
                 const records = allConsolidators
@@ -1202,9 +1266,21 @@ export async function GET(req: NextRequest) {
 
                                 if (!so && !inv) return null;
 
-                                const invoiceNo = inv?.invoice_no || so?.invoice_no || "---";
-                                const invoiceId = inv?.invoice_id || so?.invoice_id || null;
-                                const invoiceDate = inv?.invoice_date || null;
+                                const allInvoicesForOrder: DirectusInvoice[] = [
+                                    ...(so?.order_id ? invoicesByOrderKey.get(String(so.order_id).toLowerCase()) || [] : []),
+                                    ...(so?.order_no ? invoicesByOrderKey.get(so.order_no.trim().toLowerCase()) || [] : []),
+                                    ...(invoicesByOrderKey.get(String(orderId).toLowerCase()) || []),
+                                    ...(inv ? [inv] : []),
+                                ].filter((v, idx, arr) => arr.findIndex((x) => Number(x.invoice_id || x.id) === Number(v.invoice_id || v.id)) === idx);
+
+                                const invoiceNo = allInvoicesForOrder.length > 0
+                                    ? allInvoicesForOrder.map((i) => i.invoice_no).filter(Boolean).join(", ") || inv?.invoice_no || so?.invoice_no || "---"
+                                    : inv?.invoice_no || so?.invoice_no || "---";
+                                const invoiceId = inv?.invoice_id || allInvoicesForOrder[0]?.invoice_id || so?.invoice_id || null;
+                                const invoiceDate = inv?.invoice_date || allInvoicesForOrder[0]?.invoice_date || null;
+                                const totalInvoiceAmount = allInvoicesForOrder.length > 0
+                                    ? allInvoicesForOrder.reduce((sum, i) => sum + Number(i.total_amount || i.net_amount || 0), 0)
+                                    : Number(so?.total_amount || 0);
 
                                 const linkedSr =
                                     (invoiceNo && invoiceNo !== "---" ? salesReturnMap.get(invoiceNo.toLowerCase()) : null) ||
@@ -1275,7 +1351,15 @@ export async function GET(req: NextRequest) {
                                         const prodDesc = prod?.short_description || (prod?.description && prod?.description !== prod?.product_name ? prod?.description : "") || "";
                                         const ordered = Number(sod.ordered_quantity || 0);
 
-                                        const lineReservations = sodReservationMap.get(Number(sod.detail_id)) || [];
+                                        const conCreatedAtMs = parseDateMs(con.created_at);
+                                        const rawLineReservations = sodReservationMap.get(Number(sod.detail_id)) || [];
+                                        const lineReservations = conCreatedAtMs > 0
+                                            ? rawLineReservations.filter((r) => {
+                                                if (!r.created_at) return true;
+                                                const resTime = parseDateMs(r.created_at);
+                                                return resTime >= (conCreatedAtMs - 15 * 60 * 1000);
+                                            })
+                                            : rawLineReservations;
                                         const totalPickedFromRes = lineReservations.reduce((s, r) => s + (Number(r.picked_quantity) || 0), 0);
                                         const conDetail = consolidatorDetails.find(
                                             (cd) => Number(cd.consolidator_id) === conId && Number(cd.sales_order_detail_id) === Number(sod.detail_id)
@@ -1292,17 +1376,54 @@ export async function GET(req: NextRequest) {
 
                                         // Authoritative invoiced quantity for this specific order line
                                         let invoicedQty: number | undefined = undefined;
-                                        if (inv?.invoice_id) {
+
+                                        // 1. Sum across all invoices associated with this sales order
+                                        if (allInvoicesForOrder.length > 0) {
+                                            let sum = 0;
+                                            let found = false;
+                                            for (const oInv of allInvoicesForOrder) {
+                                                const oInvId = Number(oInv.invoice_id || oInv.id);
+                                                const fromInv = invoiceProductQtyMap.get(`${oInvId}:${sod.product_id}`);
+                                                if (fromInv !== undefined) {
+                                                    sum += fromInv;
+                                                    found = true;
+                                                }
+                                            }
+                                            if (found) invoicedQty = sum;
+                                        }
+
+                                        // 2. Direct invoice ID lookup
+                                        if (invoicedQty === undefined && inv?.invoice_id) {
                                             const fromInv = invoiceProductQtyMap.get(`${inv.invoice_id}:${sod.product_id}`);
                                             if (fromInv !== undefined) invoicedQty = fromInv;
                                         }
+
+                                        // 3. Fallback to order key lookup in invoiceProductQtyMap
                                         if (invoicedQty === undefined) {
-                                            const fromOrd = invoiceProductQtyMap.get(`${orderId}:${sod.product_id}`);
-                                            if (fromOrd !== undefined) invoicedQty = fromOrd;
+                                            const fromOrdNo = so?.order_no ? invoiceProductQtyMap.get(`${so.order_no.trim().toLowerCase()}:${sod.product_id}`) : undefined;
+                                            if (fromOrdNo !== undefined) {
+                                                invoicedQty = fromOrdNo;
+                                            } else {
+                                                const fromOrd = invoiceProductQtyMap.get(`${orderId}:${sod.product_id}`);
+                                                if (fromOrd !== undefined) invoicedQty = fromOrd;
+                                            }
                                         }
 
-                                        // Authoritative batch reservations for this invoice
-                                        const sibList = inv?.invoice_id ? invoiceBatchesMap.get(`${inv.invoice_id}:${sod.product_id}`) : undefined;
+                                        // Authoritative batch reservations across all invoices of this order
+                                        let sibList: DirectusInvoiceBatch[] | undefined = undefined;
+                                        if (allInvoicesForOrder.length > 0) {
+                                            for (const oInv of allInvoicesForOrder) {
+                                                const oInvId = Number(oInv.invoice_id || oInv.id);
+                                                const bList = invoiceBatchesMap.get(`${oInvId}:${sod.product_id}`);
+                                                if (bList && bList.length > 0) {
+                                                    sibList = [...(sibList || []), ...bList];
+                                                }
+                                            }
+                                        }
+                                        if (!sibList && inv?.invoice_id) {
+                                            sibList = invoiceBatchesMap.get(`${inv.invoice_id}:${sod.product_id}`);
+                                        }
+
                                         const effectiveReservations: LineItemReservation[] = (sibList && sibList.length > 0)
                                             ? sibList.map((sib) => {
                                                 const invLot = invLotMap.get(Number(sib.inventory_lot_id));
@@ -1326,9 +1447,13 @@ export async function GET(req: NextRequest) {
                                             })
                                             : lineReservations;
 
+                                        // STRICT NO FALLBACK:
+                                        // If this order has sales invoices, the baseline is strictly the invoiced quantity.
+                                        // If invoicedQty is undefined (not on invoice), invoiced_quantity is undefined (displays as '-' in UI per user request).
+                                        const hasInvoice = allInvoicesForOrder.length > 0 || Boolean(inv?.invoice_id);
                                         const baseDeliverable = invoicedQty !== undefined
                                             ? invoicedQty
-                                            : Math.min(ordered, actualDispatched);
+                                            : (hasInvoice ? 0 : Math.min(ordered, actualDispatched));
 
                                         return {
                                             detail_id: Number(sod.detail_id),
@@ -1338,7 +1463,7 @@ export async function GET(req: NextRequest) {
                                             product_description: prodDesc,
                                             uom: "",
                                             ordered_quantity: ordered,
-                                            invoiced_quantity: invoicedQty !== undefined ? invoicedQty : baseDeliverable,
+                                            invoiced_quantity: invoicedQty,
                                             received_quantity: baseDeliverable,
                                             returned_quantity: 0,
                                             unit_price: Number(sod.unit_price || 0),
@@ -1364,7 +1489,15 @@ export async function GET(req: NextRequest) {
                                         const prodDesc = prod?.short_description || (prod?.description && prod?.description !== prod?.product_name ? prod?.description : "") || "";
                                         const ordered = Number(sod.ordered_quantity || 0);
 
-                                        const lineReservations = sodReservationMap.get(Number(sod.detail_id)) || [];
+                                        const conCreatedAtMs = parseDateMs(con.created_at);
+                                        const rawLineReservations = sodReservationMap.get(Number(sod.detail_id)) || [];
+                                        const lineReservations = conCreatedAtMs > 0
+                                            ? rawLineReservations.filter((r) => {
+                                                if (!r.created_at) return true;
+                                                const resTime = parseDateMs(r.created_at);
+                                                return resTime >= (conCreatedAtMs - 15 * 60 * 1000);
+                                            })
+                                            : rawLineReservations;
                                         const totalPickedFromRes = lineReservations.reduce((s, r) => s + (Number(r.picked_quantity) || 0), 0);
                                         const conDetail = consolidatorDetails.find(
                                             (cd) => Number(cd.consolidator_id) === conId && Number(cd.sales_order_detail_id) === Number(sod.detail_id)
@@ -1381,17 +1514,54 @@ export async function GET(req: NextRequest) {
 
                                         // Authoritative invoiced quantity for this specific order line
                                         let invoicedQty: number | undefined = undefined;
-                                        if (inv?.invoice_id) {
+
+                                        // 1. Sum across all invoices associated with this sales order
+                                        if (allInvoicesForOrder.length > 0) {
+                                            let sum = 0;
+                                            let found = false;
+                                            for (const oInv of allInvoicesForOrder) {
+                                                const oInvId = Number(oInv.invoice_id || oInv.id);
+                                                const fromInv = invoiceProductQtyMap.get(`${oInvId}:${sod.product_id}`);
+                                                if (fromInv !== undefined) {
+                                                    sum += fromInv;
+                                                    found = true;
+                                                }
+                                            }
+                                            if (found) invoicedQty = sum;
+                                        }
+
+                                        // 2. Direct invoice ID lookup
+                                        if (invoicedQty === undefined && inv?.invoice_id) {
                                             const fromInv = invoiceProductQtyMap.get(`${inv.invoice_id}:${sod.product_id}`);
                                             if (fromInv !== undefined) invoicedQty = fromInv;
                                         }
+
+                                        // 3. Fallback to order key lookup in invoiceProductQtyMap
                                         if (invoicedQty === undefined) {
-                                            const fromOrd = invoiceProductQtyMap.get(`${orderId}:${sod.product_id}`);
-                                            if (fromOrd !== undefined) invoicedQty = fromOrd;
+                                            const fromOrdNo = so?.order_no ? invoiceProductQtyMap.get(`${so.order_no.trim().toLowerCase()}:${sod.product_id}`) : undefined;
+                                            if (fromOrdNo !== undefined) {
+                                                invoicedQty = fromOrdNo;
+                                            } else {
+                                                const fromOrd = invoiceProductQtyMap.get(`${orderId}:${sod.product_id}`);
+                                                if (fromOrd !== undefined) invoicedQty = fromOrd;
+                                            }
                                         }
 
-                                        // Authoritative batch reservations for this invoice
-                                        const sibList = inv?.invoice_id ? invoiceBatchesMap.get(`${inv.invoice_id}:${sod.product_id}`) : undefined;
+                                        // Authoritative batch reservations across all invoices of this order
+                                        let sibList: DirectusInvoiceBatch[] | undefined = undefined;
+                                        if (allInvoicesForOrder.length > 0) {
+                                            for (const oInv of allInvoicesForOrder) {
+                                                const oInvId = Number(oInv.invoice_id || oInv.id);
+                                                const bList = invoiceBatchesMap.get(`${oInvId}:${sod.product_id}`);
+                                                if (bList && bList.length > 0) {
+                                                    sibList = [...(sibList || []), ...bList];
+                                                }
+                                            }
+                                        }
+                                        if (!sibList && inv?.invoice_id) {
+                                            sibList = invoiceBatchesMap.get(`${inv.invoice_id}:${sod.product_id}`);
+                                        }
+
                                         const effectiveReservations: LineItemReservation[] = (sibList && sibList.length > 0)
                                             ? sibList.map((sib) => {
                                                 const invLot = invLotMap.get(Number(sib.inventory_lot_id));
@@ -1415,9 +1585,12 @@ export async function GET(req: NextRequest) {
                                             })
                                             : lineReservations;
 
+                                        // STRICT NO FALLBACK:
+                                        // If this order has sales invoices, the baseline is strictly the invoiced quantity.
+                                        const hasInvoice = allInvoicesForOrder.length > 0 || Boolean(inv?.invoice_id);
                                         const baseDeliverable = invoicedQty !== undefined
                                             ? invoicedQty
-                                            : Math.min(ordered, actualDispatched);
+                                            : (hasInvoice ? 0 : Math.min(ordered, actualDispatched));
 
                                         const srReturned = linkedSr
                                             ? returnItemQtyMap.get(`${linkedSr.return_number.toLowerCase()}:${sod.product_id}`) ||
@@ -1465,7 +1638,7 @@ export async function GET(req: NextRequest) {
                                             product_description: prodDesc,
                                             uom: "",
                                             ordered_quantity: ordered,
-                                            invoiced_quantity: invoicedQty !== undefined ? invoicedQty : baseDeliverable,
+                                            invoiced_quantity: invoicedQty,
                                             received_quantity: received,
                                             returned_quantity: returned,
                                             unit_price: Number(sod.unit_price || 0),
@@ -1525,7 +1698,9 @@ export async function GET(req: NextRequest) {
                                     salesman_id: salesmanId,
                                     salesman_code: salesmanCode,
                                     salesman_name: salesmanName,
-                                    amount: Number(so?.net_amount || so?.total_amount || inv?.net_amount || inv?.total_amount || 0),
+                                    amount: totalInvoiceAmount > 0
+                                        ? totalInvoiceAmount
+                                        : Number(so?.net_amount || so?.total_amount || inv?.net_amount || inv?.total_amount || 0),
                                     remarks: orderRemarks,
                                     fulfillment_status: orderFulfillmentStatus,
                                     is_cleared: isCleared,
