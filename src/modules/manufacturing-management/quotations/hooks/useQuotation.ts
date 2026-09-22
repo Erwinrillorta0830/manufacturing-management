@@ -249,13 +249,7 @@ export function useQuotation() {
         if (projectId) {
             setSelectedProjectId(projectId);
         } else {
-            // Find database project id inside localProjects list
-            const matchedProj = localProjects.find(p => p.project_name === projName);
-            if (matchedProj) {
-                setSelectedProjectId(Number(matchedProj.id));
-            } else {
-                setSelectedProjectId(null);
-            }
+            setSelectedProjectId(null);
         }
 
         let matchedCust = customers.find(c => Number(c.id) === customerId);
@@ -614,8 +608,9 @@ export function useQuotation() {
                 if (!item.product) return null;
                 let latestCost = Number(item.product.cost_per_unit || 0);
                 try {
+                    const parentId = item.parent_product_id || item.product.parent_product_id || item.product.product_id;
                     const url = item.versionId 
-                        ? `/api/manufacturing/finished-goods/bom-cost?productId=${item.product.product_id}&versionId=${item.versionId}`
+                        ? `/api/manufacturing/finished-goods/bom-cost?productId=${parentId}&versionId=${item.versionId}`
                         : `/api/manufacturing/finished-goods/bom-cost?productId=${item.product.product_id}`;
                     const resBOM = await fetch(url);
                     if (resBOM.ok) {
@@ -829,14 +824,15 @@ export function useQuotation() {
         return filteredCatalog.slice(startIndex, startIndex + itemsPerPage);
     }, [filteredCatalog, currentPage]);
 
-    // Virtual Project Portfolio List: maps each project_name to a single portfolio
+    // Virtual Project Portfolio List: maps each project ID to a single portfolio
     const allProjects = useMemo(() => {
         const projectMap = new Map<string, { projectId: number; projectName: string; customerId: number; customerName: string; customerCode: string; projectStatus: string; quoteCount: number; latest: QuotationHeader; history: QuotationHeader[] }>();
         
         quotes.forEach(q => {
             const projObj = q.project_id && typeof q.project_id === "object" ? q.project_id as Project : null;
-            const key = projObj?.project_name || `No Project Name`;
-            if (key === "No Project Name") return;
+            const projId = projObj ? Number(projObj.id) : (typeof q.project_id === "number" ? q.project_id : null);
+            const key = projId !== null && !isNaN(projId) && projId > 0 ? `proj_${projId}` : `quote_${q.id}`;
+            const projName = projObj?.project_name || `Project #${projId || q.id}`;
             
             const cust = q.customer_id && typeof q.customer_id === "object" ? q.customer_id as Customer : null;
             const custId = cust ? Number(cust.id) : Number(q.customer_id || 0);
@@ -845,12 +841,12 @@ export function useQuotation() {
             
             if (!projectMap.has(key)) {
                 projectMap.set(key, {
-                    projectId: projObj ? Number(projObj.id) : 0,
-                    projectName: key,
+                    projectId: projId || 0,
+                    projectName: projName,
                     customerId: custId,
                     customerName: custName,
                     customerCode: custCode,
-                    projectStatus: projObj?.status || "Draft",
+                    projectStatus: projObj?.status || q.status || "Draft",
                     quoteCount: 1,
                     latest: q,
                     history: [q]
@@ -859,18 +855,29 @@ export function useQuotation() {
                 const group = projectMap.get(key)!;
                 group.quoteCount += 1;
                 group.history.push(q);
-                const currTime = group.latest.quote_date ? new Date(group.latest.quote_date).getTime() : 0;
-                const checkTime = q.quote_date ? new Date(q.quote_date).getTime() : 0;
-                if (checkTime > currTime) {
+                
+                const currLatest = group.latest;
+                const currIsVoid = currLatest.status === "Void";
+                const qIsVoid = q.status === "Void";
+                if (currIsVoid && !qIsVoid) {
                     group.latest = q;
+                } else if (!currIsVoid && qIsVoid) {
+                    // keep currLatest as active
+                } else {
+                    const currTime = currLatest.quote_date ? new Date(currLatest.quote_date).getTime() : 0;
+                    const checkTime = q.quote_date ? new Date(q.quote_date).getTime() : 0;
+                    if (checkTime > currTime) {
+                        group.latest = q;
+                    }
                 }
             }
         });
         
         // Also add database projects that don't have quotes yet!
         localProjects.forEach(lp => {
-            if (!projectMap.has(lp.project_name)) {
-                projectMap.set(lp.project_name, {
+            const key = `proj_${lp.id}`;
+            if (!projectMap.has(key)) {
+                projectMap.set(key, {
                     projectId: lp.id,
                     projectName: lp.project_name,
                     customerId: lp.customer_id,
