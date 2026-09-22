@@ -656,7 +656,7 @@ export function usePlanningEngineering() {
         setJoNumber(code);
         setPlannedDate(new Date().toISOString().split("T")[0]);
         setDueDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);
-        setShiftOption("");
+        setShiftOption("8");
         setPriority(0);
         setRemarks(`Production run for: ${selectedLines.map(l => l.order_no).join(", ")}`);
         setIsConfirmOpen(true);

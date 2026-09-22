@@ -34,6 +34,16 @@ export function OperatorSelect({
 }: OperatorSelectProps) {
     const [open, setOpen] = useState(false);
 
+    // The dropdown list is portaled outside modal dialogs, so the dialog's
+    // scroll lock would cancel wheel events on it. Stopping propagation with
+    // a native target-phase listener keeps native list scrolling intact.
+    const guardListWheel = React.useCallback((node: HTMLDivElement | null) => {
+        if (!node) return undefined;
+        const stopWheelPropagation = (event: WheelEvent) => event.stopPropagation();
+        node.addEventListener("wheel", stopWheelPropagation);
+        return () => node.removeEventListener("wheel", stopWheelPropagation);
+    }, []);
+
     // Map operator IDs to their full operator details
     const assignedOperators = useMemo(() => {
         return operators.filter((op) => {
@@ -45,7 +55,7 @@ export function OperatorSelect({
     return (
         <div className="space-y-2">
             <div className="flex flex-wrap gap-2 items-center">
-                <Popover open={open} onOpenChange={setOpen}>
+                <Popover modal={false} open={open} onOpenChange={setOpen}>
                     <PopoverTrigger asChild>
                         <Button
                             variant="outline"
@@ -71,7 +81,7 @@ export function OperatorSelect({
                     <PopoverContent className="w-[300px] p-0" align="start">
                         <Command>
                             <CommandInput placeholder="Search operators..." className="h-9 text-xs" />
-                            <CommandList className="max-h-[220px]">
+                            <CommandList ref={guardListWheel} className="max-h-[220px]">
                                 <CommandEmpty className="text-xs py-3 text-center text-muted-foreground">No operators found.</CommandEmpty>
                                 <CommandGroup>
                                     {operators.map((op) => {
