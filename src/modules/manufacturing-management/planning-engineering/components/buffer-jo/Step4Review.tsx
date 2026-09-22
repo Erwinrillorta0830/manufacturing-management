@@ -3,7 +3,7 @@ import React from "react";
 import { CheckCircle2, ShieldAlert, Clock, Users, Package, MapPin, Calendar, FileText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Branch } from "../../types";
-import { formatProductionValue } from "../../utils/production-timing";
+import { calculateMaterialRequirementPlan, formatProductionValue } from "../../utils/production-timing";
 
 export interface Step4ReviewProps {
     selectedBranch?: Branch;
@@ -18,6 +18,7 @@ export interface Step4ReviewProps {
     totalEstimatedHours: number;
     components: any[];
     bomBaseQty: number;
+    requestedTargetQuantity: number;
     inventories: Record<number, any>;
     routings: any[];
     assignments: Record<number, number[]>;
@@ -38,19 +39,23 @@ export function Step4Review({
     totalEstimatedHours,
     components,
     bomBaseQty,
+    requestedTargetQuantity,
     inventories,
     routings,
     assignments,
     remarks
 }: Step4ReviewProps) {
     const totalAssignedOperators = Object.values(assignments).flat().length;
-    const bomQuantityScale = bomBaseQty > 0 ? targetQuantity / bomBaseQty : 0;
-
     // Check material shortfalls
     let shortfallCount = 0;
     components.forEach((comp) => {
         const compProductId = comp.component_product_id?.product_id;
-        const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * bomQuantityScale;
+        const needed = calculateMaterialRequirementPlan(
+            requestedTargetQuantity,
+            targetQuantity,
+            Number(comp.quantity_required || 0),
+            Number(comp.wastage_factor_percentage || 0)
+        ).plannedRequired;
         const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
         if (needed > available) shortfallCount++;
     });

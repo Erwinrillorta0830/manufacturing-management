@@ -1,6 +1,15 @@
+import { calculateProductionQuantityPlan } from "./production-timing";
+
 export interface ContainerizationMetrics {
     productName: string;
     targetQuantity: number;
+    requestedTargetQuantity: number;
+    requestedBatchRatio: number;
+    requiredBatchCount: number;
+    effectiveTargetQuantity: number;
+    requestedMixCount: number;
+    requestedSackCount: number;
+    requestedFlourGrams: number;
     mixCount: number;
     sackCount: number;
     flourGramsTotal: number;
@@ -58,7 +67,8 @@ export function calculateContainerizationMetrics(
     sacksPerMixParam?: number,
     baseBatchWeightPerSackParam?: number,
     components?: ContainerizationBOMComponent[],
-    bomBaseQty?: number
+    bomBaseQty?: number,
+    requestedTargetQuantity?: number
 ): ContainerizationMetrics {
     const sacksPerMix = Math.max(1, Number(sacksPerMixParam) || 4);
     const baseBatchWeightPerSack = Math.max(1, Number(baseBatchWeightPerSackParam) || 32892.5); // grams
@@ -87,13 +97,21 @@ export function calculateContainerizationMetrics(
     const casesBundlesPerPallet = Math.max(1, Number(versionCasesPerPallet) || 50); // Pallet capacity
 
     const targetNetPcs = Math.max(1, Number(targetQuantity) || 0);
+    const baseQty = Math.max(1, Number(bomBaseQty) || 1);
+    const requestedTarget = Math.max(1, Number(requestedTargetQuantity ?? targetQuantity) || 0);
+    const quantityPlan = calculateProductionQuantityPlan(requestedTarget, baseQty);
+    const requestedBatchRatio = quantityPlan.requestedBatchRatio;
+    const requiredBatchCount = quantityPlan.requiredBatchCount;
+    const effectiveTargetQuantity = quantityPlan.effectiveQuantity;
 
     // Dynamic BOM Flour calculation if flour/grain component is present in BOM
     let flourGramsTotal = 0;
     let sackCount = 0;
     let mixCount = 0;
+    let requestedFlourGrams = 0;
+    let requestedSackCount = 0;
+    let requestedMixCount = requestedBatchRatio;
 
-    const baseQty = Math.max(1, Number(bomBaseQty) || 1);
     if (Array.isArray(components) && components.length > 0) {
         const flourComp = components.find((c) => {
             const name = String(c.product_name || c.component_product_id?.product_name || c.title || "").toLowerCase();
@@ -101,24 +119,31 @@ export function calculateContainerizationMetrics(
         });
 
         if (flourComp) {
-            const qtyReqPerBase = Number(flourComp.quantity_required || 0);
+            const qtyReqPerUnit = Number(flourComp.quantity_required || 0);
             const uomStr = String(flourComp.unit_of_measurement || flourComp.uom_shortcut || "").toUpperCase();
 
-            // Convert to grams
-            let gramsPerBase = qtyReqPerBase;
+            // BOM quantities are normalized per finished output unit. Convert
+            // the per-unit quantity to grams before applying exact demand and
+            // full-batch planned output.
+            let gramsPerUnit = qtyReqPerUnit;
             if (uomStr.includes("KG") || uomStr.includes("KILO")) {
-                gramsPerBase = qtyReqPerBase * 1000;
+                gramsPerUnit = qtyReqPerUnit * 1000;
             } else if (uomStr.includes("SACK") || uomStr.includes("BAG")) {
-                gramsPerBase = qtyReqPerBase * 25000;
+                gramsPerUnit = qtyReqPerUnit * 25000;
             } else if (uomStr.includes("G") || uomStr.includes("GRAM")) {
-                gramsPerBase = qtyReqPerBase;
+                gramsPerUnit = qtyReqPerUnit;
             }
 
-            const totalFlourGramsNeeded = (gramsPerBase / baseQty) * targetNetPcs;
+            requestedFlourGrams = gramsPerUnit * requestedTarget;
+            requestedSackCount = (requestedFlourGrams / 25000);
+            const totalFlourGramsNeeded = gramsPerUnit * effectiveTargetQuantity;
             if (totalFlourGramsNeeded > 0) {
                 flourGramsTotal = Math.round(totalFlourGramsNeeded);
                 sackCount = Math.ceil(flourGramsTotal / 25000);
-                mixCount = Math.ceil(sackCount / sacksPerMix);
+                // A recipe batch is one production mix. The configured sack
+                // count remains available for packaging calculations, while
+                // mix count follows the full-batch production plan.
+                mixCount = requiredBatchCount;
             }
         }
     }
@@ -130,6 +155,9 @@ export function calculateContainerizationMetrics(
         mixCount = Math.ceil(totalSacksNeeded / sacksPerMix);
         sackCount = mixCount * sacksPerMix;
         flourGramsTotal = sackCount * 25000;
+        requestedSackCount = requiredBatchCount > 0 ? (sackCount * requestedBatchRatio) / requiredBatchCount : sackCount;
+        requestedFlourGrams = requiredBatchCount > 0 ? (flourGramsTotal * requestedBatchRatio) / requiredBatchCount : flourGramsTotal;
+        requestedMixCount = requestedBatchRatio;
     }
 
     const totalBaseWeightGrams = sackCount * baseBatchWeightPerSack;
@@ -150,6 +178,13 @@ export function calculateContainerizationMetrics(
     return {
         productName,
         targetQuantity: targetNetPcs,
+        requestedTargetQuantity: requestedTarget,
+        requestedBatchRatio,
+        requiredBatchCount,
+        effectiveTargetQuantity,
+        requestedMixCount,
+        requestedSackCount,
+        requestedFlourGrams,
         mixCount,
         sackCount,
         flourGramsTotal,

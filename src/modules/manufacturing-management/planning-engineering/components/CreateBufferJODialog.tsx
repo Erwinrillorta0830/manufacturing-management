@@ -1,5 +1,5 @@
 /* eslint-disable */
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Loader2, ArrowRight, ArrowLeft } from "lucide-react";
 import {
     Dialog,
@@ -15,7 +15,7 @@ import { toast } from "sonner";
 import { SubmittingLoadingOverlay } from "./SubmittingLoadingOverlay";
 import { calculateContainerizationMetrics } from "../utils/containerization-helper";
 import { calculateProductionMetrics } from "../utils/production-metrics";
-import { calculateAggregateRunHours, calculateFullBatchTarget, readUomId } from "../utils/production-timing";
+import { calculateAggregateRunHours, calculateMaterialRequirementPlan, calculatePerUnitMaterialRequirement, calculateFullBatchTarget, readUomId } from "../utils/production-timing";
 import { Step1BasicDetails } from "./buffer-jo/Step1BasicDetails";
 import { Step2BOMReview } from "./buffer-jo/Step2BOMReview";
 import { Step3Scheduling } from "./buffer-jo/Step3Scheduling";
@@ -43,6 +43,8 @@ export function CreateBufferJODialog({
     const [submitting, setSubmitting] = useState(false);
     const [hasLoadedDetails, setHasLoadedDetails] = useState(false);
     const [detailsError, setDetailsError] = useState<string | null>(null);
+    const [detailsRetryNonce, setDetailsRetryNonce] = useState(0);
+    const detailsRequestIdRef = useRef(0);
 
     // Master list data
     const [products, setProducts] = useState<any[]>([]);
@@ -97,11 +99,7 @@ export function CreateBufferJODialog({
         : targetQuantity;
 
     const handleTargetQuantityChange = (value: number) => {
-        setTargetQuantity(
-            Number.isFinite(value) && value > 0 && bomBaseQty > 0
-                ? calculateFullBatchTarget(value, bomBaseQty)
-                : 0
-        );
+        setTargetQuantity(Number.isFinite(value) && value > 0 ? value : 0);
     };
 
     const getProductParentId = (p: any) => {
@@ -171,6 +169,7 @@ export function CreateBufferJODialog({
             setRemarks("");
             setHasLoadedDetails(false);
             setDetailsError(null);
+            setDetailsRetryNonce(0);
 
             // Setup default JO Code
             const code = `JO-BUF-${Math.floor(100000 + Math.random() * 900000)}`;
@@ -355,45 +354,77 @@ export function CreateBufferJODialog({
 
     // Load BOM & Routing details on Step 2
     useEffect(() => {
-        if (isOpen && selectedProductId && selectedVersionId && currentStep === 2 && !hasLoadedDetails && parseValidBranchId(selectedBranchId) !== null) {
-            const loadDetails = async () => {
-                setLoadingDetails(true);
-                setDetailsError(null);
-                const controller = new AbortController();
-                const timeoutId = window.setTimeout(() => controller.abort(), 25000);
-                try {
-                    const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${selectedProductId}&bomId=${selectedVersionId}&branchId=${parseValidBranchId(selectedBranchId)}&isBuffer=true`;
-                    const res = await fetch(url, { signal: controller.signal });
-                    const data = await res.json().catch(() => null);
-                    if (!res.ok) {
-                        throw new Error(data?.error || `Failed to load BOM details (${res.status})`);
-                    }
-                    if (!data?.bom) {
-                        throw new Error("The selected recipe version has no usable BOM details.");
-                    }
-                    setRoutings(data.routings || []);
-                    setComponents(data.components || []);
-                    setBomData(data.bom || null);
-                    setSubAssemblyBoms(data.subAssemblyBoms || {});
-                    setSubAssemblyRoutings(data.subAssemblyRoutings || {});
-                    setSubAssemblyVersions(data.subAssemblyVersions || {});
-                    setSelectedSubAssemblyVersions(data.selectedSubAssemblyVersions || {});
-                    setInventories(normalizeInventoryMap(data.inventories));
-                    setBomBaseQty(Number(data.bom.base_quantity));
-                    setHasLoadedDetails(true);
-                } catch (err) {
-                    console.error("Failed to load wizard details:", err);
-                    setDetailsError(err instanceof DOMException && err.name === "AbortError"
-                        ? "Loading BOM details timed out. Please retry."
-                        : err instanceof Error ? err.message : "Failed to load BOM details. Please retry.");
-                } finally {
-                    window.clearTimeout(timeoutId);
+        const branchId = parseValidBranchId(selectedBranchId);
+        if (!isOpen || !selectedProductId || !selectedVersionId || currentStep !== 2 || hasLoadedDetails || branchId === null) {
+            return;
+        }
+
+        const requestId = detailsRequestIdRef.current + 1;
+        detailsRequestIdRef.current = requestId;
+        let cancelled = false;
+        let controller: AbortController | null = null;
+
+        const loadDetails = async () => {
+            setLoadingDetails(true);
+            setDetailsError(null);
+            controller = new AbortController();
+            const timeoutId = window.setTimeout(() => controller?.abort(), 25000);
+            try {
+                const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${selectedProductId}&bomId=${selectedVersionId}&branchId=${branchId}&isBuffer=true&requestedQuantity=${encodeURIComponent(targetQuantity)}&plannedQuantity=${encodeURIComponent(productionTargetQuantity)}`;
+                const res = await fetch(url, { signal: controller.signal });
+                const data = await res.json().catch(() => null);
+                if (!res.ok) {
+                    const isRateLimited = res.status === 429 || data?.code === "INVENTORY_MOVEMENT_RATE_LIMITED";
+                    throw new Error(isRateLimited
+                        ? "Inventory service is busy. Please retry in a moment."
+                        : data?.error || `Failed to load BOM details (${res.status})`);
+                }
+                if (!data?.bom) {
+                    throw new Error("The selected recipe version has no usable BOM details.");
+                }
+                if (cancelled || requestId !== detailsRequestIdRef.current) return;
+                setRoutings(data.routings || []);
+                setComponents(data.components || []);
+                setBomData(data.bom || null);
+                setSubAssemblyBoms(data.subAssemblyBoms || {});
+                setSubAssemblyRoutings(data.subAssemblyRoutings || {});
+                setSubAssemblyVersions(data.subAssemblyVersions || {});
+                setSelectedSubAssemblyVersions(data.selectedSubAssemblyVersions || {});
+                setInventories(normalizeInventoryMap(data.inventories));
+                setBomBaseQty(Number(data.bom.base_quantity));
+                setHasLoadedDetails(true);
+            } catch (err) {
+                if (cancelled || controller?.signal.aborted || requestId !== detailsRequestIdRef.current) return;
+                console.error("Failed to load wizard details:", err);
+                setDetailsError(err instanceof Error ? err.message : "Failed to load BOM details. Please retry.");
+            } finally {
+                window.clearTimeout(timeoutId);
+                if (!cancelled && requestId === detailsRequestIdRef.current) {
                     setLoadingDetails(false);
                 }
-            };
-            loadDetails();
-        }
-    }, [isOpen, selectedProductId, selectedVersionId, currentStep, selectedBranchId, hasLoadedDetails]);
+            }
+        };
+
+        const debounceId = window.setTimeout(() => {
+            void loadDetails();
+        }, 250);
+
+        return () => {
+            cancelled = true;
+            window.clearTimeout(debounceId);
+            controller?.abort();
+        };
+    }, [
+        isOpen,
+        selectedProductId,
+        selectedVersionId,
+        currentStep,
+        selectedBranchId,
+        hasLoadedDetails,
+        targetQuantity,
+        productionTargetQuantity,
+        detailsRetryNonce
+    ]);
 
     const handleSubAssemblyVersionChange = async (subProdId: number, versionId: number) => {
         const branchId = parseValidBranchId(selectedBranchId);
@@ -429,14 +460,18 @@ export function CreateBufferJODialog({
         }
     };
 
-    const bomQuantityScale = bomBaseQty > 0 ? productionTargetQuantity / bomBaseQty : 0;
-
     // Initialize default print selections for shortfalls
     useEffect(() => {
         const initialSelections: Record<string, boolean> = {};
         components.forEach((comp) => {
             const compProductId = comp.component_product_id?.product_id;
-            const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * bomQuantityScale;
+            const materialPlan = calculateMaterialRequirementPlan(
+                targetQuantity,
+                productionTargetQuantity,
+                Number(comp.quantity_required || 0),
+                Number(comp.wastage_factor_percentage || 0)
+            );
+            const needed = materialPlan.plannedRequired;
             const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
             const shortfall = Math.max(0, needed - available);
 
@@ -449,7 +484,11 @@ export function CreateBufferJODialog({
                     const children = subAssemblyBoms[Number(compProductId)] || [];
                     children.forEach((cc) => {
                         const ccId = cc.component_product_id?.product_id;
-                        const ccNeeded = Number(cc.quantity_required) * shortfall;
+                        const ccNeeded = calculatePerUnitMaterialRequirement(
+                            shortfall,
+                            Number(cc.quantity_required || 0),
+                            Number(cc.wastage_factor_percentage || 0)
+                        );
                         const ccAvailable = ccId ? (inventories[Number(ccId)]?.on_hand || 0) : 0;
                         const ccShortfall = Math.max(0, ccNeeded - ccAvailable);
                         if (ccShortfall > 0) {
@@ -498,7 +537,8 @@ export function CreateBufferJODialog({
                 overheadItems: Array.isArray(bomData?.overhead_items) ? bomData.overhead_items : [],
                 customOverhead: bomData?.custom_overhead ?? selectedVersion?.custom_overhead,
                 expectedYieldPercentage: bomData?.expected_yield_percentage ?? selectedVersion?.expected_yield_percentage,
-                targetSellingPrice: Number(selectedProdObj?.targetSellingPrice || selectedProdObj?.target_selling_price || 0)
+                targetSellingPrice: Number(selectedProdObj?.targetSellingPrice || selectedProdObj?.target_selling_price || 0),
+                materialCostPerUnit: bomData?.material_cost_per_unit
             });
             return { metrics, error: null };
         } catch (error) {
@@ -516,7 +556,12 @@ export function CreateBufferJODialog({
     let subAssemblyEstimatedHours = 0;
     components.forEach((comp) => {
         const compProductId = Number(comp.component_product_id?.product_id || 0);
-        const needed = (Number(comp.quantity_required || 0) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * bomQuantityScale;
+        const needed = calculateMaterialRequirementPlan(
+            targetQuantity,
+            productionTargetQuantity,
+            Number(comp.quantity_required || 0),
+            Number(comp.wastage_factor_percentage || 0)
+        ).plannedRequired;
         const available = compProductId ? Number(inventories[compProductId]?.on_hand || 0) : 0;
         const shortfall = Math.max(0, needed - available);
         const subRoute = compProductId ? (subAssemblyRoutings[compProductId] || (subAssemblyRoutings as any)[String(compProductId)]) : null;
@@ -553,9 +598,10 @@ export function CreateBufferJODialog({
             (verObj as any)?.sacks_per_mix || (verObj as any)?.sacks_per_batch,
             (verObj as any)?.batch_weight_per_sack || (verObj as any)?.base_batch_weight_grams,
             components,
-            bomBaseQty
+            bomBaseQty,
+            targetQuantity
         );
-    }, [selectedProdObj, versions, selectedVersionId, productionTargetQuantity, components, bomBaseQty]);
+    }, [selectedProdObj, versions, selectedVersionId, productionTargetQuantity, targetQuantity, components, bomBaseQty]);
 
     const cogsBreakdown = productionMetrics?.cogsBreakdown || null;
 
@@ -572,7 +618,12 @@ export function CreateBufferJODialog({
 
     const hasShortfalls = components.some((comp) => {
         const compProductId = comp.component_product_id?.product_id;
-            const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * bomQuantityScale;
+            const needed = calculateMaterialRequirementPlan(
+                targetQuantity,
+                productionTargetQuantity,
+                Number(comp.quantity_required || 0),
+                Number(comp.wastage_factor_percentage || 0)
+            ).plannedRequired;
         const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
         return Math.max(0, needed - available) > 0;
     });
@@ -587,7 +638,12 @@ export function CreateBufferJODialog({
         let tableRowsHtml = "";
         components.forEach((comp) => {
             const compProductId = comp.component_product_id?.product_id;
-            const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * bomQuantityScale;
+            const needed = calculateMaterialRequirementPlan(
+                targetQuantity,
+                productionTargetQuantity,
+                Number(comp.quantity_required || 0),
+                Number(comp.wastage_factor_percentage || 0)
+            ).plannedRequired;
             const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
             const shortfall = Math.max(0, needed - available);
             const uom = comp.unit_of_measurement || "pcs";
@@ -614,7 +670,11 @@ export function CreateBufferJODialog({
                 const children = subAssemblyBoms[Number(compProductId)] || [];
                 children.forEach((cc) => {
                     const ccId = cc.component_product_id?.product_id;
-                    const ccNeeded = Number(cc.quantity_required) * shortfall;
+                    const ccNeeded = calculatePerUnitMaterialRequirement(
+                        shortfall,
+                        Number(cc.quantity_required || 0),
+                        Number(cc.wastage_factor_percentage || 0)
+                    );
                     const ccAvailable = ccId ? (inventories[Number(ccId)]?.on_hand || 0) : 0;
                     const ccShortfall = Math.max(0, ccNeeded - ccAvailable);
                     const ccUom = cc.unit_of_measurement || "pcs";
@@ -784,7 +844,6 @@ export function CreateBufferJODialog({
         if (!printWindow) return;
 
         const branchName = branches?.find((b: any) => Number(b.id) === Number(selectedBranchId))?.branch_name || `Branch #${selectedBranchId}`;
-        const printQuantityScale = bomBaseQty > 0 ? qty / bomBaseQty : 0;
 
         const printRows: string[] = [];
 
@@ -796,7 +855,11 @@ export function CreateBufferJODialog({
             const code = comp.component_product_id?.product_code || "";
             const uom = comp.unit_of_measurement || "pcs";
             
-            const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * printQuantityScale;
+            const needed = calculatePerUnitMaterialRequirement(
+                qty,
+                Number(comp.quantity_required || 0),
+                Number(comp.wastage_factor_percentage || 0)
+            );
 
             printRows.push(`
                 <tr style="border-bottom: 1px solid #ddd; background: ${isSubAssembly ? '#f9f9f9' : '#fff'};">
@@ -818,10 +881,11 @@ export function CreateBufferJODialog({
                     const childCode = child.component_product_id?.product_code || "";
                     const childUom = child.unit_of_measurement || "pcs";
                     
-                    const childBaseQty = Number(child.bom_base_quantity);
-                    const childNeeded = childBaseQty > 0
-                        ? (Number(child.quantity_required) * (1 + (Number(child.wastage_factor_percentage || 0) / 100))) * (needed / childBaseQty)
-                        : 0;
+                    const childNeeded = calculatePerUnitMaterialRequirement(
+                        needed,
+                        Number(child.quantity_required || 0),
+                        Number(child.wastage_factor_percentage || 0)
+                    );
 
                     printRows.push(`
                         <tr style="border-bottom: 1px solid #eee; background: #fff;">
@@ -1050,7 +1114,7 @@ export function CreateBufferJODialog({
                             versions={versions}
                             selectedVersionId={selectedVersionId}
                             setSelectedVersionId={setSelectedVersionId}
-                            targetQuantity={productionTargetQuantity}
+                            targetQuantity={targetQuantity}
                             setTargetQuantity={handleTargetQuantityChange}
                             plannedDate={plannedDate}
                             setPlannedDate={setPlannedDate}
@@ -1081,9 +1145,11 @@ export function CreateBufferJODialog({
                             retryDetails={() => {
                                 setDetailsError(null);
                                 setHasLoadedDetails(false);
+                                setDetailsRetryNonce((value) => value + 1);
                             }}
                             components={components}
                             targetQuantity={productionTargetQuantity}
+                            requestedTargetQuantity={targetQuantity}
                             bomBaseQty={bomBaseQty}
                             inventories={inventories}
                             subAssemblyBoms={subAssemblyBoms}
@@ -1124,6 +1190,7 @@ export function CreateBufferJODialog({
                             totalEstimatedHours={totalEstimatedHours}
                             components={components}
                             bomBaseQty={bomBaseQty}
+                            requestedTargetQuantity={targetQuantity}
                             inventories={inventories}
                             routings={routings}
                             assignments={assignments}

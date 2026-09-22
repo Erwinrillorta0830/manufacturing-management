@@ -33,7 +33,9 @@ import { NextStepCallout } from "../shared/components/NextStepCallout";
 import { StatusLegendPopover } from "../shared/components/StatusLegendPopover";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { isCancelledJobOrderStatus, isJobOrderStatus, isTerminatedJobOrder, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "../job-order-status";
+import { isCancelledJobOrderStatus, isJobOrderStatus, isTerminatedJobOrder, JOB_ORDER_STATUS, normalizeJobOrderStatus, displayJobOrderStatus } from "../job-order-status";
+import JsBarcode from "jsbarcode";
+import QRCode from "qrcode";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -420,6 +422,14 @@ export default function PlanningEngineeringModule() {
         return familyChildJobs.find((child: any) => child.jo_id === familyActiveTab) || selectedUnreleasedJo;
     }, [familyActiveTab, familyChildJobs, selectedUnreleasedJo]);
 
+    const activeFamilyJoKey = activeFamilyJo
+        ? String(activeFamilyJo.job_order_id || activeFamilyJo.id || activeFamilyJo.order_id || activeFamilyJo.jo_id || "")
+        : null;
+
+    useEffect(() => {
+        setIsTravelerOpen(false);
+    }, [activeFamilyJoKey]);
+
     const isReadOnlyDetails = isCancelledJobOrderStatus(selectedUnreleasedJo?.status);
     const isTerminatedDetails = isTerminatedJobOrder(activeFamilyJo);
     const terminalEvidenceImageUrl = isTerminatedDetails
@@ -470,6 +480,7 @@ export default function PlanningEngineeringModule() {
 
     const handleOpenDetails = async (jo: any, tabToRestore = "family-all") => {
         const requestId = ++materialRequestIdRef.current;
+        setIsTravelerOpen(false);
         setSelectedUnreleasedJo(jo);
         setFamilyActiveTab(tabToRestore);
         setJoMaterials([]);
@@ -531,6 +542,7 @@ export default function PlanningEngineeringModule() {
 
     const clearDetails = () => {
         materialRequestIdRef.current += 1;
+        setIsTravelerOpen(false);
         setSelectedUnreleasedJo(null);
         setJoMaterials([]);
         setChildJoMaterials({});
@@ -769,7 +781,31 @@ export default function PlanningEngineeringModule() {
         printWin.document.close();
     };
 
-    const handlePrintJobOrder = () => {
+    const escapeWorksheetHtml = (value: unknown): string => String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+
+    const worksheetBarcodeSvg = (value: string): string => {
+        try {
+            const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+            JsBarcode(svg, value || "JO-000000", { format: "CODE128", height: 44, width: 1.4, fontSize: 11, margin: 0, displayValue: false });
+            return svg.outerHTML;
+        } catch {
+            return `<div style="font-family: monospace; font-weight: bold;">${escapeWorksheetHtml(value)}</div>`;
+        }
+    };
+
+    const worksheetQrDataUrl = async (value: string): Promise<string | null> => {
+        try {
+            return await QRCode.toDataURL(value, { width: 96, margin: 1 });
+        } catch {
+            return null;
+        }
+    };
+
+    const handlePrintJobOrder = async () => {
         if (!materialActionsReady) {
             toast.error("Required materials are unavailable. Retry the materials lookup before printing.");
             return;
@@ -783,9 +819,28 @@ export default function PlanningEngineeringModule() {
             return;
         }
 
-        const renderJoPrintBlock = (jo: any, mats: any[], title: string, color: string) => {
+        const worksheetBranchName = branches.find((b: any) => Number(b.id) === Number(selectedBranchId))?.branch_name || "Manufacturing Facility";
+        const worksheetPrintedAt = new Date().toLocaleString();
+
+        const renderJoPrintBlock = async (jo: any, mats: any[], title: string, color: string) => {
             const setup = jo?.routing_tasks?.reduce((sum: number, t: any) => sum + Number(t.planned_setup_hours || 0), 0) || 0;
             const run = jo?.routing_tasks?.reduce((sum: number, t: any) => sum + Number(t.planned_run_hours || 0), 0) || 0;
+            const routingSteps: any[] = Array.isArray(jo?.routing_tasks) ? jo.routing_tasks : [];
+            const joNo = String(jo.jo_id || "");
+            const joBarcode = worksheetBarcodeSvg(joNo);
+            const joQr = await worksheetQrDataUrl(`JO:${joNo}|QTY:${jo.quantity || 0}`);
+            const joStatus = displayJobOrderStatus(jo.status || "Draft");
+            const joVersion = jo.version_name || jo.recipe_version_name || (jo.version_id ? `v${jo.version_id}` : "Standard");
+            const joUom = jo.uom_name || jo.unit_of_measurement || "pcs";
+            const routingRows = routingSteps.map((t: any, index: number) => `
+                <tr>
+                    <td style="padding: 8px; border: 1px solid #e5e7eb; text-align: center; font-weight: bold;">${t.sequence_order ?? index + 1}</td>
+                    <td style="padding: 8px; border: 1px solid #e5e7eb;">${escapeWorksheetHtml(t.operation_name || "Operation")}</td>
+                    <td style="padding: 8px; border: 1px solid #e5e7eb;">${escapeWorksheetHtml(t.work_center_name || "")}</td>
+                    <td style="padding: 8px; border: 1px solid #e5e7eb; text-align: right;">${Number(t.planned_setup_hours || 0).toFixed(1)} hrs</td>
+                    <td style="padding: 8px; border: 1px solid #e5e7eb; text-align: right;">${Number(t.planned_run_hours || 0).toFixed(1)} hrs</td>
+                </tr>
+            `).join("");
 
             const matRows = (mats || []).map((m: any) => `
                 <tr>
@@ -797,7 +852,7 @@ export default function PlanningEngineeringModule() {
             `).join("");
 
             return `
-                <div style="border: 2px solid ${color}; border-radius: 10px; padding: 18px; margin-bottom: 25px;">
+                <div style="border: 2px solid ${color}; border-radius: 10px; padding: 18px; margin-bottom: 25px; page-break-inside: avoid;">
                     <div style="display: flex; justify-content: space-between; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px; margin-bottom: 15px;">
                         <div>
                             <span style="background: ${color}; color: white; padding: 4px 10px; border-radius: 6px; font-weight: 800; font-size: 11px; text-transform: uppercase;">${title}</span>
@@ -805,11 +860,40 @@ export default function PlanningEngineeringModule() {
                             <div style="font-size: 13px; color: #4b5563; margin-top: 3px;"><strong>Product:</strong> ${jo.product_name}</div>
                         </div>
                         <div style="text-align: right; font-size: 13px;">
-                            <div style="font-size: 18px; font-weight: 800; color: #111827;">${jo.quantity?.toLocaleString()} pcs</div>
-                            <div style="color: #6b7280;">Shift: <strong>${jo.shiftOption || 8} hrs</strong></div>
-                            <div style="color: #6b7280;">Duration: <strong>${(setup + run).toFixed(1)} hrs</strong></div>
+                            <div>${joBarcode}</div>
+                            <div class="meta">Status: <strong>${escapeWorksheetHtml(joStatus)}</strong></div>
+                            ${joQr ? `<img src="${joQr}" alt="Job order QR code" style="width: 72px; height: 72px; margin-top: 6px;" />` : ""}
                         </div>
                     </div>
+
+                    <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 15px;">
+                        <tbody>
+                            <tr>
+                                <td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold; width: 22%;">Product / SKU</td>
+                                <td style="padding: 8px; border: 1px solid #e5e7eb;">${escapeWorksheetHtml(jo.product_name)}${jo.product_code ? ` (${escapeWorksheetHtml(jo.product_code)})` : ""}</td>
+                                <td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold; width: 22%;">Target Quantity</td>
+                                <td style="padding: 8px; border: 1px solid #e5e7eb;">${Number(jo.quantity || 0).toLocaleString()} ${escapeWorksheetHtml(joUom)}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">BOM Version</td>
+                                <td style="padding: 8px; border: 1px solid #e5e7eb;">${escapeWorksheetHtml(joVersion)}</td>
+                                <td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">Branch</td>
+                                <td style="padding: 8px; border: 1px solid #e5e7eb;">${escapeWorksheetHtml(worksheetBranchName)}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">Planned / Due Date</td>
+                                <td style="padding: 8px; border: 1px solid #e5e7eb;">${escapeWorksheetHtml(jo.start_date || jo.planned_date || "Not set")} / ${escapeWorksheetHtml(jo.due_date || "Not set")}</td>
+                                <td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">Priority</td>
+                                <td style="padding: 8px; border: 1px solid #e5e7eb;">${jo.priority ?? "—"}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">Primary Work Center</td>
+                                <td style="padding: 8px; border: 1px solid #e5e7eb;">${escapeWorksheetHtml(jo.primary_work_center_name || "")}</td>
+                                <td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">Est. Duration</td>
+                                <td style="padding: 8px; border: 1px solid #e5e7eb;">${(setup + run).toFixed(1)} hrs (Shift: ${jo.shiftOption || 8} hrs)</td>
+                            </tr>
+                        </tbody>
+                    </table>
 
                     <h4 style="margin: 15px 0 8px 0; font-size: 12px; text-transform: uppercase; color: #4b5563;">Material Allocation Worksheet</h4>
                     <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
@@ -825,19 +909,35 @@ export default function PlanningEngineeringModule() {
                             ${matRows}
                         </tbody>
                     </table>
+
+                    <h4 style="margin: 15px 0 8px 0; font-size: 12px; text-transform: uppercase; color: #4b5563;">Routing Operations</h4>
+                    <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                        <thead>
+                            <tr style="background: #f9fafb;">
+                                <th style="padding: 8px; border: 1px solid #e5e7eb;">Seq</th>
+                                <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: left;">Operation</th>
+                                <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: left;">Work Center</th>
+                                <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: right;">Setup</th>
+                                <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: right;">Run</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${routingRows}
+                        </tbody>
+                    </table>
                 </div>
             `;
         };
 
-        const activeTitle = activeFamilyJo.jo_id?.includes("-SUB") ? "🧩 Sub-Assembly Piece Run" : "📦 Parent Assembly Run";
+        const activeTitle = activeFamilyJo.jo_id?.includes("-SUB") ? "Sub-Assembly Piece Run" : "Parent Assembly Run";
         const activeColor = activeFamilyJo.jo_id?.includes("-SUB") ? "#0284c7" : "#2563eb";
-        let bodyContent = renderJoPrintBlock(activeFamilyJo, activeFamilyMaterials, activeTitle, activeColor);
+        let bodyContent = await renderJoPrintBlock(activeFamilyJo, activeFamilyMaterials, activeTitle, activeColor);
 
         if (isFamily) {
-            familyChildJobs.forEach((child: any) => {
-                const cMats = childJoMaterials[child.jo_id] || [];
-                bodyContent += renderJoPrintBlock(child, cMats, "🧩 Sub-Assembly Piece Run", "#0284c7");
-            });
+            for (const child of familyChildJobs) {
+                const cMats = childJoMaterials[(child as any).jo_id] || [];
+                bodyContent += await renderJoPrintBlock(child, cMats, "Sub-Assembly Piece Run", "#0284c7");
+            }
         }
 
         printWin.document.write(`
@@ -852,18 +952,38 @@ export default function PlanningEngineeringModule() {
                     .meta { font-size: 12px; color: #4b5563; }
                     .footer { margin-top: 40px; display: flex; justify-content: space-between; font-size: 12px; }
                     .signature-line { border-top: 1px solid #9ca3af; width: 180px; text-align: center; padding-top: 6px; margin-top: 40px; }
+                    .signature-date { font-size: 10px; color: #6b7280; text-align: center; margin-top: 4px; }
+                    .doc-control { display: flex; justify-content: space-between; font-size: 11px; color: #4b5563; border: 1px solid #e5e7eb; background: #f9fafb; border-radius: 8px; padding: 8px 12px; margin-bottom: 18px; }
+                    @page { size: portrait; margin: 12mm; }
+                    @media print {
+                        body { padding: 0; }
+                        .no-print { display: none !important; }
+                        * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+                        table tr, .jo-summary-block { page-break-inside: avoid; }
+                    }
                 </style>
             </head>
             <body>
+                <div class="no-print" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <strong>Job Order Worksheet - ${activeFamilyJo.jo_id}</strong>
+                    <button onclick="window.print()" style="background: #1e40af; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; font-weight: bold; cursor: pointer;">Print Worksheet</button>
+                </div>
                 <div class="header">
                     <div>
-                        <div class="title">📄 Production Job Order Worksheet</div>
-                        <div class="meta">Manufacturing Operations &bull; Job Order: <strong>${activeFamilyJo.jo_id}</strong> ${isFamily ? '(Family Run)' : ''}</div>
+                        <div class="title">Production Job Order Worksheet</div>
+                        <div class="meta">VERTEX TECH CORP &bull; Manufacturing Operations &bull; Job Order: <strong>${activeFamilyJo.jo_id}</strong> ${isFamily ? '(Family Run)' : ''}</div>
                     </div>
                     <div style="text-align: right;" class="meta">
-                        <div>Date Printed: ${new Date().toLocaleString()}</div>
-                        <div>Status: <strong>DRAFT / PENDING RELEASE</strong></div>
+                        <div>Date Printed: ${worksheetPrintedAt}</div>
+                        <div>Status: <strong>${escapeWorksheetHtml(displayJobOrderStatus(activeFamilyJo.status || "Draft"))}</strong></div>
                     </div>
+                </div>
+
+                <div class="doc-control">
+                    <span>Document No.: <strong>WS-${activeFamilyJo.jo_id}</strong></span>
+                    <span>Revision: <strong>1.0</strong></span>
+                    <span>Branch: <strong>${escapeWorksheetHtml(worksheetBranchName)}</strong></span>
+                    <span>Generated by VOS ERP</span>
                 </div>
 
                 ${bodyContent}
@@ -871,23 +991,34 @@ export default function PlanningEngineeringModule() {
                 <div class="footer">
                     <div>
                         <div class="signature-line">Operator Sign-Off</div>
+                        <div class="signature-date">Date: _______________</div>
                     </div>
                     <div>
                         <div class="signature-line">QC Inspector</div>
+                        <div class="signature-date">Date: _______________</div>
                     </div>
                     <div>
                         <div class="signature-line">Production Supervisor</div>
+                        <div class="signature-date">Date: _______________</div>
+                    </div>
+                    <div>
+                        <div class="signature-line">Warehouse Custodian</div>
+                        <div class="signature-date">Date: _______________</div>
                     </div>
                 </div>
-                <script>
-                    window.onload = function() {
-                        window.print();
-                    }
-                </script>
             </body>
             </html>
         `);
         printWin.document.close();
+        // Trigger the print dialog from the opener instead of relying on the
+        // popup's load event, which does not fire reliably for written documents.
+        printWin.focus();
+        window.setTimeout(() => {
+            if (!printWin.closed) {
+                printWin.focus();
+                printWin.print();
+            }
+        }, 400);
     };
 
     const handleReleaseCurrentView = async () => {
@@ -1351,6 +1482,7 @@ export default function PlanningEngineeringModule() {
 
             {/* Unreleased JO Details Modal */}
             <Dialog
+                modal={!isTravelerOpen}
                 open={selectedUnreleasedJo !== null}
                 onOpenChange={(open) => {
                     if (!open) {
@@ -1358,7 +1490,33 @@ export default function PlanningEngineeringModule() {
                     }
                 }}
             >
-                <DialogContent className="sm:max-w-[1250px] max-h-[92vh] flex flex-col bg-background border border-border/80 shadow-2xl rounded-2xl p-0 overflow-hidden">
+                <DialogContent
+                    className="sm:max-w-[1250px] max-h-[92vh] flex flex-col bg-background border border-border/80 shadow-2xl rounded-2xl p-0 overflow-hidden"
+                    onPointerDownOutside={(event) => {
+                        if (
+                            isTravelerOpen &&
+                            event.target instanceof Element &&
+                            event.target.closest("[data-job-order-traveler]")
+                        ) {
+                            event.preventDefault();
+                        }
+                    }}
+                    onFocusOutside={(event) => {
+                        if (
+                            isTravelerOpen &&
+                            event.target instanceof Element &&
+                            event.target.closest("[data-job-order-traveler]")
+                        ) {
+                            event.preventDefault();
+                        }
+                    }}
+                    onEscapeKeyDown={(event) => {
+                        if (isTravelerOpen) {
+                            event.preventDefault();
+                            setIsTravelerOpen(false);
+                        }
+                    }}
+                >
                     {/* Header */}
                     <div className="bg-gradient-to-r from-primary/10 via-primary/5 to-background p-6 border-b border-border/50 shrink-0 space-y-3">
                         <div className="flex justify-between items-center gap-4 pr-6">

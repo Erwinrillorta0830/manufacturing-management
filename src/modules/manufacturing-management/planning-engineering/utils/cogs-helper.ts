@@ -1,6 +1,9 @@
 import type { VersionOverheadItem, VersionPosition } from "../../finished-goods-master/types";
 import { calculateDirectLaborCost } from "../../finished-goods-master/costing";
+import { DecimalValue } from "../../decimal";
 import { calculateEffectiveBatchMultiplier } from "./production-timing";
+
+export const MANUFACTURING_MONEY_DECIMAL_SCALE = 2;
 
 export interface RouteStepCosting {
     sequence_order?: number;
@@ -31,6 +34,8 @@ export interface LaborPositionCosting {
     hdmf_amount?: number | string;
 }
 
+export type FactoryOverheadBasis = "VERSION_OVERHEAD" | "CUSTOM_OVERHEAD" | "WORK_CENTER_RUNTIME";
+
 export interface UnitCOGSBreakdown {
     baseQuantity: number;
     expectedYieldPercentage: number;
@@ -42,11 +47,67 @@ export interface UnitCOGSBreakdown {
     customOverheadCostPerUnit: number;
     fixedOverheadCostPerUnit: number;
     hasCustomOverhead: boolean;
+    factoryOverheadBasis: FactoryOverheadBasis;
     baseUnitCOGS: number;
     adjustedUnitCOGS: number;
     targetSellingPrice?: number;
     grossMarginAmount?: number;
     grossMarginPercentage?: number;
+}
+
+/**
+ * Manufacturing material costs are currency values. Keep the unit cost and
+ * every derived material total on the same two-decimal, half-up boundary.
+ */
+export function roundManufacturingMoney(value: number | string | null | undefined): number {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return 0;
+    return Number(
+        DecimalValue.from(parsed)
+            .round(MANUFACTURING_MONEY_DECIMAL_SCALE)
+            .toFixed(MANUFACTURING_MONEY_DECIMAL_SCALE)
+    );
+}
+
+export function formatManufacturingMoney(value: number | string | null | undefined): string {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return DecimalValue.from(0).toFixed(MANUFACTURING_MONEY_DECIMAL_SCALE);
+    return DecimalValue.from(parsed).toFixed(MANUFACTURING_MONEY_DECIMAL_SCALE);
+}
+
+export function calculateMaterialSpend(
+    materialCostPerUnit: number | string | null | undefined,
+    quantity: number | string | null | undefined
+): number {
+    const cost = Number(materialCostPerUnit);
+    const amount = Number(quantity);
+    if (!Number.isFinite(cost) || cost < 0) {
+        throw new Error("Material cost per unit must be a non-negative number.");
+    }
+    if (!Number.isFinite(amount) || amount < 0) {
+        throw new Error("Material quantity must be a non-negative number.");
+    }
+
+    return Number(
+        DecimalValue.from(roundManufacturingMoney(cost))
+            .multiply(amount)
+            .round(MANUFACTURING_MONEY_DECIMAL_SCALE)
+            .toFixed(MANUFACTURING_MONEY_DECIMAL_SCALE)
+    );
+}
+
+/**
+ * BOM cost entries used by the planning wizard are already normalized to the
+ * finished-unit material cost. Do not divide this result by the recipe batch
+ * size a second time.
+ */
+export function calculateRecipeMaterialCostPerUnit(bomItems: RouteBOMCosting[]): number {
+    return bomItems.reduce((sum, item) => {
+        const quantity = Number(item.quantity_required || 0);
+        const wastage = 1 + (Number(item.wastage_factor_percentage || 0) / 100);
+        const unitCost = Number(item.cost_per_unit || 0);
+        return sum + (quantity * wastage * unitCost);
+    }, 0);
 }
 
 export function calculateUnitCOGSBreakdown(
@@ -57,25 +118,30 @@ export function calculateUnitCOGSBreakdown(
     routeSteps: RouteStepCosting[],
     targetSellingPrice?: number,
     laborPositions: LaborPositionCosting[] = [],
-    overheadItems: VersionOverheadItem[] = []
+    overheadItems: VersionOverheadItem[] = [],
+    materialCostPerUnit?: number | null,
+    targetQuantity?: number | null
 ): UnitCOGSBreakdown {
     const baseQty = Number(baseQuantity);
     if (!Number.isFinite(baseQty) || baseQty <= 0) {
         throw new Error("Recipe base quantity must be greater than zero.");
     }
+    const costingTargetQuantity = Number(targetQuantity);
+    const normalizedTargetQuantity = Number.isFinite(costingTargetQuantity) && costingTargetQuantity > 0
+        ? costingTargetQuantity
+        : baseQty;
     const yieldPercent = (expectedYieldPercentage && expectedYieldPercentage > 0 && expectedYieldPercentage <= 100)
         ? expectedYieldPercentage
         : 100;
     const yieldFactor = yieldPercent / 100;
 
     // 1. Direct Materials & Packaging Cost per Unit
-    const totalMaterialCost = bomItems.reduce((sum, item) => {
-        const qty = Number(item.quantity_required || 0);
-        const wastage = 1 + (Number(item.wastage_factor_percentage || 0) / 100);
-        const unitCost = Number(item.cost_per_unit || 0);
-        return sum + (qty * wastage * unitCost);
-    }, 0);
-    const materialCostPerUnit = totalMaterialCost / baseQty;
+    const resolvedMaterialCost = Number(materialCostPerUnit);
+    const directMaterialCostPerUnit = roundManufacturingMoney(
+        Number.isFinite(resolvedMaterialCost) && resolvedMaterialCost >= 0
+            ? resolvedMaterialCost
+            : calculateRecipeMaterialCostPerUnit(bomItems)
+    );
 
     // 2. Direct Labor Cost per Unit, including the configured statutory
     // benefit allowance used by the finished-goods costing rules.
@@ -95,7 +161,8 @@ export function calculateUnitCOGSBreakdown(
     const directLaborCostPerUnit = calculateDirectLaborCost(normalizedLaborPositions, baseQty);
 
     // 3. Factory Overhead Cost per Unit. Runtime is scaled by each route's
-    // configured batch size, while active version overheads are authoritative.
+    // configured batch size only when no configured version/custom overhead is
+    // available. This prevents the same overhead from being counted twice.
     const totalMachineOverhead = routeSteps.reduce((sum, step) => {
         const hourlyRate = Math.max(0, Number(step.work_center_overhead_cost_per_hour || 0));
         const stepBatchSize = Number(step.step_batch_size);
@@ -105,10 +172,10 @@ export function calculateUnitCOGSBreakdown(
         const setupHours = Math.max(0, Number(step.setup_time_hours || 0));
         const runHours = Math.max(0, Number(step.run_time_hours || 0));
         const machineHours = setupHours
-            + (calculateEffectiveBatchMultiplier(baseQty, stepBatchSize) * runHours);
+            + (calculateEffectiveBatchMultiplier(normalizedTargetQuantity, stepBatchSize) * runHours);
         return sum + (hourlyRate * machineHours);
     }, 0);
-    const machineOverheadCostPerUnit = totalMachineOverhead / baseQty;
+    const machineOverheadCostPerUnit = totalMachineOverhead / normalizedTargetQuantity;
     const activeOverheadItems = overheadItems.filter((item) => item.is_active !== false);
     const configuredFixedOverhead = activeOverheadItems.reduce(
         (sum, item) => sum + Math.max(0, Number(item.cost_per_unit || 0)),
@@ -118,12 +185,21 @@ export function calculateUnitCOGSBreakdown(
         ? configuredFixedOverhead
         : Math.max(0, Number(customOverhead || 0));
     const fixedOverheadCostPerUnit = customOverheadCostPerUnit;
-    const factoryOverheadCostPerUnit = machineOverheadCostPerUnit + fixedOverheadCostPerUnit;
-    const hasCustomOverhead = fixedOverheadCostPerUnit > 0;
+    const factoryOverheadBasis: FactoryOverheadBasis = activeOverheadItems.length > 0
+        ? "VERSION_OVERHEAD"
+        : fixedOverheadCostPerUnit > 0
+            ? "CUSTOM_OVERHEAD"
+            : "WORK_CENTER_RUNTIME";
+    const factoryOverheadCostPerUnit = factoryOverheadBasis === "WORK_CENTER_RUNTIME"
+        ? machineOverheadCostPerUnit
+        : fixedOverheadCostPerUnit;
+    const hasCustomOverhead = factoryOverheadBasis !== "WORK_CENTER_RUNTIME";
 
     // 4. Total COGS calculation
-    const baseUnitCOGS = materialCostPerUnit + directLaborCostPerUnit + factoryOverheadCostPerUnit;
-    const adjustedUnitCOGS = baseUnitCOGS / yieldFactor;
+    const baseUnitCOGS = roundManufacturingMoney(
+        directMaterialCostPerUnit + directLaborCostPerUnit + factoryOverheadCostPerUnit
+    );
+    const adjustedUnitCOGS = roundManufacturingMoney(baseUnitCOGS / yieldFactor);
 
     let grossMarginAmount: number | undefined;
     let grossMarginPercentage: number | undefined;
@@ -137,17 +213,29 @@ export function calculateUnitCOGSBreakdown(
         baseQuantity: baseQty,
         expectedYieldPercentage: yieldPercent,
         yieldFactor,
-        materialCostPerUnit,
+        materialCostPerUnit: directMaterialCostPerUnit,
         directLaborCostPerUnit,
         factoryOverheadCostPerUnit,
         machineOverheadCostPerUnit,
         customOverheadCostPerUnit,
         fixedOverheadCostPerUnit,
         hasCustomOverhead,
+        factoryOverheadBasis,
         baseUnitCOGS,
         adjustedUnitCOGS,
         targetSellingPrice,
         grossMarginAmount,
         grossMarginPercentage
     };
+}
+
+export function getFactoryOverheadBasisLabel(basis: FactoryOverheadBasis): string {
+    switch (basis) {
+        case "VERSION_OVERHEAD":
+            return "Configured version overhead";
+        case "CUSTOM_OVERHEAD":
+            return "Custom overhead fallback";
+        default:
+            return "Work-center runtime fallback";
+    }
 }

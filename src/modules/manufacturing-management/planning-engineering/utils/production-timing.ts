@@ -58,6 +58,93 @@ export function calculateFullBatchTarget(
     );
 }
 
+export interface ProductionQuantityPlan {
+    requestedQuantity: number;
+    baseQuantity: number;
+    requestedBatchRatio: number;
+    requiredBatchCount: number;
+    effectiveQuantity: number;
+}
+
+export interface MaterialRequirementPlan {
+    quantityBasis: "PER_FINISHED_UNIT";
+    quantityPerFinishedUnit: number;
+    wastageFactorPercentage: number;
+    demandRequired: number;
+    plannedRequired: number;
+}
+
+function requireNonNegativeProductionNumber(value: number, label: string): number {
+    if (!Number.isFinite(value) || value < 0) {
+        throw new Error(`${label} must be zero or greater.`);
+    }
+    return value;
+}
+
+/**
+ * BOM quantities in manufacturing_routes_bom are normalized to one finished
+ * output unit. Batch sizing affects the finished output target, not the BOM
+ * quantity basis.
+ */
+export function calculatePerUnitMaterialRequirement(
+    outputQuantity: number,
+    quantityPerFinishedUnit: number,
+    wastageFactorPercentage = 0
+): number {
+    const output = requireNonNegativeProductionNumber(Number(outputQuantity), "Output quantity");
+    const quantity = requireNonNegativeProductionNumber(Number(quantityPerFinishedUnit), "BOM quantity required");
+    const wastage = requireNonNegativeProductionNumber(Number(wastageFactorPercentage), "BOM wastage percentage");
+
+    return Number(
+        DecimalValue.from(output)
+            .multiply(quantity)
+            .multiply(DecimalValue.from(1).add(DecimalValue.from(wastage).divideRounded(100, 8)))
+            .toFixed(PRODUCTION_DECIMAL_SCALE)
+    );
+}
+
+export function calculateMaterialRequirementPlan(
+    requestedQuantity: number,
+    plannedQuantity: number,
+    quantityPerFinishedUnit: number,
+    wastageFactorPercentage = 0
+): MaterialRequirementPlan {
+    const requested = requireNonNegativeProductionNumber(Number(requestedQuantity), "Requested output quantity");
+    const planned = requireNonNegativeProductionNumber(Number(plannedQuantity), "Planned output quantity");
+    if (DecimalValue.from(planned).add(BATCH_BOUNDARY_TOLERANCE).compare(DecimalValue.from(requested)) < 0) {
+        throw new Error("Planned output quantity cannot be less than requested output quantity.");
+    }
+
+    return {
+        quantityBasis: "PER_FINISHED_UNIT",
+        quantityPerFinishedUnit: roundProductionValue(Number(quantityPerFinishedUnit)),
+        wastageFactorPercentage: roundProductionValue(Number(wastageFactorPercentage)),
+        demandRequired: calculatePerUnitMaterialRequirement(requested, quantityPerFinishedUnit, wastageFactorPercentage),
+        plannedRequired: calculatePerUnitMaterialRequirement(planned, quantityPerFinishedUnit, wastageFactorPercentage)
+    };
+}
+
+/**
+ * Keeps demand quantity and the full-batch production quantity together so
+ * previews, containerization, and inventory requirements cannot drift apart.
+ */
+export function calculateProductionQuantityPlan(
+    requestedQuantity: number,
+    baseQuantity: number
+): ProductionQuantityPlan {
+    const requested = requirePositiveProductionNumber(requestedQuantity, "Target production quantity");
+    const base = requirePositiveProductionNumber(baseQuantity, "Recipe base quantity");
+    const requiredBatchCount = calculateRequiredBatchCount(requested, base);
+
+    return {
+        requestedQuantity: roundProductionValue(requested),
+        baseQuantity: roundProductionValue(base),
+        requestedBatchRatio: requested / base,
+        requiredBatchCount,
+        effectiveQuantity: calculateFullBatchTarget(requested, base)
+    };
+}
+
 /**
  * Production runs use complete batches. A route with a configured batch size
  * therefore receives an integer multiplier, with a minimum of one batch.
