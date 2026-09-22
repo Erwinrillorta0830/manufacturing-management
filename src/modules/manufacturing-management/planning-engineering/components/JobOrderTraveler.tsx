@@ -1,8 +1,10 @@
 "use client";
 
-import React, { useRef } from "react";
+import React from "react";
+import { createPortal } from "react-dom";
 import Barcode from "react-barcode";
 import { QRCodeSVG } from "qrcode.react";
+import { toast } from "sonner";
 import { 
     Printer, 
     X, 
@@ -20,6 +22,7 @@ import {
     JobOrderAllocation 
 } from "../types";
 import { displayJobOrderStatus } from "../../job-order-status";
+import { buildTravelerSheetHtml } from "../utils/traveler-sheet-print";
 
 export interface JobOrderTravelerProps {
     isOpen?: boolean;
@@ -46,12 +49,35 @@ export function JobOrderTraveler({
     childJobOrders = [],
     branchName = "Main Manufacturing Facility"
 }: JobOrderTravelerProps) {
-    const printableRef = useRef<HTMLDivElement>(null);
-
     if (!isOpen || !jobOrder) return null;
 
-    const handlePrint = () => {
-        window.print();
+    const handlePrint = async () => {
+        // Open the window synchronously from the click gesture so popup
+        // blockers do not suppress it, then fill in the printable document.
+        const printWin = window.open("", "_blank");
+        if (!printWin) {
+            toast.error("Please allow popups to print the traveler sheet.");
+            return;
+        }
+        try {
+            const html = await buildTravelerSheetHtml({
+                sheets: [
+                    { jobOrder, materials: activeMaterials, operations: activeOperations },
+                    ...childJobOrders.map((child) => ({
+                        jobOrder: child.jobOrder,
+                        materials: child.materials || [],
+                        operations: child.operations || [],
+                        isSubAssembly: true,
+                    })),
+                ],
+                branchName,
+            });
+            printWin.document.write(html);
+            printWin.document.close();
+        } catch (printError) {
+            printWin.close();
+            toast.error(printError instanceof Error ? printError.message : "Unable to generate the traveler sheet.");
+        }
     };
 
     const currentDateStr = new Date().toLocaleDateString("en-US", {
@@ -86,7 +112,7 @@ export function JobOrderTraveler({
         return (
             <div 
                 key={`traveler-sheet-${cJoNo}-${sheetIndex}`} 
-                className="bg-white text-neutral-900 border border-neutral-300 rounded-xl p-8 shadow-sm print:shadow-none print:border-none print:p-0 print:m-0 mb-8 page-break-after-always print:text-black"
+                className="bg-white text-neutral-900 border border-neutral-300 rounded-xl p-8 shadow-sm print:shadow-none print:border-none print:p-0 print:m-0 mb-8 break-after-page print:text-black"
                 style={{ pageBreakInside: "avoid" }}
             >
                 {/* Header Banner */}
@@ -426,11 +452,23 @@ export function JobOrderTraveler({
         );
     };
 
-    return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/90 backdrop-blur-xs overflow-y-auto">
+    return createPortal(
+        // z-[80] keeps the traveler above the still-open Radix details dialog
+        // (overlay + content at z-50) so its toolbar stays clickable.
+        // Portaled to document.body so no ancestor stacking context can trap it.
+        // pointer-events-auto opts back into interaction: the open Radix
+        // details dialog sets body pointer-events to none.
+        <div
+            data-job-order-traveler="true"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Traveler sheet for ${jobOrder.job_order_no || jobOrder.jo_id || "Job Order"}`}
+            className="fixed inset-0 z-[80] overflow-y-auto overscroll-contain bg-background/90 backdrop-blur-xs pointer-events-auto"
+        >
             {/* Top Toolbar (Hidden on Print) */}
             <div className="fixed top-4 right-4 z-50 flex items-center gap-2 print:hidden bg-card/90 backdrop-blur-md p-2 rounded-2xl border border-border shadow-2xl">
                 <Button
+                    type="button"
                     onClick={handlePrint}
                     className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground font-bold text-xs rounded-xl shadow-lg hover:scale-105 transition-all"
                 >
@@ -439,8 +477,10 @@ export function JobOrderTraveler({
                 </Button>
                 {onClose && (
                     <Button
+                        type="button"
                         variant="outline"
                         onClick={onClose}
+                        aria-label="Close traveler sheet"
                         className="p-2 rounded-xl border border-border text-muted-foreground hover:text-foreground shadow-sm transition-all"
                     >
                         <X className="h-4 w-4" />
@@ -449,22 +489,25 @@ export function JobOrderTraveler({
             </div>
 
             {/* Document Container */}
-            <div ref={printableRef} className="w-full max-w-5xl my-auto py-8">
-                {/* Master Parent Job Order Sheet */}
-                {renderTravelerSheet(jobOrder, activeMaterials, activeOperations, 0, false)}
+            <div className="flex min-h-full w-full items-start justify-center p-4">
+                <div className="w-full max-w-5xl py-8">
+                    {/* Master Parent Job Order Sheet */}
+                    {renderTravelerSheet(jobOrder, activeMaterials, activeOperations, 0, false)}
 
-                {/* Sub-Assembly Sheets if Family Group */}
-                {childJobOrders.map((child, cIdx) => (
-                    renderTravelerSheet(
-                        child.jobOrder, 
-                        child.materials || [], 
-                        child.operations || [], 
-                        cIdx + 1, 
-                        true
-                    )
-                ))}
+                    {/* Sub-Assembly Sheets if Family Group */}
+                    {childJobOrders.map((child, cIdx) => (
+                        renderTravelerSheet(
+                            child.jobOrder,
+                            child.materials || [],
+                            child.operations || [],
+                            cIdx + 1,
+                            true
+                        )
+                    ))}
+                </div>
             </div>
-        </div>
+        </div>,
+        document.body,
     );
 }
 

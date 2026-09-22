@@ -6,6 +6,7 @@ import { procurementDirectusFetch } from "../_directus";
 import {
     INVENTORY_STATUS,
     WAREHOUSE_RECEIVING_QUEUE_INVENTORY_STATUS_IDS,
+    WAREHOUSE_RECEIVING_STARTABLE_INVENTORY_STATUS_IDS,
     inventoryStatusToPurchaseOrderStatus,
     type InventoryStatusId
 } from "../_domain";
@@ -417,10 +418,10 @@ async function buildOrderView(order: DirectusOrder) {
         loadBranch(orderBranchId(order))
     ]);
     const warehouseHeaders = headers.filter(header => String(header.posting_status || "") === "Reserved");
-    const warehouseHeader = statusId(order) === INVENTORY_STATUS.WAREHOUSE_RECEIVING
+    const currentWarehouseHeader = [INVENTORY_STATUS.WAREHOUSE_RECEIVING, INVENTORY_STATUS.FOR_PICKUP].some(status => status === statusId(order))
         ? warehouseHeaders.find(header => Number(header.workflow_revision) === workflowRevision(order)) || null
         : null;
-    const warehouseHeaderId = Number(warehouseHeader?.id || 0);
+    const warehouseHeaderId = Number(currentWarehouseHeader?.id || 0);
     const warehouseRows = receivingRows.filter(row =>
         isWarehouse(row)
         && isUnposted(row)
@@ -477,14 +478,24 @@ async function buildOrderView(order: DirectusOrder) {
         warehouseReceivedBy: relationId(order.warehouse_received_by, ["id", "user_id"]),
         remarks: String(order.remark || "").trim(),
         lines: viewLines,
-        draft: warehouseHeader
+        draft: statusId(order) === INVENTORY_STATUS.WAREHOUSE_RECEIVING && currentWarehouseHeader
             ? {
-                id: Number(warehouseHeader.id),
-                receiptNumber: String(warehouseHeader.receiving_ticket_no || ""),
-                receiptDate: warehouseHeader.receipt_date ? String(warehouseHeader.receipt_date).slice(0, 10) : "",
-                receiptType: String(warehouseHeader.receipt_type || "full").toLowerCase(),
-                quantityStatus: String(warehouseHeader.quantity_status || "PARTIAL"),
-                postingStatus: String(warehouseHeader.posting_status || "Reserved")
+                id: Number(currentWarehouseHeader.id),
+                receiptNumber: String(currentWarehouseHeader.receiving_ticket_no || ""),
+                receiptDate: currentWarehouseHeader.receipt_date ? String(currentWarehouseHeader.receipt_date).slice(0, 10) : "",
+                receiptType: String(currentWarehouseHeader.receipt_type || "full").toLowerCase(),
+                quantityStatus: String(currentWarehouseHeader.quantity_status || "PARTIAL"),
+                postingStatus: String(currentWarehouseHeader.posting_status || "Reserved")
+            }
+            : null,
+        pendingQaReceipt: statusId(order) === INVENTORY_STATUS.FOR_PICKUP && currentWarehouseHeader
+            ? {
+                id: Number(currentWarehouseHeader.id),
+                receiptNumber: String(currentWarehouseHeader.receiving_ticket_no || ""),
+                receiptDate: currentWarehouseHeader.receipt_date ? String(currentWarehouseHeader.receipt_date).slice(0, 10) : "",
+                receiptType: String(currentWarehouseHeader.receipt_type || "full").toLowerCase(),
+                quantityStatus: String(currentWarehouseHeader.quantity_status || "PARTIAL"),
+                postingStatus: String(currentWarehouseHeader.posting_status || "Reserved")
             }
             : null
     };
@@ -648,7 +659,7 @@ async function startWarehouseReceiving(order: DirectusOrder, command: WarehouseR
         if (!header) throw new WarehouseReceivingError("The purchase order is in Warehouse Receiving but its draft is missing.", 409);
         return buildOrderView(order);
     }
-    if (!WAREHOUSE_RECEIVING_QUEUE_INVENTORY_STATUS_IDS.some(status => status === currentStatus)) {
+    if (!WAREHOUSE_RECEIVING_STARTABLE_INVENTORY_STATUS_IDS.some(status => status === currentStatus)) {
         throw new WarehouseReceivingError("Only Approved or Partially Received purchase orders can be started in Warehouse Receiving.", 409);
     }
     if (currentStatus === INVENTORY_STATUS.PARTIALLY_RECEIVED) {

@@ -1,4 +1,5 @@
 import { formatProductionValue } from "./production-timing";
+import { formatManufacturingMoney } from "./cogs-helper";
 
 export interface ReleaseSummaryComponent {
     name: string;
@@ -6,6 +7,7 @@ export interface ReleaseSummaryComponent {
     category: string;
     uom: string;
     needed: number;
+    demandNeeded: number;
     available: number;
     sufficient: boolean;
 }
@@ -22,6 +24,7 @@ export interface ReleaseSummaryFinancials {
     materials: number;
     directLabor: number;
     factoryOverhead: number;
+    factoryOverheadBasis: string;
     baseCogs: number;
     adjustedCogs: number;
 }
@@ -53,6 +56,10 @@ function formatMoney(value: number): string {
     return `₱${formatProductionValue(value)}`;
 }
 
+function formatMaterialMoney(value: number): string {
+    return `₱${formatManufacturingMoney(value)}`;
+}
+
 function escapeHtml(value: string): string {
     return value
         .replace(/&/g, "&amp;")
@@ -68,7 +75,7 @@ function escapeHtml(value: string): string {
  */
 export function buildReleaseSummaryHtml(data: ReleaseSummaryPrintData): string {
     const componentRows = data.components.length === 0
-        ? `<tr><td colspan="5" style="padding: 10px 8px; text-align: center; color: #64748b;">No raw material requirements specified.</td></tr>`
+        ? `<tr><td colspan="6" style="padding: 10px 8px; text-align: center; color: #64748b;">No raw material requirements specified.</td></tr>`
         : data.components.map(component => `
                             <tr>
                                 <td style="padding: 6px 8px; border-bottom: 1px solid #e2e8f0; font-weight: bold;">
@@ -76,6 +83,7 @@ export function buildReleaseSummaryHtml(data: ReleaseSummaryPrintData): string {
                                     ${component.code ? `<div style="font-size: 9px; color: #64748b; font-weight: normal; margin-top: 1px;">${escapeHtml(component.code)}</div>` : ""}
                                 </td>
                                 <td style="padding: 6px 8px; border-bottom: 1px solid #e2e8f0; color: #475569;">${escapeHtml(component.category)}</td>
+                                <td style="padding: 6px 8px; border-bottom: 1px solid #e2e8f0; text-align: right;">${formatQuantity(component.demandNeeded)} ${escapeHtml(component.uom)}</td>
                                 <td style="padding: 6px 8px; border-bottom: 1px solid #e2e8f0; text-align: right;">${formatQuantity(component.needed)} ${escapeHtml(component.uom)}</td>
                                 <td style="padding: 6px 8px; border-bottom: 1px solid #e2e8f0; text-align: right; color: #64748b;">${formatQuantity(component.available)} ${escapeHtml(component.uom)}</td>
                                 <td style="padding: 6px 8px; border-bottom: 1px solid #e2e8f0; text-align: center; font-weight: bold; color: ${component.sufficient ? "#059669" : "#e11d48"};">
@@ -98,14 +106,14 @@ export function buildReleaseSummaryHtml(data: ReleaseSummaryPrintData): string {
         ? `
                             <tr>
                                 <td style="padding: 5px 8px;">Direct Materials / unit</td>
-                                <td style="padding: 5px 8px; text-align: right;">${formatMoney(data.financials.materials)}</td>
+                                <td style="padding: 5px 8px; text-align: right;">${formatMaterialMoney(data.financials.materials)}</td>
                             </tr>
                             <tr>
                                 <td style="padding: 5px 8px;">Direct Labor / unit</td>
                                 <td style="padding: 5px 8px; text-align: right;">${formatMoney(data.financials.directLabor)}</td>
                             </tr>
                             <tr>
-                                <td style="padding: 5px 8px;">Factory Overhead / unit</td>
+                                <td style="padding: 5px 8px;">Factory Overhead / unit <span style="font-size: 9px; color: #64748b;">(${escapeHtml(data.financials.factoryOverheadBasis)})</span></td>
                                 <td style="padding: 5px 8px; text-align: right;">${formatMoney(data.financials.factoryOverhead)}</td>
                             </tr>
                             <tr>
@@ -196,7 +204,8 @@ export function buildReleaseSummaryHtml(data: ReleaseSummaryPrintData): string {
                             <tr>
                                 <th style="text-align: left; padding: 6px 8px;">Component</th>
                                 <th style="text-align: left; padding: 6px 8px;">Category</th>
-                                <th style="width: 16%; text-align: right; padding: 6px 8px;">Req. Qty</th>
+                                <th style="width: 14%; text-align: right; padding: 6px 8px;">Demand Qty</th>
+                                <th style="width: 14%; text-align: right; padding: 6px 8px;">Planned Qty</th>
                                 <th style="width: 16%; text-align: right; padding: 6px 8px;">Available</th>
                                 <th style="width: 14%; text-align: center; padding: 6px 8px;">Status</th>
                             </tr>

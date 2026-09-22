@@ -3,6 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { JobOrder } from "../types";
 import { displayJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "../../job-order-status";
+import { calculatePipelinedLineDurationHours } from "../../planning-engineering/utils/production-timing";
 
 interface JobDetailsHeaderProps {
     selectedJobOrder: JobOrder;
@@ -76,8 +77,8 @@ export function JobDetailsHeader({ selectedJobOrder, parentJoNo }: JobDetailsHea
                             <span>{new Date(selectedJobOrder.due_date).toLocaleDateString()}</span>
                         </div>
                         {(() => {
-                            const totalHours = selectedJobOrder.routing_tasks 
-                                ? selectedJobOrder.routing_tasks.reduce((sum, t) => sum + Number(t.planned_setup_hours || 0) + Number(t.planned_run_hours || 0), 0)
+                            const totalHours = selectedJobOrder.routing_tasks
+                                ? calculatePipelinedLineDurationHours(selectedJobOrder.routing_tasks)
                                 : 0;
                             const shiftHours = Number(selectedJobOrder.shiftOption || 8);
                             const estDays = totalHours / shiftHours;

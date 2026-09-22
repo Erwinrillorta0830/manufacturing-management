@@ -92,6 +92,7 @@ export default function WarehouseReceivingModule() {
 
     const isStarted = selectedOrder?.status === "Warehouse Receiving";
     const isContinuation = selectedOrder?.status === "Partially Received";
+    const isPendingQa = selectedOrder?.status === "Receiving (QA)";
     const hasRemainingQuantity = selectedLines.some(line => line.remainingQuantity > 1e-9);
     const actionBusy = submitting !== null || printing;
     const totalEntered = selectedLines.reduce((sum, line) => sum + Math.max(0, Number(quantities[line.lineId] || 0)), 0);
@@ -124,7 +125,7 @@ export default function WarehouseReceivingModule() {
                     <CardHeader className="gap-5 border-b">
                         <div>
                             <CardTitle>Orders ready for warehouse receiving</CardTitle>
-                            <p className="mt-1 text-sm text-muted-foreground">Start a warehouse receipt for an approved purchase order or continue a partially received order.</p>
+                            <p className="mt-1 text-sm text-muted-foreground">Start a warehouse receipt for an approved purchase order, continue a partially received order, or inspect a receipt awaiting QA.</p>
                         </div>
                         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
                             <div className="space-y-1.5 xl:col-span-2">
@@ -153,6 +154,7 @@ export default function WarehouseReceivingModule() {
                                     <option value="Approved">Approved</option>
                                     <option value="Partially Received">Partially Received</option>
                                     <option value="Warehouse Receiving">Warehouse Receiving</option>
+                                    <option value="Receiving (QA)">Receiving (QA)</option>
                                 </select>
                             </div>
                         </div>
@@ -272,9 +274,19 @@ export default function WarehouseReceivingModule() {
                             </div>
                         </CardHeader>
                         <CardContent className="space-y-6 p-5">
-                            <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-4 text-sm text-blue-900">
-                                <div className="flex items-start gap-3"><ClipboardCheck className="mt-0.5 h-5 w-5 shrink-0" /><div><p className="font-semibold">Warehouse quantity confirmation</p><p className="mt-1">Enter the physical quantities received. Lot, batch, expiration, and QA disposition are completed in the next QA Receiving step.</p></div></div>
-                            </div>
+                            {isPendingQa ? (
+                                <Alert className="border-amber-300 bg-amber-50 text-amber-950">
+                                    <ClipboardCheck className="h-4 w-4 text-amber-700" />
+                                    <AlertTitle>Partial receipt is awaiting QA</AlertTitle>
+                                    <AlertDescription>
+                                        This warehouse receipt has been submitted to QA Receiving. It is visible here for tracking but cannot be edited or followed by another warehouse receipt until QA posts it.
+                                    </AlertDescription>
+                                </Alert>
+                            ) : (
+                                <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-4 text-sm text-blue-900">
+                                    <div className="flex items-start gap-3"><ClipboardCheck className="mt-0.5 h-5 w-5 shrink-0" /><div><p className="font-semibold">Warehouse quantity confirmation</p><p className="mt-1">Enter the physical quantities received. Lot, batch, expiration, and QA disposition are completed in the next QA Receiving step.</p></div></div>
+                                </div>
+                            )}
 
                             <div className="grid gap-4 md:grid-cols-3">
                                 <div className="space-y-2"><Label htmlFor="receipt-number">Receipt Number</Label><Input id="receipt-number" value={receiptNumber} onChange={event => setReceiptNumber(event.target.value)} disabled={!isStarted || actionBusy} placeholder="Enter receipt number" /></div>
@@ -297,12 +309,14 @@ export default function WarehouseReceivingModule() {
                     <Card className="h-fit xl:sticky xl:top-4">
                         <CardHeader><CardTitle>Workflow action</CardTitle></CardHeader>
                         <CardContent className="space-y-4">
-                            <div className="space-y-3 text-sm"><div className="flex items-center gap-3"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"><CheckCircle2 className="h-4 w-4" /></span><div><p className="font-medium">Approved</p><p className="text-xs text-muted-foreground">Finance approval complete</p></div></div><div className={`flex items-center gap-3 ${isStarted ? "text-foreground" : "text-muted-foreground"}`}><span className={`flex h-7 w-7 items-center justify-center rounded-full ${isStarted ? "bg-primary text-primary-foreground" : "bg-muted"}`}>2</span><div><p className="font-medium">Warehouse Receiving</p><p className="text-xs text-muted-foreground">Confirm physical quantities</p></div></div><div className="flex items-center gap-3 text-muted-foreground"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-muted">3</span><div><p className="font-medium">Receiving QA</p><p className="text-xs">Lot and quality inspection</p></div></div></div>
+                            <div className="space-y-3 text-sm"><div className="flex items-center gap-3"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"><CheckCircle2 className="h-4 w-4" /></span><div><p className="font-medium">Approved</p><p className="text-xs text-muted-foreground">Finance approval complete</p></div></div><div className={`flex items-center gap-3 ${isStarted || isPendingQa ? "text-foreground" : "text-muted-foreground"}`}><span className={`flex h-7 w-7 items-center justify-center rounded-full ${isStarted || isPendingQa ? "bg-primary text-primary-foreground" : "bg-muted"}`}>2</span><div><p className="font-medium">Warehouse Receiving</p><p className="text-xs text-muted-foreground">Confirm physical quantities</p></div></div><div className={`flex items-center gap-3 ${isPendingQa ? "text-foreground" : "text-muted-foreground"}`}><span className={`flex h-7 w-7 items-center justify-center rounded-full ${isPendingQa ? "bg-amber-500 text-white" : "bg-muted"}`}>3</span><div><p className="font-medium">Receiving QA</p><p className="text-xs">Lot and quality inspection</p></div></div></div>
                             <Separator />
                             {overReceivingLines.length > 0 && <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">This receipt contains an over-receipt. Submission is allowed, and the excess will be visible for review.</p>}
                             {isContinuation && !hasRemainingQuantity && <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">This purchase order has no remaining quantity available for another warehouse receipt.</p>}
-                            {!isStarted ? <Button className="w-full" onClick={() => void start()} disabled={actionBusy || (isContinuation && !hasRemainingQuantity)} title={isContinuation && !hasRemainingQuantity ? "No remaining quantity is available for another warehouse receipt." : undefined}>{submitting === "start" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}<PackageCheck className="mr-2 h-4 w-4" /> {isContinuation ? "Start Next Warehouse Receipt" : "Start Warehouse Receiving"}</Button> : <><Button variant="outline" className="w-full" onClick={() => void saveDraft()} disabled={actionBusy}>{submitting === "save_draft" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Save Draft</Button>{selectedOrder.draft && <Button variant="outline" className="w-full" onClick={() => void printSummary()} disabled={actionBusy}>{printing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />} Print Receiving Summary</Button>}<Button className="w-full" onClick={() => void submitToQa()} disabled={actionBusy}>{submitting === "submit_to_qa" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}<ClipboardCheck className="mr-2 h-4 w-4" /> Complete &amp; Send to QA</Button></>}
-                            <p className="text-center text-xs leading-5 text-muted-foreground">Sending to QA locks this warehouse receipt and makes it available in QA Receiving.</p>
+                            {isPendingQa ? (
+                                <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-center text-xs leading-5 text-amber-800">QA must post this receipt before the next warehouse receipt can be started.</p>
+                            ) : !isStarted ? <Button className="w-full" onClick={() => void start()} disabled={actionBusy || (isContinuation && !hasRemainingQuantity)} title={isContinuation && !hasRemainingQuantity ? "No remaining quantity is available for another warehouse receipt." : undefined}>{submitting === "start" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}<PackageCheck className="mr-2 h-4 w-4" /> {isContinuation ? "Start Next Warehouse Receipt" : "Start Warehouse Receiving"}</Button> : <><Button variant="outline" className="w-full" onClick={() => void saveDraft()} disabled={actionBusy}>{submitting === "save_draft" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Save Draft</Button>{selectedOrder.draft && <Button variant="outline" className="w-full" onClick={() => void printSummary()} disabled={actionBusy}>{printing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />} Print Receiving Summary</Button>}<Button className="w-full" onClick={() => void submitToQa()} disabled={actionBusy}>{submitting === "submit_to_qa" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}<ClipboardCheck className="mr-2 h-4 w-4" /> Complete &amp; Send to QA</Button></>}
+                            <p className="text-center text-xs leading-5 text-muted-foreground">{isPendingQa ? "The receipt is locked while QA completes inspection." : "Sending to QA locks this warehouse receipt and makes it available in QA Receiving."}</p>
                         </CardContent>
                     </Card>
                 </div>

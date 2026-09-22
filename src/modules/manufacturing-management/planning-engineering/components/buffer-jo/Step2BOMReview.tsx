@@ -5,7 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SearchableVersionSelect } from "../SearchableVersionSelect";
 import { formatHoursToHMS } from "../../utils/containerization-helper";
-import { calculateAggregateRunHours, formatProductionValue } from "../../utils/production-timing";
+import {
+    formatManufacturingMoney,
+    getFactoryOverheadBasisLabel
+} from "../../utils/cogs-helper";
+import { calculateAggregateRunHours, calculateMaterialRequirementPlan, calculatePerUnitMaterialRequirement, formatProductionValue } from "../../utils/production-timing";
 
 export interface Step2BOMReviewProps {
     loadingDetails: boolean;
@@ -22,6 +26,7 @@ export interface Step2BOMReviewProps {
     cogsBreakdown: any;
     components: any[];
     targetQuantity: number;
+    requestedTargetQuantity: number;
     bomBaseQty: number;
     inventories: Record<number, any>;
     subAssemblyBoms: Record<number, any[]>;
@@ -52,6 +57,7 @@ export function Step2BOMReview({
     cogsBreakdown,
     components,
     targetQuantity,
+    requestedTargetQuantity,
     bomBaseQty,
     inventories,
     subAssemblyBoms,
@@ -65,8 +71,6 @@ export function Step2BOMReview({
     hasShortfalls,
     handlePrintProcurementRequest
 }: Step2BOMReviewProps) {
-    const bomQuantityScale = bomBaseQty > 0 ? targetQuantity / bomBaseQty : 0;
-
     if (loadingDetails) {
         return (
             <div className="flex flex-col items-center justify-center py-10 space-y-3">
@@ -170,8 +174,9 @@ export function Step2BOMReview({
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-[11px]">
                         <div className="bg-background border border-border/60 rounded-lg p-2">
                             <span className="text-[10px] font-medium text-muted-foreground block">🌾 Batch Mix & Sacks</span>
-                            <span className="font-extrabold text-foreground text-xs">{containerMetrics.mixCount} Mixes</span>
-                            <span className="text-[10px] text-muted-foreground block">({containerMetrics.sackCount} Sacks / {(containerMetrics.flourGramsTotal / 1000).toLocaleString()} kg Flour)</span>
+                            <span className="font-extrabold text-foreground text-xs">{containerMetrics.mixCount} Full Mixes</span>
+                            <span className="text-[10px] text-muted-foreground block">Demand: {containerMetrics.requestedMixCount.toFixed(2)} mixes / {containerMetrics.requestedSackCount.toFixed(2)} sacks / {(containerMetrics.requestedFlourGrams / 1000).toFixed(2)} kg</span>
+                            <span className="text-[10px] text-muted-foreground block">Planned: {containerMetrics.sackCount.toFixed(2)} sacks / {(containerMetrics.flourGramsTotal / 1000).toFixed(2)} kg Flour</span>
                         </div>
                         <div className="bg-background border border-border/60 rounded-lg p-2">
                             <span className="text-[10px] font-medium text-muted-foreground block">🏭 Expected Net Pcs</span>
@@ -216,7 +221,7 @@ export function Step2BOMReview({
                     <div className="grid grid-cols-3 gap-2 pt-1 text-[11px]">
                         <div className="bg-background border border-border/60 rounded-lg p-2">
                             <span className="text-[10px] font-medium text-muted-foreground block">🥦 Direct Materials</span>
-                                <span className="font-extrabold text-foreground text-xs">₱{formatProductionValue(cogsBreakdown.materialCostPerUnit)}</span>
+                                <span className="font-extrabold text-foreground text-xs">₱{formatManufacturingMoney(cogsBreakdown.materialCostPerUnit)}</span>
                             <span className="text-[9px] text-muted-foreground block">Raw Materials & Packaging</span>
                         </div>
                         <div className="bg-background border border-border/60 rounded-lg p-2">
@@ -230,7 +235,7 @@ export function Step2BOMReview({
                             <span className="text-[10px] font-medium text-muted-foreground block">🏭 Factory Overhead</span>
                                 <span className="font-extrabold text-foreground text-xs">₱{formatProductionValue(cogsBreakdown.factoryOverheadCostPerUnit)}</span>
                             <span className="text-[9px] text-muted-foreground block">
-                                {cogsBreakdown.hasCustomOverhead ? "Machine rates + custom overhead" : "Machine rates × runtime"}
+                                {getFactoryOverheadBasisLabel(cogsBreakdown.factoryOverheadBasis)}
                             </span>
                         </div>
                     </div>
@@ -264,7 +269,7 @@ export function Step2BOMReview({
                                 <tr className="bg-muted text-muted-foreground border-b border-border font-bold uppercase tracking-wider text-[9px]">
                                     <th className="p-2.5 w-8 text-center">PR</th>
                                     <th className="p-2.5">Raw Material / Component</th>
-                                    <th className="p-2.5 text-center">Needed</th>
+                                    <th className="p-2.5 text-center">Planned / Demand</th>
                                     <th className="p-2.5 text-center">On Hand</th>
                                     <th className="p-2.5 text-center">Shortfall</th>
                                     <th className="p-2.5 text-right">Status</th>
@@ -273,7 +278,13 @@ export function Step2BOMReview({
                             <tbody>
                                 {components.map((comp, index) => {
                                     const compProductId = comp.component_product_id?.product_id;
-                                    const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * bomQuantityScale;
+                                    const materialPlan = calculateMaterialRequirementPlan(
+                                        requestedTargetQuantity,
+                                        targetQuantity,
+                                        Number(comp.quantity_required || 0),
+                                        Number(comp.wastage_factor_percentage || 0)
+                                    );
+                                    const needed = materialPlan.plannedRequired;
                                     const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
                                     const shortfall = Math.max(0, needed - available);
                                     const isSufficient = shortfall === 0;
@@ -377,7 +388,10 @@ export function Step2BOMReview({
                                                     )}
                                                 </td>
                                                 <td className="p-2.5 text-center font-semibold text-foreground">
-                                                    {needed.toLocaleString(undefined, {maximumFractionDigits:2})} <span className="text-[9px] text-muted-foreground font-normal">{uom}</span>
+                                                    <div>{needed.toLocaleString(undefined, {maximumFractionDigits:2})} <span className="text-[9px] text-muted-foreground font-normal">{uom}</span></div>
+                                                    <div className="text-[9px] font-normal text-muted-foreground">
+                                                        Demand: {materialPlan.demandRequired.toLocaleString(undefined, {maximumFractionDigits:2})} {uom}
+                                                    </div>
                                                 </td>
                                                 <td className="p-2.5 text-center text-muted-foreground">
                                                     {available.toLocaleString(undefined, {maximumFractionDigits:2})} <span className="text-[9px] text-muted-foreground font-normal">{uom}</span>
@@ -409,10 +423,11 @@ export function Step2BOMReview({
                                             {/* Indented child raw materials for Sub-Assemblies */}
                                             {isSubAssembly && children.length > 0 && children.map((cc: any, subIndex: number) => {
                                                 const ccId = cc.component_product_id?.product_id;
-                                                const subBaseQty = Number(cc.base_quantity);
-                                                const ccNeeded = subBaseQty > 0
-                                                    ? (Number(cc.quantity_required) * (1 + (Number(cc.wastage_factor_percentage || 0) / 100))) * (shortfall / subBaseQty)
-                                                    : 0;
+                                                const ccNeeded = calculatePerUnitMaterialRequirement(
+                                                    shortfall,
+                                                    Number(cc.quantity_required || 0),
+                                                    Number(cc.wastage_factor_percentage || 0)
+                                                );
                                                 const ccAvailable = ccId ? (inventories[Number(ccId)]?.on_hand || 0) : 0;
                                                 const ccShortfall = Math.max(0, ccNeeded - ccAvailable);
                                                 const ccUom = cc.unit_of_measurement || "pcs";

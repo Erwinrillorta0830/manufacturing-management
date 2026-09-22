@@ -12,7 +12,7 @@ import { getBOMDetailsForVersion, getActiveVersionForProduct, selectPreferredAct
 import { movementMmLotReference, movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
 import { loadYieldMaterials, YieldMaterialsError } from "../../production/_yield-materials";
 import { enrichDispositions, readDispositions } from "../../qa/_dispositions";
-import { fetchMmInventoryMovements, movementErrorStatus } from "../../services/mm-inventory-movements.service";
+import { fetchMmInventoryMovements, MmInventoryMovementError, movementErrorStatus } from "../../services/mm-inventory-movements.service";
 import { loadMmLots, MmLotError, mmLotId, unitId } from "../../services/mm-lots.service";
 import { getAvailableInventoryLots } from "../helpers/inventory-helper";
 import { paginate } from "../../_pagination";
@@ -20,11 +20,18 @@ import { JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturi
 import { manufacturingFileUrl } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
 import {
     assertCompatibleUoms,
-    calculateBatchScaledMaterialRequirement,
+    calculateFullBatchTarget,
+    calculateMaterialRequirementPlan,
+    calculatePerUnitMaterialRequirement,
     readUomId,
     roundProductionValue,
     requirePositiveProductionNumber
 } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
+import {
+    calculateRecipeMaterialCostPerUnit,
+    roundManufacturingMoney
+} from "@/modules/manufacturing-management/planning-engineering/utils/cogs-helper";
+import { parseContainerizationProfile } from "@/modules/manufacturing-management/planning-engineering/utils/containerization-helper";
 
 const WIZARD_STEP_TIMEOUT_MS = 20000;
 
@@ -1183,22 +1190,20 @@ export async function handleGET(request: Request) {
 
             const mapped = bomItems.map((b: any) => {
                 const prod = pMap.get(Number(b.product_id));
-                const qtyPerBatch = Number(b.quantity_required || 0);
+                const qtyPerUnit = Number(b.quantity_required || 0);
                 const wastagePercentage = Number(b.wastage_factor_percentage || 0);
-                const totalNeeded = roundProductionValue(calculateBatchScaledMaterialRequirement(
-                    quantity,
-                    baseQuantity,
-                    qtyPerBatch,
-                    wastagePercentage
-                ));
+                const totalNeeded = calculatePerUnitMaterialRequirement(quantity, qtyPerUnit, wastagePercentage);
 
                 return {
                     product_id: b.product_id,
                     product_name: prod?.product_name || `Product #${b.product_id}`,
                     product_code: prod?.product_code || "",
                     unit_shortcut: prod?.unit_of_measurement?.unit_shortcut || "pcs",
-                    qty_per_unit: qtyPerBatch,
-                    total_needed: totalNeeded
+                    qty_per_unit: qtyPerUnit,
+                    total_needed: totalNeeded,
+                    quantity_basis: "PER_FINISHED_UNIT",
+                    demand_required: null,
+                    planned_required: totalNeeded
                 };
             });
 
@@ -1333,6 +1338,8 @@ export async function handleGET(request: Request) {
             const branchId = Number(searchParams.get("branchId") || "0");
             const isBuffer = searchParams.get("isBuffer") === "true";
             const usePhysicalOnHand = searchParams.get("usePhysicalOnHand") === "true";
+            const requestedPreviewRaw = Number(searchParams.get("requestedQuantity") || "");
+            const plannedPreviewRaw = Number(searchParams.get("plannedQuantity") || "");
 
             if (!prodId || !Number.isSafeInteger(branchId) || branchId <= 0) {
                 return NextResponse.json({ error: "Missing or invalid productId or branchId query parameter" }, { status: 400 });
@@ -1390,6 +1397,17 @@ export async function handleGET(request: Request) {
                 expected_yield_percentage: version.expected_yield_percentage,
                 shift_hours: (version as any).shift_hours ?? (version as any).shift_option ?? (version as any).target_shift_hours ?? null
             };
+            const containerizationProfile = parseContainerizationProfile((version as any).remarks);
+            (bom as any).containerization_profile = containerizationProfile;
+            const recipeBaseQuantity = Number(version.base_quantity);
+            const requestedPreviewQuantity = Number.isFinite(requestedPreviewRaw) && requestedPreviewRaw > 0
+                ? requestedPreviewRaw
+                : null;
+            const plannedPreviewQuantity = Number.isFinite(plannedPreviewRaw) && plannedPreviewRaw > 0
+                ? plannedPreviewRaw
+                : requestedPreviewQuantity && Number.isFinite(recipeBaseQuantity) && recipeBaseQuantity > 0
+                    ? calculateFullBatchTarget(requestedPreviewQuantity, recipeBaseQuantity)
+                    : null;
 
             // Resolve the work centers used by the selected recipe so costing can apply machine rates.
             const workCenterIds = Array.from(new Set(
@@ -1536,6 +1554,16 @@ export async function handleGET(request: Request) {
                 const pId = extractProductId(item.product_id);
                 const pDetails = productsMap.get(pId);
                 const unitCost = Number(item.cost_per_unit ?? item.landed_cost ?? pDetails?.cost_per_unit ?? 0);
+                const quantityRequired = Number(item.quantity_required || 0);
+                const wastagePercentage = Number(item.wastage_factor_percentage || 0);
+                const requirement = requestedPreviewQuantity !== null && plannedPreviewQuantity !== null
+                    ? calculateMaterialRequirementPlan(
+                        requestedPreviewQuantity,
+                        plannedPreviewQuantity,
+                        quantityRequired,
+                        wastagePercentage
+                    )
+                    : null;
                 return {
                     component_id: item.id,
                     bom_id: version.version_id,
@@ -1548,11 +1576,23 @@ export async function handleGET(request: Request) {
                         cost_per_unit: unitCost
                     },
                     cost_per_unit: unitCost,
-                    quantity_required: Number(item.quantity_required || 0),
-                    wastage_factor_percentage: Number(item.wastage_factor_percentage || 0),
+                    quantity_required: quantityRequired,
+                    wastage_factor_percentage: wastagePercentage,
+                    quantity_basis: "PER_FINISHED_UNIT",
+                    demand_required: requirement?.demandRequired ?? null,
+                    planned_required: requirement?.plannedRequired ?? null,
                     unit_of_measurement: pDetails?.unit_of_measurement?.unit_name || pDetails?.unit_of_measurement?.unit_shortcut || "pcs"
                 };
             });
+
+            const materialCostPerUnit = roundManufacturingMoney(calculateRecipeMaterialCostPerUnit(
+                components.map((component: any) => ({
+                    quantity_required: Number(component.quantity_required || 0),
+                    wastage_factor_percentage: Number(component.wastage_factor_percentage || 0),
+                    cost_per_unit: Number(component.cost_per_unit || 0)
+                }))
+            ));
+            (bom as any).material_cost_per_unit = materialCostPerUnit;
 
             // Build subAssemblyBoms and subAssemblyRoutings records
             const subAssemblyRoutings: Record<number, { setup_time_hours: number; run_time_hours_per_unit: number; base_quantity: number }> = {};
@@ -1640,6 +1680,8 @@ export async function handleGET(request: Request) {
             // 2e: Return { bom, components, routings, subAssemblyVersions, selectedSubAssemblyVersions, subAssemblyBoms, subAssemblyRoutings, inventories }
             return NextResponse.json({
                 bom,
+                containerizationProfile,
+                materialCostPerUnit,
                 components,
                 routings,
                 subAssemblyVersions,
@@ -1928,8 +1970,15 @@ export async function handleGET(request: Request) {
         }
     } catch (e) {
         console.error("API Error in planning-engineering GET:", e);
+        const movementError = e instanceof MmInventoryMovementError ? e : null;
         return NextResponse.json(
-            { error: (e as { message?: string }).message || "Failed to process planning request" },
+            {
+                error: (e as { message?: string }).message || "Failed to process planning request",
+                ...(movementError?.code ? { code: movementError.code } : {}),
+                ...(movementError?.retryAfterSeconds
+                    ? { retryAfterSeconds: movementError.retryAfterSeconds }
+                    : {})
+            },
             { status: e instanceof MmLotError ? e.status : movementErrorStatus(e) }
         );
     }

@@ -1,6 +1,8 @@
 import { cookies } from "next/headers";
 
 const SPRING_REQUEST_TIMEOUT_MS = 20_000;
+const MAX_MOVEMENT_REQUEST_ATTEMPTS = 3;
+const MAX_MOVEMENT_RETRY_DELAY_MS = 10_000;
 
 export interface MmInventoryMovement {
     [key: string]: unknown;
@@ -88,10 +90,22 @@ export class MmInventoryMovementError extends Error {
     constructor(
         message: string,
         readonly status: number = 502,
-        readonly cause?: unknown
+        readonly cause?: unknown,
+        readonly details: {
+            code?: string;
+            retryAfterSeconds?: number;
+        } = {}
     ) {
         super(message);
         this.name = "MmInventoryMovementError";
+    }
+
+    get code(): string | undefined {
+        return this.details.code;
+    }
+
+    get retryAfterSeconds(): number | undefined {
+        return this.details.retryAfterSeconds;
     }
 }
 
@@ -337,25 +351,48 @@ export async function fetchMmInventoryMovements(
     };
     if (cookieHeader) requestHeaders.Cookie = cookieHeader;
 
-    let response: Response;
+    let response: Response | null = null;
     let responseText = "";
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), SPRING_REQUEST_TIMEOUT_MS);
-    try {
-        response = await fetch(targetUrl, {
-            headers: requestHeaders,
-            cache: "no-store",
-            signal: controller.signal
-        });
-        responseText = await response.text();
-    } catch (error) {
+    let retryAfterSeconds: number | undefined;
+
+    for (let attempt = 1; attempt <= MAX_MOVEMENT_REQUEST_ATTEMPTS; attempt += 1) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), SPRING_REQUEST_TIMEOUT_MS);
+        try {
+            response = await fetch(targetUrl, {
+                headers: requestHeaders,
+                cache: "no-store",
+                signal: controller.signal
+            });
+            responseText = await response.text();
+        } catch (error) {
+            throw new MmInventoryMovementError(
+                "The Spring inventory movement service could not be reached.",
+                503,
+                error
+            );
+        } finally {
+            clearTimeout(timeoutId);
+        }
+
+        if (response.ok) break;
+
+        if (response.status !== 429 || attempt === MAX_MOVEMENT_REQUEST_ATTEMPTS) break;
+
+        const retryAfterHeader = response.headers.get("retry-after");
+        const parsedRetryAfter = Number(retryAfterHeader);
+        const retryDelayMs = Number.isFinite(parsedRetryAfter) && parsedRetryAfter > 0
+            ? Math.min(MAX_MOVEMENT_RETRY_DELAY_MS, Math.max(1000, Math.ceil(parsedRetryAfter * 1000)))
+            : Math.min(MAX_MOVEMENT_RETRY_DELAY_MS, attempt * 1000);
+        retryAfterSeconds = Math.ceil(retryDelayMs / 1000);
+        await new Promise<void>((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+
+    if (!response) {
         throw new MmInventoryMovementError(
-            "The Spring inventory movement service could not be reached.",
-            503,
-            error
+            "The Spring inventory movement service did not return a response.",
+            503
         );
-    } finally {
-        clearTimeout(timeoutId);
     }
 
     if (!response.ok) {
@@ -384,7 +421,14 @@ export async function fetchMmInventoryMovements(
 
         throw new MmInventoryMovementError(
             formattedError,
-            response.status >= 400 && response.status < 600 ? response.status : 502
+            response.status >= 400 && response.status < 600 ? response.status : 502,
+            undefined,
+            response.status === 429
+                ? {
+                    code: "INVENTORY_MOVEMENT_RATE_LIMITED",
+                    retryAfterSeconds
+                }
+                : undefined
         );
     }
 

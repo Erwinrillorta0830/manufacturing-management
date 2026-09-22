@@ -30,6 +30,8 @@ import { submitShiftRunLog, ShiftRunLogPayload, fetchRejectionReasons } from "..
 import { validateProductionYieldImage } from "../services/production-yield-image";
 import { AddReservedMaterialDialog, type TopUpTarget } from "./AddReservedMaterialDialog";
 import { toast } from "sonner";
+import { calculatePipelinedLineDurationHours } from "../../planning-engineering/utils/production-timing";
+import { formatProductionQuantity, resolveJobOrderTargetQuantity } from "../utils/production-quantity";
 
 interface JobOrderShiftLogModalProps {
     open: boolean;
@@ -85,12 +87,10 @@ export function JobOrderShiftLogModal({
     const [isWebcamReady, setIsWebcamReady] = useState(false);
     const [webcamError, setWebcamError] = useState<string | null>(null);
 
-    const totalPlannedHours = sortedTasks.reduce(
-        (sum, task) => sum + Number(task.planned_setup_hours || 0) + Number(task.planned_run_hours || 0),
-        0
-    );
+    const totalPlannedHours = calculatePipelinedLineDurationHours(sortedTasks);
     const shiftHours = Number(selectedJobOrder?.shiftOption || 8);
     const estDays = Math.ceil(totalPlannedHours / shiftHours) || 1;
+    const targetQuantity = resolveJobOrderTargetQuantity(selectedJobOrder);
 
     const getUserLabel = (uId: number) => {
         const u = users.find((x) => (x.user_id || x.id) === uId);
@@ -394,7 +394,7 @@ export function JobOrderShiftLogModal({
     const handleShiftYieldChange = (val: string) => {
         setShiftYieldQty(val);
         const qtyNum = Number(val) || 0;
-        const targetQ = Number(selectedJobOrder.quantity || selectedJobOrder.target_quantity || 1);
+        const targetQ = targetQuantity || 1;
         
         setShiftMaterials((prev) =>
             prev.map((m) => {
@@ -478,12 +478,12 @@ export function JobOrderShiftLogModal({
 
             const res = await submitShiftRunLog(payload);
             if (res.success) {
-                const targetQty = Number(selectedJobOrder.quantity || 0);
+                const targetQty = targetQuantity;
                 const producedAfter = Number(selectedJobOrder.producedQty || selectedJobOrder.completed_quantity || 0) + newYield;
                 const reachedTarget = targetQty > 0 && producedAfter >= targetQty;
 
                 if (reachedTarget) {
-                    toast.success(`Shift closed for ${fullShiftName}. Output target reached (${producedAfter.toLocaleString()}/${targetQty.toLocaleString()} pcs) — route this Job Order to QA.`);
+                    toast.success(`Shift closed for ${fullShiftName}. Output target reached (${formatProductionQuantity(producedAfter)}/${formatProductionQuantity(targetQty)} pcs) — route this Job Order to QA.`);
                 } else {
                     toast.success(`Shift closed for ${fullShiftName} across ${sortedTasks.length || "all"} routing steps; staging materials backflushed.`);
                 }
@@ -519,7 +519,7 @@ export function JobOrderShiftLogModal({
         const materialsHtml = shiftMaterials.length === 0
             ? "<tr><td colspan='4' style='text-align: center; font-style: italic; padding: 12px;'>No raw materials consumed.</td></tr>"
             : shiftMaterials.map(m => {
-                const stdQty = Number(m.allocated_quantity || 0) / (Number(selectedJobOrder.quantity) || 1);
+                const stdQty = Number(m.allocated_quantity || 0) / (targetQuantity || 1);
                 const theoretical = stdQty * totalOutputQuantity;
                 const actual = Number(m.actual_qty || 0);
                 const deviation = actual - theoretical;
@@ -561,7 +561,7 @@ export function JobOrderShiftLogModal({
                     </div>
                     <div>
                         <div><strong>Shift Run:</strong> ${fullShiftName}</div>
-                        <div><strong>Good Yield:</strong> ${Number(shiftYieldQty).toLocaleString()} pcs • <strong>Scrap:</strong> ${Number(scrapQty).toLocaleString()} pcs</div>
+                        <div><strong>Good Yield:</strong> ${formatProductionQuantity(Number(shiftYieldQty))} pcs • <strong>Scrap:</strong> ${formatProductionQuantity(Number(scrapQty))} pcs</div>
                         <div><strong>Output Traceability:</strong> Assigned during In-Process QA</div>
                     </div>
                 </div>
@@ -591,7 +591,7 @@ export function JobOrderShiftLogModal({
         const baseQty = Number(material.allocated_quantity || 0)
             || Number(material.required_quantity || 0)
             || totalBasis;
-        const targetQty = Number(selectedJobOrder.quantity || selectedJobOrder.target_quantity) || 1;
+        const targetQty = targetQuantity || 1;
         const totalTheoretical = (baseQty / targetQty) * totalOutputQuantity;
         return totalBasis > 0 && lineBasis > 0
             ? totalTheoretical * (lineBasis / totalBasis)
@@ -737,11 +737,16 @@ export function JobOrderShiftLogModal({
                                         </div>
 
                                          <div className="space-y-1.5">
-                                             <Label htmlFor="shiftYield" className="text-muted-foreground font-medium text-[11px] font-mono">Good Output (pcs)</Label>
-                                            <Input
-                                                id="shiftYield"
-                                                type="number"
-                                                value={shiftYieldQty}
+                                             <div className="flex items-center justify-between gap-2">
+                                                 <Label htmlFor="shiftYield" className="text-muted-foreground font-medium text-[11px] font-mono">Good Output (pcs)</Label>
+                                                 <span className="text-[10px] font-medium text-muted-foreground">Target: {formatProductionQuantity(targetQuantity)} pcs</span>
+                                             </div>
+                                             <Input
+                                                 id="shiftYield"
+                                                 type="number"
+                                                 min="0"
+                                                 step="0.000001"
+                                                 value={shiftYieldQty}
                                                 onChange={(e) => handleShiftYieldChange(e.target.value)}
                                                 className="h-10 rounded-xl bg-background border-emerald-500/50 text-foreground text-xs font-bold font-mono focus-visible:ring-emerald-500/20 focus-visible:border-emerald-500 transition-all duration-200"
                                                 placeholder="e.g. 5000"

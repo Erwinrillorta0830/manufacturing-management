@@ -94,9 +94,10 @@ export function useWarehouseReceiving() {
             const detail = await fetchWarehouseReceivingOrder(order.id, controller.signal);
             if (controller.signal.aborted) return;
             setSelectedOrder(detail);
-            setReceiptNumber(detail.draft?.receiptNumber || "");
-            setReceiptDate(detail.draft?.receiptDate || today());
-            setReceiptType(detail.draft?.receiptType || "full");
+            const receipt = detail.draft || detail.pendingQaReceipt;
+            setReceiptNumber(receipt?.receiptNumber || "");
+            setReceiptDate(receipt?.receiptDate || today());
+            setReceiptType(receipt?.receiptType || "full");
             setQuantities(Object.fromEntries(detail.lines.map(line => [line.lineId, String(line.currentReceivedQuantity || "")])));
         } catch (caught) {
             if (controller.signal.aborted || (caught as Error).name === "AbortError") return;

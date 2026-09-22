@@ -48,6 +48,9 @@ export interface RoutingTask {
         product_name: string;
         qty_per_unit: number;
         total_needed: number;
+        quantity_basis?: "PER_FINISHED_UNIT" | string;
+        demand_required?: number | null;
+        planned_required?: number | null;
         unit_shortcut: string;
         lot_no?: string;
         available_stock?: number;

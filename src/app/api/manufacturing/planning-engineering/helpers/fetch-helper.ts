@@ -4,8 +4,7 @@ import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../servi
 import { normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 import { getDailyQAAuditStatus, type DailyQAOutcomeStatus } from "@/modules/manufacturing-management/manufacturing-qa/daily-qa-outcome";
 import {
-    calculateBatchScaledMaterialRequirement,
-    roundProductionValue
+    calculatePerUnitMaterialRequirement
 } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
 import { normalizeOperatorAssignments } from "../../job-orders/_operator-assignment-service";
 
@@ -525,19 +524,21 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                     
                     const stepBomItems = stepBoms.map((b: any) => {
                         const prod = productsList.find((p: any) => Number(p.product_id) === Number(b.product_id));
-                        const qtyPerBatch = Number(b.quantity_required || 0);
+                        const qtyPerUnit = Number(b.quantity_required || 0);
                         const wastagePercentage = Number(b.wastage_factor_percentage || 0);
-                        const totalNeeded = roundProductionValue(calculateBatchScaledMaterialRequirement(
+                        const totalNeeded = calculatePerUnitMaterialRequirement(
                             targetQuantity,
-                            baseQuantity,
-                            qtyPerBatch,
+                            qtyPerUnit,
                             wastagePercentage
-                        ));
+                        );
                         return {
                             product_id: b.product_id,
                             product_name: prod?.product_name || `Product #${b.product_id}`,
-                            qty_per_unit: qtyPerBatch,
+                            qty_per_unit: qtyPerUnit,
                             total_needed: totalNeeded,
+                            quantity_basis: "PER_FINISHED_UNIT",
+                            demand_required: null,
+                            planned_required: totalNeeded,
                             unit_shortcut: prod?.unit_of_measurement?.unit_shortcut || "pcs"
                         };
                     });
