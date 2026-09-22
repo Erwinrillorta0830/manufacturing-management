@@ -376,53 +376,62 @@ export default function AccountsReceivableModule() {
 
 
   return (
-      <div className="p-3 md:p-4 bg-background text-foreground min-h-screen space-y-3 w-full box-border overflow-hidden">
+      <div className="p-4 md:p-6 bg-background text-foreground min-h-screen space-y-6 w-full box-border overflow-hidden">
 
         {/* ── Header + Export ── */}
-        <div className="flex items-center justify-between gap-2 min-w-0">
-          <div className="min-w-0">
-            <h1 className="text-sm font-bold tracking-tight truncate">Accounts Receivable</h1>
-            <p className="text-[10px] text-muted-foreground">
-              Unpaid · excl. posted &amp; fully paid
-              {isFiltered && (
+        <div className="relative overflow-hidden rounded-2xl border border-border bg-gradient-to-br from-sky-500/5 via-indigo-500/5 to-purple-500/5 px-5 sm:px-7 py-5 sm:py-6">
+          <div className="absolute -right-12 -top-12 h-48 w-48 rounded-full bg-gradient-to-br from-sky-500/20 to-indigo-500/20 blur-3xl pointer-events-none" aria-hidden />
+          <div className="absolute -right-8 -bottom-16 h-56 w-56 rounded-full bg-gradient-to-br from-purple-500/15 to-pink-500/15 blur-3xl pointer-events-none" aria-hidden />
+          <div className="relative flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">
+                Financial Monitoring
+              </p>
+              <h1 className="text-2xl sm:text-3xl font-black tracking-tight leading-tight">
+                Accounts Receivable
+              </h1>
+              <p className="text-xs sm:text-sm text-muted-foreground mt-1 max-w-2xl">
+                Customer balances, aging analysis, and collection exposure at a glance.
+                {isFiltered && (
                   <span className="ml-2 font-semibold text-foreground">
-                {filteredCount}/{totalInvoices} shown
-              </span>
-              )}
-            </p>
-          </div>
-          <div className="flex items-center gap-1.5 shrink-0">
-            <Button
+                    ({filteredCount}/{totalInvoices} invoices shown)
+                  </span>
+                )}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto shrink-0">
+              <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setShowAIInsights(!showAIInsights)}
-                className={`h-7 px-2.5 text-[10px] gap-1 transition-all ${
+                className={`h-9 px-3 text-xs gap-1.5 transition-all ${
                   showAIInsights 
                     ? 'bg-purple-500/15 border-purple-500/40 text-purple-700 dark:text-purple-300 font-bold shadow-sm'
                     : 'border-purple-500/20 text-purple-600 dark:text-purple-400 hover:bg-purple-500/10'
                 }`}
-            >
-              <Sparkles className={`h-3 w-3 ${showAIInsights ? 'text-purple-600 animate-spin' : 'text-purple-500'}`} />
-              AI Copilot
-            </Button>
-            <Button
+              >
+                <Sparkles className={`h-3.5 w-3.5 ${showAIInsights ? 'text-purple-600 animate-spin' : 'text-purple-500'}`} />
+                AI Copilot
+              </Button>
+              <Button
                 variant="outline"
                 size="sm"
                 onClick={exportToExcel}
-                className="h-7 px-2.5 text-[10px] gap-1"
-            >
-              <FileSpreadsheet className="h-3 w-3 text-green-600" />
-              Excel
-            </Button>
-            <Button
+                className="h-9 px-3 text-xs gap-1.5"
+              >
+                <FileSpreadsheet className="h-3.5 w-3.5 text-green-600" />
+                Excel
+              </Button>
+              <Button
                 variant="outline"
                 size="sm"
                 onClick={exportToPDF}
-                className="h-7 px-2.5 text-[10px] gap-1"
-            >
-              <Download className="h-3 w-3" />
-              PDF
-            </Button>
+                className="h-9 px-3 text-xs gap-1.5"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Export PDF
+              </Button>
+            </div>
           </div>
         </div>
 

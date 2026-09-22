@@ -361,7 +361,8 @@ export async function calculateRollupCost(
         expectedYieldPercentage: version.expected_yield_percentage,
         baseQuantity,
         machineHours: machineHoursSubtotal,
-        totalMachineCost: totalMachineCostSubtotal
+        totalMachineCost: totalMachineCostSubtotal,
+        laborPositions: version.labor_positions || []
     });
     const overheadSummary = calculateOverheadSummary(
         breakdown.customOverheadCost,
