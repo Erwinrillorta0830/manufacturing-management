@@ -12,7 +12,7 @@ import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { cookies } from "next/headers";
 
 // ✅ Wire the finished goods module
-import FinishedGoodsModule from "@/modules/manufacturing-management/finished-goods/FinishedGoodsModule";
+import FinishedGoodsModule from "@/modules/manufacturing-management/finished-goods-master/FinishedGoodsModule";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -97,11 +97,11 @@ export default async function FinishedGoodsPage() {
                                     <BreadcrumbLink href="#">Manufacturing Management</BreadcrumbLink>
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
-                                 <BreadcrumbItem className="hidden md:block shrink-0">
+                                <BreadcrumbItem className="hidden md:block shrink-0">
                                     <BreadcrumbLink href="#">Inventory & Warehousing</BreadcrumbLink>
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
-                                
+
                                 <BreadcrumbItem className="min-w-0 overflow-hidden">
                                     <BreadcrumbPage className="truncate max-w-[56vw] sm:max-w-[60vw] md:max-w-none">
                                         Finished Goods Master

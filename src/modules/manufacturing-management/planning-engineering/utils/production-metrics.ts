@@ -1,4 +1,4 @@
-import type { VersionOverheadItem } from "../../finished-goods/types";
+import type { VersionOverheadItem } from "../../finished-goods-master/types";
 import {
     calculateUnitCOGSBreakdown,
     type LaborPositionCosting,

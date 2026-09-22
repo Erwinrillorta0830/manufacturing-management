@@ -455,7 +455,7 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
       doc.setDrawColor(148, 163, 184);
 
       // Created By
-      doc.text("PREPARED BY:", margins.left, sigY);
+      doc.text("CREATED BY:", margins.left, sigY);
       doc.line(margins.left, sigY + 12, margins.left + 50, sigY + 12);
       doc.setFontSize(9);
       doc.setFont("helvetica", "bold");

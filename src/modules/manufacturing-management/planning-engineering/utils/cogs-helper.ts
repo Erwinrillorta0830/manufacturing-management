@@ -1,5 +1,5 @@
-import type { VersionOverheadItem, VersionPosition } from "../../finished-goods/types";
-import { calculateDirectLaborCost } from "../../finished-goods/costing";
+import type { VersionOverheadItem, VersionPosition } from "../../finished-goods-master/types";
+import { calculateDirectLaborCost } from "../../finished-goods-master/costing";
 import { DecimalValue } from "../../decimal";
 import { calculateEffectiveBatchMultiplier } from "./production-timing";
 

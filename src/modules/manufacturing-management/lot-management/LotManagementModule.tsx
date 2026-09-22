@@ -19,7 +19,7 @@ import { SearchableBranchSelect } from "./components/SearchableBranchSelect";
 import { SearchableProductTypeSelect } from "./components/SearchableProductTypeSelect";
 import { SearchableUomSelect } from "./components/SearchableUomSelect";
 import { SearchableStatusSelect } from "./components/SearchableStatusSelect";
-import { resolveProductClassification } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
+import { resolveProductClassification } from "./services/lot-tracking.service";
 import { Batch, Lot, Branch } from "./types";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";

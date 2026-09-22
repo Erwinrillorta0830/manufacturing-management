@@ -221,6 +221,7 @@ export const InvoicingService = {
         if (!invoiceId || invoiceId === "null" || invoiceId === "undefined") {
             return [];
         }
+        
         const response = await fetch(`/api/manufacturing/invoicing-and-billing/invoicing/invoice-details/${invoiceId}`);
         if (!response.ok) {
             let errorMsg = "Failed to fetch invoice details";
@@ -253,7 +254,7 @@ export const InvoicingService = {
         if (!res.ok) return [];
         return res.json();
     },
-
+//src\app\api\manufacturing\invoicing-and-billing\invoicing\inventory-movements
     async getInventoryMovements(filters?: Record<string, string | number>): Promise<unknown[]> {
         const params = new URLSearchParams();
         if (filters) {
@@ -261,7 +262,7 @@ export const InvoicingService = {
                 if (v !== undefined && v !== null && v !== "") params.append(k, String(v));
             });
         }
-        const res = await fetch(`/api/manufacturing/inventory-movements?${params.toString()}`);
+        const res = await fetch(`/api/manufacturing/invoicing-and-billing/invoicing/inventory-movements?${params.toString()}`);
         if (!res.ok) return [];
         return res.json();
     }

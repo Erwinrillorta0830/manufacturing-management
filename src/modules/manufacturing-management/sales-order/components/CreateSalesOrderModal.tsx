@@ -4,7 +4,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Plus, Trash2, Loader2, DollarSign, AlertTriangle, Search, Save, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
-import { CreatableSelect } from "../../finished-goods/components/CreatableSelect";
+import { CreatableSelect } from "../../finished-goods-master/components/CreatableSelect";
 import {
     Dialog,
     DialogContent,
@@ -156,7 +156,7 @@ export function CreateSalesOrderModal({
 
     const getLeadTimeStatus = () => {
         if (!deliveryDate || items.length === 0) return { feasible: true, maxLeadDays: 0, requiredDate: null };
-        
+
         let maxLeadDays = 0;
         items.forEach(item => {
             if (item.product_id) {
@@ -171,7 +171,7 @@ export function CreateSalesOrderModal({
 
         const orderDateObj = new Date();
         const requiredDateObj = new Date(orderDateObj.getTime() + maxLeadDays * 24 * 60 * 60 * 1000);
-        
+
         // Format required date as YYYY-MM-DD local time safely
         const offset = requiredDateObj.getTimezoneOffset();
         const localRequiredDateObj = new Date(requiredDateObj.getTime() - offset * 60 * 1000);
@@ -399,8 +399,8 @@ export function CreateSalesOrderModal({
                 const discountAmount = typeof data.finalPrice === 'number' && typeof basePrice === 'number'
                     ? basePrice - data.finalPrice
                     : 0;
-                return { 
-                    discountType: data.discount?.id || null, 
+                return {
+                    discountType: data.discount?.id || null,
                     discountAmount: discountAmount,
                     discountPercent: data.discount?.totalPercent || 0
                 };
@@ -531,7 +531,7 @@ export function CreateSalesOrderModal({
             clearLineError(lineId, "product");
             clearLineError(lineId, "uom");
         }
-        
+
         const usedVariantIds = new Set(items
             .filter((_, otherIndex) => otherIndex !== index)
             .map(otherItem => Number(otherItem.product_id))
@@ -540,7 +540,7 @@ export function CreateSalesOrderModal({
             .filter(product => Number(product.parent_product_id) === parentProductId)
             .sort((a, b) => Number(b.is_parent) - Number(a.is_parent) || Number(a.unit_count) - Number(b.unit_count));
         const defaultVariant = variants.find(variant => !usedVariantIds.has(Number(variant.product_id)));
-        
+
         const newProductId = defaultVariant ? Number(defaultVariant.product_id) : 0;
         const newUnitPrice = defaultVariant ? Number(defaultVariant.price_per_unit || defaultVariant.cost_per_unit || 0) : 0;
 
@@ -564,19 +564,19 @@ export function CreateSalesOrderModal({
         const variant = products.find(product => Number(product.product_id) === productId);
         const lineId = items[index]?.line_id;
         if (lineId) clearLineError(lineId, "uom");
-        
+
         const unitPrice = variant ? Number(variant.price_per_unit || variant.cost_per_unit || 0) : 0;
         const { discountType, discountAmount, discountPercent } = await fetchLineDiscount(customerId, productId, unitPrice);
 
         setItems(prev => prev.map((item, idx) => idx === index ? {
-                ...item,
-                product_id: productId,
-                unit_price: unitPrice,
-                discount_type: discountType,
-                discount_amount: discountAmount,
-                discount_percent: discountPercent,
-                bom_version_id: undefined
-            } : item));
+            ...item,
+            product_id: productId,
+            unit_price: unitPrice,
+            discount_type: discountType,
+            discount_amount: discountAmount,
+            discount_percent: discountPercent,
+            bom_version_id: undefined
+        } : item));
     };
 
     const handleItemChange = (index: number, field: "quantity" | "unit_price" | "bom_version_id", value: number) => {
@@ -633,10 +633,10 @@ export function CreateSalesOrderModal({
             if (item.product_id && seenProductIds.has(item.product_id)) lineErrors.uom = "This product and UOM are already selected.";
             if (item.product_id) {
                 seenProductIds.add(item.product_id);
-                
+
                 const prod = products.find(p => Number(p.product_id) === Number(item.parent_product_id));
-                const typeObj = item.product_type_id 
-                    ? productTypes.find(t => Number(t.id) === Number(item.product_type_id)) 
+                const typeObj = item.product_type_id
+                    ? productTypes.find(t => Number(t.id) === Number(item.product_type_id))
                     : (prod ? productTypes.find(t => String(t.id) === String(prod.product_type)) : null);
                 const isFinishedGood = Boolean(typeObj?.name?.toLowerCase().includes("finished"));
 
@@ -716,8 +716,8 @@ export function CreateSalesOrderModal({
                 payload.customerId = Number(customerId);
                 payload.items = items.map(item => {
                     const prod = products.find(p => Number(p.product_id) === Number(item.parent_product_id));
-                    const typeObj = item.product_type_id 
-                        ? productTypes.find(t => Number(t.id) === Number(item.product_type_id)) 
+                    const typeObj = item.product_type_id
+                        ? productTypes.find(t => Number(t.id) === Number(item.product_type_id))
                         : (prod ? productTypes.find(t => String(t.id) === String(prod.product_type)) : null);
                     const isFinishedGood = Boolean(typeObj?.name?.toLowerCase().includes("finished"));
                     return {
@@ -774,576 +774,574 @@ export function CreateSalesOrderModal({
                         <DialogTitle>Create Direct Sales Order</DialogTitle>
                         <DialogDescription>Enter the customer, fulfillment, and product details.</DialogDescription>
                     </DialogHeader>
-                {loadingLookups ? (
-                    <div className="p-20 flex flex-col items-center justify-center gap-2 text-muted-foreground">
-                        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                        <span className="text-xs">Loading dependencies...</span>
-                    </div>
-                ) : (
-                    <div
-                        onKeyDown={handleFormKeyDown}
-                        className="flex min-h-0 flex-1 flex-col"
-                    >
-                        <div className="flex-1 space-y-5 overflow-y-auto p-4 sm:p-6 pb-40">
-                        {lookupError && (
-                            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
-                                {lookupError}
-                            </div>
-                        )}
-                        {/* Header Fields */}
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                            <div className="space-y-1.5">
-                                <label htmlFor="direct-so-po" className={fieldLabelClassName}>PO Number <span className="text-destructive">*</span></label>
-                                <input
-                                    id="direct-so-po"
-                                    ref={poInputRef}
-                                    type="text"
-                                    value={poNo}
-                                    onChange={event => {
-                                        setPoNo(event.target.value);
-                                        setFormErrors(previous => ({ ...previous, poNo: undefined }));
-                                    }}
-                                    placeholder="e.g. PO-88902"
-                                    aria-invalid={Boolean(formErrors.poNo)}
-                                    aria-describedby={formErrors.poNo ? "direct-so-po-error" : undefined}
-                                    className={inputClassName}
-                                />
-                                {formErrors.poNo && <p id="direct-so-po-error" className="text-xs text-destructive">{formErrors.poNo}</p>}
-                            </div>
-
-                            <div className="space-y-1.5">
-                                <label className={fieldLabelClassName}>Customer <span className="text-destructive">*</span></label>
-                                <CreatableSelect
-                                    options={customers.map(c => ({ value: String(c.id), label: `${c.customer_name} (${c.customer_code})` }))}
-                                    value={customerId}
-                                    onValueChange={handleCustomerChange}
-                                    placeholder="Select Customer..."
-                                    className="h-9 text-xs"
-                                    disabled={!lookupsReady}
-                                    aria-label="Customer"
-                                    aria-invalid={Boolean(formErrors.customerId)}
-                                    aria-describedby={formErrors.customerId ? "direct-so-customer-error" : undefined}
-                                />
-                                {formErrors.customerId && <p id="direct-so-customer-error" className="text-xs text-destructive">{formErrors.customerId}</p>}
-                            </div>
-
-                            <div className="space-y-1.5">
-                                <label className={fieldLabelClassName}>Production Branch <span className="text-destructive">*</span></label>
-                                <CreatableSelect
-                                    options={branches.map(b => ({ value: String(b.id), label: b.branch_name }))}
-                                    value={branchId}
-                                    onValueChange={val => {
-                                        setBranchId(val);
-                                        setFormErrors(prev => ({ ...prev, branchId: undefined }));
-                                    }}
-                                    placeholder="Select Branch..."
-                                    className="h-9 text-xs"
-                                    aria-label="Production branch"
-                                    aria-invalid={Boolean(formErrors.branchId)}
-                                />
-                                {formErrors.branchId && <p className="text-xs text-destructive">{formErrors.branchId}</p>}
-                            </div>
-
-                            <div className="space-y-1.5">
-                                <label className={fieldLabelClassName}>Payment Terms <span className="text-destructive">*</span></label>
-                                <CreatableSelect
-                                    options={paymentTerms.map(t => ({ value: String(t.id), label: `${t.payment_name} (${t.payment_days} days)` }))}
-                                    value={paymentTermId}
-                                    onValueChange={val => {
-                                        setPaymentTermId(val);
-                                        setFormErrors(prev => ({ ...prev, paymentTermId: undefined }));
-                                    }}
-                                    placeholder="Select Terms..."
-                                    className="h-9 text-xs"
-                                    aria-label="Payment terms"
-                                    aria-invalid={Boolean(formErrors.paymentTermId)}
-                                />
-                                {formErrors.paymentTermId && <p className="text-xs text-destructive">{formErrors.paymentTermId}</p>}
-                            </div>
+                    {loadingLookups ? (
+                        <div className="p-20 flex flex-col items-center justify-center gap-2 text-muted-foreground">
+                            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                            <span className="text-xs">Loading dependencies...</span>
                         </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                            <div className="space-y-1.5">
-                                <label className={fieldLabelClassName}>Salesman <span className="text-destructive">*</span></label>
-                                <CreatableSelect
-                                    options={users
-                                        .filter(u => salesmen.some(s => Number(s.employee_id) === Number(u.user_id)))
-                                        .map(u => ({ value: String(u.user_id), label: `${u.user_fname} ${u.user_lname}` }))}
-                                    value={userId}
-                                    onValueChange={val => {
-                                        setUserId(val);
-                                        setSalesmanAccountId("");
-                                        setFormErrors(prev => ({ ...prev, userId: undefined, salesmanAccountId: undefined }));
-                                    }}
-                                    placeholder="Select Salesman..."
-                                    className="h-9 text-xs"
-                                    aria-label="Salesman"
-                                    aria-invalid={Boolean(formErrors.userId)}
-                                />
-                                {formErrors.userId && <p className="text-xs text-destructive">{formErrors.userId}</p>}
-                            </div>
-
-                            <div className="space-y-1.5">
-                                <label className={fieldLabelClassName}>Salesman Account <span className="text-destructive">*</span></label>
-                                <CreatableSelect
-                                    options={salesmen
-                                        .filter(s => Number(s.employee_id) === Number(userId))
-                                        .map(s => ({ value: String(s.id), label: s.salesman_code || "N/A" }))}
-                                    value={salesmanAccountId}
-                                    onValueChange={val => {
-                                        setSalesmanAccountId(val);
-                                        setFormErrors(prev => ({ ...prev, salesmanAccountId: undefined }));
-                                    }}
-                                    placeholder="Select Account..."
-                                    className="h-9 text-xs"
-                                    disabled={!userId}
-                                    aria-label="Salesman Account"
-                                    aria-invalid={Boolean(formErrors.salesmanAccountId)}
-                                />
-                                {formErrors.salesmanAccountId && <p className="text-xs text-destructive">{formErrors.salesmanAccountId}</p>}
-                            </div>
-
-                            <div className="space-y-1.5">
-                                <label htmlFor="direct-so-delivery-date" className={fieldLabelClassName}>Delivery Date <span className="text-destructive">*</span></label>
-                                <input
-                                    id="direct-so-delivery-date"
-                                    type="date"
-                                    value={deliveryDate}
-                                    onChange={e => {
-                                        setDeliveryDate(e.target.value);
-                                        setFormErrors(prev => ({ ...prev, deliveryDate: undefined }));
-                                    }}
-                                    className={`${inputClassName} dark:[color-scheme:dark]`}
-                                    aria-invalid={Boolean(formErrors.deliveryDate)}
-                                />
-                                {formErrors.deliveryDate && <p className="text-xs text-destructive">{formErrors.deliveryDate}</p>}
-                            </div>
-
-                            <div className="space-y-1.5">
-                                <label htmlFor="direct-so-due-date" className={fieldLabelClassName}>Due Date <span className="text-destructive">*</span></label>
-                                <input
-                                    id="direct-so-due-date"
-                                    type="date"
-                                    value={dueDate}
-                                    readOnly
-                                    title="System-calculated based on Payment Terms"
-                                    className={`${inputClassName} dark:[color-scheme:dark] bg-muted cursor-not-allowed text-muted-foreground`}
-                                    aria-invalid={Boolean(formErrors.dueDate)}
-                                />
-                                {formErrors.dueDate && <p className="text-xs text-destructive">{formErrors.dueDate}</p>}
-                            </div>
-
-                            {/* Lead time feasibility warning alert */}
-                            {(() => {
-                                const leadTime = getLeadTimeStatus();
-                                if (leadTime.feasible) return null;
-                                return (
-                                    <div className="col-span-1 md:col-span-4 bg-amber-500/10 border border-amber-500/20 text-amber-600 rounded-lg p-3 text-xs flex flex-col gap-1.5 mt-1">
-                                        <div className="font-bold flex items-center gap-1.5">
-                                            ⚠️ Lead Time Feasibility Warning
-                                        </div>
-                                        <div>
-                                            The requested delivery date of <strong>{deliveryDate}</strong> is earlier than the standard manufacturing lead time of <strong>{leadTime.maxLeadDays} days</strong> (Earliest feasible date: <strong>{leadTime.requiredDate}</strong>).
-                                        </div>
-                                        <label className="flex items-center gap-1.5 mt-1 font-semibold cursor-pointer">
-                                            <input 
-                                                type="checkbox" 
-                                                checked={overrideLeadTime} 
-                                                onChange={e => {
-                                                    setOverrideLeadTime(e.target.checked);
-                                                    if (e.target.checked) {
-                                                        setFormErrors(prev => ({ ...prev, deliveryDate: undefined }));
-                                                    }
-                                                }}
-                                                className="rounded border-gray-300 text-primary focus:ring-primary h-3.5 w-3.5"
-                                            />
-                                            Override lead time feasibility constraint
-                                        </label>
+                    ) : (
+                        <div
+                            onKeyDown={handleFormKeyDown}
+                            className="flex min-h-0 flex-1 flex-col"
+                        >
+                            <div className="flex-1 space-y-5 overflow-y-auto p-4 sm:p-6 pb-40">
+                                {lookupError && (
+                                    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+                                        {lookupError}
                                     </div>
-                                );
-                            })()}
-                        </div>
+                                )}
+                                {/* Header Fields */}
+                                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                    <div className="space-y-1.5">
+                                        <label htmlFor="direct-so-po" className={fieldLabelClassName}>PO Number <span className="text-destructive">*</span></label>
+                                        <input
+                                            id="direct-so-po"
+                                            ref={poInputRef}
+                                            type="text"
+                                            value={poNo}
+                                            onChange={event => {
+                                                setPoNo(event.target.value);
+                                                setFormErrors(previous => ({ ...previous, poNo: undefined }));
+                                            }}
+                                            placeholder="e.g. PO-88902"
+                                            aria-invalid={Boolean(formErrors.poNo)}
+                                            aria-describedby={formErrors.poNo ? "direct-so-po-error" : undefined}
+                                            className={inputClassName}
+                                        />
+                                        {formErrors.poNo && <p id="direct-so-po-error" className="text-xs text-destructive">{formErrors.poNo}</p>}
+                                    </div>
 
-                        <div className="space-y-1">
-                            <label htmlFor="direct-so-remarks" className={fieldLabelClassName}>Remarks / Special Instructions</label>
-                            <textarea
-                                id="direct-so-remarks"
-                                value={remarks}
-                                onChange={e => setRemarks(e.target.value)}
-                                placeholder="Add general remarks, freight instructions, or delivery guidelines here..."
-                                rows={2}
-                                className="w-full bg-background border rounded-lg px-3 py-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary focus:border-primary resize-none font-semibold"
-                            />
-                        </div>
+                                    <div className="space-y-1.5">
+                                        <label className={fieldLabelClassName}>Customer <span className="text-destructive">*</span></label>
+                                        <CreatableSelect
+                                            options={customers.map(c => ({ value: String(c.id), label: `${c.customer_name} (${c.customer_code})` }))}
+                                            value={customerId}
+                                            onValueChange={handleCustomerChange}
+                                            placeholder="Select Customer..."
+                                            className="h-9 text-xs"
+                                            disabled={!lookupsReady}
+                                            aria-label="Customer"
+                                            aria-invalid={Boolean(formErrors.customerId)}
+                                            aria-describedby={formErrors.customerId ? "direct-so-customer-error" : undefined}
+                                        />
+                                        {formErrors.customerId && <p id="direct-so-customer-error" className="text-xs text-destructive">{formErrors.customerId}</p>}
+                                    </div>
 
-                        {/* Order Items Section */}
-                        <div className="space-y-3 border-t pt-4">
-                            <div className="flex items-center justify-between mb-3">
-                                <h5 className="text-sm font-semibold text-foreground">Order Products</h5>
-                                <div className="relative w-64">
-                                    <Search className="absolute left-2.5 top-1.5 h-4 w-4 text-muted-foreground" />
-                                    <input
-                                        type="text"
-                                        placeholder="Search inserted products..."
-                                        value={productSearch}
-                                        onChange={(e) => setProductSearch(e.target.value)}
-                                        className="w-full bg-background border rounded-lg pl-9 pr-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary focus:border-primary font-semibold"
+                                    <div className="space-y-1.5">
+                                        <label className={fieldLabelClassName}>Production Branch <span className="text-destructive">*</span></label>
+                                        <CreatableSelect
+                                            options={branches.map(b => ({ value: String(b.id), label: b.branch_name }))}
+                                            value={branchId}
+                                            onValueChange={val => {
+                                                setBranchId(val);
+                                                setFormErrors(prev => ({ ...prev, branchId: undefined }));
+                                            }}
+                                            placeholder="Select Branch..."
+                                            className="h-9 text-xs"
+                                            aria-label="Production branch"
+                                            aria-invalid={Boolean(formErrors.branchId)}
+                                        />
+                                        {formErrors.branchId && <p className="text-xs text-destructive">{formErrors.branchId}</p>}
+                                    </div>
+
+                                    <div className="space-y-1.5">
+                                        <label className={fieldLabelClassName}>Payment Terms <span className="text-destructive">*</span></label>
+                                        <CreatableSelect
+                                            options={paymentTerms.map(t => ({ value: String(t.id), label: `${t.payment_name} (${t.payment_days} days)` }))}
+                                            value={paymentTermId}
+                                            onValueChange={val => {
+                                                setPaymentTermId(val);
+                                                setFormErrors(prev => ({ ...prev, paymentTermId: undefined }));
+                                            }}
+                                            placeholder="Select Terms..."
+                                            className="h-9 text-xs"
+                                            aria-label="Payment terms"
+                                            aria-invalid={Boolean(formErrors.paymentTermId)}
+                                        />
+                                        {formErrors.paymentTermId && <p className="text-xs text-destructive">{formErrors.paymentTermId}</p>}
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                    <div className="space-y-1.5">
+                                        <label className={fieldLabelClassName}>Salesman <span className="text-destructive">*</span></label>
+                                        <CreatableSelect
+                                            options={users
+                                                .filter(u => salesmen.some(s => Number(s.employee_id) === Number(u.user_id)))
+                                                .map(u => ({ value: String(u.user_id), label: `${u.user_fname} ${u.user_lname}` }))}
+                                            value={userId}
+                                            onValueChange={val => {
+                                                setUserId(val);
+                                                setSalesmanAccountId("");
+                                                setFormErrors(prev => ({ ...prev, userId: undefined, salesmanAccountId: undefined }));
+                                            }}
+                                            placeholder="Select Salesman..."
+                                            className="h-9 text-xs"
+                                            aria-label="Salesman"
+                                            aria-invalid={Boolean(formErrors.userId)}
+                                        />
+                                        {formErrors.userId && <p className="text-xs text-destructive">{formErrors.userId}</p>}
+                                    </div>
+
+                                    <div className="space-y-1.5">
+                                        <label className={fieldLabelClassName}>Salesman Account <span className="text-destructive">*</span></label>
+                                        <CreatableSelect
+                                            options={salesmen
+                                                .filter(s => Number(s.employee_id) === Number(userId))
+                                                .map(s => ({ value: String(s.id), label: s.salesman_code || "N/A" }))}
+                                            value={salesmanAccountId}
+                                            onValueChange={val => {
+                                                setSalesmanAccountId(val);
+                                                setFormErrors(prev => ({ ...prev, salesmanAccountId: undefined }));
+                                            }}
+                                            placeholder="Select Account..."
+                                            className="h-9 text-xs"
+                                            disabled={!userId}
+                                            aria-label="Salesman Account"
+                                            aria-invalid={Boolean(formErrors.salesmanAccountId)}
+                                        />
+                                        {formErrors.salesmanAccountId && <p className="text-xs text-destructive">{formErrors.salesmanAccountId}</p>}
+                                    </div>
+
+                                    <div className="space-y-1.5">
+                                        <label htmlFor="direct-so-delivery-date" className={fieldLabelClassName}>Delivery Date <span className="text-destructive">*</span></label>
+                                        <input
+                                            id="direct-so-delivery-date"
+                                            type="date"
+                                            value={deliveryDate}
+                                            onChange={e => {
+                                                setDeliveryDate(e.target.value);
+                                                setFormErrors(prev => ({ ...prev, deliveryDate: undefined }));
+                                            }}
+                                            className={`${inputClassName} dark:[color-scheme:dark]`}
+                                            aria-invalid={Boolean(formErrors.deliveryDate)}
+                                        />
+                                        {formErrors.deliveryDate && <p className="text-xs text-destructive">{formErrors.deliveryDate}</p>}
+                                    </div>
+
+                                    <div className="space-y-1.5">
+                                        <label htmlFor="direct-so-due-date" className={fieldLabelClassName}>Due Date <span className="text-destructive">*</span></label>
+                                        <input
+                                            id="direct-so-due-date"
+                                            type="date"
+                                            value={dueDate}
+                                            readOnly
+                                            title="System-calculated based on Payment Terms"
+                                            className={`${inputClassName} dark:[color-scheme:dark] bg-muted cursor-not-allowed text-muted-foreground`}
+                                            aria-invalid={Boolean(formErrors.dueDate)}
+                                        />
+                                        {formErrors.dueDate && <p className="text-xs text-destructive">{formErrors.dueDate}</p>}
+                                    </div>
+
+                                    {/* Lead time feasibility warning alert */}
+                                    {(() => {
+                                        const leadTime = getLeadTimeStatus();
+                                        if (leadTime.feasible) return null;
+                                        return (
+                                            <div className="col-span-1 md:col-span-4 bg-amber-500/10 border border-amber-500/20 text-amber-600 rounded-lg p-3 text-xs flex flex-col gap-1.5 mt-1">
+                                                <div className="font-bold flex items-center gap-1.5">
+                                                    ⚠️ Lead Time Feasibility Warning
+                                                </div>
+                                                <div>
+                                                    The requested delivery date of <strong>{deliveryDate}</strong> is earlier than the standard manufacturing lead time of <strong>{leadTime.maxLeadDays} days</strong> (Earliest feasible date: <strong>{leadTime.requiredDate}</strong>).
+                                                </div>
+                                                <label className="flex items-center gap-1.5 mt-1 font-semibold cursor-pointer">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={overrideLeadTime}
+                                                        onChange={e => {
+                                                            setOverrideLeadTime(e.target.checked);
+                                                            if (e.target.checked) {
+                                                                setFormErrors(prev => ({ ...prev, deliveryDate: undefined }));
+                                                            }
+                                                        }}
+                                                        className="rounded border-gray-300 text-primary focus:ring-primary h-3.5 w-3.5"
+                                                    />
+                                                    Override lead time feasibility constraint
+                                                </label>
+                                            </div>
+                                        );
+                                    })()}
+                                </div>
+
+                                <div className="space-y-1">
+                                    <label htmlFor="direct-so-remarks" className={fieldLabelClassName}>Remarks / Special Instructions</label>
+                                    <textarea
+                                        id="direct-so-remarks"
+                                        value={remarks}
+                                        onChange={e => setRemarks(e.target.value)}
+                                        placeholder="Add general remarks, freight instructions, or delivery guidelines here..."
+                                        rows={2}
+                                        className="w-full bg-background border rounded-lg px-3 py-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary focus:border-primary resize-none font-semibold"
                                     />
                                 </div>
-                            </div>
-                            {formErrors.items?.[0]?.product && (
-                                <p id="direct-so-items-error" className="text-xs text-destructive">
-                                    {formErrors.items[0].product}
-                                </p>
-                            )}
-                            <div className="overflow-x-auto overflow-y-visible rounded-md border bg-card">
-                                <table className="block w-full min-w-[1080px] text-left text-xs md:table">
-                                    <thead className="hidden md:table-header-group">
-                                        <tr className="border-b bg-muted/40 text-xs font-semibold text-muted-foreground">
-                                            <th className="py-2.5 px-3 w-32 min-w-[120px]">Product Type</th>
-                                            <th className="py-2.5 px-3 w-48 min-w-[180px]">Product</th>
-                                            <th className="py-2.5 px-3 w-36 min-w-[130px]">Unit of Measure</th>
-                                            <th className="py-2.5 px-3 w-32 min-w-[120px]">Version</th>
-                                            <th className="py-2.5 px-3 text-right w-28 min-w-[100px]">Qty</th>
-                                            <th className="py-2.5 px-3 text-right w-28 min-w-[110px]">Unit Price</th>
-                                            <th className="py-2.5 px-3 text-left w-28 min-w-[100px]">Discount Type</th>
-                                            <th className="py-2.5 px-3 text-right w-28 min-w-[100px]">Discount Amount</th>
-                                            <th className="py-2.5 px-3 text-right w-32 min-w-[110px]">Total Net</th>
-                                            <th className="py-2.5 px-3 text-center w-14">Action</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="block divide-y md:table-row-group">
-                                        {items.length === 0 ? (
-                                            <tr className="block md:table-row">
-                                                <td colSpan={10} className="py-8 text-center text-muted-foreground italic font-semibold">
-                                                    No products added.
-                                                </td>
-                                            </tr>
-                                        ) : (
-                                            (() => {
-                                                const filteredItems = items.filter(item => {
-                                                    if (!productSearch.trim()) return true;
-                                                    const query = productSearch.toLowerCase();
-                                                    const parentProd = products.find(p => Number(p.product_id) === Number(item.parent_product_id));
-                                                    const uomProd = products.find(p => Number(p.product_id) === Number(item.product_id));
-                                                    const parentLabel = parentProd ? `${parentProd.product_name} ${parentProd.product_code || ""}`.toLowerCase() : "";
-                                                    const uomLabel = uomProd ? formatUomLabel(uomProd, products).toLowerCase() : "";
-                                                    return parentLabel.includes(query) || uomLabel.includes(query);
-                                                });
-                                                
-                                                if (filteredItems.length === 0) {
-                                                    return (
-                                                        <tr className="block md:table-row">
-                                                            <td colSpan={10} className="py-8 text-center text-muted-foreground italic font-semibold">
-                                                                No products match your search.
-                                                            </td>
-                                                        </tr>
-                                                    );
-                                                }
 
-                                                return filteredItems.map((item) => {
-                                                    const trueIndex = items.findIndex(it => it.line_id === item.line_id);
-                                                const otherSelectedVariantIds = items
-                                                    .map((it, idx) => idx !== trueIndex ? it.product_id : 0)
-                                                    .filter(id => id > 0);
-                                                const isFinishedGoods = Boolean(
-                                                    item.product_type_id &&
-                                                    productTypes.find(t => Number(t.id) === Number(item.product_type_id))
-                                                        ?.name?.toLowerCase().includes("finished")
-                                                );
-                                                const parentOptions = products
-                                                    .filter(product => product.is_parent)
-                                                    .filter(p => {
-                                                        if (item.product_type_id) {
-                                                            const rawT = typeof p.product_type === "object" && p.product_type !== null ? (p.product_type as any).id : p.product_type;
-                                                            if (rawT !== undefined && rawT !== null && String(rawT) !== String(item.product_type_id)) return false;
-                                                        }
-                                                        if (isFinishedGoods) {
-                                                            const parentHasVer = Boolean(p.has_active_version);
-                                                            const childHasVer = products.some(child => Number(child.parent_product_id) === Number(p.product_id) && Boolean(child.has_active_version));
-                                                            if (!parentHasVer && !childHasVer) return false;
-                                                        }
-                                                        // Check if parent still has at least one selectable UOM variant
-                                                        const isCurrentParent = Number(p.product_id) === Number(item.parent_product_id);
-                                                        if (!isCurrentParent) {
-                                                            const availableVariants = products
-                                                                .filter(child => Number(child.parent_product_id) === Number(p.product_id))
-                                                                .filter(child => !otherSelectedVariantIds.includes(Number(child.product_id)))
-                                                                .filter(child => !isFinishedGoods || Boolean(child.has_active_uom_version));
-                                                            if (availableVariants.length === 0) return false;
-                                                        }
-                                                        return true;
-                                                    })
-                                                    .map(p => ({
-                                                        value: String(p.product_id),
-                                                        label: `${p.product_name} (${p.product_code || `SKU-${p.product_id}`})`
-                                                    }));
-                                                const uomOptions = products
-                                                    .filter(product => Number(product.parent_product_id) === Number(item.parent_product_id))
-                                                    .filter(product => Number(product.product_id) === Number(item.product_id)
-                                                        || !otherSelectedVariantIds.includes(Number(product.product_id)))
-                                                    .filter(product => {
-                                                        if (!isFinishedGoods) return true;
-                                                        return Boolean(product.has_active_uom_version);
-                                                    })
-                                                    .sort((a, b) => Number(b.is_parent) - Number(a.is_parent) || Number(a.unit_count) - Number(b.unit_count))
-                                                    .map(product => ({
-                                                        value: String(product.product_id),
-                                                        label: formatUomLabel(product, products)
-                                                    }));
-
-                                                const activeVerState = (Number(item.product_id) > 0 && versionStates[item.product_id]?.status === "resolved" && versionStates[item.product_id]?.versions?.length)
-                                                    ? versionStates[item.product_id]
-                                                    : (Number(item.parent_product_id) > 0 && versionStates[item.parent_product_id]?.status === "resolved" && versionStates[item.parent_product_id]?.versions?.length)
-                                                    ? versionStates[item.parent_product_id]
-                                                    : versionStates[item.product_id] || versionStates[item.parent_product_id];
-
-                                                return (
-                                                    <tr key={item.line_id} className="grid grid-cols-1 gap-3 p-3 font-semibold text-foreground hover:bg-muted/5 md:table-row md:p-0">
-                                                        <td className="block overflow-visible p-0 md:table-cell md:px-3 md:py-2.5">
-                                                            <span className="mb-1 block text-xs font-semibold md:hidden">Product Type</span>
-                                                            <CreatableSelect
-                                                                options={productTypes.map(t => ({ value: String(t.id), label: t.name }))}
-                                                                value={item.product_type_id ? String(item.product_type_id) : ""}
-                                                                onValueChange={val => handleProductTypeChange(trueIndex, Number(val))}
-                                                                placeholder="Choose Type..."
-                                                                className="h-8 text-xs font-semibold"
-                                                                disabled={!lookupsReady}
-                                                                aria-label={`Product type for line ${trueIndex + 1}`}
-                                                                aria-invalid={Boolean(formErrors.items?.[item.line_id]?.product_type)}
-                                                                aria-describedby={formErrors.items?.[item.line_id]?.product_type ? `line-${item.line_id}-product-type-error` : undefined}
-                                                            />
-                                                            {formErrors.items?.[item.line_id]?.product_type && <p id={`line-${item.line_id}-product-type-error`} className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].product_type}</p>}
-                                                        </td>
-                                                        <td className="block overflow-visible p-0 md:table-cell md:px-3 md:py-2.5">
-                                                            <span className="mb-1 block text-xs font-semibold md:hidden">Product</span>
-                                                            <CreatableSelect
-                                                                options={parentOptions}
-                                                                value={item.parent_product_id ? String(item.parent_product_id) : ""}
-                                                                onValueChange={val => handleParentProductChange(trueIndex, Number(val))}
-                                                                placeholder="Choose Parent Product..."
-                                                                className="h-8 text-xs font-semibold"
-                                                                disabled={!lookupsReady || !item.product_type_id}
-                                                                aria-label={`Parent product for line ${trueIndex + 1}`}
-                                                                aria-invalid={Boolean(formErrors.items?.[item.line_id]?.product)}
-                                                                aria-describedby={formErrors.items?.[item.line_id]?.product ? `line-${item.line_id}-product-error` : undefined}
-                                                            />
-                                                            {formErrors.items?.[item.line_id]?.product && <p id={`line-${item.line_id}-product-error`} className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].product}</p>}
-                                                        </td>
-                                                        <td className="block overflow-visible p-0 md:table-cell md:w-36 md:min-w-[130px] md:px-3 md:py-2.5">
-                                                            <span className="mb-1 block text-xs font-semibold md:hidden">Unit of Measure</span>
-                                                            <CreatableSelect
-                                                                options={uomOptions}
-                                                                value={item.product_id ? String(item.product_id) : ""}
-                                                                onValueChange={val => handleUomChange(trueIndex, Number(val))}
-                                                                placeholder="Choose UOM..."
-                                                                className="h-8 text-xs font-semibold"
-                                                                disabled={!item.parent_product_id || uomOptions.length === 0}
-                                                                aria-label={`Unit of measure for line ${trueIndex + 1}`}
-                                                                aria-invalid={Boolean(formErrors.items?.[item.line_id]?.uom)}
-                                                                aria-describedby={formErrors.items?.[item.line_id]?.uom ? `line-${item.line_id}-uom-error` : undefined}
-                                                            />
-                                                            {formErrors.items?.[item.line_id]?.uom && <p id={`line-${item.line_id}-uom-error`} className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].uom}</p>}
-                                                            {item.parent_product_id > 0 && uomOptions.length === 0 && <p className="mt-1 text-xs text-muted-foreground">No additional UOM is available.</p>}
-                                                        </td>
-                                                        <td className="block overflow-visible p-0 md:table-cell md:w-32 md:min-w-[120px] md:px-3 md:py-2.5">
-                                                            <span className="mb-1 block text-xs font-semibold md:hidden">Version</span>
-                                                            {isFinishedGoods ? (
-                                                                activeVerState?.versions && activeVerState.versions.length > 0 ? (
-                                                                    activeVerState.status === "loading" ? (
-                                                                        <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Resolving...</span>
-                                                                    ) : activeVerState.status === "resolved" ? (
-                                                                        <select
-                                                                            value={item.bom_version_id || activeVerState.defaultVersionId || ""}
-                                                                            onChange={e => handleItemChange(trueIndex, "bom_version_id", Number(e.target.value))}
-                                                                            className="h-8 w-full text-xs font-semibold bg-background border rounded px-1.5 outline-none focus:ring-1 focus:ring-primary focus:border-primary text-primary truncate max-w-[150px]"
-                                                                        >
-                                                                            {activeVerState.versions.map((v: any) => (
-                                                                                <option key={v.version_id} value={v.version_id}>
-                                                                                    {v.version_name} {v.is_primary ? "(Primary)" : Number(v.version_id) === activeVerState.defaultVersionId ? "(Default)" : ""}
-                                                                                </option>
-                                                                            ))}
-                                                                        </select>
-                                                                    ) : <span className="text-[10px] text-muted-foreground">Unavailable</span>
-                                                                ) : (
-                                                                    <span className="text-muted-foreground text-xs font-semibold text-center block">-</span>
-                                                                )
-                                                            ) : (
-                                                                <span className="text-muted-foreground text-xs font-semibold text-center block">N/A</span>
-                                                            )}
-                                                        </td>
-                                                        <td className="block p-0 md:table-cell md:w-28 md:min-w-[100px] md:px-3 md:py-2.5 md:text-right">
-                                                            <label htmlFor={`line-${item.line_id}-quantity`} className="mb-1 block text-xs font-semibold md:sr-only">Qty</label>
-                                                            <input
-                                                                id={`line-${item.line_id}-quantity`}
-                                                                type="number"
-                                                                min={1}
-                                                                value={item.quantity}
-                                                                onChange={e => handleItemChange(trueIndex, "quantity", Number(e.target.value))}
-                                                                aria-invalid={Boolean(formErrors.items?.[item.line_id]?.quantity)}
-                                                                aria-describedby={formErrors.items?.[item.line_id]?.quantity ? `line-${item.line_id}-quantity-error` : undefined}
-                                                                className="w-full bg-background border rounded-lg px-2.5 py-1 h-8 text-xs text-right outline-none focus:ring-1 focus:ring-primary focus:border-primary font-semibold"
-                                                            />
-                                                            {formErrors.items?.[item.line_id]?.quantity && <p id={`line-${item.line_id}-quantity-error`} className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].quantity}</p>}
-                                                        </td>
-                                                        <td className="block p-0 md:table-cell md:w-28 md:min-w-[110px] md:px-3 md:py-2.5 md:text-right">
-                                                            <span className="mb-1 block text-xs font-semibold md:hidden">Unit Price</span>
-                                                            <div className={`h-8 flex items-center justify-end px-2.5 text-xs font-semibold font-mono border rounded-lg ${
-                                                                formErrors.items?.[item.line_id]?.unit_price 
-                                                                    ? "border-destructive bg-destructive/10 text-destructive" 
-                                                                    : "text-muted-foreground bg-muted/50 border-input"
-                                                            }`}>
-                                                                {item.unit_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                                            </div>
-                                                            {formErrors.items?.[item.line_id]?.unit_price && (
-                                                                <p className="mt-1 text-[10px] text-destructive font-normal text-right">Price is ₱0.00</p>
-                                                            )}
-                                                        </td>
-                                                        <td className="block p-0 md:table-cell md:w-28 md:min-w-[100px] md:px-3 md:py-2.5 md:text-left">
-                                                            <span className="mb-1 block text-xs font-semibold md:hidden">Discount Type</span>
-                                                            <div className="h-8 flex items-center justify-start px-2 text-xs font-semibold text-muted-foreground truncate" title={(() => {
-                                                                const matchedDiscount = discountTypes.find(d => Number(d.id) === Number(item.discount_type));
-                                                                return matchedDiscount?.discount_type || "-";
-                                                            })()}>
-                                                                {(() => {
-                                                                    const matchedDiscount = discountTypes.find(d => Number(d.id) === Number(item.discount_type));
-                                                                    return matchedDiscount?.discount_type || "-";
-                                                                })()}
-                                                            </div>
-                                                        </td>
-                                                        <td className="block p-0 md:table-cell md:w-28 md:min-w-[100px] md:px-3 md:py-2.5 md:text-right">
-                                                            <span className="mb-1 block text-xs font-semibold md:hidden">Discount Amount</span>
-                                                            <div className="h-8 flex items-center justify-end px-2.5 text-xs font-semibold font-mono text-destructive bg-muted/50 border rounded-lg">
-                                                                {item.discount_amount ? `-${item.discount_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : "-"}
-                                                            </div>
-                                                        </td>
-                                                        <td className="flex items-center justify-between p-0 text-right font-bold text-foreground md:table-cell md:w-32 md:min-w-[110px] md:px-3 md:py-2.5 whitespace-nowrap">
-                                                            <span className="text-xs md:hidden">Total Net</span>
-                                                            ₱{((item.unit_price - (item.discount_amount || 0)) * item.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                                        </td>
-                                                        <td className="block p-0 text-right md:table-cell md:w-14 md:px-3 md:py-2.5 md:text-center">
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => handleRemoveItem(trueIndex)}
-                                                                aria-label={`Remove line ${trueIndex + 1}`}
-                                                                title={`Remove line ${trueIndex + 1}`}
-                                                                className="p-1 hover:bg-rose-500/10 text-rose-500 hover:text-rose-600 rounded-lg border-none bg-transparent cursor-pointer transition-colors"
-                                                            >
-                                                                <Trash2 className="h-4 w-4" />
-                                                            </button>
+                                {/* Order Items Section */}
+                                <div className="space-y-3 border-t pt-4">
+                                    <div className="flex items-center justify-between mb-3">
+                                        <h5 className="text-sm font-semibold text-foreground">Order Products</h5>
+                                        <div className="relative w-64">
+                                            <Search className="absolute left-2.5 top-1.5 h-4 w-4 text-muted-foreground" />
+                                            <input
+                                                type="text"
+                                                placeholder="Search inserted products..."
+                                                value={productSearch}
+                                                onChange={(e) => setProductSearch(e.target.value)}
+                                                className="w-full bg-background border rounded-lg pl-9 pr-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary focus:border-primary font-semibold"
+                                            />
+                                        </div>
+                                    </div>
+                                    {formErrors.items?.[0]?.product && (
+                                        <p id="direct-so-items-error" className="text-xs text-destructive">
+                                            {formErrors.items[0].product}
+                                        </p>
+                                    )}
+                                    <div className="overflow-x-auto overflow-y-visible rounded-md border bg-card">
+                                        <table className="block w-full min-w-[1080px] text-left text-xs md:table">
+                                            <thead className="hidden md:table-header-group">
+                                                <tr className="border-b bg-muted/40 text-xs font-semibold text-muted-foreground">
+                                                    <th className="py-2.5 px-3 w-32 min-w-[120px]">Product Type</th>
+                                                    <th className="py-2.5 px-3 w-48 min-w-[180px]">Product</th>
+                                                    <th className="py-2.5 px-3 w-36 min-w-[130px]">Unit of Measure</th>
+                                                    <th className="py-2.5 px-3 w-32 min-w-[120px]">Version</th>
+                                                    <th className="py-2.5 px-3 text-right w-28 min-w-[100px]">Qty</th>
+                                                    <th className="py-2.5 px-3 text-right w-28 min-w-[110px]">Unit Price</th>
+                                                    <th className="py-2.5 px-3 text-left w-28 min-w-[100px]">Discount Type</th>
+                                                    <th className="py-2.5 px-3 text-right w-28 min-w-[100px]">Discount Amount</th>
+                                                    <th className="py-2.5 px-3 text-right w-32 min-w-[110px]">Total Net</th>
+                                                    <th className="py-2.5 px-3 text-center w-14">Action</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="block divide-y md:table-row-group">
+                                                {items.length === 0 ? (
+                                                    <tr className="block md:table-row">
+                                                        <td colSpan={10} className="py-8 text-center text-muted-foreground italic font-semibold">
+                                                            No products added.
                                                         </td>
                                                     </tr>
-                                                );
-                                                });
-                                            })()
-                                        )}
-                                    </tbody>
-                                </table>
-                                <div className="p-3 border-t bg-muted/10 flex justify-end">
+                                                ) : (
+                                                    (() => {
+                                                        const filteredItems = items.filter(item => {
+                                                            if (!productSearch.trim()) return true;
+                                                            const query = productSearch.toLowerCase();
+                                                            const parentProd = products.find(p => Number(p.product_id) === Number(item.parent_product_id));
+                                                            const uomProd = products.find(p => Number(p.product_id) === Number(item.product_id));
+                                                            const parentLabel = parentProd ? `${parentProd.product_name} ${parentProd.product_code || ""}`.toLowerCase() : "";
+                                                            const uomLabel = uomProd ? formatUomLabel(uomProd, products).toLowerCase() : "";
+                                                            return parentLabel.includes(query) || uomLabel.includes(query);
+                                                        });
+
+                                                        if (filteredItems.length === 0) {
+                                                            return (
+                                                                <tr className="block md:table-row">
+                                                                    <td colSpan={10} className="py-8 text-center text-muted-foreground italic font-semibold">
+                                                                        No products match your search.
+                                                                    </td>
+                                                                </tr>
+                                                            );
+                                                        }
+
+                                                        return filteredItems.map((item) => {
+                                                            const trueIndex = items.findIndex(it => it.line_id === item.line_id);
+                                                            const otherSelectedVariantIds = items
+                                                                .map((it, idx) => idx !== trueIndex ? it.product_id : 0)
+                                                                .filter(id => id > 0);
+                                                            const isFinishedGoods = Boolean(
+                                                                item.product_type_id &&
+                                                                productTypes.find(t => Number(t.id) === Number(item.product_type_id))
+                                                                    ?.name?.toLowerCase().includes("finished")
+                                                            );
+                                                            const parentOptions = products
+                                                                .filter(product => product.is_parent)
+                                                                .filter(p => {
+                                                                    if (item.product_type_id) {
+                                                                        const rawT = typeof p.product_type === "object" && p.product_type !== null ? (p.product_type as any).id : p.product_type;
+                                                                        if (rawT !== undefined && rawT !== null && String(rawT) !== String(item.product_type_id)) return false;
+                                                                    }
+                                                                    if (isFinishedGoods) {
+                                                                        const parentHasVer = Boolean(p.has_active_version);
+                                                                        const childHasVer = products.some(child => Number(child.parent_product_id) === Number(p.product_id) && Boolean(child.has_active_version));
+                                                                        if (!parentHasVer && !childHasVer) return false;
+                                                                    }
+                                                                    // Check if parent still has at least one selectable UOM variant
+                                                                    const isCurrentParent = Number(p.product_id) === Number(item.parent_product_id);
+                                                                    if (!isCurrentParent) {
+                                                                        const availableVariants = products
+                                                                            .filter(child => Number(child.parent_product_id) === Number(p.product_id))
+                                                                            .filter(child => !otherSelectedVariantIds.includes(Number(child.product_id)))
+                                                                            .filter(child => !isFinishedGoods || Boolean(child.has_active_uom_version));
+                                                                        if (availableVariants.length === 0) return false;
+                                                                    }
+                                                                    return true;
+                                                                })
+                                                                .map(p => ({
+                                                                    value: String(p.product_id),
+                                                                    label: `${p.product_name} (${p.product_code || `SKU-${p.product_id}`})`
+                                                                }));
+                                                            const uomOptions = products
+                                                                .filter(product => Number(product.parent_product_id) === Number(item.parent_product_id))
+                                                                .filter(product => Number(product.product_id) === Number(item.product_id)
+                                                                    || !otherSelectedVariantIds.includes(Number(product.product_id)))
+                                                                .filter(product => {
+                                                                    if (!isFinishedGoods) return true;
+                                                                    return Boolean(product.has_active_uom_version);
+                                                                })
+                                                                .sort((a, b) => Number(b.is_parent) - Number(a.is_parent) || Number(a.unit_count) - Number(b.unit_count))
+                                                                .map(product => ({
+                                                                    value: String(product.product_id),
+                                                                    label: formatUomLabel(product, products)
+                                                                }));
+
+                                                            const activeVerState = (Number(item.product_id) > 0 && versionStates[item.product_id]?.status === "resolved" && versionStates[item.product_id]?.versions?.length)
+                                                                ? versionStates[item.product_id]
+                                                                : (Number(item.parent_product_id) > 0 && versionStates[item.parent_product_id]?.status === "resolved" && versionStates[item.parent_product_id]?.versions?.length)
+                                                                    ? versionStates[item.parent_product_id]
+                                                                    : versionStates[item.product_id] || versionStates[item.parent_product_id];
+
+                                                            return (
+                                                                <tr key={item.line_id} className="grid grid-cols-1 gap-3 p-3 font-semibold text-foreground hover:bg-muted/5 md:table-row md:p-0">
+                                                                    <td className="block overflow-visible p-0 md:table-cell md:px-3 md:py-2.5">
+                                                                        <span className="mb-1 block text-xs font-semibold md:hidden">Product Type</span>
+                                                                        <CreatableSelect
+                                                                            options={productTypes.map(t => ({ value: String(t.id), label: t.name }))}
+                                                                            value={item.product_type_id ? String(item.product_type_id) : ""}
+                                                                            onValueChange={val => handleProductTypeChange(trueIndex, Number(val))}
+                                                                            placeholder="Choose Type..."
+                                                                            className="h-8 text-xs font-semibold"
+                                                                            disabled={!lookupsReady}
+                                                                            aria-label={`Product type for line ${trueIndex + 1}`}
+                                                                            aria-invalid={Boolean(formErrors.items?.[item.line_id]?.product_type)}
+                                                                            aria-describedby={formErrors.items?.[item.line_id]?.product_type ? `line-${item.line_id}-product-type-error` : undefined}
+                                                                        />
+                                                                        {formErrors.items?.[item.line_id]?.product_type && <p id={`line-${item.line_id}-product-type-error`} className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].product_type}</p>}
+                                                                    </td>
+                                                                    <td className="block overflow-visible p-0 md:table-cell md:px-3 md:py-2.5">
+                                                                        <span className="mb-1 block text-xs font-semibold md:hidden">Product</span>
+                                                                        <CreatableSelect
+                                                                            options={parentOptions}
+                                                                            value={item.parent_product_id ? String(item.parent_product_id) : ""}
+                                                                            onValueChange={val => handleParentProductChange(trueIndex, Number(val))}
+                                                                            placeholder="Choose Parent Product..."
+                                                                            className="h-8 text-xs font-semibold"
+                                                                            disabled={!lookupsReady || !item.product_type_id}
+                                                                            aria-label={`Parent product for line ${trueIndex + 1}`}
+                                                                            aria-invalid={Boolean(formErrors.items?.[item.line_id]?.product)}
+                                                                            aria-describedby={formErrors.items?.[item.line_id]?.product ? `line-${item.line_id}-product-error` : undefined}
+                                                                        />
+                                                                        {formErrors.items?.[item.line_id]?.product && <p id={`line-${item.line_id}-product-error`} className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].product}</p>}
+                                                                    </td>
+                                                                    <td className="block overflow-visible p-0 md:table-cell md:w-36 md:min-w-[130px] md:px-3 md:py-2.5">
+                                                                        <span className="mb-1 block text-xs font-semibold md:hidden">Unit of Measure</span>
+                                                                        <CreatableSelect
+                                                                            options={uomOptions}
+                                                                            value={item.product_id ? String(item.product_id) : ""}
+                                                                            onValueChange={val => handleUomChange(trueIndex, Number(val))}
+                                                                            placeholder="Choose UOM..."
+                                                                            className="h-8 text-xs font-semibold"
+                                                                            disabled={!item.parent_product_id || uomOptions.length === 0}
+                                                                            aria-label={`Unit of measure for line ${trueIndex + 1}`}
+                                                                            aria-invalid={Boolean(formErrors.items?.[item.line_id]?.uom)}
+                                                                            aria-describedby={formErrors.items?.[item.line_id]?.uom ? `line-${item.line_id}-uom-error` : undefined}
+                                                                        />
+                                                                        {formErrors.items?.[item.line_id]?.uom && <p id={`line-${item.line_id}-uom-error`} className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].uom}</p>}
+                                                                        {item.parent_product_id > 0 && uomOptions.length === 0 && <p className="mt-1 text-xs text-muted-foreground">No additional UOM is available.</p>}
+                                                                    </td>
+                                                                    <td className="block overflow-visible p-0 md:table-cell md:w-32 md:min-w-[120px] md:px-3 md:py-2.5">
+                                                                        <span className="mb-1 block text-xs font-semibold md:hidden">Version</span>
+                                                                        {isFinishedGoods ? (
+                                                                            activeVerState?.versions && activeVerState.versions.length > 0 ? (
+                                                                                activeVerState.status === "loading" ? (
+                                                                                    <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Resolving...</span>
+                                                                                ) : activeVerState.status === "resolved" ? (
+                                                                                    <select
+                                                                                        value={item.bom_version_id || activeVerState.defaultVersionId || ""}
+                                                                                        onChange={e => handleItemChange(trueIndex, "bom_version_id", Number(e.target.value))}
+                                                                                        className="h-8 w-full text-xs font-semibold bg-background border rounded px-1.5 outline-none focus:ring-1 focus:ring-primary focus:border-primary text-primary truncate max-w-[150px]"
+                                                                                    >
+                                                                                        {activeVerState.versions.map((v: any) => (
+                                                                                            <option key={v.version_id} value={v.version_id}>
+                                                                                                {v.version_name} {v.is_primary ? "(Primary)" : Number(v.version_id) === activeVerState.defaultVersionId ? "(Default)" : ""}
+                                                                                            </option>
+                                                                                        ))}
+                                                                                    </select>
+                                                                                ) : <span className="text-[10px] text-muted-foreground">Unavailable</span>
+                                                                            ) : (
+                                                                                <span className="text-muted-foreground text-xs font-semibold text-center block">-</span>
+                                                                            )
+                                                                        ) : (
+                                                                            <span className="text-muted-foreground text-xs font-semibold text-center block">N/A</span>
+                                                                        )}
+                                                                    </td>
+                                                                    <td className="block p-0 md:table-cell md:w-28 md:min-w-[100px] md:px-3 md:py-2.5 md:text-right">
+                                                                        <label htmlFor={`line-${item.line_id}-quantity`} className="mb-1 block text-xs font-semibold md:sr-only">Qty</label>
+                                                                        <input
+                                                                            id={`line-${item.line_id}-quantity`}
+                                                                            type="number"
+                                                                            min={1}
+                                                                            value={item.quantity}
+                                                                            onChange={e => handleItemChange(trueIndex, "quantity", Number(e.target.value))}
+                                                                            aria-invalid={Boolean(formErrors.items?.[item.line_id]?.quantity)}
+                                                                            aria-describedby={formErrors.items?.[item.line_id]?.quantity ? `line-${item.line_id}-quantity-error` : undefined}
+                                                                            className="w-full bg-background border rounded-lg px-2.5 py-1 h-8 text-xs text-right outline-none focus:ring-1 focus:ring-primary focus:border-primary font-semibold"
+                                                                        />
+                                                                        {formErrors.items?.[item.line_id]?.quantity && <p id={`line-${item.line_id}-quantity-error`} className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].quantity}</p>}
+                                                                    </td>
+                                                                    <td className="block p-0 md:table-cell md:w-28 md:min-w-[110px] md:px-3 md:py-2.5 md:text-right">
+                                                                        <span className="mb-1 block text-xs font-semibold md:hidden">Unit Price</span>
+                                                                        <div className={`h-8 flex items-center justify-end px-2.5 text-xs font-semibold font-mono border rounded-lg ${formErrors.items?.[item.line_id]?.unit_price
+                                                                                ? "border-destructive bg-destructive/10 text-destructive"
+                                                                                : "text-muted-foreground bg-muted/50 border-input"
+                                                                            }`}>
+                                                                            {item.unit_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                                        </div>
+                                                                        {formErrors.items?.[item.line_id]?.unit_price && (
+                                                                            <p className="mt-1 text-[10px] text-destructive font-normal text-right">Price is ₱0.00</p>
+                                                                        )}
+                                                                    </td>
+                                                                    <td className="block p-0 md:table-cell md:w-28 md:min-w-[100px] md:px-3 md:py-2.5 md:text-left">
+                                                                        <span className="mb-1 block text-xs font-semibold md:hidden">Discount Type</span>
+                                                                        <div className="h-8 flex items-center justify-start px-2 text-xs font-semibold text-muted-foreground truncate" title={(() => {
+                                                                            const matchedDiscount = discountTypes.find(d => Number(d.id) === Number(item.discount_type));
+                                                                            return matchedDiscount?.discount_type || "-";
+                                                                        })()}>
+                                                                            {(() => {
+                                                                                const matchedDiscount = discountTypes.find(d => Number(d.id) === Number(item.discount_type));
+                                                                                return matchedDiscount?.discount_type || "-";
+                                                                            })()}
+                                                                        </div>
+                                                                    </td>
+                                                                    <td className="block p-0 md:table-cell md:w-28 md:min-w-[100px] md:px-3 md:py-2.5 md:text-right">
+                                                                        <span className="mb-1 block text-xs font-semibold md:hidden">Discount Amount</span>
+                                                                        <div className="h-8 flex items-center justify-end px-2.5 text-xs font-semibold font-mono text-destructive bg-muted/50 border rounded-lg">
+                                                                            {item.discount_amount ? `-${item.discount_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : "-"}
+                                                                        </div>
+                                                                    </td>
+                                                                    <td className="flex items-center justify-between p-0 text-right font-bold text-foreground md:table-cell md:w-32 md:min-w-[110px] md:px-3 md:py-2.5 whitespace-nowrap">
+                                                                        <span className="text-xs md:hidden">Total Net</span>
+                                                                        ₱{((item.unit_price - (item.discount_amount || 0)) * item.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                                    </td>
+                                                                    <td className="block p-0 text-right md:table-cell md:w-14 md:px-3 md:py-2.5 md:text-center">
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => handleRemoveItem(trueIndex)}
+                                                                            aria-label={`Remove line ${trueIndex + 1}`}
+                                                                            title={`Remove line ${trueIndex + 1}`}
+                                                                            className="p-1 hover:bg-rose-500/10 text-rose-500 hover:text-rose-600 rounded-lg border-none bg-transparent cursor-pointer transition-colors"
+                                                                        >
+                                                                            <Trash2 className="h-4 w-4" />
+                                                                        </button>
+                                                                    </td>
+                                                                </tr>
+                                                            );
+                                                        });
+                                                    })()
+                                                )}
+                                            </tbody>
+                                        </table>
+                                        <div className="p-3 border-t bg-muted/10 flex justify-end">
+                                            <button
+                                                id="direct-so-add-product"
+                                                type="button"
+                                                onClick={handleAddItem}
+                                                disabled={!lookupsReady}
+                                                aria-invalid={Boolean(formErrors.items?.[0]?.product)}
+                                                aria-describedby={formErrors.items?.[0]?.product ? "direct-so-items-error" : undefined}
+                                                className="inline-flex items-center gap-1.5 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary border-none px-3 py-1.5 text-xs font-bold cursor-pointer transition-all disabled:cursor-not-allowed disabled:opacity-50"
+                                            >
+                                                <Plus className="h-3.5 w-3.5" /> Add Product
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                            </div>
+                            <div className="shrink-0 border-t bg-background px-4 py-3 sm:px-6">
+                                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                                    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs">
+                                        <div className="flex items-center gap-2 font-bold text-muted-foreground whitespace-nowrap">
+                                            <span>Subtotal:</span>
+                                            <span className="font-mono text-foreground">₱{subTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                        </div>
+                                        <div className="flex items-center gap-2 font-bold text-rose-500 whitespace-nowrap">
+                                            <span>Total Discount:</span>
+                                            <span className="font-mono">-₱{totalDiscountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                        </div>
+                                        <div className="flex items-center gap-2 font-black text-foreground whitespace-nowrap">
+                                            <span>Grand Total:</span>
+                                            <span className="font-mono text-primary text-sm font-extrabold">₱{grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex gap-3 items-center shrink-0">
+                                        <button
+                                            type="button"
+                                            onClick={requestClose}
+                                            className="px-6 py-2.5 rounded-lg border bg-background text-foreground font-semibold hover:bg-muted transition-colors text-sm cursor-pointer"
+                                        >
+                                            Cancel
+                                        </button>
+                                        <button
+                                            type="button"
+                                            disabled={submitting}
+                                            onClick={() => {
+                                                if (validateForm()) {
+                                                    setConfirmingAction("save");
+                                                }
+                                            }}
+                                            className="px-6 py-2.5 rounded-lg bg-primary text-primary-foreground font-bold hover:bg-primary/90 transition-all text-sm cursor-pointer shadow-sm hover:shadow"
+                                        >
+                                            Save Draft
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {confirmingAction && (
+                        <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/50">
+                            <div className="w-full max-w-sm rounded-xl bg-card p-6 shadow-2xl border border-border animate-in fade-in zoom-in-95">
+                                <div className="flex flex-col items-center text-center space-y-3">
+                                    <div className={`p-3 rounded-full ${confirmingAction === "save" ? "bg-primary/10 text-primary" : "bg-destructive/10 text-destructive"}`}>
+                                        {confirmingAction === "save" ? <Save className="h-6 w-6" /> : <AlertCircle className="h-6 w-6" />}
+                                    </div>
+                                    <div>
+                                        <h3 className="text-lg font-bold text-foreground">
+                                            {confirmingAction === "save" ? "Confirm Creation" : "Discard Changes?"}
+                                        </h3>
+                                        <p className="text-sm text-muted-foreground mt-1.5 leading-relaxed">
+                                            {confirmingAction === "save"
+                                                ? "Are you sure you want to create this sales order?"
+                                                : "Are you sure you want to discard your unsaved changes? This action cannot be undone."}
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="mt-6 flex justify-center gap-3 w-full">
                                     <button
-                                        id="direct-so-add-product"
                                         type="button"
-                                        onClick={handleAddItem}
-                                        disabled={!lookupsReady}
-                                        aria-invalid={Boolean(formErrors.items?.[0]?.product)}
-                                        aria-describedby={formErrors.items?.[0]?.product ? "direct-so-items-error" : undefined}
-                                        className="inline-flex items-center gap-1.5 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary border-none px-3 py-1.5 text-xs font-bold cursor-pointer transition-all disabled:cursor-not-allowed disabled:opacity-50"
+                                        onClick={() => setConfirmingAction(null)}
+                                        disabled={submitting}
+                                        className="flex-1 rounded-lg border bg-background px-4 py-2 text-sm font-semibold transition-colors hover:bg-muted cursor-pointer"
                                     >
-                                        <Plus className="h-3.5 w-3.5" /> Add Product
+                                        {confirmingAction === "save" ? "Cancel" : "Keep Editing"}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={confirmingAction === "save" ? handleSubmit : () => {
+                                            setConfirmingAction(null);
+                                            setDiscardOpen(false);
+                                            onClose();
+                                        }}
+                                        disabled={submitting}
+                                        className={`flex-1 rounded-lg px-4 py-2 text-sm font-bold text-white transition-all cursor-pointer ${confirmingAction === "save" ? "bg-primary hover:bg-primary/90" : "bg-destructive hover:bg-destructive/90"
+                                            }`}
+                                    >
+                                        {submitting ? "Processing..." : confirmingAction === "save" ? "Confirm" : "Discard"}
                                     </button>
                                 </div>
                             </div>
                         </div>
-
-                        </div>
-                        <div className="shrink-0 border-t bg-background px-4 py-3 sm:px-6">
-                            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs">
-                                <div className="flex items-center gap-2 font-bold text-muted-foreground whitespace-nowrap">
-                                    <span>Subtotal:</span>
-                                    <span className="font-mono text-foreground">₱{subTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                </div>
-                                <div className="flex items-center gap-2 font-bold text-rose-500 whitespace-nowrap">
-                                    <span>Total Discount:</span>
-                                    <span className="font-mono">-₱{totalDiscountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                </div>
-                                <div className="flex items-center gap-2 font-black text-foreground whitespace-nowrap">
-                                    <span>Grand Total:</span>
-                                    <span className="font-mono text-primary text-sm font-extrabold">₱{grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                </div>
-                            </div>
-
-                            <div className="flex gap-3 items-center shrink-0">
-                                <button
-                                    type="button"
-                                    onClick={requestClose}
-                                    className="px-6 py-2.5 rounded-lg border bg-background text-foreground font-semibold hover:bg-muted transition-colors text-sm cursor-pointer"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="button"
-                                    disabled={submitting}
-                                    onClick={() => {
-                                        if (validateForm()) {
-                                            setConfirmingAction("save");
-                                        }
-                                    }}
-                                    className="px-6 py-2.5 rounded-lg bg-primary text-primary-foreground font-bold hover:bg-primary/90 transition-all text-sm cursor-pointer shadow-sm hover:shadow"
-                                >
-                                    Save Draft
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                )}
-
-                {confirmingAction && (
-                    <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/50">
-                        <div className="w-full max-w-sm rounded-xl bg-card p-6 shadow-2xl border border-border animate-in fade-in zoom-in-95">
-                            <div className="flex flex-col items-center text-center space-y-3">
-                                <div className={`p-3 rounded-full ${confirmingAction === "save" ? "bg-primary/10 text-primary" : "bg-destructive/10 text-destructive"}`}>
-                                    {confirmingAction === "save" ? <Save className="h-6 w-6" /> : <AlertCircle className="h-6 w-6" />}
-                                </div>
-                                <div>
-                                    <h3 className="text-lg font-bold text-foreground">
-                                        {confirmingAction === "save" ? "Confirm Creation" : "Discard Changes?"}
-                                    </h3>
-                                    <p className="text-sm text-muted-foreground mt-1.5 leading-relaxed">
-                                        {confirmingAction === "save"
-                                            ? "Are you sure you want to create this sales order?"
-                                            : "Are you sure you want to discard your unsaved changes? This action cannot be undone."}
-                                    </p>
-                                </div>
-                            </div>
-                            <div className="mt-6 flex justify-center gap-3 w-full">
-                                <button
-                                    type="button"
-                                    onClick={() => setConfirmingAction(null)}
-                                    disabled={submitting}
-                                    className="flex-1 rounded-lg border bg-background px-4 py-2 text-sm font-semibold transition-colors hover:bg-muted cursor-pointer"
-                                >
-                                    {confirmingAction === "save" ? "Cancel" : "Keep Editing"}
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={confirmingAction === "save" ? handleSubmit : () => {
-                                        setConfirmingAction(null);
-                                        setDiscardOpen(false);
-                                        onClose();
-                                    }}
-                                    disabled={submitting}
-                                    className={`flex-1 rounded-lg px-4 py-2 text-sm font-bold text-white transition-all cursor-pointer ${
-                                        confirmingAction === "save" ? "bg-primary hover:bg-primary/90" : "bg-destructive hover:bg-destructive/90"
-                                    }`}
-                                >
-                                    {submitting ? "Processing..." : confirmingAction === "save" ? "Confirm" : "Discard"}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                )}
+                    )}
                 </DialogContent>
             </Dialog>
 

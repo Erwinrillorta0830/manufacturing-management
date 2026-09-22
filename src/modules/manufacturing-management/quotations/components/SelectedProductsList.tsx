@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Trash2, Coins, Percent, Plus } from "lucide-react";
 import { SelectedQuoteProduct, CatalogProduct } from "../types";
-import { CreatableSelect } from "../../finished-goods/components/CreatableSelect";
+import { CreatableSelect } from "../../finished-goods-master/components/CreatableSelect";
 
 interface SelectedProductsListProps {
     selectedProductsList: SelectedQuoteProduct[];
@@ -41,7 +41,7 @@ export function SelectedProductsList({
         selectedProductsList.forEach(item => {
             const pid = item.product?.product_id || item.parent_product_id;
             if (!pid) return;
-            
+
             if (versionsMap[pid] !== undefined || loadingVersions[pid]) return;
 
             setLoadingVersions(prev => ({ ...prev, [pid]: true }));
@@ -60,7 +60,7 @@ export function SelectedProductsList({
                         return (b.id as number) - (a.id as number);
                     });
                     setVersionsMap(prev => ({ ...prev, [pid]: sorted }));
-                    
+
                     // Auto-default if product is already selected
                     if (item.product && sorted.length > 0 && !item.versionId && item.line_id) {
                         changeProductVersion(item.line_id, sorted[0].id, sorted[0].version_name);
@@ -77,7 +77,7 @@ export function SelectedProductsList({
     useEffect(() => {
         selectedProductsList.forEach(item => {
             if (!item.product) return;
-            
+
             const pid = item.product.product_id;
             const parentId = item.parent_product_id || item.product.parent_product_id || pid;
             const vid = item.versionId;
@@ -86,9 +86,9 @@ export function SelectedProductsList({
             if (cogsMap[cacheKey] !== undefined || loadingCogs[cacheKey]) return;
 
             setLoadingCogs(prev => ({ ...prev, [cacheKey]: true }));
-            
+
             // Note: cost depends on the BOM of the parent but price is based on the variant
-            const url = vid 
+            const url = vid
                 ? `/api/manufacturing/finished-goods/bom-cost?productId=${parentId}&versionId=${vid}`
                 : `/api/manufacturing/finished-goods/bom-cost?productId=${pid}`;
 
@@ -151,7 +151,7 @@ export function SelectedProductsList({
                             const lineId = item.line_id || item.product?.product_id || index;
                             const pid = item.product?.product_id;
                             const parentId = item.parent_product_id || item.product?.parent_product_id || pid;
-                            
+
                             const vid = item.versionId;
                             const cacheKey = `${pid}-${vid || "default"}`;
                             const cost = (pid && cogsMap[cacheKey] !== undefined) ? cogsMap[cacheKey] : (item.product?.has_cogs ? Number(item.product.cost_per_unit || 0) : null);
@@ -208,67 +208,67 @@ export function SelectedProductsList({
                                 })
                                 .sort((a, b) => Number((b as unknown as Record<string, unknown>).is_parent) - Number((a as unknown as Record<string, unknown>).is_parent) || Number((a as unknown as Record<string, unknown>).unit_count) - Number((b as unknown as Record<string, unknown>).unit_count))
                                 .map(p => ({ value: String(p.product_id), label: formatUomLabel(p as unknown as Record<string, unknown>) }));
-                                
+
                             const activeVersions = (pid && versionsMap[pid]) || (parentId && versionsMap[parentId]) || [];
 
                             return (
                                 <tr key={lineId} className="hover:bg-muted/35 transition-colors group">
                                     <td className="p-3.5 overflow-visible">
-                                        <CreatableSelect 
-                                            options={productTypes.map(t => ({ value: String(t.id), label: String(t.name) }))} 
-                                            value={item.product_type_id ? String(item.product_type_id) : ""} 
+                                        <CreatableSelect
+                                            options={productTypes.map(t => ({ value: String(t.id), label: String(t.name) }))}
+                                            value={item.product_type_id ? String(item.product_type_id) : ""}
                                             onValueChange={(val) => {
                                                 if (updateRow) {
                                                     updateRow(lineId, "product_type_id", Number(val));
                                                     updateRow(lineId, "parent_product_id", undefined);
                                                     if (handleRowProductSelect) handleRowProductSelect(lineId, null);
                                                 }
-                                            }} 
-                                            placeholder="Choose Type..." 
-                                            className="h-8 text-xs font-semibold" 
+                                            }}
+                                            placeholder="Choose Type..."
+                                            className="h-8 text-xs font-semibold"
                                         />
                                     </td>
                                     <td className="p-3.5 overflow-visible">
-                                        <CreatableSelect 
-                                            options={parentOptions} 
-                                            value={parentId ? String(parentId) : ""} 
+                                        <CreatableSelect
+                                            options={parentOptions}
+                                            value={parentId ? String(parentId) : ""}
                                             onValueChange={(val) => {
                                                 if (updateRow) {
                                                     updateRow(lineId, "parent_product_id", Number(val));
                                                     if (handleRowProductSelect) handleRowProductSelect(lineId, null);
                                                 }
-                                            }} 
-                                            placeholder="Choose Product..." 
-                                            className="h-8 text-xs font-semibold" 
-                                            disabled={!item.product_type_id && !parentId} 
+                                            }}
+                                            placeholder="Choose Product..."
+                                            className="h-8 text-xs font-semibold"
+                                            disabled={!item.product_type_id && !parentId}
                                         />
                                     </td>
                                     <td className="p-3.5 overflow-visible">
-                                        <CreatableSelect 
-                                            options={uomOptions} 
-                                            value={pid ? String(pid) : ""} 
+                                        <CreatableSelect
+                                            options={uomOptions}
+                                            value={pid ? String(pid) : ""}
                                             onValueChange={(val) => {
                                                 if (handleRowProductSelect) {
                                                     const variant = allProducts.find(p => String(p.product_id) === val);
                                                     handleRowProductSelect(lineId, (variant as unknown as CatalogProduct) || null);
                                                 }
-                                            }} 
-                                            placeholder="Choose UOM..." 
-                                            className="h-8 text-xs font-semibold" 
-                                            disabled={!parentId} 
+                                            }}
+                                            placeholder="Choose UOM..."
+                                            className="h-8 text-xs font-semibold"
+                                            disabled={!parentId}
                                         />
                                     </td>
                                     <td className="p-3.5 overflow-visible">
-                                        <CreatableSelect 
-                                            options={activeVersions.map(v => ({ value: String(v.id), label: v.version_name }))} 
-                                            value={vid ? String(vid) : ""} 
+                                        <CreatableSelect
+                                            options={activeVersions.map(v => ({ value: String(v.id), label: v.version_name }))}
+                                            value={vid ? String(vid) : ""}
                                             onValueChange={(val) => {
                                                 const vObj = activeVersions.find(v => String(v.id) === val);
                                                 changeProductVersion(lineId, Number(val), vObj ? vObj.version_name : null);
-                                            }} 
-                                            placeholder="Choose Version..." 
-                                            className="h-8 text-xs font-semibold" 
-                                            disabled={!parentId || activeVersions.length === 0} 
+                                            }}
+                                            placeholder="Choose Version..."
+                                            className="h-8 text-xs font-semibold"
+                                            disabled={!parentId || activeVersions.length === 0}
                                         />
                                     </td>
                                     <td className="p-3.5 text-right font-semibold text-foreground">
@@ -277,7 +277,7 @@ export function SelectedProductsList({
                                         ) : loadingCogs[cacheKey] ? (
                                             <span className="text-muted-foreground animate-pulse text-[10px]">resolving...</span>
                                         ) : cost !== null ? (
-                                            `₱${cost.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`
+                                            `₱${cost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                                         ) : (
                                             <span className="text-muted-foreground bg-muted border px-2 py-0.5 rounded-md text-[10px]">N/A</span>
                                         )}
@@ -286,7 +286,7 @@ export function SelectedProductsList({
                                         {!pid ? (
                                             <span className="text-muted-foreground bg-muted border px-2 py-0.5 rounded-md text-[10px]">--</span>
                                         ) : (
-                                            `₱${priceTypePrice.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`
+                                            `₱${priceTypePrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                                         )}
                                     </td>
                                     <td className="p-3.5 text-right">
@@ -297,11 +297,10 @@ export function SelectedProductsList({
                                                 step="0.01"
                                                 value={agreedPrice || ""}
                                                 onChange={e => handleAgreedPriceChange(lineId, parseFloat(e.target.value) || 0)}
-                                                className={`w-full rounded-lg border pl-6 pr-2.5 py-1 text-right text-xs bg-background outline-none transition-all ${
-                                                    isOverride 
-                                                        ? "border-amber-500/80 font-bold text-amber-500 focus:ring-1 focus:ring-amber-500" 
+                                                className={`w-full rounded-lg border pl-6 pr-2.5 py-1 text-right text-xs bg-background outline-none transition-all ${isOverride
+                                                        ? "border-amber-500/80 font-bold text-amber-500 focus:ring-1 focus:ring-amber-500"
                                                         : "border-input text-foreground focus:ring-1 focus:ring-primary focus:border-primary"
-                                                }`}
+                                                    }`}
                                                 disabled={!pid}
                                             />
                                         </div>
@@ -313,7 +312,7 @@ export function SelectedProductsList({
                                             ) : gp !== null ? (
                                                 <>
                                                     <span className={`font-bold text-xs ${gp >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
-                                                        ₱{gp.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                                                        ₱{gp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                     </span>
                                                     <span className={`text-[10px] font-semibold flex items-center gap-0.5 ${margin !== null && margin >= 15 ? "text-emerald-600/90" : "text-amber-500"}`}>
                                                         <Percent className="h-2.5 w-2.5" />

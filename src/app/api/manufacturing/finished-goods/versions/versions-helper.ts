@@ -1,7 +1,7 @@
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { productUpdateAuditFields } from "@/app/api/manufacturing/product-audit";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
-import { ProductVersion, RouteStep, RouteBOMItem, ProductOverhead, VersionPosition, RoutePosition } from "@/modules/manufacturing-management/finished-goods/types";
+import { ProductVersion, RouteStep, RouteBOMItem, ProductOverhead, VersionPosition, RoutePosition } from "@/modules/manufacturing-management/finished-goods-master/types";
 
 type DirectusOverheadRelation = {
     id?: number | string;
@@ -79,14 +79,14 @@ export async function getBOMDetailsForVersion(
 
     try {
         let version: ProductVersion | null = null;
-        
+
         // 1. Try to fetch the version directly by ID (fastest, bypasses recursive fallbacks)
         const resVerDirect = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version/${versionId}`, { headers, cache: "no-store" });
         if (resVerDirect.ok) {
             const verData = await resVerDirect.json();
             version = verData.data || null;
         }
-        
+
         // 2. Fall back to filtered query if direct fetch did not find the version
         if (!version) {
             const filter = encodeURIComponent(JSON.stringify({
@@ -101,7 +101,7 @@ export async function getBOMDetailsForVersion(
                 version = verData.data?.[0] || null;
             }
         }
-        
+
         if (!version) {
             try {
                 const prodRes = await fetch(`${DIRECTUS_URL}/items/products/${productId}?fields=product_id,parent_id`, { headers });

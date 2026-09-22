@@ -3,7 +3,7 @@
 import React from "react";
 import Image from "next/image";
 import { Settings, Check, Upload, Loader2, Info, Calendar, User, Edit } from "lucide-react";
-import { AssetRecord, DepartmentRecord } from "@/modules/manufacturing-management/finished-goods/types";
+import { AssetRecord, DepartmentRecord } from "@/modules/manufacturing-management/finished-goods-master/types";
 import {
     Select,
     SelectContent,
@@ -345,9 +345,8 @@ export function MaintenanceWorkOrderModal({
                                         placeholder="Barcode"
                                         value={barcode}
                                         onChange={e => setBarcode(e.target.value)}
-                                        className={`w-full rounded-lg border bg-background px-3 py-2 text-xs text-foreground outline-none focus:ring-1 transition-all ${
-                                            isDuplicateBarcode ? "border-destructive focus:ring-destructive focus:ring-1" : "border-border focus:ring-primary"
-                                        }`}
+                                        className={`w-full rounded-lg border bg-background px-3 py-2 text-xs text-foreground outline-none focus:ring-1 transition-all ${isDuplicateBarcode ? "border-destructive focus:ring-destructive focus:ring-1" : "border-border focus:ring-primary"
+                                            }`}
                                     />
                                     {isDuplicateBarcode && (
                                         <span className="text-[10px] text-destructive font-medium block mt-0.5">Barcode already exists in database</span>
@@ -360,9 +359,8 @@ export function MaintenanceWorkOrderModal({
                                         placeholder="RFID Code"
                                         value={rfidCode}
                                         onChange={e => setRfidCode(e.target.value)}
-                                        className={`w-full rounded-lg border bg-background px-3 py-2 text-xs text-foreground outline-none focus:ring-1 transition-all ${
-                                            isDuplicateRfid ? "border-destructive focus:ring-destructive focus:ring-1" : "border-border focus:ring-primary"
-                                        }`}
+                                        className={`w-full rounded-lg border bg-background px-3 py-2 text-xs text-foreground outline-none focus:ring-1 transition-all ${isDuplicateRfid ? "border-destructive focus:ring-destructive focus:ring-1" : "border-border focus:ring-primary"
+                                            }`}
                                     />
                                     {isDuplicateRfid && (
                                         <span className="text-[10px] text-destructive font-medium block mt-0.5">RFID Code already exists in database</span>
@@ -522,7 +520,7 @@ export function MaintenanceWorkOrderModal({
                                     {/* Left: Image Container */}
                                     <div className="w-full md:w-1/3 shrink-0">
                                         {viewingAsset.item_image ? (
-                                            <div 
+                                            <div
                                                 className="w-full h-24 rounded-lg border border-border bg-muted/5 shrink-0 overflow-hidden relative cursor-zoom-in hover:scale-102 transition-transform"
                                                 onClick={() => setPreviewImage(viewingAsset.item_image || null)}
                                             >

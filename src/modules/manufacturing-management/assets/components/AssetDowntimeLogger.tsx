@@ -3,7 +3,7 @@
 import React from "react";
 import Image from "next/image";
 import { X } from "lucide-react";
-import { CreatableSelect } from "../../finished-goods/components/CreatableSelect";
+import { CreatableSelect } from "../../finished-goods-master/components/CreatableSelect";
 
 interface Option {
     value: string;

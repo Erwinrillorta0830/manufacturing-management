@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { Loader2, Plus, Search, Trash2, Save, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { SalesOrder, SalesOrderDetail } from "../types";
-import { CreatableSelect } from "../../finished-goods/components/CreatableSelect";
+import { CreatableSelect } from "../../finished-goods-master/components/CreatableSelect";
 import { updateSalesOrderDraft } from "../services/sales-order-api";
 
 export interface SalesOrderDraftEditorProps {
@@ -389,8 +389,8 @@ export function SalesOrderDraftEditor({
             if (item.product_id) {
                 seenProductIds.add(item.product_id);
                 const prod = products.find(p => Number(p.product_id) === Number(item.parent_product_id));
-                const typeObj = item.product_type_id 
-                    ? productTypes.find(t => Number(t.id) === Number(item.product_type_id)) 
+                const typeObj = item.product_type_id
+                    ? productTypes.find(t => Number(t.id) === Number(item.product_type_id))
                     : (prod ? productTypes.find(t => String(t.id) === String(prod.product_type)) : null);
                 const isFinishedGood = Boolean(typeObj?.name?.toLowerCase().includes("finished"));
                 if (isFinishedGood) {
@@ -451,8 +451,8 @@ export function SalesOrderDraftEditor({
                 remarks: finalRemarks,
                 items: items.map(item => {
                     const prod = products.find(p => Number(p.product_id) === Number(item.parent_product_id));
-                    const typeObj = item.product_type_id 
-                        ? productTypes.find(t => Number(t.id) === Number(item.product_type_id)) 
+                    const typeObj = item.product_type_id
+                        ? productTypes.find(t => Number(t.id) === Number(item.product_type_id))
                         : (prod ? productTypes.find(t => String(t.id) === String(prod.product_type)) : null);
                     const isFinishedGood = Boolean(typeObj?.name?.toLowerCase().includes("finished"));
                     return {
@@ -490,7 +490,7 @@ export function SalesOrderDraftEditor({
                         <div className="h-3 w-64 bg-muted/60 rounded"></div>
                     </div>
                 </div>
-                
+
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     {[...Array(4)].map((_, i) => (
                         <div key={i} className="space-y-2">
@@ -519,7 +519,7 @@ export function SalesOrderDraftEditor({
                         <div className="h-4 w-32 bg-muted rounded"></div>
                         <div className="h-8 w-64 bg-muted/50 rounded-lg"></div>
                     </div>
-                    
+
                     <div className="rounded-md border bg-card">
                         <div className="border-b bg-muted/40 p-3 flex gap-4">
                             <div className="h-3 w-24 bg-muted/60 rounded"></div>
@@ -734,22 +734,22 @@ export function SalesOrderDraftEditor({
                                                 const rawT = typeof p.product_type === "object" && p.product_type !== null ? (p.product_type as any).id : p.product_type;
                                                 if (rawT !== undefined && rawT !== null && String(rawT) !== String(item.product_type_id)) return false;
                                             }
-                                             if (isFinishedGoods) {
-                                                 const parentHasVer = Boolean(p.has_active_version);
-                                                 const childHasVer = products.some(child => Number(child.parent_product_id) === Number(p.product_id) && Boolean(child.has_active_version));
-                                                 if (!parentHasVer && !childHasVer) return false;
-                                             }
-                                             // Check if parent still has at least one selectable UOM variant
-                                             const isCurrentParent = Number(p.product_id) === Number(item.parent_product_id);
-                                             if (!isCurrentParent) {
-                                                 const availableVariants = products
-                                                     .filter(child => Number(child.parent_product_id) === Number(p.product_id))
-                                                     .filter(child => !otherSelectedVariantIds.includes(Number(child.product_id)))
-                                                     .filter(child => !isFinishedGoods || Boolean(child.has_active_uom_version));
-                                                 if (availableVariants.length === 0) return false;
-                                             }
-                                             return true;
-                                         })
+                                            if (isFinishedGoods) {
+                                                const parentHasVer = Boolean(p.has_active_version);
+                                                const childHasVer = products.some(child => Number(child.parent_product_id) === Number(p.product_id) && Boolean(child.has_active_version));
+                                                if (!parentHasVer && !childHasVer) return false;
+                                            }
+                                            // Check if parent still has at least one selectable UOM variant
+                                            const isCurrentParent = Number(p.product_id) === Number(item.parent_product_id);
+                                            if (!isCurrentParent) {
+                                                const availableVariants = products
+                                                    .filter(child => Number(child.parent_product_id) === Number(p.product_id))
+                                                    .filter(child => !otherSelectedVariantIds.includes(Number(child.product_id)))
+                                                    .filter(child => !isFinishedGoods || Boolean(child.has_active_uom_version));
+                                                if (availableVariants.length === 0) return false;
+                                            }
+                                            return true;
+                                        })
                                         .map(p => ({ value: String(p.product_id), label: `${p.product_name} (${p.product_code || `SKU-${p.product_id}`})` }));
                                     const uomOptions = products.filter(p => Number(p.parent_product_id) === Number(item.parent_product_id))
                                         .filter(p => Number(p.product_id) === Number(item.product_id) || !otherSelectedVariantIds.includes(Number(p.product_id)))
@@ -763,8 +763,8 @@ export function SalesOrderDraftEditor({
                                     const activeVerState = (Number(item.product_id) > 0 && versionStates[item.product_id]?.status === "resolved" && versionStates[item.product_id]?.versions?.length)
                                         ? versionStates[item.product_id]
                                         : (Number(item.parent_product_id) > 0 && versionStates[item.parent_product_id]?.status === "resolved" && versionStates[item.parent_product_id]?.versions?.length)
-                                        ? versionStates[item.parent_product_id]
-                                        : versionStates[item.product_id] || versionStates[item.parent_product_id];
+                                            ? versionStates[item.parent_product_id]
+                                            : versionStates[item.product_id] || versionStates[item.parent_product_id];
 
                                     return (
                                         <tr key={item.line_id} className="grid grid-cols-1 gap-3 p-3 font-semibold text-foreground hover:bg-muted/5 md:table-row md:p-0">
@@ -806,11 +806,10 @@ export function SalesOrderDraftEditor({
                                             </td>
                                             <td className="block p-0 md:table-cell md:w-28 md:min-w-[110px] md:px-3 md:py-2.5 md:text-right">
                                                 <span className="mb-1 block text-xs font-semibold md:hidden">Unit Price</span>
-                                                <div className={`h-8 flex items-center justify-end px-2.5 text-xs font-semibold font-mono border rounded-lg ${
-                                                    formErrors.items?.[item.line_id]?.unit_price 
-                                                        ? "border-destructive bg-destructive/10 text-destructive" 
+                                                <div className={`h-8 flex items-center justify-end px-2.5 text-xs font-semibold font-mono border rounded-lg ${formErrors.items?.[item.line_id]?.unit_price
+                                                        ? "border-destructive bg-destructive/10 text-destructive"
                                                         : "text-muted-foreground bg-muted/50 border-input"
-                                                }`}>
+                                                    }`}>
                                                     {item.unit_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                                 </div>
                                                 {formErrors.items?.[item.line_id]?.unit_price && (
@@ -890,9 +889,8 @@ export function SalesOrderDraftEditor({
                                 type="button"
                                 onClick={confirmingAction === "draft" || confirmingAction === "approval" ? confirmSubmit : () => { setConfirmingAction(null); onCancel(); }}
                                 disabled={submitting}
-                                className={`flex-1 rounded-lg px-4 py-2 text-sm font-bold text-white transition-colors flex items-center justify-center gap-2 cursor-pointer ${
-                                    confirmingAction === "draft" || confirmingAction === "approval" ? "bg-primary hover:bg-primary/90" : "bg-destructive hover:bg-destructive/90"
-                                }`}
+                                className={`flex-1 rounded-lg px-4 py-2 text-sm font-bold text-white transition-colors flex items-center justify-center gap-2 cursor-pointer ${confirmingAction === "draft" || confirmingAction === "approval" ? "bg-primary hover:bg-primary/90" : "bg-destructive hover:bg-destructive/90"
+                                    }`}
                             >
                                 {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                                 {confirmingAction === "draft" ? "Save Draft" : confirmingAction === "approval" ? "Submit" : "Discard"}

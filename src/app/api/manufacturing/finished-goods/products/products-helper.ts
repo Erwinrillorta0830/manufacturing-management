@@ -5,8 +5,8 @@ import {
     DirectusProductCurrencyProfile,
     CostRollupResult,
     CostNode
-} from "@/modules/manufacturing-management/finished-goods/types";
-import { calculateCostBreakdown, calculateMaterialCost, calculateMarginSummary, calculateOverheadSummary, calculateRouteBreakdown } from "@/modules/manufacturing-management/finished-goods/costing";
+} from "@/modules/manufacturing-management/finished-goods-master/types";
+import { calculateCostBreakdown, calculateMaterialCost, calculateMarginSummary, calculateOverheadSummary, calculateRouteBreakdown } from "@/modules/manufacturing-management/finished-goods-master/costing";
 import { getActiveVersionForProduct, getBOMDetailsForVersion } from "../versions/versions-helper";
 
 /**

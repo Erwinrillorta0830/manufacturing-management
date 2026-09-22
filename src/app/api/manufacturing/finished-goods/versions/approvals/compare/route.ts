@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { getBOMDetailsForVersion, getActiveVersionForProduct } from "../../versions-helper";
 import { getDraftById } from "../../drafts/drafts-helper";
-import { ProductVersion, RouteStep, RouteBOMItem, VersionPosition } from "@/modules/manufacturing-management/finished-goods/types";
+import { ProductVersion, RouteStep, RouteBOMItem, VersionPosition } from "@/modules/manufacturing-management/finished-goods-master/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

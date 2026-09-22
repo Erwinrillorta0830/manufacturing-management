@@ -12,7 +12,7 @@ import {
 import {
     ProductRequiredFieldsError,
     validateProductRegistration
-} from "@/modules/manufacturing-management/finished-goods/product-validation";
+} from "@/modules/manufacturing-management/finished-goods-master/product-validation";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { fetchAllWeightUnits } from "../weight-units/weight-units-helper";
 import { fetchPurchaseOrderPriceTypeRules } from "@/app/api/manufacturing/purchase-orders/_price-type";
