@@ -2,8 +2,17 @@ import assert from "node:assert/strict";
 import { calculateProductionMetrics } from "./production-metrics";
 import {
     calculateBatchScaledMaterialRequirement,
+    calculateFullBatchTarget,
+    calculateRequiredBatchCount,
     formatProductionValue
 } from "./production-timing";
+
+assert.equal(calculateRequiredBatchCount(12001, 6986.19), 2);
+assert.equal(formatProductionValue(calculateFullBatchTarget(12001, 6986.19)), "13972.3800");
+assert.equal(
+    formatProductionValue(calculateBatchScaledMaterialRequirement(12001, 6986.19, 5, 0.5)),
+    "10.0500"
+);
 
 const bisenteRequirement = calculateBatchScaledMaterialRequirement(
     354.628,
@@ -61,8 +70,8 @@ const metrics = calculateProductionMetrics({
 
 assert.equal(metrics.routeMetrics[0].effectiveBatchMultiplier, 1);
 assert.equal(formatProductionValue(metrics.routeMetrics[0].elapsedHours), "17.7314");
-assert.equal(formatProductionValue(metrics.routeMetrics[1].plannedRunHours), "0.0493");
-assert.equal(formatProductionValue(metrics.routeMetrics[1].elapsedHours), "0.1326");
+assert.equal(formatProductionValue(metrics.routeMetrics[1].plannedRunHours), "0.0500");
+assert.equal(formatProductionValue(metrics.routeMetrics[1].elapsedHours), "0.1333");
 assert.equal(formatProductionValue(metrics.lineLeadTimeHours), "17.7314");
 assert.equal(formatProductionValue(metrics.cogsBreakdown.directLaborCostPerUnit), "3.0306");
 assert.equal(formatProductionValue(metrics.cogsBreakdown.factoryOverheadCostPerUnit), "0.0500");
@@ -88,8 +97,26 @@ const aboveBatch = calculateProductionMetrics({
     baseQuantity: 1000,
     routes: [{ sequence_order: 1, setup_time_hours: 0, run_time_hours: 10, step_batch_size: 1000 }]
 });
-assert.equal(aboveBatch.routeMetrics[0].effectiveBatchMultiplier, 2.5);
-assert.equal(aboveBatch.routeMetrics[0].plannedRunHours, 25);
+assert.equal(aboveBatch.routeMetrics[0].effectiveBatchMultiplier, 3);
+assert.equal(aboveBatch.routeMetrics[0].plannedRunHours, 30);
+
+const fullBatchSetup = calculateProductionMetrics({
+    targetQuantity: 12001,
+    baseQuantity: 6986.19,
+    routes: [{ sequence_order: 1, setup_time_hours: 0.5, run_time_hours: 2.5, step_batch_size: 6986.19 }]
+});
+assert.equal(fullBatchSetup.routeMetrics[0].effectiveBatchMultiplier, 2);
+assert.equal(fullBatchSetup.routeMetrics[0].setupTimeHours, 0.5);
+assert.equal(fullBatchSetup.routeMetrics[0].plannedRunHours, 5);
+assert.equal(fullBatchSetup.routeMetrics[0].elapsedHours, 5.5);
+
+const multiBatchRuntime = calculateProductionMetrics({
+    targetQuantity: 12001,
+    baseQuantity: 6986.19,
+    routes: [{ sequence_order: 1, setup_time_hours: 0.25, run_time_hours: 17.4814, step_batch_size: 6986.19 }]
+});
+assert.equal(multiBatchRuntime.routeMetrics[0].effectiveBatchMultiplier, 2);
+assert.equal(formatProductionValue(multiBatchRuntime.lineLeadTimeHours), "35.2128");
 
 assert.throws(
     () => calculateProductionMetrics({

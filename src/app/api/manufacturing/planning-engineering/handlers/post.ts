@@ -19,6 +19,7 @@ import { SalesOrderAllocationConflictError } from "../helpers/create-helper";
 import type { SalesOrderSchedulingPlan } from "../helpers/create-helper";
 import { executeJobOrderWorkflow, JobOrderWorkflowError } from "../../job-orders/_workflow-service";
 import { resolveProductUnitId } from "../../services/mm-lots.service";
+import { calculateFullBatchTarget, calculateRequiredBatchCount } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
 
 const RELEASE_DRAFT_FETCH_TIMEOUT_MS = 15000;
 const QUANTITY_EPSILON = 0.000001;
@@ -243,6 +244,21 @@ async function validateSalesOrderScheduling(
         throw new PlanningConflictError("The submitted BOM version is stale or does not match the selected Sales Order details. Refresh the demand list and try again.");
     }
 
+    const versionResponse = await fetchWithTimeout(
+        `${DIRECTUS_URL}/items/product_manufacturing_version/${effectiveBomVersionId}?fields=version_id,base_quantity,uom_id`,
+        { headers, cache: "no-store" }
+    );
+    if (!versionResponse.ok) {
+        throw new Error(`Unable to load the selected recipe batch size (${versionResponse.status}).`);
+    }
+    const recipeVersion = (await versionResponse.json()).data;
+    const recipeBaseQuantity = Number(recipeVersion?.base_quantity);
+    if (!Number.isFinite(recipeBaseQuantity) || recipeBaseQuantity <= 0) {
+        throw new PlanningConflictError("The selected recipe must define a valid positive batch size before a Job Order can be released.");
+    }
+    const batchCount = calculateRequiredBatchCount(requestedQuantity, recipeBaseQuantity);
+    const fullBatchQuantity = calculateFullBatchTarget(requestedQuantity, recipeBaseQuantity);
+
     const allocations: any[] = await fetchSchedulingAllocations(detailIds);
     const allocatedJobOrderIds = [...new Set(
         allocations
@@ -346,7 +362,9 @@ async function validateSalesOrderScheduling(
             branchId: requestedBranchId,
             productId: requestedProductId,
             bomVersionId: effectiveBomVersionId,
-            totalQuantity: requestedQuantity,
+            requestedQuantity,
+            batchCount,
+            totalQuantity: fullBatchQuantity,
             lines: schedulingLines
         } satisfies SalesOrderSchedulingPlan
     };

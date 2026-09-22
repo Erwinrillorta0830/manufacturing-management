@@ -1,8 +1,9 @@
 import { DecimalValue } from "../../decimal";
 
-export const PRODUCTION_TIMING_POLICY = "MINIMUM_BATCH_PROPORTIONAL" as const;
+export const PRODUCTION_TIMING_POLICY = "FULL_BATCH_CEILING" as const;
 
 export const PRODUCTION_DECIMAL_SCALE = 4;
+const BATCH_BOUNDARY_TOLERANCE = DecimalValue.from("0.001");
 
 export function requirePositiveProductionNumber(value: unknown, label: string): number {
     const parsed = Number(value);
@@ -13,16 +14,59 @@ export function requirePositiveProductionNumber(value: unknown, label: string): 
 }
 
 /**
- * A route always requires at least one configured batch run. Additional
- * quantity scales proportionally above that minimum.
+ * Returns the number of complete recipe/route batches required for a target.
+ * DecimalValue is used at the comparison boundary so an exact batch multiple
+ * does not become the next batch because of binary floating-point rounding.
+ */
+export function calculateRequiredBatchCount(
+    targetQuantity: number,
+    batchSize: number
+): number {
+    const target = DecimalValue.from(requirePositiveProductionNumber(targetQuantity, "Target production quantity"))
+        .round(PRODUCTION_DECIMAL_SCALE);
+    const batch = DecimalValue.from(requirePositiveProductionNumber(batchSize, "Batch size"))
+        .round(PRODUCTION_DECIMAL_SCALE);
+
+    let wholeBatches = Math.floor(Number(target.toFixed(PRODUCTION_DECIMAL_SCALE)) / Number(batch.toFixed(PRODUCTION_DECIMAL_SCALE)));
+    wholeBatches = Math.max(0, wholeBatches);
+
+    let wholeBatchQuantity = batch.multiply(wholeBatches);
+    while (wholeBatches > 0 && wholeBatchQuantity.compare(target) > 0) {
+        wholeBatches -= 1;
+        wholeBatchQuantity = batch.multiply(wholeBatches);
+    }
+    while (batch.multiply(wholeBatches + 1).compare(target) <= 0) {
+        wholeBatches += 1;
+    }
+
+    const remainder = target.subtract(wholeBatchQuantity);
+    return Math.max(
+        1,
+        remainder.compare(BATCH_BOUNDARY_TOLERANCE) <= 0 ? wholeBatches : wholeBatches + 1
+    );
+}
+
+export function calculateFullBatchTarget(
+    targetQuantity: number,
+    batchSize: number
+): number {
+    const batchCount = calculateRequiredBatchCount(targetQuantity, batchSize);
+    return Number(
+        DecimalValue.from(requirePositiveProductionNumber(batchSize, "Batch size"))
+            .multiply(batchCount)
+            .toFixed(PRODUCTION_DECIMAL_SCALE)
+    );
+}
+
+/**
+ * Production runs use complete batches. A route with a configured batch size
+ * therefore receives an integer multiplier, with a minimum of one batch.
  */
 export function calculateEffectiveBatchMultiplier(
     targetQuantity: number,
     stepBatchSize: number
 ): number {
-    const target = requirePositiveProductionNumber(targetQuantity, "Target production quantity");
-    const batch = requirePositiveProductionNumber(stepBatchSize, "Routing step batch size");
-    return Math.max(1, target / batch);
+    return calculateRequiredBatchCount(targetQuantity, stepBatchSize);
 }
 
 export function calculatePlannedRunHours(
@@ -75,7 +119,10 @@ export function calculateBatchScaledMaterialRequirement(
         throw new Error("BOM wastage percentage must be zero or greater.");
     }
 
-    return (target / base) * quantity * (1 + (wastage / 100));
+    if (target === 0) return 0;
+
+    const batchCount = calculateRequiredBatchCount(target, base);
+    return batchCount * quantity * (1 + (wastage / 100));
 }
 
 export function readUomId(value: unknown): number | null {

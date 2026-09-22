@@ -102,8 +102,10 @@ export function calculateUnitCOGSBreakdown(
         if (!Number.isFinite(stepBatchSize) || stepBatchSize <= 0) {
             throw new Error(`Routing step ${Number(step.sequence_order || 0) || ""} batch size must be greater than zero.`);
         }
-        const machineHours = Math.max(0, Number(step.setup_time_hours || 0))
-            + (calculateEffectiveBatchMultiplier(baseQty, stepBatchSize) * Math.max(0, Number(step.run_time_hours || 0)));
+        const setupHours = Math.max(0, Number(step.setup_time_hours || 0));
+        const runHours = Math.max(0, Number(step.run_time_hours || 0));
+        const machineHours = setupHours
+            + (calculateEffectiveBatchMultiplier(baseQty, stepBatchSize) * runHours);
         return sum + (hourlyRate * machineHours);
     }, 0);
     const machineOverheadCostPerUnit = totalMachineOverhead / baseQty;
