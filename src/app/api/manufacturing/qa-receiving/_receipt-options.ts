@@ -34,6 +34,8 @@ interface ReceiptLineRow {
     received_date?: unknown;
     receiving_header_id?: unknown;
     receiving_method?: unknown;
+    received_quantity?: unknown;
+    quantity_rejected?: unknown;
     isPosted?: unknown;
     is_reverted?: unknown;
     is_replacement?: unknown;
@@ -102,6 +104,17 @@ function optionSortDate(option: QaReceiptOption): number {
     return timestamp(option.receiptDate);
 }
 
+function receiptTotals(rows: ReceiptLineRow[]): Pick<QaReceiptOption, "receivedQuantity" | "acceptedQuantity" | "rejectedQuantity"> {
+    const receivedQuantity = rows.reduce((sum, row) => sum + Math.max(0, Number(row.received_quantity || 0)), 0);
+    const rejectedQuantity = rows.reduce((sum, row) => sum + Math.max(0, Number(row.quantity_rejected || 0)), 0);
+
+    return {
+        receivedQuantity,
+        acceptedQuantity: Math.max(0, receivedQuantity - rejectedQuantity),
+        rejectedQuantity,
+    };
+}
+
 async function directusRows(path: string, message: string): Promise<Record<string, unknown>[]> {
     const response = await procurementDirectusFetch(path);
     if (!response.ok) throw new QaReceiptSelectionError(message, 503);
@@ -132,6 +145,7 @@ function mapHeaderOption(
     const isCurrent = (postingStatus === "Reserved" || postingStatus === "Failed")
         && workflowRevision === currentWorkflowRevision
         && linkedRows.some(isUnpostedWarehouseRow);
+    const totals = receiptTotals(linkedRows);
 
     return {
         key: `header:${id}`,
@@ -142,7 +156,8 @@ function mapHeaderOption(
         workflowRevision: Number.isSafeInteger(workflowRevision) ? workflowRevision : 0,
         receivingHeaderId: id,
         isCurrent,
-        readOnly: !isCurrent
+        readOnly: !isCurrent,
+        ...totals
     };
 }
 
@@ -161,6 +176,7 @@ function mapLegacyOptions(rows: ReceiptLineRow[]): QaReceiptOption[] {
         const receiptDate = groupedRows
             .map(row => dateOnly(row.receipt_date) || dateOnly(row.received_date))
             .sort((left, right) => timestamp(right) - timestamp(left))[0] || null;
+        const totals = receiptTotals(groupedRows);
         return [{
             key: `legacy:${receiptNumber}`,
             receiptNumber,
@@ -170,7 +186,8 @@ function mapLegacyOptions(rows: ReceiptLineRow[]): QaReceiptOption[] {
             workflowRevision: 0,
             receivingHeaderId: null,
             isCurrent: false,
-            readOnly: true
+            readOnly: true,
+            ...totals
         } satisfies QaReceiptOption];
     });
 }
@@ -191,7 +208,7 @@ export async function fetchQaReceiptOptions(
     const receivingParams = new URLSearchParams({
         "filter[purchase_order_id][_eq]": String(purchaseOrderId),
         "filter[is_reverted][_eq]": "0",
-        fields: "purchase_order_product_id,purchase_order_line_id,receipt_no,receipt_date,received_date,receiving_header_id,receiving_header_id.id,receiving_method,isPosted,is_reverted,is_replacement",
+        fields: "purchase_order_product_id,purchase_order_line_id,receipt_no,receipt_date,received_date,receiving_header_id,receiving_header_id.id,receiving_method,received_quantity,quantity_rejected,isPosted,is_reverted,is_replacement",
         limit: "-1"
     });
 

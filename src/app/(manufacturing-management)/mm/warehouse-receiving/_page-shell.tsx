@@ -30,7 +30,13 @@ function headerUser(token: string | undefined) {
     return { name: [first, last].filter(Boolean).join(" ") || email || "User", email, avatar: "/vos.png" };
 }
 
-export default async function WarehouseReceivingPageShell({ children }: { children: ReactNode }) {
+export default async function WarehouseReceivingPageShell({
+    children,
+    detailLabel = "Warehouse Receiving"
+}: {
+    children: ReactNode;
+    detailLabel?: string;
+}) {
     const token = (await cookies()).get(COOKIE_NAME)?.value;
     return (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -44,7 +50,7 @@ export default async function WarehouseReceivingPageShell({ children }: { childr
                             <BreadcrumbSeparator className="hidden shrink-0 md:block" />
                             <BreadcrumbItem className="hidden shrink-0 sm:block"><BreadcrumbLink href="/mm/incoming-shipments">Procurement &amp; Inbound</BreadcrumbLink></BreadcrumbItem>
                             <BreadcrumbSeparator className="hidden shrink-0 sm:block" />
-                            <BreadcrumbItem className="min-w-0 overflow-hidden"><BreadcrumbPage className="max-w-[56vw] truncate">Warehouse Receiving</BreadcrumbPage></BreadcrumbItem>
+                            <BreadcrumbItem className="min-w-0 overflow-hidden"><BreadcrumbPage className="max-w-[56vw] truncate">{detailLabel}</BreadcrumbPage></BreadcrumbItem>
                         </BreadcrumbList>
                     </Breadcrumb>
                 </div>
