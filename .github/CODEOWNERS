@@ -85,7 +85,34 @@
 /src/modules/manufacturing-management/asset-management/ @Fierrez
 /src/app/api/manufacturing/asset-management/ @Fierrez
 
-# Additional Modules
+# Lot Registry
 /src/modules/manufacturing-management/lot-registry/ @Fierrez
+
+# Consolidation Approval
+/src/modules/manufacturing-management/mm/sales-and-fulfillment/consolidation-approval/ @Fierrez
+/src/app/api/manufacturing/sales-and-fulfillment/consolidation-approval/ @Fierrez
+/src/app/(manufacturing-management)/mm/sales-and-fulfillment/consolidation-approval/ @Fierrez
+
+# Consolidation Picking
+/src/modules/manufacturing-management/mm/sales-and-fulfillment/consolidation-picking/ @Fierrez
+/src/app/api/manufacturing/sales-and-fulfillment/consolidation-picking/ @Fierrez
+/src/app/(manufacturing-management)/mm/sales-and-fulfillment/consolidation-picking/ @Fierrez
+
+# Consolidation Planning
+/src/modules/manufacturing-management/mm/sales-and-fulfillment/consolidation-planning/ @Fierrez
+/src/app/api/manufacturing/sales-and-fulfillment/consolidation-planning/ @Fierrez
+/src/app/api/manufacturing/invoice-consolidation/ @Fierrez
+/src/app/(manufacturing-management)/mm/sales-and-fulfillment/consolidation-planning/ @Fierrez
+
+# Fulfillment and Deliveries
+/src/modules/manufacturing-management/mm/sales-and-fulfillment/fulfilment-and-deliveries/ @Fierrez
+/src/app/api/manufacturing/sales-and-fulfillment/fulfilment-and-deliveries/ @Fierrez
+/src/app/(manufacturing-management)/mm/sales-and-fulfillment/fulfillment-and-deliveries/ @Fierrez
+
+# Sales Order Fulfillment
+/src/modules/manufacturing-management/sales-and-fulfillment/sales-order-fulfillment/ @Fierrez
+/src/app/api/manufacturing/sales-and-fulfillment/sales-order-fulfillment/ @Fierrez
+/src/app/(manufacturing-management)/mm/sales-and-fulfillment/sales-order-fulfillment/ @Fierrez
+
 
 

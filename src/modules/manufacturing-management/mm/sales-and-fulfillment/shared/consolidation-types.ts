@@ -160,6 +160,8 @@ export interface AvailableLotBatchItem {
     expiryDate: string | null;
     availableQuantity: number;
     inventoryCondition?: string;
+    branchId?: number;
+    branchName?: string;
 }
 
 export interface PickingSavePayload {
