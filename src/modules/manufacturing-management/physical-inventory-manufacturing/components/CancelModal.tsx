@@ -76,7 +76,7 @@ export default function CancelModal({
                     )}
 
                     <p className="text-xs text-muted-foreground">
-                        Please provide a required reason for cancelling sheet <span className="font-mono font-bold text-foreground">{sheet.pi_no}</span>.
+                        Please provide a required reason for cancelling the sheet <span className="font-mono font-bold text-foreground">{sheet.pi_no}</span>.
                     </p>
 
                     <div>
