@@ -25,7 +25,7 @@ import { SearchableVersionSelect } from "./SearchableVersionSelect";
 import { SubmittingLoadingOverlay } from "./SubmittingLoadingOverlay";
 import { calculateContainerizationMetrics, formatHoursToHMS } from "../utils/containerization-helper";
 import { calculateProductionMetrics } from "../utils/production-metrics";
-import { calculateAggregateRunHours, formatProductionValue, readUomId } from "../utils/production-timing";
+import { calculateAggregateRunHours, calculateFullBatchTarget, calculateRequiredBatchCount, formatProductionValue, readUomId } from "../utils/production-timing";
 import { buildReleaseSummaryHtml, type ReleaseSummaryComponent, type ReleaseSummaryFinancials, type ReleaseSummaryRoutingStep } from "../utils/release-summary-print";
 import { calculateNetRunTime } from "../../finished-goods/costing";
 
@@ -135,7 +135,10 @@ export function ReleaseJODialog({
     const activeReleaseGroup = normalizedReleaseGroups[activeGroupIndex] || normalizedReleaseGroups[0];
     const activeGroupKey = activeReleaseGroup?.key || "single";
     const selectedLines = activeReleaseGroup?.lines || selectedLinesProp;
-    const targetQuantity = isMultiRelease ? activeReleaseGroup.totalRemainingQuantity : targetQuantityProp;
+    const requestedTargetQuantity = isMultiRelease ? activeReleaseGroup.totalRemainingQuantity : targetQuantityProp;
+    const targetQuantity = bomBaseQty > 0 && requestedTargetQuantity > 0
+        ? calculateFullBatchTarget(requestedTargetQuantity, bomBaseQty)
+        : requestedTargetQuantity;
     const joNumber = isMultiRelease
         ? `${joNumberProp}-${String(activeGroupIndex + 1).padStart(2, "0")}`
         : joNumberProp;
@@ -232,8 +235,9 @@ export function ReleaseJODialog({
                         if (data.bom) {
                             const baseQty = Number(data.bom.base_quantity);
                             setBomBaseQty(baseQty);
-                            if (!isMultiRelease && targetQuantityProp <= 0 && baseQty > 0) {
-                                setTargetQuantity(baseQty);
+                            if (!isMultiRelease && baseQty > 0) {
+                                const requestedQuantity = targetQuantityProp > 0 ? targetQuantityProp : baseQty;
+                                setTargetQuantity(calculateFullBatchTarget(requestedQuantity, baseQty));
                             }
                             const rawShift = data.bom.net_run_time ?? data.bom.shift_hours ?? data.bom.shift_option ?? data.bom.target_shift_hours;
                             if (rawShift && Number(rawShift) > 0) {
@@ -295,6 +299,9 @@ export function ReleaseJODialog({
     };
 
     const bomQuantityScale = bomBaseQty > 0 ? targetQuantity / bomBaseQty : 0;
+    const requiredBatchCount = bomBaseQty > 0 && targetQuantity > 0
+        ? calculateRequiredBatchCount(targetQuantity, bomBaseQty)
+        : 0;
 
     // Initialize default print selections for shortfalls
     useEffect(() => {
@@ -778,6 +785,10 @@ export function ReleaseJODialog({
                                         <span className="text-muted-foreground">Ordered Quantity (from SO):</span>
                                         <span className="font-bold text-blue-600 dark:text-blue-400 font-mono">{maxAvailableQuantity.toLocaleString()}</span>
                                     </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Required Full Batches:</span>
+                                        <span className="font-bold text-amber-600 dark:text-amber-400 font-mono">{requiredBatchCount || "—"}</span>
+                                    </div>
                                 </div>
 
                                 <div className="space-y-3">
@@ -825,7 +836,11 @@ export function ReleaseJODialog({
                                                     step="any"
                                                     onChange={(e) => {
                                                         const next = Number(e.target.value);
-                                                        setTargetQuantity(Number.isFinite(next) && next > 0 ? next : 0);
+                                                        setTargetQuantity(
+                                                            Number.isFinite(next) && next > 0 && bomBaseQty > 0
+                                                                ? calculateFullBatchTarget(next, bomBaseQty)
+                                                                : 0
+                                                        );
                                                     }}
                                                     disabled={isMultiRelease || loadingDetails}
                                                     placeholder={loadingDetails ? "Calculating batch size..." : "e.g. 1000"}
@@ -841,8 +856,8 @@ export function ReleaseJODialog({
                                     </div>
                                     <p className="text-[10px] text-muted-foreground">
                                         {isMultiRelease
-                                            ? "The full remaining quantity for this product/BOM group will be released."
-                                            : `Prefilled based on recipe batch size (${bomBaseQty.toLocaleString()}). Total ordered quantity requested in Sales Order is ${maxAvailableQuantity.toLocaleString()} units.`}
+                                            ? `The target is rounded up to ${requiredBatchCount || "the required number of"} complete recipe batch${requiredBatchCount === 1 ? "" : "es"}.`
+                                            : `The target is rounded up to ${requiredBatchCount || "the required number of"} complete recipe batch${requiredBatchCount === 1 ? "" : "es"} using the ${bomBaseQty.toLocaleString()} batch size. SO demand is ${maxAvailableQuantity.toLocaleString()} units.`}
                                     </p>
 
                                     <div className="grid grid-cols-2 gap-4">

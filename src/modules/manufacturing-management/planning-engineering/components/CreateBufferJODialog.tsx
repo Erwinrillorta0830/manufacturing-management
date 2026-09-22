@@ -15,7 +15,7 @@ import { toast } from "sonner";
 import { SubmittingLoadingOverlay } from "./SubmittingLoadingOverlay";
 import { calculateContainerizationMetrics } from "../utils/containerization-helper";
 import { calculateProductionMetrics } from "../utils/production-metrics";
-import { calculateAggregateRunHours, readUomId } from "../utils/production-timing";
+import { calculateAggregateRunHours, calculateFullBatchTarget, readUomId } from "../utils/production-timing";
 import { calculateNetRunTime } from "../../finished-goods/costing";
 import { Step1BasicDetails } from "./buffer-jo/Step1BasicDetails";
 import { Step2BOMReview } from "./buffer-jo/Step2BOMReview";
@@ -93,6 +93,17 @@ export function CreateBufferJODialog({
 
     const selectedBranch = branches.find((b) => String(b.id) === selectedBranchId);
     const selectedProduct = products.find((p) => String(p.product_id) === selectedProductId);
+    const productionTargetQuantity = bomBaseQty > 0 && targetQuantity > 0
+        ? calculateFullBatchTarget(targetQuantity, bomBaseQty)
+        : targetQuantity;
+
+    const handleTargetQuantityChange = (value: number) => {
+        setTargetQuantity(
+            Number.isFinite(value) && value > 0 && bomBaseQty > 0
+                ? calculateFullBatchTarget(value, bomBaseQty)
+                : 0
+        );
+    };
 
     const getProductParentId = (p: any) => {
         if (!p) return null;
@@ -310,7 +321,10 @@ export function CreateBufferJODialog({
             if (verObj) {
                 const baseQty = Number(verObj.base_quantity ?? verObj.baseQuantity ?? 0);
                 if (baseQty > 0) {
+                    setBomBaseQty(baseQty);
                     setTargetQuantity(baseQty);
+                } else {
+                    setBomBaseQty(1);
                 }
                 const rawShift = verObj.net_run_time ?? verObj.shift_hours ?? verObj.shift_option ?? verObj.target_shift_hours;
                 if (rawShift && Number(rawShift) > 0) {
@@ -325,6 +339,8 @@ export function CreateBufferJODialog({
                     setShiftOption(netRunTime.toFixed(1));
                 }
             }
+        } else {
+            setBomBaseQty(1);
         }
     }, [selectedVersionId, versions]);
 
@@ -416,7 +432,7 @@ export function CreateBufferJODialog({
         }
     };
 
-    const bomQuantityScale = bomBaseQty > 0 ? targetQuantity / bomBaseQty : 0;
+    const bomQuantityScale = bomBaseQty > 0 ? productionTargetQuantity / bomBaseQty : 0;
 
     // Initialize default print selections for shortfalls
     useEffect(() => {
@@ -447,12 +463,12 @@ export function CreateBufferJODialog({
             }
         });
         setPrintSelection(initialSelections);
-    }, [components, inventories, subAssemblyBoms, targetQuantity, bomBaseQty]);
+    }, [components, inventories, subAssemblyBoms, productionTargetQuantity, bomBaseQty]);
 
     const selectedProdObj = products.find((p) => String(p.product_id) === selectedProductId);
 
     const productionMetricsResult = useMemo(() => {
-        if (!hasLoadedDetails || routings.length === 0 || targetQuantity <= 0) {
+        if (!hasLoadedDetails || routings.length === 0 || productionTargetQuantity <= 0) {
             return { metrics: null, error: null };
         }
 
@@ -463,7 +479,7 @@ export function CreateBufferJODialog({
         try {
             const selectedVersion = versions.find((version) => String(version.version_id) === String(selectedVersionId));
             const metrics = calculateProductionMetrics({
-                targetQuantity,
+                targetQuantity: productionTargetQuantity,
                 baseQuantity: bomBaseQty,
                 targetUomId: readUomId(selectedProdObj?.unit_of_measurement ?? selectedProdObj?.uom_id ?? selectedProdObj?.uom),
                 baseUomId: readUomId(bomData?.uom_id ?? bomData?.unit_of_measurement ?? bomData?.uom),
@@ -494,7 +510,7 @@ export function CreateBufferJODialog({
                 error: error instanceof Error ? error.message : "Unable to calculate production metrics."
             };
         }
-    }, [hasLoadedDetails, routings, targetQuantity, bomBaseQty, components, bomData, versions, selectedVersionId, selectedProdObj]);
+    }, [hasLoadedDetails, routings, productionTargetQuantity, bomBaseQty, components, bomData, versions, selectedVersionId, selectedProdObj]);
 
     const productionMetrics = productionMetricsResult.metrics;
     const productionMetricsError = productionMetricsResult.error;
@@ -531,7 +547,7 @@ export function CreateBufferJODialog({
         const verObj = versions.find((v) => String(v.version_id) === String(selectedVersionId));
         return calculateContainerizationMetrics(
             (selectedProdObj as any).product_name || selectedProdObj.title || selectedProdObj.sku || "Product",
-            targetQuantity,
+            productionTargetQuantity,
             selectedProdObj.unit_of_measurement_count || (selectedProdObj as any).pcs_per_bundle || (selectedProdObj as any).pcs_per_case || (selectedProdObj as any).uom_count,
             verObj?.expected_yield_percentage || (verObj as any)?.yield_percentage,
             (verObj as any)?.scrap_rate || (verObj as any)?.scrap_percentage || (verObj as any)?.wastage_factor_percentage,
@@ -542,7 +558,7 @@ export function CreateBufferJODialog({
             components,
             bomBaseQty
         );
-    }, [selectedProdObj, versions, selectedVersionId, targetQuantity, components, bomBaseQty]);
+    }, [selectedProdObj, versions, selectedVersionId, productionTargetQuantity, components, bomBaseQty]);
 
     const cogsBreakdown = productionMetrics?.cogsBreakdown || null;
 
@@ -677,7 +693,7 @@ export function CreateBufferJODialog({
                             </div>
                             <div>
                                 <div class="jo-summary-label">Plan Output Quantity</div>
-                                <div class="jo-summary-value">${targetQuantity.toLocaleString()} units</div>
+                                <div class="jo-summary-value">${productionTargetQuantity.toLocaleString()} units</div>
                             </div>
                             <div>
                                 <div class="jo-summary-label">Estimated Days</div>
@@ -916,7 +932,7 @@ export function CreateBufferJODialog({
                     jo_id: joNumber,
                     product_id: Number(selectedProductId),
                     product_name: selectedProduct?.product_name || `Product #${selectedProductId}`,
-                    quantity: Number(targetQuantity),
+                    quantity: Number(productionTargetQuantity),
                     due_date: dueDate,
                     start_date: plannedDate,
                     uom_id: Number(selectedProduct?.unit_of_measurement?.unit_id || selectedProduct?.unit_of_measurement || 0) || null,
@@ -935,7 +951,7 @@ export function CreateBufferJODialog({
                         {
                             product_id: Number(selectedProductId),
                             product_name: selectedProduct?.product_name || `Product #${selectedProductId}`,
-                            quantity: Number(targetQuantity),
+                            quantity: Number(productionTargetQuantity),
                             bom: {
                                 version_id: selectedVersionId ? Number(selectedVersionId) : null
                             }
@@ -977,7 +993,7 @@ export function CreateBufferJODialog({
             printPickingList(
                 joNumber,
                 selectedProduct?.product_name || `Product #${selectedProductId}`,
-                Number(targetQuantity)
+                Number(productionTargetQuantity)
             );
             onOpenChange(false);
             await onSuccess(createdJobOrderNo);
@@ -1037,8 +1053,8 @@ export function CreateBufferJODialog({
                             versions={versions}
                             selectedVersionId={selectedVersionId}
                             setSelectedVersionId={setSelectedVersionId}
-                            targetQuantity={targetQuantity}
-                            setTargetQuantity={setTargetQuantity}
+                            targetQuantity={productionTargetQuantity}
+                            setTargetQuantity={handleTargetQuantityChange}
                             plannedDate={plannedDate}
                             setPlannedDate={setPlannedDate}
                             dueDate={dueDate}
@@ -1070,7 +1086,7 @@ export function CreateBufferJODialog({
                                 setHasLoadedDetails(false);
                             }}
                             components={components}
-                            targetQuantity={targetQuantity}
+                            targetQuantity={productionTargetQuantity}
                             bomBaseQty={bomBaseQty}
                             inventories={inventories}
                             subAssemblyBoms={subAssemblyBoms}
@@ -1103,7 +1119,7 @@ export function CreateBufferJODialog({
                             joNumber={joNumber}
                             selectedProduct={selectedProduct}
                             selectedVersion={selectedVersion}
-                            targetQuantity={targetQuantity}
+                            targetQuantity={productionTargetQuantity}
                             plannedDate={plannedDate}
                             dueDate={dueDate}
                             priority={priority}
@@ -1147,7 +1163,7 @@ export function CreateBufferJODialog({
                             <Button
                                 size="sm"
                                 onClick={handleNextStep}
-                                disabled={loadingDetails || !!detailsError || !!productionMetricsError || (currentStep === 2 && !hasLoadedDetails) || !joNumber || targetQuantity <= 0 || !selectedProductId || !selectedVersionId}
+                                disabled={loadingDetails || !!detailsError || !!productionMetricsError || (currentStep === 2 && !hasLoadedDetails) || !joNumber || productionTargetQuantity <= 0 || !selectedProductId || !selectedVersionId}
                                 className="bg-primary hover:bg-primary/90 text-white h-8 font-semibold shadow-lg shadow-primary/20"
                             >
                                 Next <ArrowRight className="h-3.5 w-3.5 ml-1.5" />

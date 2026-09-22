@@ -12,6 +12,7 @@ import { deleteJobOrder } from "./delete-helper";
 import { calculateProductionMetrics } from "@/modules/manufacturing-management/planning-engineering/utils/production-metrics";
 import {
     calculateBatchScaledMaterialRequirement,
+    calculateFullBatchTarget,
     readUomId,
     roundProductionValue
 } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
@@ -30,6 +31,8 @@ export interface SalesOrderSchedulingPlan {
     branchId: number;
     productId: number;
     bomVersionId: number;
+    requestedQuantity?: number;
+    batchCount?: number;
     totalQuantity: number;
     lines: Array<{
         detailId: number;
@@ -227,8 +230,6 @@ export async function createJobOrder(
             mergedProducts[key].quantity += Number(p.quantity || 0);
         }
         const finalProductsList = Object.values(mergedProducts);
-        const totalMergedQuantity = finalProductsList.reduce((sum, p) => sum + Number(p.quantity || 0), 0);
-
         const firstProd = finalProductsList[0];
         if (!firstProd) throw new Error("No products selected for Job Order");
 
@@ -320,6 +321,12 @@ export async function createJobOrder(
                 }
             }
 
+            const recipeBaseQuantity = Number(version?.base_quantity);
+            if (Number.isFinite(recipeBaseQuantity) && recipeBaseQuantity > 0) {
+                productionQty = calculateFullBatchTarget(productionQty, recipeBaseQuantity);
+                p.quantity = productionQty;
+            }
+
             if (components.length > 0) {
                 for (const bItem of components) {
                     const compProductId = Number(bItem.product_id);
@@ -369,6 +376,7 @@ export async function createJobOrder(
             }
         }
 
+        const totalMergedQuantity = finalProductsList.reduce((sum, p) => sum + Number(p.quantity || 0), 0);
         const numericTargetQuantity = Number(totalMergedQuantity);
         const numericBranchId = Number(joData.branch_id);
         const numericPriority = Number((joData as any).priority ?? 0);
@@ -488,6 +496,9 @@ export async function createJobOrder(
             }
 
             const baseQuantity = Number(version?.base_quantity);
+            if (Number.isFinite(baseQuantity) && baseQuantity > 0) {
+                productionQty = calculateFullBatchTarget(productionQty, baseQuantity);
+            }
             const costingComponents = (routes || []).flatMap((route) => route.bom_items || []);
             const productionMetrics = routes && routes.length > 0
                 ? calculateProductionMetrics({
