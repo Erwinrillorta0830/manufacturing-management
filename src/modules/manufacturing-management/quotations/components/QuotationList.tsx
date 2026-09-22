@@ -54,52 +54,13 @@ export function QuotationList({
     const [historyQuotes, setHistoryQuotes] = useState<QuotationHeader[]>([]);
     const [projectSnapshots, setProjectSnapshots] = useState<Record<number, QuotationSnapshotNode[]>>({});
 
-    const projectGroups = React.useMemo(() => {
-        const groups: Record<string, { latest: QuotationHeader; history: QuotationHeader[]; projectStatus?: string }> = {};
-
-        quotes.forEach(q => {
-            const projObj = q.project_id && typeof q.project_id === "object" ? q.project_id as Project : null;
-            const key = projObj?.project_name || `No Project Name (Quote: ${q.quote_number})`;
-            if (!groups[key]) {
-                groups[key] = { latest: q, history: [q], projectStatus: projObj?.status || "Draft" };
-            } else {
-                groups[key].history.push(q);
-                // Compare dates or revision suffixes to find the latest
-                const currLatest = groups[key].latest;
-                const currTime = currLatest.quote_date ? new Date(currLatest.quote_date).getTime() : 0;
-                const checkTime = q.quote_date ? new Date(q.quote_date).getTime() : 0;
-                if (checkTime > currTime) {
-                    groups[key].latest = q;
-                }
-            }
-        });
-
-        // Also add database projects that don't have quotes yet into the pipeline!
-        allProjects.forEach(proj => {
-            if (proj.quoteCount === 0) {
-                const key = proj.projectName;
-                if (!groups[key]) {
-                    groups[key] = {
-                        latest: proj.latest,
-                        history: [],
-                        projectStatus: proj.projectStatus
-                    };
-                }
-            }
-        });
-
-        return groups;
-    }, [quotes, allProjects]);
-
     const allProjectsList = React.useMemo(() => {
-        return Object.entries(projectGroups)
-            .map(([name, group]) => ({ projectName: name, ...group }))
-            .sort((a, b) => {
-                const tA = a.latest.quote_date ? new Date(a.latest.quote_date).getTime() : 0;
-                const tB = b.latest.quote_date ? new Date(b.latest.quote_date).getTime() : 0;
-                return tB - tA; // descending
-            });
-    }, [projectGroups]);
+        return [...allProjects].sort((a, b) => {
+            const tA = a.latest.quote_date ? new Date(a.latest.quote_date).getTime() : 0;
+            const tB = b.latest.quote_date ? new Date(b.latest.quote_date).getTime() : 0;
+            return tB - tA; // descending
+        });
+    }, [allProjects]);
 
     const filteredProjects = React.useMemo(() => {
         let filtered = allProjectsList;
@@ -296,7 +257,7 @@ export function QuotationList({
 
                                         return (
                                             <tr
-                                                key={proj.projectName}
+                                                key={proj.projectId ? `proj-${proj.projectId}` : `quote-${q.id || proj.projectName}`}
                                                 onClick={() => viewQuoteDetails(q)}
                                                 className="hover:bg-muted/50 transition-colors cursor-pointer group"
                                             >
