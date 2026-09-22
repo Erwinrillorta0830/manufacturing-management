@@ -165,6 +165,40 @@ export function calculatePlannedRunHours(
     return multiplier * Math.max(0, Number(runTimeHours) || 0);
 }
 
+export function calculatePlannedSetupHours(
+    targetQuantity: number,
+    stepBatchSize: number,
+    setupTimeHours: number
+): number {
+    const multiplier = calculateEffectiveBatchMultiplier(targetQuantity, stepBatchSize);
+    return multiplier * Math.max(0, Number(setupTimeHours) || 0);
+}
+
+export interface PlannedRouteHours {
+    planned_setup_hours?: unknown;
+    planned_run_hours?: unknown;
+}
+
+export function calculatePipelinedLineDurationHours(routes: readonly PlannedRouteHours[]): number {
+    return routes.reduce(
+        (longest, route) => Math.max(
+            longest,
+            Math.max(0, Number(route.planned_setup_hours) || 0)
+                + Math.max(0, Number(route.planned_run_hours) || 0)
+        ),
+        0
+    );
+}
+
+export function calculateCumulativeRouteWorkloadHours(routes: readonly PlannedRouteHours[]): number {
+    return routes.reduce(
+        (total, route) => total
+            + Math.max(0, Number(route.planned_setup_hours) || 0)
+            + Math.max(0, Number(route.planned_run_hours) || 0),
+        0
+    );
+}
+
 export function calculateAggregateRunHours(
     targetQuantity: number,
     baseQuantity: number,
@@ -173,7 +207,8 @@ export function calculateAggregateRunHours(
 ): number {
     const multiplier = calculateEffectiveBatchMultiplier(targetQuantity, baseQuantity);
     const standardRunHours = Math.max(0, Number(runTimeHoursPerUnit) || 0) * baseQuantity;
-    return Math.max(0, Number(setupTimeHours) || 0) + (multiplier * standardRunHours);
+    const plannedSetupHours = multiplier * Math.max(0, Number(setupTimeHours) || 0);
+    return plannedSetupHours + (multiplier * standardRunHours);
 }
 
 /**

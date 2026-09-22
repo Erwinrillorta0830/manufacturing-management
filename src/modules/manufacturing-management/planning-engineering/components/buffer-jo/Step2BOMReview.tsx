@@ -175,8 +175,8 @@ export function Step2BOMReview({
                         <div className="bg-background border border-border/60 rounded-lg p-2">
                             <span className="text-[10px] font-medium text-muted-foreground block">🌾 Batch Mix & Sacks</span>
                             <span className="font-extrabold text-foreground text-xs">{containerMetrics.mixCount} Full Mixes</span>
-                            <span className="text-[10px] text-muted-foreground block">Demand: {containerMetrics.requestedMixCount.toFixed(2)} mixes / {(containerMetrics.requestedFlourGrams / 1000).toFixed(2)} kg</span>
-                            <span className="text-[10px] text-muted-foreground block">Planned: {containerMetrics.sackCount} sacks / {(containerMetrics.flourGramsTotal / 1000).toFixed(2)} kg Flour</span>
+                            <span className="text-[10px] text-muted-foreground block">Demand: {containerMetrics.requestedMixCount.toFixed(2)} mixes / {containerMetrics.requestedSackCount.toFixed(2)} sacks / {(containerMetrics.requestedFlourGrams / 1000).toFixed(2)} kg</span>
+                            <span className="text-[10px] text-muted-foreground block">Planned: {containerMetrics.sackCount.toFixed(2)} sacks / {(containerMetrics.flourGramsTotal / 1000).toFixed(2)} kg Flour</span>
                         </div>
                         <div className="bg-background border border-border/60 rounded-lg p-2">
                             <span className="text-[10px] font-medium text-muted-foreground block">🏭 Expected Net Pcs</span>

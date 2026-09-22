@@ -728,6 +728,7 @@ export function usePlanningEngineering() {
                         product_id: targetProductId,
                         product_name: targetProductName,
                         quantity: targetQuantity,
+                        requested_quantity: targetQuantity,
                         due_date: dueDate,
                         start_date: plannedDate,
                         uom_id: Number((firstLine.product_id as any)?.uom_id || 0) || null,
@@ -744,6 +745,7 @@ export function usePlanningEngineering() {
                             product_id: targetProductId,
                             product_name: targetProductName,
                             quantity: targetQuantity,
+                            requested_quantity: targetQuantity,
                             bom: { version_id: firstLine.bom_version_id }
                         }]
                     },

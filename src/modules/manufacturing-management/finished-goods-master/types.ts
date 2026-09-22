@@ -242,6 +242,7 @@ export interface ProductVersion {
     source_version_id?: number | null;
     rejection_reason?: string | null;
     approval_remarks?: string | null;
+    remarks?: string | null;
     created_at?: string | null;
     updated_at?: string | null;
     routes?: RouteStep[];

@@ -178,6 +178,7 @@ export async function createJobOrder(
                 product_id: schedulingPlan.productId,
                 product_name: joData.product_name,
                 quantity: schedulingPlan.totalQuantity,
+                requested_quantity: schedulingPlan.requestedQuantity ?? schedulingPlan.totalQuantity,
                 bom: { version_id: schedulingPlan.bomVersionId }
             }]
             : (joData.products || []);
@@ -186,6 +187,7 @@ export async function createJobOrder(
                 product_id: joData.product_id,
                 product_name: joData.product_name,
                 quantity: joData.quantity,
+                requested_quantity: (joData as any).requested_quantity ?? (joData as any).requestedQuantity ?? joData.quantity,
                 bom: joData.bom
             }];
         }
@@ -227,11 +229,15 @@ export async function createJobOrder(
                     product_id: pId,
                     product_name: p.product_name || `Product #${pId}`,
                     quantity: 0,
+                    timing_target_quantity: 0,
                     uom_id: (p as any).uom_id ?? (p as any).uomId ?? (joData as any).uom_id ?? null,
                     bom: versionId ? { version_id: versionId } : null
                 };
             }
             mergedProducts[key].quantity += Number(p.quantity || 0);
+            mergedProducts[key].timing_target_quantity += Number(
+                (p as any).requested_quantity ?? (p as any).requestedQuantity ?? p.quantity ?? 0
+            );
         }
         const finalProductsList = Object.values(mergedProducts);
         const firstProd = finalProductsList[0];
@@ -318,12 +324,16 @@ export async function createJobOrder(
             }
             
             let productionQty = Number(p.quantity);
+            let timingTargetQuantity = Number((p as any).timing_target_quantity ?? productionQty);
             if (version && version.product_id && Number(version.product_id) !== Number(pId)) {
                 const pCount = await getUomCountForProduct(pId);
                 if (pCount > 0) {
                     productionQty = Math.ceil(productionQty / pCount);
+                    timingTargetQuantity = Math.ceil(timingTargetQuantity / pCount);
                 }
             }
+
+            (p as any).timing_target_quantity = timingTargetQuantity;
 
             const recipeBaseQuantity = Number(version?.base_quantity);
             if (Number.isFinite(recipeBaseQuantity) && recipeBaseQuantity > 0) {
@@ -486,12 +496,14 @@ export async function createJobOrder(
                 : await getActiveVersionForProduct(p.product_id);
 
             let productionQty = Number(p.quantity);
+            let timingTargetQuantity = Number((p as any).timing_target_quantity ?? productionQty);
             let productionUomId = readUomId((p as any).uom_id ?? (p as any).uomId ?? (joData as any).uom_id ?? (joData as any).uomId);
             if (version && version.product_id && Number(version.product_id) !== Number(p.product_id)) {
                 try {
                     const originalUomCount = await getUomCountForProduct(Number(p.product_id));
                     const targetUomCount = await getUomCountForProduct(Number(version.product_id));
                     productionQty = productionQty * (originalUomCount / targetUomCount);
+                    timingTargetQuantity = timingTargetQuantity * (originalUomCount / targetUomCount);
                     productionUomId = readUomId(version.uom_id) || productionUomId;
                 } catch (e) {
                     console.error("Error scaling quantity for job order product variant:", e);
@@ -513,6 +525,7 @@ export async function createJobOrder(
             const productionMetrics = routes && routes.length > 0
                 ? calculateProductionMetrics({
                     targetQuantity: productionQty,
+                    timingTargetQuantity,
                     baseQuantity,
                     targetUomId: productionUomId,
                     baseUomId: readUomId(version?.uom_id),
@@ -557,7 +570,7 @@ export async function createJobOrder(
                         throw new Error(`Unable to calculate production metrics for routing step ${sequenceOrder || ""}.`);
                     }
 
-                    const plannedSetup = roundProductionValue(routeMetric.setupTimeHours);
+                    const plannedSetup = roundProductionValue(routeMetric.plannedSetupHours);
                     const plannedRun = roundProductionValue(routeMetric.plannedRunHours);
                     const laborWorkloadShare = productionMetrics.cumulativeWorkloadHours > 0
                         ? routeMetric.elapsedHours / productionMetrics.cumulativeWorkloadHours

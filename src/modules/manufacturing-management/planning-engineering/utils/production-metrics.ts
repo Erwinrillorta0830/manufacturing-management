@@ -8,6 +8,7 @@ import {
 import {
     assertCompatibleUoms,
     calculateEffectiveBatchMultiplier,
+    calculatePlannedSetupHours,
     requirePositiveProductionNumber,
     PRODUCTION_TIMING_POLICY
 } from "./production-timing";
@@ -15,6 +16,7 @@ import {
 export interface ProductionRouteMetric {
     sequenceOrder: number;
     setupTimeHours: number;
+    plannedSetupHours: number;
     plannedRunHours: number;
     elapsedHours: number;
     stepBatchSize: number;
@@ -23,6 +25,11 @@ export interface ProductionRouteMetric {
 
 export interface ProductionMetricsInput {
     targetQuantity: number;
+    /**
+     * Requested output used only for route timing. The target quantity may be
+     * rounded up to a full recipe batch for costing and material planning.
+     */
+    timingTargetQuantity?: number;
     baseQuantity: number;
     targetUomId?: number | null;
     baseUomId?: number | null;
@@ -52,6 +59,10 @@ export interface ProductionMetrics {
  */
 export function calculateProductionMetrics(input: ProductionMetricsInput): ProductionMetrics {
     const targetQuantity = requirePositiveProductionNumber(input.targetQuantity, "Target production quantity");
+    const timingTargetQuantity = requirePositiveProductionNumber(
+        input.timingTargetQuantity ?? targetQuantity,
+        "Timing target production quantity"
+    );
     const baseQuantity = requirePositiveProductionNumber(input.baseQuantity, "Recipe base quantity");
     assertCompatibleUoms(input.targetUomId, input.baseUomId);
     const sortedRoutes = [...(input.routes || [])].sort(
@@ -66,21 +77,23 @@ export function calculateProductionMetrics(input: ProductionMetricsInput): Produ
         );
         const setupTimeHours = Math.max(0, Number(route.setup_time_hours || 0));
         const runTimeHours = Math.max(0, Number(route.run_time_hours || 0));
-        const effectiveBatchMultiplier = calculateEffectiveBatchMultiplier(targetQuantity, stepBatchSize);
+        const effectiveBatchMultiplier = calculateEffectiveBatchMultiplier(timingTargetQuantity, stepBatchSize);
+        const plannedSetupHours = calculatePlannedSetupHours(timingTargetQuantity, stepBatchSize, setupTimeHours);
         const plannedRunHours = effectiveBatchMultiplier * runTimeHours;
 
         return {
             sequenceOrder,
             setupTimeHours,
+            plannedSetupHours,
             plannedRunHours,
-            elapsedHours: setupTimeHours + plannedRunHours,
+            elapsedHours: plannedSetupHours + plannedRunHours,
             stepBatchSize,
             effectiveBatchMultiplier
         };
     });
 
     const lineLeadTimeHours = routeMetrics.length > 0
-        ? Math.max(...routeMetrics.map((metric) => metric.plannedRunHours)) + routeMetrics[0].setupTimeHours
+        ? Math.max(...routeMetrics.map((metric) => metric.elapsedHours))
         : 0;
     const cumulativeWorkloadHours = routeMetrics.reduce(
         (total, metric) => total + metric.elapsedHours,

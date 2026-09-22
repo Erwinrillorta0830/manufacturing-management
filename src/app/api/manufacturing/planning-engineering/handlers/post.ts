@@ -1554,6 +1554,7 @@ export async function handlePOST(request: Request) {
             product_id: schedulingPlan?.productId ?? jo.product_id,
             product_name: jo.product_name,
             quantity: schedulingPlan?.totalQuantity ?? jo.quantity,
+            requested_quantity: schedulingPlan?.requestedQuantity ?? jo.requested_quantity ?? jo.requestedQuantity ?? jo.quantity,
             due_date: jo.due_date,
             // Creation is always a Draft. Lifecycle advancement is explicit
             // through the workflow action, never through this payload.
@@ -1585,6 +1586,7 @@ export async function handlePOST(request: Request) {
                     product_id: schedulingPlan.productId,
                     product_name: jo.product_name,
                     quantity: schedulingPlan.totalQuantity,
+                    requested_quantity: schedulingPlan.requestedQuantity ?? jo.requested_quantity ?? jo.requestedQuantity ?? jo.quantity,
                     bom: { version_id: schedulingPlan.bomVersionId },
                     components: jo.components || null,
                     routings: jo.routings || null,
@@ -1594,6 +1596,7 @@ export async function handlePOST(request: Request) {
                     product_id: p.product_id,
                     product_name: p.product_name,
                     quantity: p.quantity,
+                    requested_quantity: p.requested_quantity ?? p.requestedQuantity,
                     bom: p.bom || null,
                     components: p.components || null,
                     routings: p.routings || null,

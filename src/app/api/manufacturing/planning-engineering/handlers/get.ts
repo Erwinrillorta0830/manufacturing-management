@@ -31,6 +31,7 @@ import {
     calculateRecipeMaterialCostPerUnit,
     roundManufacturingMoney
 } from "@/modules/manufacturing-management/planning-engineering/utils/cogs-helper";
+import { parseContainerizationProfile } from "@/modules/manufacturing-management/planning-engineering/utils/containerization-helper";
 
 const WIZARD_STEP_TIMEOUT_MS = 20000;
 
@@ -1396,6 +1397,8 @@ export async function handleGET(request: Request) {
                 expected_yield_percentage: version.expected_yield_percentage,
                 shift_hours: (version as any).shift_hours ?? (version as any).shift_option ?? (version as any).target_shift_hours ?? null
             };
+            const containerizationProfile = parseContainerizationProfile((version as any).remarks);
+            (bom as any).containerization_profile = containerizationProfile;
             const recipeBaseQuantity = Number(version.base_quantity);
             const requestedPreviewQuantity = Number.isFinite(requestedPreviewRaw) && requestedPreviewRaw > 0
                 ? requestedPreviewRaw
@@ -1677,6 +1680,7 @@ export async function handleGET(request: Request) {
             // 2e: Return { bom, components, routings, subAssemblyVersions, selectedSubAssemblyVersions, subAssemblyBoms, subAssemblyRoutings, inventories }
             return NextResponse.json({
                 bom,
+                containerizationProfile,
                 materialCostPerUnit,
                 components,
                 routings,

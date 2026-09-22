@@ -31,6 +31,7 @@ export interface DirectusJobOrder {
         product_id?: number | null;
         product_name?: string | null;
         quantity?: number;
+        requested_quantity?: number;
         bom?: unknown;
         components?: unknown;
         routings?: unknown;

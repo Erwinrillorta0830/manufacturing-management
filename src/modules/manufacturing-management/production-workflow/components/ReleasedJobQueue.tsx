@@ -10,6 +10,7 @@ import { resolveJobOrderJourney } from "../../shared/job-order-journey";
 import { JobOrderJourneyBar } from "../../shared/components/JobOrderJourneyBar";
 import { JobOrderStatusBadge } from "../../shared/components/JobOrderStatusBadge";
 import { SearchableSelect } from "../../planning-engineering/components/SearchableSelect";
+import { calculatePipelinedLineDurationHours } from "../../planning-engineering/utils/production-timing";
 
 interface ReleasedJobQueueProps {
     filteredJobOrders: JobOrder[];
@@ -235,10 +236,7 @@ export function ReleasedJobQueue({
                                     const completedSteps = routingTasks.filter(
                                         (task) => String(task.status || "").trim().toLowerCase() === "completed"
                                     ).length;
-                                    const totalHours = routingTasks.reduce(
-                                        (sum, task) => sum + Number(task.planned_setup_hours || 0) + Number(task.planned_run_hours || 0),
-                                        0
-                                    );
+                                    const totalHours = calculatePipelinedLineDurationHours(routingTasks);
 
                                     return (
                                         <tr
@@ -278,7 +276,7 @@ export function ReleasedJobQueue({
                                                     <span className="text-emerald-600 dark:text-emerald-400">{Number(producedQty || 0).toLocaleString()}</span>
                                                 </div>
                                                 <div className="mt-2 text-xs text-muted-foreground">
-                                                    {totalHours.toFixed(1)} planned hrs
+                                                    {totalHours.toFixed(1)} line hrs
                                                 </div>
                                             </td>
                                             <td className="px-3 py-3 align-top">
