@@ -1396,25 +1396,28 @@ export default function FinishedGoodsModule() {
 
             {savingBOM && (
                 <div
-                    className="fixed inset-0 z-[100] flex items-center justify-center bg-background/55 backdrop-blur-sm animate-in fade-in duration-150"
+                    className="fixed inset-0 z-[100] flex items-center justify-center bg-background/60 backdrop-blur-sm animate-in fade-in duration-150"
                     role="dialog"
                     aria-modal="true"
                     aria-labelledby="finished-goods-saving-title"
                 >
-                    <div className="bg-card border rounded-xl shadow-lg p-6 flex flex-col gap-4 w-80 text-center border-primary/20" tabIndex={-1}>
+                    <div className="bg-card border rounded-2xl shadow-2xl p-6 flex flex-col items-center gap-4 w-84 text-center border-primary/20 animate-in zoom-in-95 duration-150" tabIndex={-1}>
+                        <div className="h-11 w-11 rounded-full bg-primary/10 flex items-center justify-center">
+                            <Loader2 className="h-5 w-5 text-primary animate-spin" />
+                        </div>
                         <div className="flex flex-col items-center gap-1">
                             <h4 id="finished-goods-saving-title" className="text-xs font-bold text-foreground uppercase tracking-wider">Processing Request</h4>
-                            <p className="text-[10px] text-muted-foreground font-mono">{saveStatus}</p>
+                            <p className="text-[11px] text-muted-foreground font-mono min-h-[16px]">{saveStatus || "Please wait..."}</p>
                         </div>
                         <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden relative">
                             <div
-                                className="bg-primary h-full rounded-full transition-all duration-300 ease-out"
-                                style={{ width: `${saveProgress}%` }}
+                                className={`bg-primary h-full rounded-full transition-all duration-300 ease-out ${saveProgress <= 0 ? "w-full animate-pulse opacity-70" : ""}`}
+                                style={{ width: saveProgress > 0 ? `${saveProgress}%` : "100%" }}
                             />
                         </div>
-                        <div className="flex justify-between items-center text-[10px] font-mono font-bold text-muted-foreground">
+                        <div className="flex justify-between items-center w-full text-[10px] font-mono font-bold text-muted-foreground">
                             <span>PROGRESS</span>
-                            <span className="text-primary">{saveProgress}%</span>
+                            <span className="text-primary">{saveProgress > 0 ? `${saveProgress}%` : "PROCESSING"}</span>
                         </div>
                     </div>
                 </div>
