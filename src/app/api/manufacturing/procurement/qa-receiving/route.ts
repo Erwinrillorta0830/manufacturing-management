@@ -302,7 +302,7 @@ export async function GET(request: Request) {
             const lotIds = lots.map(lot => lotNumber(lot.lot_id)).filter((id): id is number => id !== null);
             const movementRows = await loadMovementRowsForMmLots(
                 lotIds,
-                "movement_id,product_id,mm_lot_id,lot_id,batch_no,quantity,manufacturing_date,expiry_date"
+                [targetBranchId]
             );
             const occupiedByLot = sumMovementQuantitiesByStorageLot(movementRows);
             const netQuantityByLotProduct = new Map<string, number>();

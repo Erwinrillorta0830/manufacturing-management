@@ -247,7 +247,7 @@ function buildNextAction(
             return {
                 label: "Open QA & Yield Closing",
                 description: "Resolve the QA hold or close the final yield to post finished goods.",
-                href: `/mm/manufacturing-job-order-inspection-qa${joParam}`
+                href: `/mm/manufacturing-qa${joParam}`
             };
         case "done":
         case "cancelled":

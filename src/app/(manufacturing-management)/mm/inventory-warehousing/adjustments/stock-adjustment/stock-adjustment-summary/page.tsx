@@ -10,7 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { cookies } from "next/headers";
-import StockAdjustmentSummaryModule from "@/modules/manufacturing-management/stock-adjustment-summary/StockAdjustmentSummaryModule";
+import StockAdjustmentSummaryModule from "@/modules/manufacturing-management/adjustments/stock-adjustment/stock-adjustment-summary/StockAdjustmentSummaryModule";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

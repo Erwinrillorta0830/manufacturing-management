@@ -26,7 +26,7 @@ export function StatusLegendPopover({
                     <div>
                         <p className="text-xs font-bold text-foreground">Job Order statuses</p>
                         <ul className="mt-1.5 space-y-1.5">
-                            {[...new Set(Object.values(JOB_ORDER_STATUS))].map((status) => (
+                            {Object.values(JOB_ORDER_STATUS).map((status) => (
                                 <li key={status} className="text-[11px] leading-snug">
                                     <span className="font-semibold text-foreground">{status}</span>
                                     <span className="text-muted-foreground">

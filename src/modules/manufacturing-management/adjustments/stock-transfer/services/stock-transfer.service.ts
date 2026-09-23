@@ -1,0 +1,1644 @@
+import * as repo from "./stock-transfer.repo";
+import * as helpers from "./stock-transfer.helpers";
+import { fetchItems, createItems } from "./api";
+import type { 
+  StockTransferRow, 
+  EnrichedProduct,
+  CreateTransferPayload,
+  UpdateTransferPayload,
+  StockTransferInsertPayload,
+  ProductRow,
+  MMStockTransferDetail,
+} from "../types/stock-transfer.types";
+import { CreateStockTransferSchema, UpdateStockTransferSchema, UpdateItemValue } from "../types/stock-transfer.schema";
+import { ensureLotForBranch } from "../services/lot-tracking.service";
+import { allocateStock } from "../services/stock-allocation.engine";
+import type { LotAllocationGroup, QAStatus } from "../types/lot-tracking.types";
+
+/**
+ * Safely resolves valid lot_id and inventory_lot_id foreign keys from existing records
+ * or creates an appropriate source inventory lot to satisfy foreign key constraints.
+ */
+/**
+ * Ensures a valid source inventory lot exists in mm_inventory_lots with a valid lot_id in mm_lots.
+ * Conforms strictly to schema: fk_mm_std_lot -> mm_lots, fk_mm_std_inventory_lot -> mm_inventory_lots.
+ */
+async function ensureSourceInventoryLot(params: {
+  lotId?: number | null;
+  inventoryLotId?: number | null;
+  branchId: number;
+  productId: number;
+  unitId?: number | null;
+  batchNo?: string | null;
+  manufacturingDate?: string | null;
+  expiryDate?: string | null;
+  qaStatus?: string;
+  sourceReference: string;
+  userId?: number | null;
+}): Promise<{ inventoryLotId: number; lotId: number }> {
+  const { branchId, productId, unitId, sourceReference, userId } = params;
+  // 1. If inventoryLotId is explicitly provided, check if it exists in mm_inventory_lots
+  if (params.inventoryLotId && Number(params.inventoryLotId) > 0) {
+    const checkInv = await fetchItems<{ inventory_lot_id: number; lot_id: number }>("items/mm_inventory_lots", {
+      filter: JSON.stringify({ inventory_lot_id: { _eq: Number(params.inventoryLotId) } }),
+      limit: 1,
+      fields: "inventory_lot_id,lot_id",
+    }).catch(() => ({ data: [] }));
+
+    if (checkInv.data && checkInv.data.length > 0) {
+      return {
+        inventoryLotId: Number(checkInv.data[0].inventory_lot_id),
+        lotId: Number(checkInv.data[0].lot_id || params.lotId || 0),
+      };
+    }
+  }
+
+  // 2. Verify passed lotId exists in mm_lots for source branch
+  let validLotId: number | null = null;
+  if (params.lotId && Number(params.lotId) > 0) {
+    const checkLot = await fetchItems<{ lot_id?: number }>("items/mm_lots", {
+      filter: JSON.stringify({
+        _and: [
+          { lot_id: { _eq: Number(params.lotId) } },
+          { branch_id: { _eq: branchId } },
+        ],
+      }),
+      limit: 1,
+      fields: "lot_id",
+    }).catch(() => ({ data: [] }));
+
+    if (checkLot.data && checkLot.data.length > 0) {
+      validLotId = Number(checkLot.data[0].lot_id || params.lotId);
+    }
+  }
+
+  // If no valid lotId on source branch, resolve or create active branch lot
+  if (!validLotId) {
+    validLotId = await ensureBranchLotDirect(branchId, unitId, userId);
+  }
+
+  if (!validLotId) {
+    throw new Error(`Could not resolve or create an active storage lot for source branch ${branchId}.`);
+  }
+
+  let cleanBatchNo = params.batchNo && String(params.batchNo).trim() !== "" 
+    ? String(params.batchNo).trim() 
+    : null;
+
+  // If batch number is not provided, look for any existing active inventory lot for this product at the branch
+  if (!cleanBatchNo) {
+    const anyInvRes = await fetchItems<{ inventory_lot_id: number; lot_id: number; batch_no?: string }>("items/mm_inventory_lots", {
+      filter: JSON.stringify({
+        _and: [
+          { branch_id: { _eq: branchId } },
+          { product_id: { _eq: productId } },
+        ],
+      }),
+      limit: 1,
+      fields: "inventory_lot_id,lot_id,batch_no",
+    }).catch(() => ({ data: [] }));
+
+    if (anyInvRes.data && anyInvRes.data.length > 0) {
+      return {
+        inventoryLotId: Number(anyInvRes.data[0].inventory_lot_id),
+        lotId: Number(anyInvRes.data[0].lot_id || validLotId),
+      };
+    }
+
+    cleanBatchNo = `BATCH-${productId}-${Date.now()}`;
+  }
+
+  // Check by (lot_id, product_id, batch_no)
+  const existingRes = await fetchItems<{ inventory_lot_id: number; lot_id: number }>("items/mm_inventory_lots", {
+    filter: JSON.stringify({
+      _and: [
+        { lot_id: { _eq: validLotId } },
+        { product_id: { _eq: productId } },
+        { batch_no: { _eq: cleanBatchNo } },
+      ],
+    }),
+    limit: 1,
+    fields: "inventory_lot_id,lot_id",
+  }).catch(() => ({ data: [] }));
+
+  if (existingRes.data && existingRes.data.length > 0) {
+    return {
+      inventoryLotId: Number(existingRes.data[0].inventory_lot_id),
+      lotId: validLotId,
+    };
+  }
+
+  // Also check across branch for (branch_id, product_id, batch_no)
+  const branchRes = await fetchItems<{ inventory_lot_id: number; lot_id: number }>("items/mm_inventory_lots", {
+    filter: JSON.stringify({
+      _and: [
+        { branch_id: { _eq: branchId } },
+        { product_id: { _eq: productId } },
+        { batch_no: { _eq: cleanBatchNo } },
+      ],
+    }),
+    limit: 1,
+    fields: "inventory_lot_id,lot_id",
+  }).catch(() => ({ data: [] }));
+
+  if (branchRes.data && branchRes.data.length > 0) {
+    return {
+      inventoryLotId: Number(branchRes.data[0].inventory_lot_id),
+      lotId: Number(branchRes.data[0].lot_id || validLotId),
+    };
+  }
+
+  // 3. Create record in mm_inventory_lots if missing
+  const batchPayload = {
+    lot_id: validLotId,
+    branch_id: branchId,
+    product_id: productId,
+    batch_no: cleanBatchNo,
+    unit_cost: 0,
+    manufacturing_date: params.manufacturingDate || null,
+    expiry_date: params.expiryDate || null,
+    qa_status: (params.qaStatus as string) || "GOOD",
+    status: "ACTIVE",
+    source_type: "STOCK_TRANSFER",
+    source_reference: sourceReference,
+    created_by: userId || 1,
+  };
+
+  const createRes = await createItems<{ inventory_lot_id?: number; id?: number }>("items/mm_inventory_lots", batchPayload);
+  const raw = createRes.data || createRes;
+  const item = Array.isArray(raw) ? raw[0] : raw;
+  const createdInvLotId = Number(item?.inventory_lot_id || item?.id);
+
+  if (!createdInvLotId) {
+    throw new Error(`Failed to initialize inventory lot for batch "${cleanBatchNo}" on source branch.`);
+  }
+
+  return {
+    inventoryLotId: createdInvLotId,
+    lotId: validLotId,
+  };
+}
+
+/**
+ * Safely resolves valid lot_id and inventory_lot_id foreign keys from existing records
+ * or creates an appropriate source inventory lot to satisfy foreign key constraints.
+ */
+async function resolveDetailLotReferences(
+  transfer: StockTransferRow,
+  destLotId?: number | null,
+  destInventoryLotId?: number | null,
+  userId?: number | null
+): Promise<{ lot_id: number; inventory_lot_id: number; target_lot_id: number | null; target_inventory_lot_id: number | null }> {
+  const prodId = typeof transfer.product_id === "object" ? transfer.product_id.product_id : transfer.product_id;
+  const srcBranch = typeof transfer.source_branch_id === "object" && transfer.source_branch_id !== null ? transfer.source_branch_id.id : (transfer.source_branch_id || transfer.source_branch);
+  const unitId = typeof transfer.unit_id === "object" && transfer.unit_id !== null ? transfer.unit_id.unit_id : (transfer.unit_id || 1);
+
+  if (!srcBranch || !prodId) {
+    throw new Error(`Cannot resolve lot references for transfer ${transfer.order_no}: source branch or product missing.`);
+  }
+
+  const srcEnsured = await ensureSourceInventoryLot({
+    lotId: transfer.source_lot_id ? Number(transfer.source_lot_id) : null,
+    inventoryLotId: transfer.source_inventory_lot_id ? Number(transfer.source_inventory_lot_id) : null,
+    branchId: Number(srcBranch),
+    productId: Number(prodId),
+    unitId: Number(unitId),
+    batchNo: transfer.batch_no,
+    manufacturingDate: transfer.manufacturing_date,
+    expiryDate: transfer.expiry_date || null,
+    qaStatus: transfer.qa_status || transfer.inventory_condition || "GOOD",
+    sourceReference: transfer.order_no,
+    userId: userId,
+  });
+
+  return {
+    lot_id: srcEnsured.lotId,
+    inventory_lot_id: srcEnsured.inventoryLotId,
+    target_lot_id: destLotId ? Number(destLotId) : null,
+    target_inventory_lot_id: destInventoryLotId ? Number(destInventoryLotId) : null,
+  };
+}
+
+/**
+ * Ensures an active master lot exists in mm_lots for a given branch using authenticated Directus client.
+ * Satisfies all NOT NULL constraints: unit_id, created_by, branch_id, lot_name.
+ */
+async function ensureBranchLotDirect(branchId: number, unitId?: number | null, userId?: number | null): Promise<number | null> {
+  try {
+    const res = await fetchItems<{ lot_id?: number; id?: number; status?: string }>("items/mm_lots", {
+      filter: JSON.stringify({ branch_id: { _eq: branchId } }),
+      limit: 10,
+      fields: "lot_id,status,branch_id",
+    }).catch(() => ({ data: [] }));
+
+    if (res.data && res.data.length > 0) {
+      const active = res.data.find(l => l.status === "ACTIVE" || !l.status) || res.data[0];
+      const lotId = Number(active.lot_id || (active as unknown as { id?: number }).id);
+      if (lotId) {
+        // console.log(`[StockTransfer] Found existing lot ${lotId} for branch ${branchId}`);
+        return lotId;
+      }
+    }
+
+    // Resolve valid unit_id for mm_lots foreign key
+    let validUnitId = unitId ? Number(unitId) : null;
+    if (!validUnitId) {
+      const unitsRes = await fetchItems<{ unit_id?: number }>("items/units", { limit: 1, fields: "unit_id" }).catch(() => ({ data: [] }));
+      validUnitId = Number(unitsRes.data?.[0]?.unit_id || 1);
+    }
+
+    const createRes = await createItems<{ lot_id?: number; id?: number }>("items/mm_lots", {
+      lot_name: `Main Lot - Branch ${branchId}`,
+      branch_id: branchId,
+      unit_id: validUnitId,
+      max_batch_capacity: 100,
+      status: "ACTIVE",
+      description: "Auto-generated lot for stock operations",
+      created_by: userId || 1,
+    });
+
+    if (createRes) {
+      const raw = createRes.data || createRes;
+      const item = Array.isArray(raw) ? raw[0] : raw;
+      const newLotId = typeof item === "number" ? item : Number(item?.lot_id || item?.id);
+      if (newLotId) {
+        // console.log(`[StockTransfer] Created new lot ${newLotId} for branch ${branchId}`);
+        return newLotId;
+      }
+    }
+
+    const confirmRes = await fetchItems<{ lot_id?: number }>("items/mm_lots", {
+      filter: JSON.stringify({ branch_id: { _eq: branchId } }),
+      limit: 1,
+      fields: "lot_id",
+    }).catch(() => ({ data: [] }));
+
+    if (confirmRes.data && confirmRes.data.length > 0) {
+      return Number(confirmRes.data[0].lot_id);
+    }
+  } catch (err) {
+    console.error(`[StockTransfer] Failed to ensure lot for branch ${branchId}:`, err);
+  }
+  return null;
+}
+
+/**
+ * Ensures a destination inventory lot exists in mm_inventory_lots for a specific lot, product, and batch number.
+ * Conforms strictly to schema: UNIQUE KEY (lot_id, product_id, batch_no) & FK (lot_id, branch_id) -> mm_lots.
+ */
+async function ensureDestinationInventoryLot(params: {
+  lotId?: number | null;
+  branchId: number;
+  productId: number;
+  unitId?: number | null;
+  batchNo: string;
+  unitCost: number;
+  manufacturingDate?: string | null;
+  expiryDate?: string | null;
+  qaStatus?: string;
+  sourceReference: string;
+  userId?: number | null;
+}): Promise<{ inventoryLotId: number; lotId: number } | null> {
+  const { branchId, productId, unitId, batchNo, unitCost, manufacturingDate, expiryDate, qaStatus, sourceReference, userId } = params;
+  if (!branchId || !productId || !batchNo) {
+    console.warn("[StockTransfer] ensureDestinationInventoryLot missing required parameters:", { productId, batchNo, branchId });
+    return null;
+  }
+
+  try {
+    // 1. Resolve and validate lot_id for the target branch in mm_lots
+    let validLotId: number | null = null;
+    if (params.lotId) {
+      const checkLot = await fetchItems<{ lot_id?: number }>("items/mm_lots", {
+        filter: JSON.stringify({
+          _and: [
+            { lot_id: { _eq: Number(params.lotId) } },
+            { branch_id: { _eq: branchId } },
+          ],
+        }),
+        limit: 1,
+        fields: "lot_id",
+      }).catch(() => ({ data: [] }));
+
+      if (checkLot.data && checkLot.data.length > 0) {
+        validLotId = Number(checkLot.data[0].lot_id || params.lotId);
+      }
+    }
+
+    if (!validLotId) {
+      validLotId = await ensureBranchLotDirect(branchId, unitId, userId);
+    }
+
+    if (!validLotId) {
+      console.warn(`[StockTransfer] Could not resolve valid destination lot for branch ${branchId}`);
+      return null;
+    }
+
+    // 2. Check if inventory lot already exists in mm_inventory_lots for (lot_id, product_id, batch_no)
+    // NOTE: mm_inventory_lots primary key is inventory_lot_id (no 'id' field exists)
+    try {
+      const existingRes = await fetchItems<{ inventory_lot_id: number }>("items/mm_inventory_lots", {
+        filter: JSON.stringify({
+          _and: [
+            { lot_id: { _eq: validLotId } },
+            { product_id: { _eq: productId } },
+            { batch_no: { _eq: batchNo } },
+          ],
+        }),
+        limit: 1,
+        fields: "inventory_lot_id,lot_id,branch_id,product_id,batch_no",
+      });
+
+      if (existingRes.data && existingRes.data.length > 0) {
+        const foundId = Number(existingRes.data[0].inventory_lot_id);
+        if (foundId) {
+          // console.log(`[StockTransfer] Found existing destination inventory lot: ${foundId} for batch ${batchNo}`);
+          return { inventoryLotId: foundId, lotId: validLotId };
+        }
+      }
+    } catch (queryErr) {
+      console.warn("[StockTransfer] Warning querying existing mm_inventory_lots:", queryErr);
+    }
+
+    // 3. Create new inventory lot record in mm_inventory_lots
+    const batchPayload = {
+      lot_id: validLotId,
+      branch_id: branchId,
+      product_id: productId,
+      batch_no: batchNo,
+      unit_cost: unitCost || 0,
+      manufacturing_date: manufacturingDate || null,
+      expiry_date: expiryDate || null,
+      qa_status: (qaStatus as string) || "GOOD",
+      status: "ACTIVE",
+      source_type: "STOCK_TRANSFER",
+      source_reference: sourceReference,
+      created_by: userId || 1,
+    };
+
+    try {
+      const createRes = await createItems<{ inventory_lot_id?: number; id?: number }>("items/mm_inventory_lots", batchPayload);
+      if (createRes) {
+        const raw = createRes.data || createRes;
+        const item = Array.isArray(raw) ? raw[0] : raw;
+        const invLotId = typeof item === "number" ? item : Number(item?.inventory_lot_id || item?.id);
+        if (invLotId && !isNaN(invLotId)) {
+          // console.log(`[StockTransfer] Created new destination inventory lot: ${invLotId} for batch ${batchNo}`);
+          return { inventoryLotId: invLotId, lotId: validLotId };
+        }
+      }
+
+      // If response didn't include the ID directly, confirm by querying
+      const confirmQuery = await fetchItems<{ inventory_lot_id: number }>("items/mm_inventory_lots", {
+        filter: JSON.stringify({
+          _and: [
+            { lot_id: { _eq: validLotId } },
+            { product_id: { _eq: productId } },
+            { batch_no: { _eq: batchNo } },
+          ],
+        }),
+        limit: 1,
+        fields: "inventory_lot_id,lot_id,branch_id,product_id,batch_no",
+      }).catch(() => ({ data: [] }));
+
+      if (confirmQuery.data && confirmQuery.data.length > 0) {
+        const foundId = Number(confirmQuery.data[0].inventory_lot_id);
+        if (foundId) {
+          // console.log(`[StockTransfer] Confirmed destination inventory lot: ${foundId}`);
+          return { inventoryLotId: foundId, lotId: validLotId };
+        }
+      }
+    } catch (createErr) {
+      console.warn("[StockTransfer] mm_inventory_lots creation conflict, re-fetching:", createErr);
+      const fallbackQuery = await fetchItems<{ inventory_lot_id: number }>("items/mm_inventory_lots", {
+        filter: JSON.stringify({
+          _and: [
+            { lot_id: { _eq: validLotId } },
+            { product_id: { _eq: productId } },
+            { batch_no: { _eq: batchNo } },
+          ],
+        }),
+        limit: 1,
+        fields: "inventory_lot_id,lot_id,branch_id,product_id,batch_no",
+      }).catch(() => ({ data: [] }));
+
+      if (fallbackQuery.data && fallbackQuery.data.length > 0) {
+        const foundId = Number(fallbackQuery.data[0].inventory_lot_id);
+        if (foundId) {
+          // console.log(`[StockTransfer] Resolved destination inventory lot after conflict: ${foundId}`);
+          return { inventoryLotId: foundId, lotId: validLotId };
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[StockTransfer] Error in ensureDestinationInventoryLot:", err);
+  }
+
+  return null;
+}
+
+/**
+ * Service to orchestrate stock transfer business logic.
+ * Higher-level than the repo; used by the API route handlers.
+ */
+
+/**
+ * Fetches transfers by status and enriches them with dispatched RFID data and saved batch details.
+ */
+export async function getEnrichedTransfers(status?: string): Promise<StockTransferRow[]> {
+  const transfers = await repo.fetchStockTransfers(status);
+  
+  if (transfers.length === 0) return [];
+
+  // Fetch all RFIDs and transfer details for these transfers
+  const transferIds = transfers.map(t => t.id);
+  const [rfidRecords, details] = await Promise.all([
+    repo.fetchDispatchedRfids(transferIds),
+    repo.fetchStockTransferDetails(transferIds).catch(() => []),
+  ]);
+
+  // Group RFIDs by transfer_id
+  const rfidMap: Record<number, string[]> = {};
+  rfidRecords.forEach(r => {
+    if (!rfidMap[r.stock_transfer_id]) rfidMap[r.stock_transfer_id] = [];
+    rfidMap[r.stock_transfer_id].push(r.rfid_tag);
+  });
+
+  // Group transfer details by stock_transfer_id
+  const detailsMap: Record<number, MMStockTransferDetail[]> = {};
+  details.forEach(d => {
+    if (!detailsMap[d.stock_transfer_id]) detailsMap[d.stock_transfer_id] = [];
+    detailsMap[d.stock_transfer_id].push(d);
+  });
+
+  // Fetch missing product_per_supplier data and mm_lots in parallel
+  const productIds = transfers
+    .filter(t => t.product_id && typeof t.product_id === 'object' && t.product_id.product_id)
+    .map(t => (t.product_id as ProductRow).product_id as number);
+
+  const lotIdsToFetch = Array.from(
+    new Set([
+      ...details.map(d => Number(typeof d.lot_id === 'object' && d.lot_id !== null ? (d.lot_id as { lot_id?: number }).lot_id : d.lot_id)).filter(id => id > 0),
+      ...transfers.map(t => Number(t.source_lot_id || 0)).filter(id => id > 0),
+    ])
+  );
+    
+  const invLotIdsToFetch = Array.from(
+    new Set([
+      ...details.map(d => Number(typeof d.inventory_lot_id === 'object' && d.inventory_lot_id !== null ? (d.inventory_lot_id as { inventory_lot_id?: number }).inventory_lot_id : d.inventory_lot_id)).filter(id => id > 0),
+      ...transfers.map(t => Number(typeof t.source_inventory_lot_id === 'object' && t.source_inventory_lot_id !== null ? (t.source_inventory_lot_id as { inventory_lot_id?: number }).inventory_lot_id : t.source_inventory_lot_id)).filter(id => id > 0),
+    ])
+  );
+    
+  const [supplierMap, lotsMap, invLotsMap] = await Promise.all([
+    repo.fetchProductSuppliers(productIds),
+    repo.fetchMmLotsByIds(lotIdsToFetch).catch((): Record<number, { lot_id: number; lot_name: string }> => ({})),
+    repo.fetchInventoryLotsByIds(invLotIdsToFetch).catch((): Record<number, { inventory_lot_id: number; lot_id: number; product_id: number; batch_no: string; manufacturing_date?: string | null; expiry_date?: string | null; qa_status?: string | null; unit_cost?: number }> => ({})),
+  ]);
+
+  // Attach RFIDs, Suppliers, and Batch Allocations to each row
+  return transfers.map(t => {
+    let enrichedProduct = t.product_id;
+    if (enrichedProduct && typeof enrichedProduct === 'object' && enrichedProduct.product_id) {
+      enrichedProduct = {
+        ...enrichedProduct,
+        product_per_supplier: supplierMap[enrichedProduct.product_id] || []
+      };
+    }
+
+    const tDetails = detailsMap[t.id] || [];
+    const isPhantomStr = (str?: string | null) => !str || /^BATCH-\d+-\d{10,}$/.test(str.trim()) || str.trim() === 'N/A';
+    
+    const rawSrcInvId = Number(typeof t.source_inventory_lot_id === 'object' && t.source_inventory_lot_id !== null ? (t.source_inventory_lot_id as { inventory_lot_id?: number }).inventory_lot_id : t.source_inventory_lot_id) || 0;
+    const headerInvLotFromDb = invLotsMap[rawSrcInvId];
+    const rawSrcInv = (typeof t.source_inventory_lot_id === 'object' && t.source_inventory_lot_id !== null ? (t.source_inventory_lot_id as Record<string, unknown>) : null) || headerInvLotFromDb;
+    const rawSrcLot = typeof t.source_lot_id === 'object' && t.source_lot_id !== null ? (t.source_lot_id as Record<string, unknown>) : null;
+
+    let lotAllocations: LotAllocationGroup[] | undefined = undefined;
+    let batchNo = isPhantomStr(t.batch_no)
+      ? (rawSrcInv?.batch_no ? String(rawSrcInv.batch_no) : (headerInvLotFromDb?.batch_no ? String(headerInvLotFromDb.batch_no) : null))
+      : t.batch_no;
+    let mfgDate = t.manufacturing_date || (rawSrcInv?.manufacturing_date ? String(rawSrcInv.manufacturing_date) : (headerInvLotFromDb?.manufacturing_date ? String(headerInvLotFromDb.manufacturing_date) : null));
+    let expDate = t.expiry_date || (t as unknown as { expiration_date?: string }).expiration_date || ((rawSrcInv as Record<string, unknown>)?.expiry_date ? String((rawSrcInv as Record<string, unknown>).expiry_date) : ((rawSrcInv as Record<string, unknown>)?.expiration_date ? String((rawSrcInv as Record<string, unknown>).expiration_date) : (headerInvLotFromDb?.expiry_date ? String(headerInvLotFromDb.expiry_date) : null)));
+    let qaStatus = t.qa_status || (rawSrcInv?.qa_status as string) || (headerInvLotFromDb?.qa_status as string) || null;
+    let condition = t.inventory_condition || ((rawSrcInv as Record<string, unknown>)?.inventory_condition as string) || null;
+
+    if (tDetails.length > 0) {
+      // Group by lot_id
+      const groupMap = new Map<number, LotAllocationGroup>();
+      for (const d of tDetails) {
+        const rawLotId = typeof d.lot_id === 'object' && d.lot_id !== null ? (d.lot_id as { lot_id?: number }).lot_id : d.lot_id;
+        const lotId = Number(rawLotId || 0);
+        const lotRecord = lotsMap[lotId];
+        const lotName = (typeof d.lot_id === 'object' && d.lot_id !== null && (d.lot_id as { lot_name?: string }).lot_name)
+          ? (d.lot_id as { lot_name?: string }).lot_name!
+          : (lotRecord?.lot_name || `Lot #${lotId}`);
+
+        if (!groupMap.has(lotId)) {
+          groupMap.set(lotId, {
+            lot_id: lotId,
+            lot_name: lotName,
+            max_batch_capacity: 100,
+            allocated_quantity: 0,
+            batches: [],
+          });
+        }
+
+        const rawInvLotId = Number(typeof d.inventory_lot_id === 'object' && d.inventory_lot_id !== null ? (d.inventory_lot_id as { inventory_lot_id?: number }).inventory_lot_id : d.inventory_lot_id) || 0;
+        const invLotFromDb = invLotsMap[rawInvLotId];
+        const rawInvLot = (typeof d.inventory_lot_id === 'object' && d.inventory_lot_id !== null ? (d.inventory_lot_id as Record<string, unknown>) : null) || invLotFromDb;
+        const bNo = (rawInvLot && rawInvLot.batch_no)
+          ? String(rawInvLot.batch_no)
+          : (d.batch_no || (invLotFromDb && invLotFromDb.batch_no) || null);
+
+        // Disregard phantom batches created by fallback (e.g. BATCH-25038-1788936941559 or N/A)
+        const isPhantom = !bNo || /^BATCH-\d+-\d{10,}$/.test(bNo.trim()) || bNo.trim() === 'N/A';
+        if (isPhantom) {
+          continue;
+        }
+
+        const mDate = (rawInvLot && rawInvLot.manufacturing_date)
+          ? String(rawInvLot.manufacturing_date)
+          : (d.manufacturing_date || invLotFromDb?.manufacturing_date || null);
+        const eDate = (rawInvLot && (rawInvLot.expiry_date || (rawInvLot as { expiration_date?: string }).expiration_date))
+          ? String(rawInvLot.expiry_date || (rawInvLot as { expiration_date?: string }).expiration_date)
+          : ((d as unknown as { expiry_date?: string; expiration_date?: string }).expiry_date || d.expiration_date || invLotFromDb?.expiry_date || null);
+        const invLotId = rawInvLotId || (rawInvLot
+          ? Number((rawInvLot as { inventory_lot_id?: number }).inventory_lot_id || (rawInvLot as { id?: number }).id)
+          : (typeof d.inventory_lot_id === 'number' ? d.inventory_lot_id : undefined));
+
+        const grp = groupMap.get(lotId)!;
+        const detailQty = d.dispatched_quantity !== null && d.dispatched_quantity !== undefined && Number(d.dispatched_quantity) > 0
+          ? Number(d.dispatched_quantity)
+          : d.picked_quantity !== null && d.picked_quantity !== undefined && Number(d.picked_quantity) > 0
+          ? Number(d.picked_quantity)
+          : d.allocated_quantity !== null && d.allocated_quantity !== undefined && Number(d.allocated_quantity) > 0
+          ? Number(d.allocated_quantity)
+          : Number(t.dispatched_quantity ?? t.picked_quantity ?? t.allocated_quantity ?? t.ordered_quantity ?? 0);
+
+        grp.allocated_quantity += detailQty;
+        grp.batches.push({
+          inventory_lot_id: invLotId,
+          batch_no: bNo,
+          manufacturing_date: mDate ? String(mDate).substring(0, 10) : null,
+          expiry_date: eDate ? String(eDate).substring(0, 10) : null,
+          quantity: detailQty,
+          unit_cost: Number(d.unit_cost || invLotFromDb?.unit_cost || 0),
+          qa_status: (d.inventory_condition as QAStatus) || (rawInvLot?.qa_status as QAStatus) || (invLotFromDb?.qa_status as QAStatus) || 'GOOD',
+        });
+      }
+
+      const validGroups = Array.from(groupMap.values()).filter(g => g.batches && g.batches.length > 0);
+      lotAllocations = validGroups.length > 0 ? validGroups : undefined;
+      const allBatches = (lotAllocations || []).flatMap(g => g.batches);
+      const firstBatch = allBatches[0];
+      if (firstBatch) {
+        batchNo = allBatches.length === 1 ? firstBatch.batch_no : allBatches.map(b => b.batch_no).join(', ');
+        mfgDate = firstBatch.manufacturing_date ? String(firstBatch.manufacturing_date).substring(0, 10) : mfgDate;
+        expDate = firstBatch.expiry_date ? String(firstBatch.expiry_date).substring(0, 10) : expDate;
+        qaStatus = firstBatch.qa_status;
+        condition = firstBatch.qa_status;
+      }
+    }
+
+    // If no multi-lot details exist, construct default single lot group if batchNo is available
+    if (!lotAllocations && batchNo) {
+      const srcLId = Number(rawSrcLot?.lot_id || (typeof t.source_lot_id === 'number' ? t.source_lot_id : 0));
+      const srcLotRecord = lotsMap[srcLId];
+      const srcLotName = (rawSrcLot?.lot_name as string) || srcLotRecord?.lot_name || (srcLId ? `Lot #${srcLId}` : null);
+      const rowQty = Number(t.dispatched_quantity ?? t.picked_quantity ?? t.allocated_quantity ?? t.ordered_quantity ?? 0);
+
+      lotAllocations = [
+        {
+          lot_id: srcLId,
+          lot_name: srcLotName || (srcLId ? `Lot #${srcLId}` : ''),
+          max_batch_capacity: 100,
+          allocated_quantity: rowQty,
+          batches: [
+            {
+              inventory_lot_id: rawSrcInv ? Number((rawSrcInv as { inventory_lot_id?: number; id?: number }).inventory_lot_id || (rawSrcInv as { inventory_lot_id?: number; id?: number }).id) : (typeof t.source_inventory_lot_id === 'number' ? t.source_inventory_lot_id : undefined),
+              batch_no: batchNo,
+              manufacturing_date: mfgDate ? String(mfgDate).substring(0, 10) : null,
+              expiry_date: expDate ? String(expDate).substring(0, 10) : null,
+              quantity: rowQty,
+              unit_cost: 0,
+              qa_status: (qaStatus as QAStatus) || 'GOOD',
+            },
+          ],
+        },
+      ];
+    }
+
+    const srcLotId = Number(rawSrcLot?.lot_id || (typeof t.source_lot_id === 'number' ? t.source_lot_id : 0));
+    const rawLotName = (rawSrcLot?.lot_name as string) || lotsMap[srcLotId]?.lot_name || (srcLotId ? `Lot #${srcLotId}` : null);
+    const srcLotName = (!batchNo && isPhantomStr(t.batch_no)) ? null : rawLotName;
+
+    // console.log("[StockTransferService:getEnrichedTransfers] Transfer ID:", t.id, "Order:", t.order_no, "Allocations:", JSON.stringify(lotAllocations, null, 2));
+
+    return {
+      ...t,
+      product_id: enrichedProduct,
+      dispatched_rfids: rfidMap[t.id] || [],
+      lot_allocations: lotAllocations,
+      source_lot_name: srcLotName,
+      batch_no: batchNo,
+      manufacturing_date: mfgDate,
+      expiry_date: expDate,
+      qa_status: qaStatus,
+      inventory_condition: condition,
+    };
+  });
+}
+
+/**
+ * Fetches products and enriches them with branch-specific inventory quantities.
+ */
+export async function getEnrichedProducts(
+  branchId: number, 
+  search?: string, 
+  token?: string
+): Promise<EnrichedProduct[]> {
+  const [products, inventory] = await Promise.all([
+    repo.fetchProducts(search),
+    repo.fetchBranchInventory(branchId, token)
+  ]);
+
+  // Build inventory map for faster lookup: productId -> total rfid count
+  const invMap: Record<number, number> = {};
+  inventory.forEach((i: { productId?: number; product_id?: number; runningInventory?: number; running_inventory?: number }) => {
+    const pId = Number(i.productId || i.product_id);
+    const qty = Number(i.runningInventory || i.running_inventory || 0);
+    if (!isNaN(pId)) invMap[pId] = (invMap[pId] || 0) + qty;
+  });
+
+  return products.map(p => {
+    const rfidCount = invMap[p.product_id] || 0;
+    const unitCount = Number(p.unit_of_measurement_count || 1) || 1;
+    
+    // Formula for available unit quantity: rfid_count / unit_multiplier
+    return {
+      ...p,
+      qtyAvailable: Math.floor(rfidCount / unitCount)
+    } as EnrichedProduct;
+  });
+}
+
+/**
+ * Handles the creation of a new stock transfer request.
+ */
+export async function createTransfer(payload: CreateTransferPayload, userId?: number): Promise<{ success: boolean; orderNo: string }> {
+  // 1. Validate payload
+  const validated = CreateStockTransferSchema.parse(payload);
+  
+  const orderNo = helpers.generateOrderNo(validated.sourceBranch, validated.targetBranch);
+  const nowPHT = new Date().toLocaleString("sv-SE", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).replace(" ", "T");
+
+  // 2. Prepare Directus payloads (1 row per product item in mm_stock_transfer)
+  interface ItemWithAllocations {
+    payload: StockTransferInsertPayload;
+    allocations: {
+      inventory_lot_id: number;
+      lot_id: number;
+      batch_no: string;
+      allocated_quantity: number;
+      manufacturing_date?: string | null;
+      expiry_date?: string | null;
+    }[];
+  }
+
+  const itemsToCreate: ItemWithAllocations[] = validated.scannedItems
+    .filter(item => item.productId > 0)
+    .map(item => {
+      const itemAllocations = item.allocations && item.allocations.length > 0 ? item.allocations : [];
+      const batchNo = (itemAllocations[0]?.batch_no) || item.batch_no || null;
+      const sourceLotId = (itemAllocations[0]?.lot_id) || item.source_lot_id || null;
+      const sourceInventoryLotId = (itemAllocations[0]?.inventory_lot_id) || item.source_inventory_lot_id || null;
+      const manufacturingDate = (itemAllocations[0]?.manufacturing_date) || item.manufacturing_date || null;
+      const expiryDate = (itemAllocations[0]?.expiry_date) || item.expiry_date || null;
+
+      return {
+        payload: {
+          order_no: orderNo,
+          source_branch_id: Number(validated.sourceBranch),
+          target_branch_id: Number(validated.targetBranch),
+          source_branch: Number(validated.sourceBranch),
+          target_branch: Number(validated.targetBranch),
+          lead_date: validated.leadDate ? validated.leadDate.split("T")[0] : null,
+          product_id: item.productId,
+          unit_id: item.unitId || 1,
+          ordered_quantity: item.unitQty,
+          allocated_quantity: item.unitQty,
+          picked_quantity: 0,
+          received_quantity: 0,
+          amount: item.totalAmount ?? (item.unitQty * (item.unitPrice || 0)),
+          status: "REQUESTED",
+          remarks: item.rfid || null,
+          date_requested: nowPHT,
+          date_encoded: nowPHT,
+          encoder_id: userId || null,
+          source_lot_id: sourceLotId,
+          source_inventory_lot_id: sourceInventoryLotId,
+          batch_no: batchNo,
+          manufacturing_date: manufacturingDate,
+          expiration_date: expiryDate,
+          expiry_date: expiryDate,
+        },
+        allocations: itemAllocations,
+      };
+    });
+
+  if (itemsToCreate.length === 0) {
+    throw new Error("No valid products provided for transfer");
+  }
+
+  // 3. Persist main transfer rows (1 row per product)
+  const insertPayloads = itemsToCreate.map(i => i.payload);
+  const createdRows = await repo.createStockTransfers(insertPayloads);
+
+  // 4. Persist details in mm_stock_transfer_details if batch allocations are explicitly provided
+  try {
+    const detailsPayload: MMStockTransferDetail[] = [];
+    const rowsArray = Array.isArray(createdRows) ? createdRows : [createdRows];
+
+    for (let i = 0; i < rowsArray.length; i++) {
+      const row = rowsArray[i];
+      const itemData = itemsToCreate[i];
+      if (!row?.id || !itemData) continue;
+
+      const unitCost = itemData.payload.amount / (itemData.payload.ordered_quantity || 1);
+
+      if (itemData.allocations.length > 0) {
+        for (const alloc of itemData.allocations) {
+          const ensured = await ensureSourceInventoryLot({
+            lotId: alloc.lot_id && Number(alloc.lot_id) > 0 ? Number(alloc.lot_id) : null,
+            inventoryLotId: alloc.inventory_lot_id && Number(alloc.inventory_lot_id) > 0 ? Number(alloc.inventory_lot_id) : null,
+            branchId: itemData.payload.source_branch_id,
+            productId: itemData.payload.product_id,
+            unitId: itemData.payload.unit_id,
+            batchNo: alloc.batch_no,
+            expiryDate: alloc.expiry_date,
+            sourceReference: itemData.payload.order_no,
+            userId: userId,
+          });
+
+          detailsPayload.push({
+            stock_transfer_id: row.id,
+            inventory_lot_id: ensured.inventoryLotId,
+            target_inventory_lot_id: null,
+            lot_id: ensured.lotId,
+            target_lot_id: null,
+            product_id: itemData.payload.product_id,
+            unit_id: itemData.payload.unit_id,
+            batch_no: alloc.batch_no,
+            manufacturing_date: alloc.manufacturing_date || itemData.payload.manufacturing_date || null,
+            expiration_date: alloc.expiry_date || itemData.payload.expiration_date || null,
+            inventory_condition: "GOOD",
+            unit_cost: unitCost,
+            allocated_quantity: alloc.allocated_quantity,
+            picked_quantity: 0,
+            dispatched_quantity: 0,
+            received_quantity: 0,
+            variance_quantity: 0,
+            remarks: itemData.payload.remarks || null,
+          });
+        }
+      } else if (itemData.payload.source_lot_id || itemData.payload.source_inventory_lot_id || itemData.payload.batch_no) {
+        const ensured = await ensureSourceInventoryLot({
+          lotId: itemData.payload.source_lot_id ? Number(itemData.payload.source_lot_id) : null,
+          inventoryLotId: itemData.payload.source_inventory_lot_id ? Number(itemData.payload.source_inventory_lot_id) : null,
+          branchId: itemData.payload.source_branch_id,
+          productId: itemData.payload.product_id,
+          unitId: itemData.payload.unit_id,
+          batchNo: itemData.payload.batch_no,
+          manufacturingDate: itemData.payload.manufacturing_date,
+          expiryDate: itemData.payload.expiration_date,
+          sourceReference: itemData.payload.order_no,
+          userId: userId,
+        });
+
+        detailsPayload.push({
+          stock_transfer_id: row.id,
+          inventory_lot_id: ensured.inventoryLotId,
+          target_inventory_lot_id: null,
+          lot_id: ensured.lotId,
+          target_lot_id: null,
+          product_id: itemData.payload.product_id,
+          unit_id: itemData.payload.unit_id,
+          batch_no: itemData.payload.batch_no || "",
+          manufacturing_date: itemData.payload.manufacturing_date || null,
+          expiration_date: itemData.payload.expiration_date || null,
+          inventory_condition: "GOOD",
+          unit_cost: unitCost,
+          allocated_quantity: itemData.payload.ordered_quantity,
+          picked_quantity: 0,
+          dispatched_quantity: 0,
+          received_quantity: 0,
+          variance_quantity: 0,
+          remarks: itemData.payload.remarks || null,
+        });
+      }
+    }
+
+    if (detailsPayload.length > 0) {
+      await repo.createStockTransferDetails(detailsPayload).catch(e => console.warn("[StockTransfer] Detail creation warning:", e));
+    }
+  } catch (err) {
+    console.warn("[StockTransfer] Warning creating transfer details:", err);
+  }
+
+  return { success: true, orderNo };
+}
+
+export async function updateTransferStatus(payload: UpdateTransferPayload): Promise<{ success: boolean }> {
+  // 1. Validate payload
+  const validated = UpdateStockTransferSchema.parse(payload);
+
+  // 2. Normalize updates (handle both 'items' and 'ids' formats)
+  const nowPHT = new Date().toLocaleString("sv-SE", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).replace(" ", "T");
+  const rawItems: UpdateItemValue[] = validated.items || (validated.ids || []).map(id => ({
+    id,
+    status: validated.status || "REQUESTED"
+  }));
+
+  const updates = rawItems.map(u => {
+    const dbStatus = helpers.formatStatusForDb(u.status);
+    const itemRemarks = u.remarks || validated.remarks || undefined;
+    return {
+      ...u,
+      status: dbStatus,
+      ...(itemRemarks !== undefined ? { remarks: itemRemarks } : {}),
+      ...(dbStatus === "RECEIVED" ? { date_received: nowPHT, receiver_id: validated.userId || null } : {}),
+      ...(dbStatus === "FOR_PICKING" ? { 
+        approved_by: validated.userId || null
+      } : {}),
+      ...(dbStatus === "FOR_LOADING" || dbStatus === "DISPATCHED" ? { 
+        dispatched_at: nowPHT, 
+        dispatched_by: validated.userId || null,
+        dispatched_quantity: u.dispatched_quantity ?? u.picked_quantity ?? u.allocated_quantity
+      } : {}),
+      ...(dbStatus === "REJECTED" ? { 
+        rejected_at: nowPHT, 
+        rejected_by: validated.userId || null 
+      } : {})
+    };
+  });
+
+  // console.log("[Stock Transfer Service] Mapped updates payload:", JSON.stringify(updates));
+
+  if (updates.length === 0) return { success: true };
+
+  // 3. Update main table statuses
+  await repo.updateTransfersStatus(updates);
+
+  // 4. Synchronize mm_stock_transfer_details across lifecycle transitions
+  try {
+    const updatedIds = updates.map(u => u.id);
+    const transferRows = await repo.fetchStockTransfersByIds(updatedIds);
+    const existingDetails = await repo.fetchStockTransferDetails(updatedIds);
+
+    for (const u of updates) {
+      const t = transferRows.find(row => row.id === u.id);
+      if (!t) continue;
+
+      const detailsForTransfer = existingDetails.filter(d => d.stock_transfer_id === u.id);
+      const prodId = typeof t.product_id === "object" ? t.product_id.product_id : t.product_id;
+      const unitId = typeof t.unit_id === "object" && t.unit_id !== null ? t.unit_id.unit_id : (t.unit_id || 1);
+      const srcBranch = typeof t.source_branch_id === "object" && t.source_branch_id !== null ? t.source_branch_id.id : (t.source_branch_id || t.source_branch);
+      const targetBranch = typeof t.target_branch_id === "object" && t.target_branch_id !== null ? t.target_branch_id.id : (t.target_branch_id || t.target_branch);
+      const unitCost = t.amount / (t.ordered_quantity || 1);
+
+      // A. Allocation Stage (FOR_PICKING) -> Ensure detail records exist with correct strategy allocation
+      if (u.status === "FOR_PICKING") {
+        const allocatedQty = u.allocated_quantity ?? t.allocated_quantity ?? t.ordered_quantity;
+        if (detailsForTransfer.length === 0) {
+          let allocations: { inventory_lot_id: number; lot_id: number; batch_no: string; allocated_quantity: number; expiry_date?: string | null }[] = [];
+          if (srcBranch && prodId && allocatedQty > 0) {
+            // Derive allocation strategy based on product classification:
+            // PKG (Packaging Materials) → FIFO (receipt/inward date)
+            // RM (Raw Materials) & FG (Finished Goods) → FEFO (nearest expiry first)
+            const productRow = typeof t.product_id === "object" && t.product_id !== null ? t.product_id as unknown as Record<string, unknown> : null;
+            const rawPt = productRow?.product_type;
+            let ptId: number | null = null;
+            let ptName = "";
+            if (typeof rawPt === "number") {
+              ptId = rawPt;
+            } else if (typeof rawPt === "string" && !isNaN(Number(rawPt)) && Number(rawPt) > 0) {
+              ptId = Number(rawPt);
+            } else if (typeof rawPt === "object" && rawPt !== null) {
+              const ptObj = rawPt as Record<string, unknown>;
+              if (ptObj.id || ptObj.product_type_id) ptId = Number(ptObj.id || ptObj.product_type_id);
+              ptName = String(ptObj.name || ptObj.type_name || "").toLowerCase();
+            } else if (typeof rawPt === "string") {
+              ptName = rawPt.toLowerCase();
+            }
+            const isPkg = ptId === 390 || (!ptId && (ptName.includes("packag") || ptName === "pkg"));
+            const allocationStrategy = isPkg ? "FIFO" : "FEFO";
+
+            try {
+              const allocationPlan = await allocateStock({
+                productId: Number(prodId),
+                branchId: Number(srcBranch),
+                requestedQuantity: Number(allocatedQty),
+                options: {
+                  strategy: allocationStrategy,
+                  token: validated.token,
+                },
+              });
+              if (allocationPlan?.allocations?.length > 0) {
+                allocations = allocationPlan.allocations;
+              }
+            } catch (e) {
+              console.warn(`[StockTransfer] ${allocationStrategy} allocation lookup warning on approval:`, e);
+            }
+          }
+
+
+          if (allocations.length > 0) {
+            const validatedDetails: MMStockTransferDetail[] = [];
+            for (const a of allocations) {
+              const ensured = await ensureSourceInventoryLot({
+                lotId: a.lot_id && Number(a.lot_id) > 0 ? Number(a.lot_id) : null,
+                inventoryLotId: a.inventory_lot_id && Number(a.inventory_lot_id) > 0 ? Number(a.inventory_lot_id) : null,
+                branchId: Number(srcBranch),
+                productId: Number(prodId),
+                unitId: Number(unitId),
+                batchNo: a.batch_no,
+                expiryDate: a.expiry_date,
+                sourceReference: t.order_no,
+                userId: validated.userId,
+              });
+
+              validatedDetails.push({
+                stock_transfer_id: t.id,
+                inventory_lot_id: ensured.inventoryLotId,
+                target_inventory_lot_id: null,
+                lot_id: ensured.lotId,
+                target_lot_id: null,
+                product_id: Number(prodId),
+                unit_id: Number(unitId),
+                batch_no: a.batch_no,
+                expiration_date: a.expiry_date || null,
+                inventory_condition: "GOOD",
+                unit_cost: unitCost,
+                allocated_quantity: a.allocated_quantity,
+                picked_quantity: 0,
+                dispatched_quantity: 0,
+                received_quantity: 0,
+                variance_quantity: 0,
+              });
+            }
+            await repo.createStockTransferDetails(validatedDetails);
+          } else if (t.source_lot_id || t.source_inventory_lot_id || (t.batch_no && t.batch_no.trim() !== "" && t.batch_no !== "N/A")) {
+            const ensured = await ensureSourceInventoryLot({
+              lotId: t.source_lot_id ? Number(t.source_lot_id) : null,
+              inventoryLotId: t.source_inventory_lot_id ? Number(t.source_inventory_lot_id) : null,
+              branchId: Number(srcBranch),
+              productId: Number(prodId),
+              unitId: Number(unitId),
+              batchNo: t.batch_no,
+              manufacturingDate: t.manufacturing_date,
+              expiryDate: t.expiry_date || null,
+              sourceReference: t.order_no,
+              userId: validated.userId,
+            });
+
+            await repo.createStockTransferDetails([{
+              stock_transfer_id: t.id,
+              inventory_lot_id: ensured.inventoryLotId,
+              target_inventory_lot_id: null,
+              lot_id: ensured.lotId,
+              target_lot_id: null,
+              product_id: Number(prodId),
+              unit_id: Number(unitId),
+              batch_no: t.batch_no || "N/A",
+              inventory_condition: "GOOD",
+              unit_cost: unitCost,
+              allocated_quantity: Number(allocatedQty),
+              picked_quantity: 0,
+              dispatched_quantity: 0,
+              received_quantity: 0,
+              variance_quantity: 0,
+            }]);
+          } else {
+            // console.log(`[StockTransfer] No FEFO allocation found for transfer ${t.order_no} (product ${prodId}). Leaving unallocated for manual selection.`);
+          }
+        }
+      }
+
+      // B. Picking Stage (PICKED / PICKING) & C. Dispatch Stage (FOR_LOADING / DISPATCHED)
+      const isPickingStage = u.status === "PICKED" || u.status === "PICKING" || u.picked_quantity !== undefined;
+      const isDispatchStage = u.status === "DISPATCHED" || u.status === "FOR_LOADING" || u.dispatched_quantity !== undefined;
+
+      if (isPickingStage || isDispatchStage) {
+        const rawLotAllocations = (u as { lot_allocations?: { lot_id: number; batches?: { inventory_lot_id?: number; batch_no: string; quantity: number; manufacturing_date?: string | null; expiry_date?: string | null; qa_status?: string | null; unit_cost?: number }[] }[] }).lot_allocations;
+
+        if (rawLotAllocations && Array.isArray(rawLotAllocations) && rawLotAllocations.length > 0) {
+          const flattenedSourceBatches: {
+            lot_id: number;
+            inventory_lot_id?: number | null;
+            batch_no: string;
+            quantity: number;
+            manufacturing_date?: string | null;
+            expiry_date?: string | null;
+            qa_status?: string | null;
+            unit_cost?: number;
+          }[] = [];
+
+          for (const g of rawLotAllocations) {
+            const gLotId = Number(g.lot_id);
+            for (const b of (g.batches || [])) {
+              if (Number(b.quantity) > 0 || b.batch_no) {
+                flattenedSourceBatches.push({
+                  lot_id: gLotId,
+                  inventory_lot_id: b.inventory_lot_id ? Number(b.inventory_lot_id) : null,
+                  batch_no: b.batch_no,
+                  quantity: Number(b.quantity) || 0,
+                  manufacturing_date: b.manufacturing_date || u.manufacturing_date || t.manufacturing_date || null,
+                  expiry_date: b.expiry_date || u.expiration_date || t.expiry_date || null,
+                  qa_status: b.qa_status || "GOOD",
+                  unit_cost: b.unit_cost || unitCost,
+                });
+              }
+            }
+          }
+
+          if (flattenedSourceBatches.length > 0) {
+            let detailIdx = 0;
+            for (const batchAlloc of flattenedSourceBatches) {
+              const srcInvLotId = batchAlloc.inventory_lot_id || t.source_inventory_lot_id || null;
+              const srcLotId = batchAlloc.lot_id || t.source_lot_id || null;
+
+              const ensured = await ensureSourceInventoryLot({
+                lotId: srcLotId ? Number(srcLotId) : null,
+                inventoryLotId: srcInvLotId ? Number(srcInvLotId) : null,
+                branchId: Number(srcBranch),
+                productId: Number(prodId),
+                unitId: Number(unitId),
+                batchNo: batchAlloc.batch_no,
+                manufacturingDate: batchAlloc.manufacturing_date,
+                expiryDate: batchAlloc.expiry_date,
+                qaStatus: batchAlloc.qa_status || "GOOD",
+                sourceReference: t.order_no,
+                userId: validated.userId,
+              });
+
+              if (detailIdx < detailsForTransfer.length) {
+                const d = detailsForTransfer[detailIdx];
+                await repo.updateStockTransferDetail(d.id!, {
+                  inventory_lot_id: ensured.inventoryLotId,
+                  lot_id: ensured.lotId,
+                  batch_no: batchAlloc.batch_no || d.batch_no,
+                  manufacturing_date: batchAlloc.manufacturing_date || d.manufacturing_date || null,
+                  expiration_date: batchAlloc.expiry_date || d.expiration_date || null,
+                  inventory_condition: (batchAlloc.qa_status as "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED") || d.inventory_condition || "GOOD",
+                  unit_cost: batchAlloc.unit_cost || d.unit_cost || unitCost,
+                  allocated_quantity: batchAlloc.quantity,
+                  picked_quantity: batchAlloc.quantity,
+                  dispatched_quantity: isDispatchStage ? batchAlloc.quantity : Number(d.dispatched_quantity || 0),
+                });
+              } else {
+                await repo.createStockTransferDetails([{
+                  stock_transfer_id: t.id,
+                  inventory_lot_id: ensured.inventoryLotId,
+                  target_inventory_lot_id: null,
+                  lot_id: ensured.lotId,
+                  target_lot_id: null,
+                  product_id: Number(prodId),
+                  unit_id: Number(unitId),
+                  batch_no: batchAlloc.batch_no || "",
+                  manufacturing_date: batchAlloc.manufacturing_date || null,
+                  expiration_date: batchAlloc.expiry_date || null,
+                  inventory_condition: (batchAlloc.qa_status as "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED") || "GOOD",
+                  unit_cost: batchAlloc.unit_cost || unitCost,
+                  allocated_quantity: batchAlloc.quantity,
+                  picked_quantity: batchAlloc.quantity,
+                  dispatched_quantity: isDispatchStage ? batchAlloc.quantity : 0,
+                  received_quantity: 0,
+                  variance_quantity: 0,
+                }]);
+              }
+              detailIdx++;
+            }
+          }
+        } else if (detailsForTransfer.length === 0) {
+          const dispQty = u.dispatched_quantity ?? u.picked_quantity ?? t.dispatched_quantity ?? t.picked_quantity ?? t.allocated_quantity ?? t.ordered_quantity ?? 0;
+          const effectiveBatchNo = u.batch_no || t.batch_no;
+          const cleanEffectiveBatch = effectiveBatchNo && String(effectiveBatchNo).trim() !== "" ? String(effectiveBatchNo).trim() : null;
+
+          // Skip items with no quantity and no batch — nothing meaningful to record
+          if (Number(dispQty) === 0 && !cleanEffectiveBatch) {
+            // No batch info and zero qty — skip detail creation silently
+          } else {
+            const ensured = await ensureSourceInventoryLot({
+              lotId: u.source_lot_id || t.source_lot_id ? Number(u.source_lot_id || t.source_lot_id) : null,
+              inventoryLotId: u.source_inventory_lot_id || t.source_inventory_lot_id ? Number(u.source_inventory_lot_id || t.source_inventory_lot_id) : null,
+              branchId: Number(srcBranch),
+              productId: Number(prodId),
+              unitId: Number(unitId),
+              batchNo: effectiveBatchNo,
+              manufacturingDate: u.manufacturing_date || t.manufacturing_date,
+              expiryDate: u.expiration_date || t.expiry_date,
+              qaStatus: "GOOD",
+              sourceReference: t.order_no,
+              userId: validated.userId,
+            });
+
+            await repo.createStockTransferDetails([{
+              stock_transfer_id: t.id,
+              inventory_lot_id: ensured.inventoryLotId,
+              target_inventory_lot_id: null,
+              lot_id: ensured.lotId,
+              target_lot_id: null,
+              product_id: Number(prodId),
+              unit_id: Number(unitId),
+              batch_no: effectiveBatchNo || "",
+              manufacturing_date: u.manufacturing_date || t.manufacturing_date || null,
+              expiration_date: u.expiration_date || t.expiry_date || null,
+              inventory_condition: "GOOD",
+              unit_cost: unitCost,
+              allocated_quantity: Number(t.allocated_quantity || dispQty),
+              picked_quantity: Number(dispQty),
+              dispatched_quantity: isDispatchStage ? Number(dispQty) : 0,
+              received_quantity: 0,
+              variance_quantity: 0,
+            }]);
+          }
+        } else {
+          // Standard proportional update for existing details
+          const totalAllocated = detailsForTransfer.reduce((sum, d) => sum + Number(d.allocated_quantity || 0), 0);
+          const headerPicked = u.picked_quantity ?? t.picked_quantity ?? t.allocated_quantity ?? t.ordered_quantity ?? 0;
+          const headerDispatched = u.dispatched_quantity ?? u.picked_quantity ?? t.dispatched_quantity ?? t.picked_quantity ?? t.allocated_quantity ?? t.ordered_quantity ?? 0;
+
+          for (const d of detailsForTransfer) {
+            if (d.id) {
+              const detailAlloc = Number(d.allocated_quantity || 0);
+              const detailPicked = isPickingStage
+                ? (headerPicked >= totalAllocated || totalAllocated === 0
+                    ? detailAlloc
+                    : (totalAllocated > 0 ? Math.round((detailAlloc / totalAllocated) * headerPicked) : headerPicked))
+                : Number(d.picked_quantity || 0);
+
+              const detailDispatched = isDispatchStage
+                ? (headerDispatched >= totalAllocated || totalAllocated === 0
+                    ? (Number(d.picked_quantity) || detailAlloc)
+                    : (totalAllocated > 0 ? Math.round((detailAlloc / totalAllocated) * headerDispatched) : headerDispatched))
+                : Number(d.dispatched_quantity || 0);
+
+              const rawLot = u.source_lot_id || (typeof d.lot_id === 'object' && d.lot_id !== null ? (d.lot_id as { lot_id?: number }).lot_id : d.lot_id);
+              const rawInvLot = u.source_inventory_lot_id || (typeof d.inventory_lot_id === 'object' && d.inventory_lot_id !== null ? (d.inventory_lot_id as { inventory_lot_id?: number }).inventory_lot_id : d.inventory_lot_id);
+
+              const ensured = await ensureSourceInventoryLot({
+                lotId: rawLot ? Number(rawLot) : null,
+                inventoryLotId: rawInvLot ? Number(rawInvLot) : null,
+                branchId: Number(srcBranch),
+                productId: Number(prodId),
+                unitId: Number(unitId),
+                batchNo: u.batch_no || d.batch_no,
+                manufacturingDate: u.manufacturing_date || d.manufacturing_date || null,
+                expiryDate: u.expiration_date || d.expiration_date || null,
+                qaStatus: d.inventory_condition || "GOOD",
+                sourceReference: t.order_no,
+                userId: validated.userId,
+              });
+
+              await repo.updateStockTransferDetail(d.id, {
+                ...(isPickingStage ? { picked_quantity: detailPicked } : {}),
+                ...(isDispatchStage ? { dispatched_quantity: detailDispatched, picked_quantity: Number(d.picked_quantity || detailDispatched) } : {}),
+                ...(u.batch_no ? { batch_no: u.batch_no } : {}),
+                ...(u.manufacturing_date ? { manufacturing_date: u.manufacturing_date } : {}),
+                ...(u.expiration_date ? { expiration_date: u.expiration_date } : {}),
+                lot_id: ensured.lotId,
+                inventory_lot_id: ensured.inventoryLotId,
+              });
+            }
+          }
+        }
+      }
+
+      // D. Receiving Stage (RECEIVED)
+      if (u.status === "RECEIVED" || u.received_quantity !== undefined) {
+        let destLotId = u.destination_lot_id || validated.destination_lot_id || t.destination_lot_id;
+        if (!destLotId && targetBranch) {
+          try {
+            const lot = await ensureLotForBranch(Number(targetBranch));
+            if (lot) destLotId = lot.lot_id;
+          } catch (e) {
+            console.warn("[StockTransfer] Warning ensuring target branch lot:", e);
+          }
+        }
+
+        const headerReceived = u.received_quantity ?? t.received_quantity ?? t.dispatched_quantity ?? t.picked_quantity ?? t.allocated_quantity ?? t.ordered_quantity ?? 0;
+        const totalDispatched = detailsForTransfer.reduce((sum, d) => sum + Number(d.dispatched_quantity || d.allocated_quantity || 0), 0);
+        const isFull = u.status === "RECEIVED" || headerReceived >= totalDispatched || totalDispatched === 0;
+
+        // Check if Multi-Lot & Multi-Batch structured allocations were provided
+        const rawLotAllocations = (u as { lot_allocations?: { lot_id: number; batches?: { batch_no: string; quantity: number; manufacturing_date?: string | null; expiry_date?: string | null; qa_status?: string | null; unit_cost?: number }[] }[] }).lot_allocations;
+
+        if (rawLotAllocations && Array.isArray(rawLotAllocations) && rawLotAllocations.length > 0) {
+          // Flatten all batch splits across all assigned storage lots (one batch per row)
+          const flattenedBatches: {
+            lot_id: number;
+            batch_no: string;
+            quantity: number;
+            manufacturing_date?: string | null;
+            expiry_date?: string | null;
+            qa_status?: string | null;
+            unit_cost?: number;
+          }[] = [];
+
+          for (const g of rawLotAllocations) {
+            const gLotId = Number(g.lot_id);
+            for (const b of (g.batches || [])) {
+              if (Number(b.quantity) > 0 || b.batch_no) {
+                flattenedBatches.push({
+                  lot_id: gLotId,
+                  batch_no: b.batch_no || "",
+                  quantity: Number(b.quantity) || 0,
+                  manufacturing_date: b.manufacturing_date || u.manufacturing_date || t.manufacturing_date || null,
+                  expiry_date: b.expiry_date || u.expiration_date || t.expiry_date || null,
+                  qa_status: b.qa_status || "GOOD",
+                  unit_cost: b.unit_cost || unitCost,
+                });
+              }
+            }
+          }
+
+          if (flattenedBatches.length > 0) {
+            let detailIdx = 0;
+            for (const batchAlloc of flattenedBatches) {
+              let destInventoryLotId: number | null = null;
+              let finalDestLotId: number | null = batchAlloc.lot_id;
+
+              if (targetBranch && prodId) {
+                const ensured = await ensureDestinationInventoryLot({
+                  lotId: batchAlloc.lot_id,
+                  branchId: Number(targetBranch),
+                  productId: Number(prodId),
+                  unitId: Number(unitId),
+                  batchNo: batchAlloc.batch_no,
+                  unitCost: batchAlloc.unit_cost || unitCost,
+                  manufacturingDate: batchAlloc.manufacturing_date,
+                  expiryDate: batchAlloc.expiry_date,
+                  qaStatus: (batchAlloc.qa_status as "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED") || "GOOD",
+                  sourceReference: t.order_no,
+                  userId: validated.userId,
+                });
+                if (ensured) {
+                  destInventoryLotId = ensured.inventoryLotId;
+                  finalDestLotId = ensured.lotId;
+                }
+              }
+
+              if (detailIdx < detailsForTransfer.length) {
+                // Update existing detail row
+                const d = detailsForTransfer[detailIdx];
+                const dispQty = Number(d.dispatched_quantity || d.allocated_quantity || batchAlloc.quantity);
+                await repo.updateStockTransferDetail(d.id!, {
+                  batch_no: batchAlloc.batch_no,
+                  manufacturing_date: batchAlloc.manufacturing_date || d.manufacturing_date || null,
+                  received_quantity: batchAlloc.quantity,
+                  variance_quantity: batchAlloc.quantity - dispQty,
+                  target_lot_id: finalDestLotId || d.target_lot_id,
+                  target_inventory_lot_id: destInventoryLotId || d.target_inventory_lot_id,
+                  expiration_date: batchAlloc.expiry_date || d.expiration_date || null,
+                  inventory_condition: (batchAlloc.qa_status as "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED") || d.inventory_condition || "GOOD",
+                });
+              } else {
+                // Create new detail row for extra batch split (reuse existing source lot if already present)
+                const resolved = detailsForTransfer.length > 0 && detailsForTransfer[0].inventory_lot_id && detailsForTransfer[0].lot_id
+                  ? {
+                      inventory_lot_id: detailsForTransfer[0].inventory_lot_id,
+                      lot_id: detailsForTransfer[0].lot_id,
+                      target_lot_id: finalDestLotId || detailsForTransfer[0].target_lot_id || null,
+                      target_inventory_lot_id: destInventoryLotId || detailsForTransfer[0].target_inventory_lot_id || null,
+                    }
+                  : await resolveDetailLotReferences(t, finalDestLotId, destInventoryLotId);
+                if (resolved) {
+                  await repo.createStockTransferDetails([{
+                    stock_transfer_id: t.id,
+                    inventory_lot_id: resolved.inventory_lot_id,
+                    target_inventory_lot_id: destInventoryLotId || resolved.target_inventory_lot_id,
+                    lot_id: resolved.lot_id,
+                    target_lot_id: finalDestLotId || resolved.target_lot_id,
+                    product_id: Number(prodId),
+                    unit_id: Number(unitId),
+                    batch_no: batchAlloc.batch_no,
+                    manufacturing_date: batchAlloc.manufacturing_date || null,
+                    inventory_condition: (batchAlloc.qa_status as "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED") || "GOOD",
+                    unit_cost: batchAlloc.unit_cost || unitCost,
+                    allocated_quantity: batchAlloc.quantity,
+                    picked_quantity: batchAlloc.quantity,
+                    dispatched_quantity: batchAlloc.quantity,
+                    received_quantity: batchAlloc.quantity,
+                    variance_quantity: 0,
+                    expiration_date: batchAlloc.expiry_date || null,
+                  }]).catch(e => console.warn("[StockTransfer] Multi-batch detail creation error:", e));
+                }
+              }
+              detailIdx++;
+            }
+
+            // If there were more details in detailsForTransfer than received batches, mark excess as 0 received
+            while (detailIdx < detailsForTransfer.length) {
+              const d = detailsForTransfer[detailIdx];
+              const dispQty = Number(d.dispatched_quantity || d.allocated_quantity || 0);
+              await repo.updateStockTransferDetail(d.id!, {
+                received_quantity: 0,
+                variance_quantity: -dispQty,
+                target_lot_id: null,
+                target_inventory_lot_id: null,
+              });
+              detailIdx++;
+            }
+          }
+        } else if (detailsForTransfer.length > 0) {
+          for (const d of detailsForTransfer) {
+            if (!d.id) continue;
+
+            const detailDispatched = Number(d.dispatched_quantity || d.allocated_quantity || 0);
+            const detailReceived = isFull
+              ? detailDispatched
+              : (totalDispatched > 0 ? Math.round((detailDispatched / totalDispatched) * headerReceived) : headerReceived);
+            const variance = detailReceived - detailDispatched;
+
+            const batchNoForDest = d.batch_no || u.destination_batch_no || t.batch_no || "";
+            let destInventoryLotId: number | null = null;
+            let finalDestLotId: number | null = destLotId ? Number(destLotId) : null;
+
+            if (targetBranch && prodId) {
+              const ensured = await ensureDestinationInventoryLot({
+                lotId: destLotId ? Number(destLotId) : null,
+                branchId: Number(targetBranch),
+                productId: Number(prodId),
+                unitId: Number(unitId),
+                batchNo: batchNoForDest,
+                unitCost: unitCost,
+                manufacturingDate: u.manufacturing_date || d.manufacturing_date || t.manufacturing_date || null,
+                expiryDate: u.expiration_date || d.expiration_date || t.expiry_date || null,
+                qaStatus: d.inventory_condition || "GOOD",
+                sourceReference: t.order_no,
+                userId: validated.userId,
+              });
+              if (ensured) {
+                destInventoryLotId = ensured.inventoryLotId;
+                finalDestLotId = ensured.lotId;
+              }
+            }
+
+            await repo.updateStockTransferDetail(d.id, {
+              received_quantity: detailReceived,
+              variance_quantity: variance,
+              target_lot_id: finalDestLotId || d.target_lot_id,
+              target_inventory_lot_id: destInventoryLotId || d.target_inventory_lot_id,
+              manufacturing_date: u.manufacturing_date || d.manufacturing_date || t.manufacturing_date || null,
+              expiration_date: u.expiration_date || d.expiration_date || t.expiry_date || null,
+            });
+          }
+        } else {
+          // Reconstruct/create missing detail row for previously unattached transfer
+          const dispQty = Number(t.dispatched_quantity || t.picked_quantity || 0);
+          // If this transfer item was never dispatched and nothing was received, skip detail reconstruction
+          if (Number(headerReceived) === 0 && dispQty === 0) {
+            console.log(`[StockTransfer] Skipping detail reconstruction for undispatched item ${t.id} (product ${prodId})`);
+            continue;
+          }
+
+          const destBatchNo = u.destination_batch_no || t.batch_no || "";
+          let destInventoryLotId: number | null = null;
+          let finalDestLotId: number | null = destLotId ? Number(destLotId) : null;
+
+          if (targetBranch && prodId) {
+            const ensured = await ensureDestinationInventoryLot({
+              lotId: destLotId ? Number(destLotId) : null,
+              branchId: Number(targetBranch),
+              productId: Number(prodId),
+              unitId: Number(unitId),
+              batchNo: destBatchNo,
+              unitCost: unitCost,
+              manufacturingDate: u.manufacturing_date || t.manufacturing_date || null,
+              expiryDate: u.expiration_date || t.expiry_date || null,
+              qaStatus: "GOOD",
+              sourceReference: t.order_no,
+              userId: validated.userId,
+            });
+            if (ensured) {
+              destInventoryLotId = ensured.inventoryLotId;
+              finalDestLotId = ensured.lotId;
+            }
+          }
+
+          const resolved = await resolveDetailLotReferences(t, finalDestLotId, destInventoryLotId);
+          if (resolved) {
+            const dispQty = t.dispatched_quantity || t.picked_quantity || t.allocated_quantity || headerReceived;
+            await repo.createStockTransferDetails([{
+              stock_transfer_id: t.id,
+              inventory_lot_id: resolved.inventory_lot_id,
+              target_inventory_lot_id: destInventoryLotId || resolved.target_inventory_lot_id,
+              lot_id: resolved.lot_id,
+              target_lot_id: finalDestLotId || resolved.target_lot_id,
+              product_id: Number(prodId),
+              unit_id: Number(unitId),
+              batch_no: destBatchNo,
+              manufacturing_date: u.manufacturing_date || t.manufacturing_date || null,
+              inventory_condition: "GOOD",
+              unit_cost: unitCost,
+              allocated_quantity: Number(t.allocated_quantity || headerReceived),
+              picked_quantity: Number(t.picked_quantity || dispQty),
+              dispatched_quantity: Number(dispQty),
+              received_quantity: Number(headerReceived),
+              variance_quantity: Number(headerReceived) - Number(dispQty),
+              expiration_date: u.expiration_date || t.expiry_date || null,
+            }]).catch(e => console.warn("[StockTransfer] Detail creation error:", e));
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[StockTransfer] Error during detail synchronization:", err);
+    throw err;
+  }
+
+  // 5. Record RFID tracking if provided
+  if (validated.rfids && validated.rfids.length > 0 && validated.scanType) {
+    const trackingEntries = validated.rfids.map(r => ({
+      stock_transfer_id: r.stock_transfer_id,
+      rfid_tag: r.rfid_tag,
+      scan_type: validated.scanType!,
+      created_by: validated.userId || null,
+      created_at: nowPHT
+    }));
+    await repo.insertRfidTracking(trackingEntries);
+  }
+
+  // 6. Record attachments if provided
+  if (validated.attachments && validated.attachments.length > 0) {
+    const attachmentEntries = updates.flatMap(u => 
+      validated.attachments!.map(fileId => ({
+        stock_transfer_id: u.id,
+        directus_file_id: fileId,
+        created_by: validated.userId || null
+      }))
+    );
+    await repo.insertStockTransferAttachments(attachmentEntries);
+  }
+
+  return { success: true };
+}
+
+/**
+ * Specifically handles manual receiving where received_quantity is auto-filled.
+ */
+export async function manualReceiveItems(ids: number[], status: string, userId?: number): Promise<{ success: boolean }> {
+  const targetItems = await repo.fetchStockTransfersByIds(ids);
+  if (targetItems.length === 0) return { success: true };
+
+  const dbStatus = helpers.formatStatusForDb(status);
+  const nowPHT = new Date().toLocaleString("sv-SE", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).replace(" ", "T");
+
+  const updates = targetItems.map(item => ({
+    id: item.id,
+    status: dbStatus,
+    received_quantity: item.allocated_quantity ?? item.ordered_quantity ?? 0,
+    date_received: nowPHT,
+    receiver_id: userId || null,
+  }));
+
+  // Update status and received_quantity in bulk
+  await repo.updateTransfersStatus(updates);
+
+  // Sync destination inventory lots and mm_stock_transfer_details
+  if (dbStatus === "RECEIVED") {
+    try {
+      const existingDetails = await repo.fetchStockTransferDetails(ids);
+      for (const t of targetItems) {
+        let destLotId = t.destination_lot_id;
+        const targetBranch = typeof t.target_branch_id === "object" && t.target_branch_id !== null ? t.target_branch_id.id : (t.target_branch_id || t.target_branch);
+        const prodId = typeof t.product_id === "object" ? t.product_id.product_id : t.product_id;
+        const unitId = typeof t.unit_id === "object" && t.unit_id !== null ? t.unit_id.unit_id : (t.unit_id || 1);
+        const unitCost = t.amount / (t.received_quantity || t.ordered_quantity || 1);
+
+        if (!destLotId && targetBranch) {
+          try {
+            const lot = await ensureLotForBranch(Number(targetBranch));
+            if (lot) destLotId = lot.lot_id;
+          } catch (e) {
+            console.warn("[StockTransfer] Warning ensuring target branch lot:", e);
+          }
+        }
+
+        let destInventoryLotId: number | null = null;
+        let finalDestLotId: number | null = destLotId ? Number(destLotId) : null;
+
+        if (targetBranch && prodId) {
+          const batchNo = t.batch_no || `TRF-${t.order_no}-${t.id}`;
+          const ensured = await ensureDestinationInventoryLot({
+            lotId: destLotId ? Number(destLotId) : null,
+            branchId: Number(targetBranch),
+            productId: Number(prodId),
+            unitId: Number(unitId),
+            batchNo,
+            unitCost,
+            sourceReference: t.order_no,
+            userId,
+          });
+          if (ensured) {
+            destInventoryLotId = ensured.inventoryLotId;
+            finalDestLotId = ensured.lotId;
+          }
+        }
+
+        const detailsForTransfer = existingDetails.filter(d => d.stock_transfer_id === t.id);
+
+        if (detailsForTransfer.length > 0) {
+          for (const d of detailsForTransfer) {
+            if (!d.id) continue;
+            const batchNo = d.batch_no || t.batch_no || `TRF-${t.order_no}-${d.id}`;
+            let dInventoryLotId: number | null = null;
+            let dLotId: number | null = finalDestLotId;
+
+            if (targetBranch && prodId) {
+              const ensured = await ensureDestinationInventoryLot({
+                lotId: finalDestLotId,
+                branchId: Number(targetBranch),
+                productId: Number(prodId),
+                unitId: Number(unitId),
+                batchNo,
+                unitCost,
+                expiryDate: d.expiration_date || t.expiry_date || null,
+                qaStatus: d.inventory_condition || "GOOD",
+                sourceReference: t.order_no,
+                userId,
+              });
+              if (ensured) {
+                dInventoryLotId = ensured.inventoryLotId;
+                dLotId = ensured.lotId;
+              }
+            }
+
+            const dispQty = Number(d.dispatched_quantity || d.allocated_quantity || 0);
+            const recvQty = dispQty;
+
+            await repo.updateStockTransferDetail(d.id, {
+              received_quantity: recvQty,
+              variance_quantity: 0,
+              target_lot_id: dLotId || d.target_lot_id,
+              target_inventory_lot_id: dInventoryLotId || d.target_inventory_lot_id,
+            });
+          }
+        } else {
+          const receivedQty = t.allocated_quantity ?? t.ordered_quantity ?? 0;
+          const resolved = await resolveDetailLotReferences(t, finalDestLotId, destInventoryLotId);
+          if (resolved) {
+            const dispQty = t.dispatched_quantity || t.picked_quantity || t.allocated_quantity || receivedQty;
+            await repo.createStockTransferDetails([{
+              stock_transfer_id: t.id,
+              inventory_lot_id: resolved.inventory_lot_id,
+              target_inventory_lot_id: destInventoryLotId || resolved.target_inventory_lot_id,
+              lot_id: resolved.lot_id,
+              target_lot_id: destLotId ? Number(destLotId) : resolved.target_lot_id,
+              product_id: Number(prodId),
+              unit_id: Number(unitId),
+              batch_no: t.batch_no || `TRF-${t.order_no}-${t.id}`,
+              inventory_condition: "GOOD",
+              unit_cost: unitCost,
+              allocated_quantity: Number(t.allocated_quantity || receivedQty),
+              picked_quantity: Number(t.picked_quantity || dispQty),
+              dispatched_quantity: Number(dispQty),
+              received_quantity: Number(receivedQty),
+              variance_quantity: Number(receivedQty) - Number(dispQty),
+            }]).catch(e => console.warn("[StockTransfer] Detail creation error:", e));
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[StockTransfer] Error during manual receive detail sync:", err);
+      throw err;
+    }
+  }
+
+  return { success: true };
+}

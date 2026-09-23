@@ -1,4 +1,5 @@
 import { DIRECTUS_URL, headers } from "./core-api.service";
+import { fetchMmInventoryMovements } from "./mm-inventory-movements.service";
 
 export const MM_LOT_COLLECTION = "mm_lots";
 export const MM_INVENTORY_LOT_COLLECTION = "mm_inventory_lots";
@@ -293,14 +294,23 @@ export async function resolveOrCreateMmLot(payload: {
 
 export async function loadMovementRowsForMmLots(
     mmLotIds: number[],
-    fields = "movement_id,product_id,mm_lot_id,lot_id,branch_id,transaction_type_id,source_document_id,source_document_no,batch_no,quantity,manufacturing_date,expiry_date,version_id,is_capacity_override,capacity_available_before_receipt,capacity_override_quantity,created_at"
+    branchIds: number[]
 ): Promise<Record<string, unknown>[]> {
     const normalizedIds = [...new Set(mmLotIds.filter(id => Number.isSafeInteger(id) && id > 0))];
     if (normalizedIds.length === 0) return [];
-    return readRows(
-        `/items/inventory_movements?filter[mm_lot_id][_in]=${normalizedIds.join(",")}&fields=${encodeURIComponent(fields)}&limit=-1`,
-        "Manufacturing Management inventory movement lookup"
+    const normalizedBranchIds = [...new Set(branchIds.filter(id => Number.isSafeInteger(id) && id > 0))];
+    if (normalizedBranchIds.length === 0) {
+        throw new MmLotError("A valid branch is required to load storage-lot inventory movements.", 400, "MM_LOT_INVALID");
+    }
+
+    const movementGroups = await Promise.all(
+        normalizedBranchIds.map(branch => fetchMmInventoryMovements({ branch }))
     );
+    const requestedLotIds = new Set(normalizedIds);
+    return movementGroups.flat().filter(movement => {
+        const lotId = mmLotId(movement.mm_lot_id);
+        return lotId !== null && requestedLotIds.has(lotId);
+    });
 }
 
 export async function loadEligibleFinishedGoodsLot(options: {

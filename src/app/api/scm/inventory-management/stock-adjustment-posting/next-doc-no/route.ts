@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { stockAdjustmentService } from "@/modules/manufacturing-management/stock-adjustment-posting/services/stock-adjustment-service";
-import { handleApiError } from "@/modules/manufacturing-management/stock-adjustment-posting/utils/error-handler";
+import { stockAdjustmentService } from "@/modules/manufacturing-management/adjustments/stock-adjustment/stock-adjustment-posting/services/stock-adjustment-service";
+import { handleApiError } from "@/modules/manufacturing-management/adjustments/stock-adjustment/stock-adjustment-posting/utils/error-handler";
 
 /**
  * GET /api/scm/inventory-management/stock-adjustment-posting/next-doc-no
@@ -12,7 +12,7 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const type = searchParams.get("type") as "IN" | "OUT" || "IN";
-    
+
     const doc_no = await stockAdjustmentService.fetchNextDocNo(type);
     return NextResponse.json({ doc_no });
   } catch (error) {

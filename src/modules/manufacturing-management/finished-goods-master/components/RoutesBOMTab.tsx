@@ -8,7 +8,7 @@ import { BOMMaterialSelect } from "./BOMMaterialSelect";
 import { MaterialTypeSelect } from "./MaterialTypeSelect";
 import { CreatableSelect } from "./CreatableSelect";
 import { Button } from "@/components/ui/button";
-import { calculateMaterialCost, calculateBottleneckBaseQuantity, calculateNetRunTime, BottleneckCalculationResult } from "../costing";
+import { calculateMaterialCost, calculateBottleneckBaseQuantity, calculateNetRunTime, BottleneckCalculationResult, calculatePositionBatchCost } from "../costing";
 import { getProductFamilyUOMOptions, extractProductUomShortcut } from "../utils/uom-rules";
 import { formatNumberWithCommas } from "../utils/formatters";
 import {
@@ -337,20 +337,13 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
     const unitShortcut = units.find(u => u.unit_id === editedVersionDetails?.uom_id)?.unit_shortcut || "Units";
 
     const totalLaborBatchCost = React.useMemo(() => {
-        return versionLaborPositions.reduce((sum, pos) => {
-            const count = Number(pos.manpower_count) || 0;
-            const rate = Number(pos.hourly_rate) || 0;
-            const hours = Number(pos.hours_required) || 0;
-            return sum + (count * rate * hours);
-        }, 0);
+        return versionLaborPositions.reduce((sum, pos) => sum + calculatePositionBatchCost(pos), 0);
     }, [versionLaborPositions]);
 
     const laborCostPerUnit = baseQuantity > 0 ? totalLaborBatchCost / baseQuantity : 0;
-    const totalManpowerCount = versionLaborPositions.reduce((sum, pos) => sum + (Number(pos.manpower_count) || 0), 0);
-    const totalLaborHoursRequired = versionLaborPositions.reduce((sum, pos) => sum + (Number(pos.hours_required) || 0), 0);
 
     // Dynamic Bottleneck Runtime Model State
-    const [isAutoBaseQty, setIsAutoBaseQty] = React.useState<boolean>(false);
+    const [isAutoBaseQty, setIsAutoBaseQty] = React.useState<boolean>(true);
     const [showRuntimeSettings, setShowRuntimeSettings] = React.useState<boolean>(false);
     const [shiftHours, setShiftHours] = React.useState<number>(18);
     const [shiftMinutes, setShiftMinutes] = React.useState<number>(0);
@@ -428,14 +421,14 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
         console.log(`  • Bottleneck Station     : Step #${bottleneckCalc.bottleneckStepIndex + 1} (${bottleneckCalc.stepCapacities[bottleneckCalc.bottleneckStepIndex]?.operationName || "N/A"})`);
         console.log(`  • Line Bottleneck Rate   : %c${bottleneckCalc.bottleneckRate.toFixed(4)} ${unitShortcut}/hr`, "color: #d97706; font-weight: bold;");
 
-        console.log("%cStep 3: Compute Gross Output", "font-weight: bold; color: #0284c7;");
+        console.log("%cStep 3: Compute Gross Output (Base Quantity)", "font-weight: bold; color: #0284c7;");
         console.log("  • Equation               : Line Bottleneck Capacity * Net Production Hours");
-        console.log(`  • Gross Output           : ${bottleneckCalc.bottleneckRate.toFixed(4)} * ${bottleneckCalc.netProductionHours.toFixed(6)} = %c${bottleneckCalc.grossOutput.toFixed(4)} ${unitShortcut}`, "color: #059669; font-weight: bold;");
+        console.log(`  • Gross Output (Base Qty): ${bottleneckCalc.bottleneckRate.toFixed(4)} * ${bottleneckCalc.netProductionHours.toFixed(6)} = %c${bottleneckCalc.grossOutput.toFixed(4)} ${unitShortcut}`, "color: #059669; font-weight: bold;");
 
-        console.log("%cStep 4: Compute Net Base Quantity", "font-weight: bold; color: #0284c7;");
+        console.log("%cStep 4: Compute Net Output (Post-Yield)", "font-weight: bold; color: #0284c7;");
         console.log(`  • Expected Yield %       : ${yieldPct}%`);
         console.log("  • Equation               : Gross Output * (Expected Yield % / 100)");
-        console.log(`  • Net Base Quantity      : ${bottleneckCalc.grossOutput.toFixed(4)} * (${yieldPct} / 100) = %c${bottleneckCalc.computedBaseQuantity.toFixed(4)} ${unitShortcut}%c (Display: ${bottleneckCalc.computedBaseQuantity.toFixed(4)} ${unitShortcut})`, "color: #2563eb; font-weight: bold;", "color: inherit;");
+        console.log(`  • Net Output             : ${bottleneckCalc.grossOutput.toFixed(4)} * (${yieldPct} / 100) = %c${bottleneckCalc.netBaseQuantity.toFixed(4)} ${unitShortcut}%c (Display: ${bottleneckCalc.netBaseQuantity.toFixed(4)} ${unitShortcut})`, "color: #2563eb; font-weight: bold;", "color: inherit;");
 
         console.log("%cStep 5: Compute Downstream Direct Labor Cost per Unit", "font-weight: bold; color: #0284c7;");
         console.log(`  • Total Batch Labor Cost : ₱${totalLaborBatchCost.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
@@ -446,28 +439,29 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
         console.groupEnd();
     }, [bottleneckCalc, editedRoutes, shiftHours, shiftMinutes, downtimeMinutes, downtimeSeconds, editedVersionDetails?.expected_yield_percentage, editedVersionDetails?.base_quantity, editedVersionDetails?.version_name, totalLaborBatchCost, unitShortcut]);
 
-    // When in Auto mode, sync calculated base quantity dynamically
+    // When in Auto mode, sync calculated base quantity dynamically to gross output
     React.useEffect(() => {
         if (!isAutoBaseQty || isVersionLocked) return;
-        if (bottleneckCalc.computedBaseQuantity > 0) {
-            const computed = parseFloat(bottleneckCalc.computedBaseQuantity.toFixed(4));
+        if (bottleneckCalc.grossOutput > 0) {
+            const computed = parseFloat(bottleneckCalc.grossOutput.toFixed(4));
             if (Math.abs(Number(editedVersionDetails?.base_quantity || 0) - computed) > 0.0001) {
+                setRawBaseQty(String(computed));
                 setEditedVersionDetails((prev: any) => ({ ...prev, base_quantity: computed }));
                 setHasUnsavedChanges(true);
             }
         }
-    }, [isAutoBaseQty, bottleneckCalc.computedBaseQuantity, isVersionLocked, editedVersionDetails?.base_quantity, setEditedVersionDetails, setHasUnsavedChanges]);
-
-    // Primary route step 1 batch size for instant parity sync
-    const primaryStepBatchSize = editedRoutes[0]?.step_batch_size ? Number(editedRoutes[0].step_batch_size) : null;
+    }, [isAutoBaseQty, bottleneckCalc.grossOutput, isVersionLocked, editedVersionDetails?.base_quantity, setEditedVersionDetails, setHasUnsavedChanges]);
 
     const handleApplyBottleneckQty = () => {
-        if (isVersionLocked || bottleneckCalc.computedBaseQuantity <= 0) return;
-        const computed = parseFloat(bottleneckCalc.computedBaseQuantity.toFixed(4));
+        if (isVersionLocked || bottleneckCalc.grossOutput <= 0) return;
+        const computed = parseFloat(bottleneckCalc.grossOutput.toFixed(4));
         setRawBaseQty(String(computed));
         setEditedVersionDetails((prev: any) => ({ ...prev, base_quantity: computed }));
         setHasUnsavedChanges(true);
     };
+
+    // Primary route step 1 batch size for instant parity sync
+    const primaryStepBatchSize = editedRoutes[0]?.step_batch_size ? Number(editedRoutes[0].step_batch_size) : null;
 
     const handleSyncWithStep1 = () => {
         if (isVersionLocked || !primaryStepBatchSize) return;
@@ -476,6 +470,8 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
         setIsAutoBaseQty(false);
         setHasUnsavedChanges(true);
     };
+
+
 
     return (
         <div className="space-y-6">
@@ -557,8 +553,8 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                             onClick={() => {
                                                 const nextMode = !isAutoBaseQty;
                                                 setIsAutoBaseQty(nextMode);
-                                                if (nextMode && bottleneckCalc.computedBaseQuantity > 0) {
-                                                    const computed = parseFloat(bottleneckCalc.computedBaseQuantity.toFixed(4));
+                                                if (nextMode && bottleneckCalc.grossOutput > 0) {
+                                                    const computed = parseFloat(bottleneckCalc.grossOutput.toFixed(4));
                                                     setRawBaseQty(String(computed));
                                                     setEditedVersionDetails((prev: any) => ({ ...prev, base_quantity: computed }));
                                                     setHasUnsavedChanges(true);
@@ -749,7 +745,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                         </span>
                                     </div>
                                     <div className="p-2.5 rounded-lg border bg-muted/10 border-border/60">
-                                        <span className="text-[10px] text-muted-foreground uppercase font-bold block">3. Gross Output</span>
+                                        <span className="text-[10px] text-muted-foreground uppercase font-bold block">3. Gross Output (Base Qty)</span>
                                         <span className="font-mono text-xs font-semibold text-foreground block mt-0.5">
                                             {bottleneckCalc.grossOutput.toFixed(4)} {unitShortcut}
                                         </span>
@@ -761,9 +757,9 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                         </span>
                                     </div>
                                     <div className="p-2.5 rounded-lg border bg-primary/5 border-primary/20">
-                                        <span className="text-[10px] text-primary uppercase font-bold block">5. Net Base Qty</span>
+                                        <span className="text-[10px] text-primary uppercase font-bold block">5. Net Output</span>
                                         <span className="font-mono text-xs font-bold text-primary block mt-0.5">
-                                            {bottleneckCalc.computedBaseQuantity.toFixed(4)} {unitShortcut}
+                                            {bottleneckCalc.netBaseQuantity.toFixed(4)} {unitShortcut}
                                         </span>
                                     </div>
                                     <div className="p-2.5 rounded-lg border bg-emerald-500/5 border-emerald-500/20">
