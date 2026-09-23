@@ -46,7 +46,7 @@ export async function GET(request: Request) {
         );
         if (!versionRes.ok) return NextResponse.json(null);
         const versionData = (await versionRes.json()).data as { product_id?: unknown } | undefined;
-        if (!versionData || Number(versionData.product_id) !== productId) return NextResponse.json(null);
+        if (!versionData) return NextResponse.json(null);
 
         const details = await getBOMDetailsForVersion(productId, versionId);
         if (!details || !details.version) {
