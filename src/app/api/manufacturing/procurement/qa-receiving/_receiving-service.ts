@@ -937,7 +937,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             }
             const freshMovementRows = await loadMovementRowsForMmLots(
                 allocationLotIds,
-                "movement_id,mm_lot_id,lot_id,quantity,product_id"
+                [branchId, ...(badBranch ? [Number(badBranch.id)] : [])]
             );
             const freshOccupied = sumMovementQuantitiesByStorageLot(freshMovementRows);
             const netQuantityByLotProduct = new Map<string, number>();

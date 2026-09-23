@@ -4,6 +4,7 @@ import { DecimalValue } from "../../decimal";
 import { calculateEffectiveBatchMultiplier } from "./production-timing";
 
 export const MANUFACTURING_MONEY_DECIMAL_SCALE = 2;
+export const MANUFACTURING_UNIT_COST_DECIMAL_SCALE = 4;
 
 export interface RouteStepCosting {
     sequence_order?: number;
@@ -75,6 +76,16 @@ export function formatManufacturingMoney(value: number | string | null | undefin
     return DecimalValue.from(parsed).toFixed(MANUFACTURING_MONEY_DECIMAL_SCALE);
 }
 
+export function roundManufacturingUnitCost(value: number | string | null | undefined): number {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return 0;
+    return Number(
+        DecimalValue.from(parsed)
+            .round(MANUFACTURING_UNIT_COST_DECIMAL_SCALE)
+            .toFixed(MANUFACTURING_UNIT_COST_DECIMAL_SCALE)
+    );
+}
+
 export function calculateMaterialSpend(
     materialCostPerUnit: number | string | null | undefined,
     quantity: number | string | null | undefined
@@ -137,7 +148,7 @@ export function calculateUnitCOGSBreakdown(
 
     // 1. Direct Materials & Packaging Cost per Unit
     const resolvedMaterialCost = Number(materialCostPerUnit);
-    const directMaterialCostPerUnit = roundManufacturingMoney(
+    const directMaterialCostPerUnit = roundManufacturingUnitCost(
         Number.isFinite(resolvedMaterialCost) && resolvedMaterialCost >= 0
             ? resolvedMaterialCost
             : calculateRecipeMaterialCostPerUnit(bomItems)
@@ -160,9 +171,8 @@ export function calculateUnitCOGSBreakdown(
     }));
     const directLaborCostPerUnit = calculateDirectLaborCost(normalizedLaborPositions, baseQty);
 
-    // 3. Factory Overhead Cost per Unit. Runtime is scaled by each route's
-    // configured batch size only when no configured version/custom overhead is
-    // available. This prevents the same overhead from being counted twice.
+    // 3. Factory overhead is additive: route runtime overhead and configured
+    // version/custom overhead are distinct cost components.
     const totalMachineOverhead = routeSteps.reduce((sum, step) => {
         const hourlyRate = Math.max(0, Number(step.work_center_overhead_cost_per_hour || 0));
         const stepBatchSize = Number(step.step_batch_size);
@@ -190,16 +200,21 @@ export function calculateUnitCOGSBreakdown(
         : fixedOverheadCostPerUnit > 0
             ? "CUSTOM_OVERHEAD"
             : "WORK_CENTER_RUNTIME";
-    const factoryOverheadCostPerUnit = factoryOverheadBasis === "WORK_CENTER_RUNTIME"
-        ? machineOverheadCostPerUnit
-        : fixedOverheadCostPerUnit;
+    const factoryOverheadCostPerUnit = machineOverheadCostPerUnit + fixedOverheadCostPerUnit;
     const hasCustomOverhead = factoryOverheadBasis !== "WORK_CENTER_RUNTIME";
 
     // 4. Total COGS calculation
-    const baseUnitCOGS = roundManufacturingMoney(
-        directMaterialCostPerUnit + directLaborCostPerUnit + factoryOverheadCostPerUnit
+    const unroundedBaseUnitCOGS = DecimalValue.from(directMaterialCostPerUnit)
+        .add(directLaborCostPerUnit)
+        .add(machineOverheadCostPerUnit)
+        .add(fixedOverheadCostPerUnit);
+    const baseUnitCOGS = roundManufacturingUnitCost(
+        unroundedBaseUnitCOGS.toFixed(MANUFACTURING_UNIT_COST_DECIMAL_SCALE + 8)
     );
-    const adjustedUnitCOGS = roundManufacturingMoney(baseUnitCOGS / yieldFactor);
+    const adjustedUnitCOGS = roundManufacturingUnitCost(
+        unroundedBaseUnitCOGS.divideRounded(yieldFactor, MANUFACTURING_UNIT_COST_DECIMAL_SCALE + 8)
+            .toFixed(MANUFACTURING_UNIT_COST_DECIMAL_SCALE + 8)
+    );
 
     let grossMarginAmount: number | undefined;
     let grossMarginPercentage: number | undefined;
@@ -236,6 +251,6 @@ export function getFactoryOverheadBasisLabel(basis: FactoryOverheadBasis): strin
         case "CUSTOM_OVERHEAD":
             return "Custom overhead fallback";
         default:
-            return "Work-center runtime fallback";
+            return "No configured fixed overhead";
     }
 }

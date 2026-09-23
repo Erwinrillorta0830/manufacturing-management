@@ -7,8 +7,6 @@ import {
 } from "./cogs-helper";
 import {
     assertCompatibleUoms,
-    calculateEffectiveBatchMultiplier,
-    calculatePlannedSetupHours,
     requirePositiveProductionNumber,
     PRODUCTION_TIMING_POLICY
 } from "./production-timing";
@@ -20,7 +18,7 @@ export interface ProductionRouteMetric {
     plannedRunHours: number;
     elapsedHours: number;
     stepBatchSize: number;
-    effectiveBatchMultiplier: number;
+    timingBatchRatio: number;
 }
 
 export interface ProductionMetricsInput {
@@ -77,9 +75,9 @@ export function calculateProductionMetrics(input: ProductionMetricsInput): Produ
         );
         const setupTimeHours = Math.max(0, Number(route.setup_time_hours || 0));
         const runTimeHours = Math.max(0, Number(route.run_time_hours || 0));
-        const effectiveBatchMultiplier = calculateEffectiveBatchMultiplier(timingTargetQuantity, stepBatchSize);
-        const plannedSetupHours = calculatePlannedSetupHours(timingTargetQuantity, stepBatchSize, setupTimeHours);
-        const plannedRunHours = effectiveBatchMultiplier * runTimeHours;
+        const timingBatchRatio = timingTargetQuantity / stepBatchSize;
+        const plannedSetupHours = setupTimeHours;
+        const plannedRunHours = timingBatchRatio * runTimeHours;
 
         return {
             sequenceOrder,
@@ -88,7 +86,7 @@ export function calculateProductionMetrics(input: ProductionMetricsInput): Produ
             plannedRunHours,
             elapsedHours: plannedSetupHours + plannedRunHours,
             stepBatchSize,
-            effectiveBatchMultiplier
+            timingBatchRatio
         };
     });
 

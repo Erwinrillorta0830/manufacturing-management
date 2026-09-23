@@ -9,6 +9,11 @@ export interface ContainerizationMetrics {
     effectiveTargetQuantity: number;
     requestedMixCount: number;
     requestedSackCount: number;
+    containerUnitLabel: string;
+    hasSackEstimate: boolean;
+    hasFlourWeightEstimate: boolean;
+    hasOutputEstimate: boolean;
+    hasPalletEstimate: boolean;
     requestedFlourGrams: number;
     mixCount: number;
     sackCount: number;
@@ -51,6 +56,7 @@ export interface ContainerizationBOMComponent {
     scrap_percentage?: number;
     unit_of_measurement?: string;
     uom_shortcut?: string;
+    kilograms_per_inventory_unit?: number | null;
     component_product_id?: {
         product_name?: string;
     };
@@ -59,6 +65,59 @@ export interface ContainerizationBOMComponent {
 export interface ContainerizationProfile {
     sacksPerMixEquivalent: number;
     flourKgPerMix: number;
+}
+
+function normalizedUnitLabel(value: unknown): string {
+    return String(value ?? "").trim().toLowerCase().replace(/[._-]/g, " ");
+}
+
+/** Returns the explicitly configured mass equivalent of one inventory unit. */
+export function getKilogramsPerInventoryUnit(product: unknown): number | null {
+    if (!product || typeof product !== "object") return null;
+    const row = product as Record<string, unknown>;
+    const uomValue = row.unit_of_measurement;
+    const uom = typeof uomValue === "object" && uomValue !== null
+        ? (uomValue as Record<string, unknown>).unit_shortcut ?? (uomValue as Record<string, unknown>).unit_name
+        : uomValue;
+    const uomLabel = normalizedUnitLabel(uom);
+    if (uomLabel === "kg" || uomLabel.includes("kilogram")) return 1;
+    if (uomLabel === "g" || uomLabel.includes("gram")) return 0.001;
+    if (["lb", "lbs"].includes(uomLabel) || uomLabel.includes("pound")) return 0.45359237;
+    if (["oz", "ounce"].includes(uomLabel)) return 0.028349523125;
+
+    const weight = Number(row.net_weight ?? row.product_weight ?? row.weight);
+    if (!Number.isFinite(weight) || weight <= 0) return null;
+    const weightUnitValue = row.weight_unit_id;
+    const weightUnit = typeof weightUnitValue === "object" && weightUnitValue !== null
+        ? (weightUnitValue as Record<string, unknown>).code
+            ?? (weightUnitValue as Record<string, unknown>).unit_shortcut
+            ?? (weightUnitValue as Record<string, unknown>).name
+            ?? (weightUnitValue as Record<string, unknown>).unit_name
+        : weightUnitValue;
+    const weightUnitLabel = normalizedUnitLabel(weightUnit);
+    if (weightUnitLabel === "kg" || weightUnitLabel.includes("kilogram")) return weight;
+    if (weightUnitLabel === "g" || weightUnitLabel.includes("gram")) return weight / 1000;
+    if (["lb", "lbs"].includes(weightUnitLabel) || weightUnitLabel.includes("pound")) return weight * 0.45359237;
+    if (["oz", "ounce"].includes(weightUnitLabel)) return weight * 0.028349523125;
+    return null;
+}
+
+export function formatInventoryQuantity(
+    value: number,
+    uom: string,
+    kilogramsPerInventoryUnit?: number | null
+): { quantity: string; kilograms: string | null } {
+    const formattedQuantity = Number(value).toLocaleString(undefined, { maximumFractionDigits: 4 });
+    const kilogramsPerUnit = Number(kilogramsPerInventoryUnit);
+    const unit = normalizedUnitLabel(uom);
+    return {
+        quantity: `${formattedQuantity} ${uom}`,
+        kilograms: (unit === "kg" || unit.includes("kilogram"))
+            ? null
+            : Number.isFinite(kilogramsPerUnit) && kilogramsPerUnit > 0
+            ? `${(Number(value) * kilogramsPerUnit).toLocaleString(undefined, { maximumFractionDigits: 4 })} kg`
+            : null
+    };
 }
 
 const CONTAINERIZATION_PROFILE_MARKER = "[MM-CONTAINERIZATION-V1]";
@@ -109,9 +168,9 @@ export function calculateContainerizationMetrics(
     requestedTargetQuantity?: number,
     containerizationProfile?: ContainerizationProfile | null
 ): ContainerizationMetrics {
-    const sacksPerMix = Math.max(1, Number(sacksPerMixParam) || 4);
-    const baseBatchWeightPerSack = Math.max(1, Number(baseBatchWeightPerSackParam) || 32892.5); // grams
-    const cuttingUnitWeightGrams = Math.max(1, Number(versionCuttingWeightGrams) || 500); // grams
+    const sacksPerMix = Number(sacksPerMixParam) > 0 ? Number(sacksPerMixParam) : 0;
+    const baseBatchWeightPerSack = Number(baseBatchWeightPerSackParam) > 0 ? Number(baseBatchWeightPerSackParam) : 0;
+    const cuttingUnitWeightGrams = Number(versionCuttingWeightGrams) > 0 ? Number(versionCuttingWeightGrams) : 0;
     const expectedYieldPercentage = (versionExpectedYieldPercent !== undefined && versionExpectedYieldPercent !== null && Number(versionExpectedYieldPercent) > 0 && Number(versionExpectedYieldPercent) <= 100)
         ? Number(versionExpectedYieldPercent)
         : 100.0;
@@ -133,7 +192,7 @@ export function calculateContainerizationMetrics(
     }
 
     const pcsPerCaseBundle = Math.max(1, Number(uomCount) || 1); // Uses product uom count
-    const casesBundlesPerPallet = Math.max(1, Number(versionCasesPerPallet) || 50); // Pallet capacity
+    const casesBundlesPerPallet = Number(versionCasesPerPallet) > 0 ? Number(versionCasesPerPallet) : 0;
 
     const targetNetPcs = Math.max(1, Number(targetQuantity) || 0);
     const baseQty = Math.max(1, Number(bomBaseQty) || 1);
@@ -151,7 +210,10 @@ export function calculateContainerizationMetrics(
     let mixCount = 0;
     let requestedFlourGrams = 0;
     let requestedSackCount = 0;
-    let requestedMixCount = requestedBatchRatio;
+    const requestedMixCount = requestedBatchRatio;
+    let containerUnitLabel = "sacks";
+    let hasSackEstimate = false;
+    let hasFlourWeightEstimate = false;
 
     if (containerizationProfile) {
         requestedSackCount = requestedMixCount * containerizationProfile.sacksPerMixEquivalent;
@@ -159,6 +221,9 @@ export function calculateContainerizationMetrics(
         requestedFlourGrams = requestedMixCount * containerizationProfile.flourKgPerMix * 1000;
         flourGramsTotal = requiredBatchCount * containerizationProfile.flourKgPerMix * 1000;
         mixCount = requiredBatchCount;
+        containerUnitLabel = "recipe sack-equivalents";
+        hasSackEstimate = true;
+        hasFlourWeightEstimate = true;
     }
 
     if (!containerizationProfile && Array.isArray(components) && components.length > 0) {
@@ -169,58 +234,65 @@ export function calculateContainerizationMetrics(
 
         if (flourComp) {
             const qtyReqPerUnit = Number(flourComp.quantity_required || 0);
-            const uomStr = String(flourComp.unit_of_measurement || flourComp.uom_shortcut || "").toUpperCase();
+            const uomStr = normalizedUnitLabel(flourComp.unit_of_measurement || flourComp.uom_shortcut);
+            const perInventoryUnitKg = Number(flourComp.kilograms_per_inventory_unit);
+            const isBagOrSack = uomStr.includes("sack") || uomStr.includes("bag");
+            const directKgPerUnit = uomStr === "kg" || uomStr.includes("kilogram")
+                ? 1
+                : uomStr === "g" || uomStr.includes("gram")
+                    ? 0.001
+                    : Number.isFinite(perInventoryUnitKg) && perInventoryUnitKg > 0
+                        ? perInventoryUnitKg
+                        : null;
 
-            // BOM quantities are normalized per finished output unit. Convert
-            // the per-unit quantity to grams before applying exact demand and
-            // full-batch planned output.
-            let gramsPerUnit = qtyReqPerUnit;
-            if (uomStr.includes("KG") || uomStr.includes("KILO")) {
-                gramsPerUnit = qtyReqPerUnit * 1000;
-            } else if (uomStr.includes("SACK") || uomStr.includes("BAG")) {
-                gramsPerUnit = qtyReqPerUnit * 25000;
-            } else if (uomStr.includes("G") || uomStr.includes("GRAM")) {
-                gramsPerUnit = qtyReqPerUnit;
+            if (isBagOrSack) {
+                requestedSackCount = qtyReqPerUnit * requestedTarget;
+                sackCount = qtyReqPerUnit * effectiveTargetQuantity;
+                containerUnitLabel = uomStr.includes("bag") ? "Bags" : "Sacks";
+                hasSackEstimate = true;
             }
-
-            requestedFlourGrams = gramsPerUnit * requestedTarget;
-            requestedSackCount = (requestedFlourGrams / 25000);
-            const totalFlourGramsNeeded = gramsPerUnit * effectiveTargetQuantity;
-            if (totalFlourGramsNeeded > 0) {
-                flourGramsTotal = Math.round(totalFlourGramsNeeded);
-                sackCount = Math.ceil(flourGramsTotal / 25000);
-                // A recipe batch is one production mix. The configured sack
-                // count remains available for packaging calculations, while
-                // mix count follows the full-batch production plan.
-                mixCount = requiredBatchCount;
+            if (directKgPerUnit !== null) {
+                requestedFlourGrams = qtyReqPerUnit * requestedTarget * directKgPerUnit * 1000;
+                flourGramsTotal = qtyReqPerUnit * effectiveTargetQuantity * directKgPerUnit * 1000;
+                hasFlourWeightEstimate = true;
             }
+            if (!hasSackEstimate && hasFlourWeightEstimate && baseBatchWeightPerSack > 0) {
+                requestedSackCount = requestedFlourGrams / baseBatchWeightPerSack;
+                sackCount = flourGramsTotal / baseBatchWeightPerSack;
+                containerUnitLabel = "Sacks";
+                hasSackEstimate = true;
+            }
+            mixCount = requiredBatchCount;
         }
     }
 
-    // Fallback if no specific flour component was identified
+    if (!containerizationProfile && !hasSackEstimate && sacksPerMix > 0 && baseBatchWeightPerSack > 0) {
+        requestedSackCount = requestedMixCount * sacksPerMix;
+        sackCount = requiredBatchCount * sacksPerMix;
+        requestedFlourGrams = requestedSackCount * baseBatchWeightPerSack;
+        flourGramsTotal = sackCount * baseBatchWeightPerSack;
+        containerUnitLabel = "Sacks";
+        hasSackEstimate = true;
+        hasFlourWeightEstimate = true;
+    }
     if (!containerizationProfile && mixCount <= 0) {
-        const netPcsPerSack = (baseBatchWeightPerSack / cuttingUnitWeightGrams * yieldFactor) * (1 - scrapRate);
-        const totalSacksNeeded = Math.ceil(targetNetPcs / Math.max(0.001, netPcsPerSack));
-        mixCount = Math.ceil(totalSacksNeeded / sacksPerMix);
-        sackCount = mixCount * sacksPerMix;
-        flourGramsTotal = sackCount * 25000;
-        requestedSackCount = requiredBatchCount > 0 ? (sackCount * requestedBatchRatio) / requiredBatchCount : sackCount;
-        requestedFlourGrams = requiredBatchCount > 0 ? (flourGramsTotal * requestedBatchRatio) / requiredBatchCount : flourGramsTotal;
-        requestedMixCount = requestedBatchRatio;
+        mixCount = requiredBatchCount;
     }
 
-    const totalBaseWeightGrams = sackCount * baseBatchWeightPerSack;
-    const grossPieces = (totalBaseWeightGrams / cuttingUnitWeightGrams) * yieldFactor;
+    const totalBaseWeightGrams = hasFlourWeightEstimate ? flourGramsTotal : 0;
+    const hasOutputEstimate = totalBaseWeightGrams > 0 && cuttingUnitWeightGrams > 0;
+    const grossPieces = hasOutputEstimate ? (totalBaseWeightGrams / cuttingUnitWeightGrams) * yieldFactor : 0;
     const wastePieces = grossPieces * scrapRate;
     const netPieces = Math.max(0, grossPieces - wastePieces);
 
     // Case / Bundle Conversions
-    const totalCasesBundlesExact = netPieces / pcsPerCaseBundle;
+    const totalCasesBundlesExact = hasOutputEstimate ? netPieces / pcsPerCaseBundle : 0;
     const totalCasesBundlesFull = Math.floor(totalCasesBundlesExact);
     const remainingPcs = Math.round((totalCasesBundlesExact - totalCasesBundlesFull) * pcsPerCaseBundle);
 
     // Pallet Conversions
-    const totalPalletsExact = totalCasesBundlesFull / casesBundlesPerPallet;
+    const hasPalletEstimate = hasOutputEstimate && casesBundlesPerPallet > 0;
+    const totalPalletsExact = hasPalletEstimate ? totalCasesBundlesFull / casesBundlesPerPallet : 0;
     const totalPalletsFull = Math.floor(totalPalletsExact);
     const remainingCasesBundles = Math.round((totalPalletsExact - totalPalletsFull) * casesBundlesPerPallet);
 
@@ -233,6 +305,11 @@ export function calculateContainerizationMetrics(
         effectiveTargetQuantity,
         requestedMixCount,
         requestedSackCount,
+        containerUnitLabel,
+        hasSackEstimate,
+        hasFlourWeightEstimate,
+        hasOutputEstimate,
+        hasPalletEstimate,
         requestedFlourGrams,
         mixCount,
         sackCount,

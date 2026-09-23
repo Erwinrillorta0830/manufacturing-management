@@ -12,7 +12,7 @@ import { deleteJobOrder } from "./delete-helper";
 import { calculateProductionMetrics } from "@/modules/manufacturing-management/planning-engineering/utils/production-metrics";
 import {
     calculateRecipeMaterialCostPerUnit,
-    roundManufacturingMoney
+    roundManufacturingUnitCost
 } from "@/modules/manufacturing-management/planning-engineering/utils/cogs-helper";
 import {
     calculatePerUnitMaterialRequirement,
@@ -515,7 +515,7 @@ export async function createJobOrder(
                 productionQty = calculateFullBatchTarget(productionQty, baseQuantity);
             }
             const costingComponents = (routes || []).flatMap((route) => route.bom_items || []);
-            const materialCostPerUnit = roundManufacturingMoney(calculateRecipeMaterialCostPerUnit(
+            const materialCostPerUnit = roundManufacturingUnitCost(calculateRecipeMaterialCostPerUnit(
                 costingComponents.map((component: any) => ({
                     quantity_required: Number(component.quantity_required || 0),
                     wastage_factor_percentage: Number(component.wastage_factor_percentage || 0),
