@@ -30,6 +30,11 @@ function relationNumber(value: unknown, keys: string[]): number | null {
     return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+function formatQuantity(value: number | null | undefined): string {
+    const normalized = Number(value ?? 0);
+    return Number.isFinite(normalized) ? normalized.toLocaleString(undefined, { maximumFractionDigits: 6 }) : "—";
+}
+
 function toSiblingLotAllocations(
     allocations: ReceivingLotAllocationInput[],
     storageLots: StorageLot[],
@@ -248,9 +253,55 @@ export default function ShipmentInspectionForm({
         return lineItems.reduce((sum, l) => sum + Number(l.quantity_ordered || 0), 0);
     }, [lineItems]);
 
+    const receiptProgress = React.useMemo(() => {
+        const postedReceived = lineItems.reduce((sum, line) => sum + Math.max(0, Number(line.previously_received_quantity || 0)), 0);
+        const postedAccepted = lineItems.reduce((sum, line) => sum + Math.max(0, Number(line.previously_accepted_quantity || 0)), 0);
+        const remainingPhysical = lineItems.reduce((sum, line) => sum + Math.max(0, Number(line.remaining_quantity || 0)), 0);
+        const remainingAccepted = lineItems.reduce((sum, line) => sum + Math.max(0, Number(line.remaining_accepted_quantity || 0)), 0);
+        const selectedReceived = selectedReceipt ? Math.max(0, Number(selectedReceipt.receivedQuantity || 0)) : null;
+        const selectedAccepted = selectedReceipt ? Math.max(0, Number(selectedReceipt.acceptedQuantity || 0)) : null;
+        const selectedRejected = selectedReceipt ? Math.max(0, Number(selectedReceipt.rejectedQuantity || 0)) : null;
+
+        return {
+            postedReceived,
+            postedAccepted,
+            remainingPhysical,
+            remainingAccepted,
+            selectedReceived,
+            selectedAccepted,
+            selectedRejected,
+        };
+    }, [lineItems, selectedReceipt]);
+
+    const receiptProgressMetrics = [
+        { label: "PO ordered", value: formatQuantity(totalOrderedQty), className: "text-foreground" },
+        {
+            label: selectedReceipt?.isCurrent ? "Posted before this receipt" : "Posted received",
+            value: formatQuantity(receiptProgress.postedReceived),
+            className: "text-foreground"
+        },
+        {
+            label: selectedReceipt?.isCurrent ? "Current receipt (pending QA)" : "Selected receipt",
+            value: selectedReceipt ? formatQuantity(receiptProgress.selectedReceived) : "—",
+            className: "text-primary"
+        },
+        { label: "Remaining physical", value: formatQuantity(receiptProgress.remainingPhysical), className: "text-amber-700" },
+        {
+            label: selectedReceipt?.isCurrent ? "Posted accepted before this receipt" : "Posted accepted",
+            value: formatQuantity(receiptProgress.postedAccepted),
+            className: "text-emerald-700"
+        },
+        {
+            label: selectedReceipt?.isCurrent ? "Current accepted (pending QA)" : "Selected accepted",
+            value: selectedReceipt ? formatQuantity(receiptProgress.selectedAccepted) : "—",
+            className: "text-emerald-700"
+        },
+        { label: "Remaining accepted", value: formatQuantity(receiptProgress.remainingAccepted), className: "text-amber-700" },
+    ];
+
     const receiptSelectOptions = React.useMemo(() => receiptOptions.map(option => ({
         value: option.key,
-        label: `${option.receiptNumber} ${option.receiptDate || ""} ${option.postingStatus}`.trim(),
+        label: `${option.receiptNumber} ${option.receiptDate || ""} ${option.postingStatus} received ${formatQuantity(option.receivedQuantity)}`.trim(),
         labelNode: (
             <div className="flex min-w-0 items-center justify-between gap-3">
                 <span className="truncate font-semibold">{option.receiptNumber}</span>
@@ -620,6 +671,77 @@ export default function ShipmentInspectionForm({
                 </div>
             </div>
 
+            {!isReplacement && (
+                <div data-testid="qa-receiving-progress" className="mx-4 mt-4 rounded-xl border border-primary/20 bg-primary/5 p-3">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                            <p className="text-[10px] font-extrabold uppercase tracking-wider text-primary">PO receiving progress</p>
+                            <p className="text-[10px] text-muted-foreground">
+                                Posted quantities are cumulative. The current receipt remains separate until QA posts it.
+                            </p>
+                        </div>
+                        <span className="text-[9px] font-bold text-muted-foreground">
+                            {receiptOptions.length} receipt{receiptOptions.length === 1 ? "" : "s"} on this PO
+                        </span>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
+                        {receiptProgressMetrics.map(metric => (
+                            <div key={metric.label} className="rounded-lg border border-border/70 bg-background/80 px-2.5 py-2">
+                                <p className="text-[8px] font-bold uppercase tracking-wide text-muted-foreground">{metric.label}</p>
+                                <p className={`mt-1 text-sm font-extrabold ${metric.className}`}>{metric.value}</p>
+                            </div>
+                        ))}
+                    </div>
+                    {selectedReceipt && receiptProgress.selectedRejected !== null && receiptProgress.selectedRejected > 0 && (
+                        <p className="mt-2 text-[9px] font-semibold text-amber-700">
+                            Selected receipt rejected: {formatQuantity(receiptProgress.selectedRejected)}
+                        </p>
+                    )}
+                </div>
+            )}
+
+            {!isReplacement && receiptOptions.length > 0 && (
+                <div data-testid="qa-receipt-history" className="mx-4 mt-3 overflow-hidden rounded-xl border bg-background">
+                    <div className="flex flex-col gap-1 border-b bg-muted/20 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                            <p className="text-[10px] font-extrabold uppercase tracking-wider text-foreground">Receipt history</p>
+                            <p className="text-[9px] text-muted-foreground">Select a row to inspect its quantities. Posted receipts are view-only.</p>
+                        </div>
+                        <span className="text-[9px] font-bold text-muted-foreground">Received · Accepted · Rejected</span>
+                    </div>
+                    <div className="divide-y">
+                        {receiptOptions.map(option => {
+                            const isSelected = selectedReceipt?.key === option.key;
+                            return (
+                                <button
+                                    key={option.key}
+                                    type="button"
+                                    onClick={() => onReceiptSelection(option.key)}
+                                    aria-current={isSelected ? "true" : undefined}
+                                    className={`grid w-full grid-cols-[minmax(0,1.5fr)_auto_repeat(3,minmax(72px,0.5fr))] items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-muted/40 ${isSelected ? "bg-primary/5 ring-1 ring-inset ring-primary/30" : ""}`}
+                                >
+                                    <span className="min-w-0">
+                                        <span className="block truncate text-[10px] font-bold text-foreground">{option.receiptNumber}</span>
+                                        <span className="block truncate text-[9px] text-muted-foreground">
+                                            {option.receiptDate || "No date"} · {option.receiptType || "Receipt"}
+                                        </span>
+                                    </span>
+                                    <span className={`rounded-md px-1.5 py-0.5 text-[8px] font-extrabold uppercase ${option.isCurrent
+                                        ? "bg-primary/10 text-primary"
+                                        : "bg-emerald-500/10 text-emerald-700"
+                                        }`}>
+                                        {option.isCurrent ? "Awaiting QA" : option.postingStatus || "Posted"}
+                                    </span>
+                                    <span className="text-right text-[10px] font-semibold text-foreground">{formatQuantity(option.receivedQuantity)}</span>
+                                    <span className="text-right text-[10px] font-semibold text-emerald-700">{formatQuantity(option.acceptedQuantity)}</span>
+                                    <span className="text-right text-[10px] font-semibold text-amber-700">{formatQuantity(option.rejectedQuantity)}</span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
+
             {!readOnly && (
                 <div
                     data-testid="universal-batch-dates"
@@ -857,13 +979,31 @@ export default function ShipmentInspectionForm({
                                     </div>
                                 )}
 
-                                <div className="flex flex-wrap gap-x-5 gap-y-1 border-y py-2 text-[9px] font-semibold text-muted-foreground">
-                                    <span>Previously received: <strong className="text-foreground">{previouslyReceivedVal.toLocaleString()}</strong></span>
-                                    <span>Previously accepted: <strong className="text-emerald-700">{previouslyAcceptedVal.toLocaleString()}</strong></span>
-                                    <span>This receipt accepted: <strong className="text-primary">{currentReceiptAcceptedVal === null ? "—" : currentReceiptAcceptedVal.toLocaleString()}</strong></span>
-                                    <span>This receipt physical: <strong className="text-foreground">{currentReceiptPhysicalVal === null ? "—" : currentReceiptPhysicalVal.toLocaleString()}</strong></span>
-                                    <span>PO accepted balance: <strong className="text-primary">{remainingAcceptedVal.toLocaleString()}</strong></span>
-                                    <span>PO physical balance: <strong className="text-foreground">{remainingVal.toLocaleString()}</strong></span>
+                                <div className="grid grid-cols-2 gap-2 border-y py-3 text-[10px] font-semibold text-muted-foreground sm:grid-cols-3 xl:grid-cols-6">
+                                    <div>
+                                        <span className="block text-[8px] font-bold uppercase tracking-wide">{selectedReceipt?.isCurrent ? "Posted before this receipt" : "Posted to date"}</span>
+                                        <strong className="mt-0.5 block text-foreground">{formatQuantity(previouslyReceivedVal)}</strong>
+                                    </div>
+                                    <div>
+                                        <span className="block text-[8px] font-bold uppercase tracking-wide">Posted accepted</span>
+                                        <strong className="mt-0.5 block text-emerald-700">{formatQuantity(previouslyAcceptedVal)}</strong>
+                                    </div>
+                                    <div>
+                                        <span className="block text-[8px] font-bold uppercase tracking-wide">{selectedReceipt?.readOnly ? "Selected receipt accepted" : "Current receipt accepted"}</span>
+                                        <strong className="mt-0.5 block text-primary">{currentReceiptAcceptedVal === null ? "—" : formatQuantity(currentReceiptAcceptedVal)}</strong>
+                                    </div>
+                                    <div>
+                                        <span className="block text-[8px] font-bold uppercase tracking-wide">{selectedReceipt?.readOnly ? "Selected receipt physical" : "Current receipt physical"}</span>
+                                        <strong className="mt-0.5 block text-foreground">{currentReceiptPhysicalVal === null ? "—" : formatQuantity(currentReceiptPhysicalVal)}</strong>
+                                    </div>
+                                    <div>
+                                        <span className="block text-[8px] font-bold uppercase tracking-wide">Remaining accepted</span>
+                                        <strong className="mt-0.5 block text-primary">{formatQuantity(remainingAcceptedVal)}</strong>
+                                    </div>
+                                    <div>
+                                        <span className="block text-[8px] font-bold uppercase tracking-wide">Remaining physical</span>
+                                        <strong className="mt-0.5 block text-foreground">{formatQuantity(remainingVal)}</strong>
+                                    </div>
                                 </div>
 
                                 {/* QA Inputs Grid - Touch Optimized layout */}
