@@ -14,7 +14,7 @@ import { DirectusShipment } from "@/modules/manufacturing-management/procurement
 import type { PurchaseOrderListQuery } from "../../purchase-orders/_schemas";
 import { buildPurchaseOrderProductPayload, calculatePurchaseOrderTotals } from "../../purchase-orders/_domain";
 import { resolvePurchaseOrderLineId, summarizeReceivingHistory } from "../../qa-receiving/_receiving-history";
-import { movementMmLotId } from "../../services/mm-lots.service";
+import { loadMmInventoryLots, mmInventoryLotId, movementMmLotId } from "../../services/mm-lots.service";
 import { forceReceivedById, isForceReceived, remainingReceivingQuantity } from "../../qa-receiving/_force-received";
 import { resolvePurchaseOrderBranchId } from "../../qa-receiving/_purchase-order-branch";
 import type { QaReceiptSelection } from "../../qa-receiving/_receipt-options";
@@ -237,6 +237,7 @@ interface DirectusInventoryMovement {
     batch_no?: string | null;
     manufacturing_date?: string | null;
     expiry_date?: string | null;
+    inventory_lot_id?: number | { inventory_lot_id?: number; id?: number } | null;
 }
 
 interface ReceivingLotAllocationSnapshot {
@@ -245,6 +246,7 @@ interface ReceivingLotAllocationSnapshot {
     manufacturing_date: string | null;
     expiration_date: string | null;
     quantity: number;
+    qa_status?: string;
 }
 
 interface LatestReceivingSnapshot {
@@ -393,7 +395,8 @@ function movementRelationId(value: unknown, key: string): number {
 function sumMovementAllocations(
     movements: DirectusInventoryMovement[],
     branchId: number | null,
-    mode: "match" | "exclude" = "match"
+    mode: "match" | "exclude" = "match",
+    inventoryLotQaStatuses: ReadonlyMap<number, string> = new Map()
 ): ReceivingLotAllocationSnapshot[] {
     const quantities = new Map<string, ReceivingLotAllocationSnapshot>();
     for (const movement of movements) {
@@ -407,11 +410,13 @@ function sumMovementAllocations(
         const batchNumber = String(movement.batch_no || "").trim();
         const manufacturingDate = movement.manufacturing_date ? String(movement.manufacturing_date).slice(0, 10) : null;
         const expirationDate = movement.expiry_date ? String(movement.expiry_date).slice(0, 10) : null;
+        const inventoryLotId = mmInventoryLotId(movement.inventory_lot_id);
+        const qaStatus = inventoryLotId ? inventoryLotQaStatuses.get(inventoryLotId) : undefined;
         const key = `${storageLotId}:${batchNumber.toLowerCase()}:${manufacturingDate || ""}:${expirationDate || ""}`;
         const current = quantities.get(key);
         quantities.set(key, current
             ? { ...current, quantity: current.quantity + quantity }
-            : { storage_lot_id: storageLotId, batch_number: batchNumber, manufacturing_date: manufacturingDate, expiration_date: expirationDate, quantity });
+            : { storage_lot_id: storageLotId, batch_number: batchNumber, manufacturing_date: manufacturingDate, expiration_date: expirationDate, quantity, qa_status: qaStatus });
     }
     return [...quantities.values()];
 }
@@ -1011,11 +1016,31 @@ export async function fetchShipmentLineItems(
         if (receivingIds.length > 0) {
             const movementParams = new URLSearchParams({
                 "filter[source_document_id][_in]": receivingIds.join(","),
-                fields: "source_document_id,product_id,mm_lot_id,lot_id,branch_id,quantity,batch_no,manufacturing_date,expiry_date",
+                fields: "source_document_id,product_id,mm_lot_id,lot_id,branch_id,inventory_lot_id,quantity,batch_no,manufacturing_date,expiry_date",
                 limit: "-1"
             });
-            const movementRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?${movementParams.toString()}`, { headers, cache: "no-store" });
+            let movementRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?${movementParams.toString()}`, { headers, cache: "no-store" });
+            if (!movementRes.ok) {
+                movementParams.set("fields", "source_document_id,product_id,mm_lot_id,lot_id,branch_id,quantity,batch_no,manufacturing_date,expiry_date");
+                movementRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?${movementParams.toString()}`, { headers, cache: "no-store" });
+            }
             movementData = (movementRes.ok ? (await movementRes.json()).data || [] : []) as DirectusInventoryMovement[];
+        }
+        const inventoryLotIds = [...new Set(movementData
+            .map(movement => mmInventoryLotId(movement.inventory_lot_id))
+            .filter((id): id is number => Number.isSafeInteger(id) && Number(id) > 0))];
+        const inventoryLotQaStatuses = new Map<number, string>();
+        if (inventoryLotIds.length > 0) {
+            try {
+                const inventoryLots = await loadMmInventoryLots({ ids: inventoryLotIds, onlyActive: false });
+                for (const inventoryLot of inventoryLots) {
+                    const inventoryLotId = mmInventoryLotId(inventoryLot.inventory_lot_id);
+                    const qaStatus = String(inventoryLot.qa_status || "").trim().toUpperCase();
+                    if (inventoryLotId && qaStatus) inventoryLotQaStatuses.set(inventoryLotId, qaStatus === "REJECTED" ? "DAMAGED" : qaStatus);
+                }
+            } catch (error) {
+                console.warn("[Manufacturing Directus API] Unable to load QA statuses for receiving allocations.", error);
+            }
         }
 
         // Fetch actual product details from products table as a fallback/guarantee
@@ -1167,12 +1192,15 @@ export async function fetchShipmentLineItems(
                 : [];
             const latestAcceptedAllocations = sumMovementAllocations(
                 latestReceiptMovements,
-                Number.isSafeInteger(latestReceiptBranchId) ? latestReceiptBranchId : null
+                Number.isSafeInteger(latestReceiptBranchId) ? latestReceiptBranchId : null,
+                "match",
+                inventoryLotQaStatuses
             );
             const rejectedAllocations = sumMovementAllocations(
                 latestReceiptMovements,
                 Number.isSafeInteger(latestReceiptBranchId) ? latestReceiptBranchId : null,
-                "exclude"
+                "exclude",
+                inventoryLotQaStatuses
             );
             const latestMovementWithDate = latestReceiptMovements.find(row => Boolean(row.manufacturing_date));
             const latestReceivedQuantity = Number(latestReceipt?.received_quantity || 0);

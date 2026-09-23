@@ -696,14 +696,16 @@ export async function POST(request: Request) {
                             batch_no: allocation.batchNumber,
                             manufacturing_date: allocation.manufacturingDate,
                             expiration_date: allocation.expirationDate,
-                            quantity: allocation.quantity
+                            quantity: allocation.quantity,
+                            qa_status: allocation.qaStatus
                         })),
                         rejected_lot_allocations: line.rejectedLotAllocations.map(allocation => ({
                             storage_lot_id: allocation.storageLotId,
                             batch_no: allocation.batchNumber,
                             manufacturing_date: allocation.manufacturingDate,
                             expiration_date: allocation.expirationDate,
-                            quantity: allocation.quantity
+                            quantity: allocation.quantity,
+                            qa_status: allocation.qaStatus
                         })),
                         qa_results: result.evaluations.map(evaluation => ({
                             spec_id: evaluation.specId,

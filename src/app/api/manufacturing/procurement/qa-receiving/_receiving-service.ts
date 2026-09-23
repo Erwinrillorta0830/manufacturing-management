@@ -738,7 +738,8 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 quantity: allocation.quantity,
                 batchNumber: allocation.batch_no,
                 manufacturingDate: allocation.manufacturing_date,
-                expirationDate: allocation.expiration_date
+                expirationDate: allocation.expiration_date,
+                qaStatus: allocation.qa_status
             }));
             const acceptedLotAllocations = normalizeReceivingLotAllocations(
                 accepted,
@@ -751,7 +752,8 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 quantity: allocation.quantity,
                 batchNumber: allocation.batch_no,
                 manufacturingDate: allocation.manufacturing_date,
-                expirationDate: allocation.expiration_date
+                expirationDate: allocation.expiration_date,
+                qaStatus: allocation.qa_status
             }));
             const rejectedLotAllocations = normalizeRejectedLotAllocations(
                 rejected,
@@ -1115,7 +1117,8 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                      targetBranchId: number,
                      storageLotId: number,
                      quantity: number,
-                     qaStatus: string,
+                     movementKind: "Passed" | "Rejected",
+                     inventoryQaStatus: "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED",
                      reason: string | null,
                      batchNumber: string,
                      manufacturingDate: string | null,
@@ -1132,14 +1135,24 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                          manufacturingDate,
                          expiryDate: expirationDate,
                          unitCost,
-                         qaStatus: qaStatus === "Rejected" ? "REJECTED" : "GOOD",
-                         sourceType: qaStatus === "Rejected"
+                         qaStatus: inventoryQaStatus,
+                         sourceType: movementKind === "Rejected"
                              ? "PURCHASE_RECEIVING_QA_REJECTED"
                              : "PURCHASE_RECEIVING_QA_ACCEPTED",
                          sourceReference,
                          remarks: reason,
                          createdBy: options.actorUserId
                      });
+                     if (!inventoryLot.created) {
+                         const existingQaStatus = String(inventoryLot.qa_status || "GOOD").trim().toUpperCase();
+                         const normalizedExistingQaStatus = existingQaStatus === "REJECTED" ? "DAMAGED" : existingQaStatus;
+                         if (normalizedExistingQaStatus !== inventoryQaStatus) {
+                             throw new ReceivingError(
+                                 `Batch ${batchNumber} in storage lot ${storageLotId} is already registered as ${existingQaStatus}. Use the same QA status or a distinct batch number.`,
+                                 409
+                             );
+                         }
+                     }
                      if (inventoryLot.created && !createdInventoryLotIds.includes(inventoryLot.inventory_lot_id)) {
                          createdInventoryLotIds.push(inventoryLot.inventory_lot_id);
                      }
@@ -1213,6 +1226,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                          acceptedAllocation.storageLotId,
                          acceptedAllocation.quantity,
                          "Passed",
+                         acceptedAllocation.qaStatus,
                          null,
                          acceptedAllocation.batchNumber,
                          acceptedAllocation.manufacturingDate,
@@ -1229,6 +1243,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                             rejectedAllocation.storageLotId,
                             rejectedAllocation.quantity,
                             "Rejected",
+                            rejectedAllocation.qaStatus,
                             line.item.rejection_reason,
                             rejectedAllocation.batchNumber,
                             rejectedAllocation.manufacturingDate,
