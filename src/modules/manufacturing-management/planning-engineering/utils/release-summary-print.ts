@@ -1,11 +1,11 @@
 import { formatProductionValue } from "./production-timing";
-import { formatManufacturingMoney } from "./cogs-helper";
 
 export interface ReleaseSummaryComponent {
     name: string;
     code: string;
     category: string;
     uom: string;
+    kilogramsPerUnit?: number | null;
     needed: number;
     demandNeeded: number;
     available: number;
@@ -23,8 +23,9 @@ export interface ReleaseSummaryRoutingStep {
 export interface ReleaseSummaryFinancials {
     materials: number;
     directLabor: number;
-    factoryOverhead: number;
-    factoryOverheadBasis: string;
+    machineOverhead: number;
+    configuredOverhead: number;
+    configuredOverheadBasis: string;
     baseCogs: number;
     adjustedCogs: number;
 }
@@ -52,12 +53,18 @@ function formatQuantity(value: number): string {
     return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
-function formatMoney(value: number): string {
-    return `₱${formatProductionValue(value)}`;
+function formatComponentQuantity(value: number, uom: string, kilogramsPerUnit?: number | null): string {
+    const primary = `${formatQuantity(value)} ${uom}`;
+    const factor = Number(kilogramsPerUnit);
+    const normalizedUom = uom.trim().toLowerCase();
+    if (!Number.isFinite(factor) || factor <= 0 || normalizedUom === "kg" || normalizedUom.includes("kilogram")) {
+        return primary;
+    }
+    return `${primary} (≈ ${formatQuantity(value * factor)} kg)`;
 }
 
-function formatMaterialMoney(value: number): string {
-    return `₱${formatManufacturingMoney(value)}`;
+function formatMoney(value: number): string {
+    return `₱${formatProductionValue(value)}`;
 }
 
 function escapeHtml(value: string): string {
@@ -83,9 +90,9 @@ export function buildReleaseSummaryHtml(data: ReleaseSummaryPrintData): string {
                                     ${component.code ? `<div style="font-size: 9px; color: #64748b; font-weight: normal; margin-top: 1px;">${escapeHtml(component.code)}</div>` : ""}
                                 </td>
                                 <td style="padding: 6px 8px; border-bottom: 1px solid #e2e8f0; color: #475569;">${escapeHtml(component.category)}</td>
-                                <td style="padding: 6px 8px; border-bottom: 1px solid #e2e8f0; text-align: right;">${formatQuantity(component.demandNeeded)} ${escapeHtml(component.uom)}</td>
-                                <td style="padding: 6px 8px; border-bottom: 1px solid #e2e8f0; text-align: right;">${formatQuantity(component.needed)} ${escapeHtml(component.uom)}</td>
-                                <td style="padding: 6px 8px; border-bottom: 1px solid #e2e8f0; text-align: right; color: #64748b;">${formatQuantity(component.available)} ${escapeHtml(component.uom)}</td>
+                                <td style="padding: 6px 8px; border-bottom: 1px solid #e2e8f0; text-align: right;">${escapeHtml(formatComponentQuantity(component.demandNeeded, component.uom, component.kilogramsPerUnit))}</td>
+                                <td style="padding: 6px 8px; border-bottom: 1px solid #e2e8f0; text-align: right;">${escapeHtml(formatComponentQuantity(component.needed, component.uom, component.kilogramsPerUnit))}</td>
+                                <td style="padding: 6px 8px; border-bottom: 1px solid #e2e8f0; text-align: right; color: #64748b;">${escapeHtml(formatComponentQuantity(component.available, component.uom, component.kilogramsPerUnit))}</td>
                                 <td style="padding: 6px 8px; border-bottom: 1px solid #e2e8f0; text-align: center; font-weight: bold; color: ${component.sufficient ? "#059669" : "#e11d48"};">
                                     ${component.sufficient ? "Sufficient" : "Insufficient"}
                                 </td>
@@ -106,15 +113,19 @@ export function buildReleaseSummaryHtml(data: ReleaseSummaryPrintData): string {
         ? `
                             <tr>
                                 <td style="padding: 5px 8px;">Direct Materials / unit</td>
-                                <td style="padding: 5px 8px; text-align: right;">${formatMaterialMoney(data.financials.materials)}</td>
+                                <td style="padding: 5px 8px; text-align: right;">${formatMoney(data.financials.materials)}</td>
                             </tr>
                             <tr>
                                 <td style="padding: 5px 8px;">Direct Labor / unit</td>
                                 <td style="padding: 5px 8px; text-align: right;">${formatMoney(data.financials.directLabor)}</td>
                             </tr>
                             <tr>
-                                <td style="padding: 5px 8px;">Factory Overhead / unit <span style="font-size: 9px; color: #64748b;">(${escapeHtml(data.financials.factoryOverheadBasis)})</span></td>
-                                <td style="padding: 5px 8px; text-align: right;">${formatMoney(data.financials.factoryOverhead)}</td>
+                                <td style="padding: 5px 8px;">Machine &amp; Routing Overhead / unit</td>
+                                <td style="padding: 5px 8px; text-align: right;">${formatMoney(data.financials.machineOverhead)}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 5px 8px;">Configured Factory Overhead / unit <span style="font-size: 9px; color: #64748b;">(${escapeHtml(data.financials.configuredOverheadBasis)})</span></td>
+                                <td style="padding: 5px 8px; text-align: right;">${formatMoney(data.financials.configuredOverhead)}</td>
                             </tr>
                             <tr>
                                 <td style="padding: 5px 8px; font-weight: bold;">Est. Unit COGS (Base)</td>

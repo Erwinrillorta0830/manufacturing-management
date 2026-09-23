@@ -416,7 +416,7 @@ function availableFromDispositionLedger(source: SourceReceiving, all: Quarantine
 async function currentStockOnHand(source: SourceReceiving): Promise<number> {
     const movementRows = await loadMovementRowsForMmLots(
         source.mmLotId ? [source.mmLotId] : [],
-        "movement_id,mm_lot_id,lot_id,product_id,branch_id,batch_no,quantity"
+        [source.branchId]
     );
     return Math.max(0, movementRows
         .filter(row => relationId(row.product_id, "product_id") === source.productId
