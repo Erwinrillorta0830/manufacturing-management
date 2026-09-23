@@ -241,8 +241,7 @@ export function calculateProductVersionCOGS(
         totalMachineCost += routeBreakdown.totalMachineCost;
     });
 
-    const laborPositionsList = (Array.isArray(versionData.labor_positions) ? versionData.labor_positions : []) as VersionPosition[];
-    const directLaborCost = calculateDirectLaborCost(laborPositionsList, baseQuantity);
+    const directLaborCost = calculateDirectLaborCost(laborPositions, baseQuantity);
 
     const breakdown = calculateCostBreakdown({
         materialsCost,
@@ -254,7 +253,7 @@ export function calculateProductVersionCOGS(
         machineHours,
         lineElapsedHours,
         totalMachineCost,
-        laborPositions: laborPositionsList
+        laborPositions
     });
 
     return breakdown.unitCost;
