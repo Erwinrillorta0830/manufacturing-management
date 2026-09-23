@@ -106,6 +106,27 @@ export interface FormSiblingAllocation {
   batches?: Array<{ quantity?: number | null; batch_no?: string | null; manufacturing_date?: string | null; expiry_date?: string | null; qa_status?: QAStatus | null }>;
 }
 
+const QA_STATUS_OPTIONS: Array<{ value: QAStatus; label: string; color: string; dot: string }> = [
+  { value: 'GOOD', label: 'GOOD', color: 'text-emerald-600 dark:text-emerald-400', dot: 'bg-emerald-500' },
+  { value: 'DAMAGED', label: 'Damaged', color: 'text-rose-600 dark:text-rose-400', dot: 'bg-rose-500' },
+  { value: 'QUARANTINED', label: 'Quarantine', color: 'text-amber-600 dark:text-amber-400', dot: 'bg-amber-500' },
+  { value: 'EXPIRED', label: 'Expired', color: 'text-purple-600 dark:text-purple-400', dot: 'bg-purple-500' },
+];
+
+const REJECTED_QA_STATUS_VALUES = new Set<QAStatus>(['DAMAGED', 'QUARANTINED', 'EXPIRED']);
+
+function qaStatusForDisposition(disposition: 'accepted' | 'rejected' | undefined, status?: QAStatus | null): QAStatus {
+  if (disposition === 'accepted') return 'GOOD';
+  if (disposition === 'rejected') {
+    return status === 'DAMAGED' || status === 'QUARANTINED' || status === 'EXPIRED' ? status : 'DAMAGED';
+  }
+  return status || 'GOOD';
+}
+
+function isBadStockLotForDisposition(lot: MMLot | undefined | null, disposition: 'accepted' | 'rejected' | undefined): boolean {
+  return disposition ? disposition === 'rejected' : lot ? isBadStockLot(lot) : false;
+}
+
 
 
 interface LotBatchSelectionModalProps {
@@ -130,6 +151,7 @@ interface LotBatchSelectionModalProps {
   initialLotAllocations?: LotAllocationGroup[];
   existingFormAllocations?: FormSiblingAllocation[];
   qaStorageLots?: QAStorageLot[];
+  qaDisposition?: 'accepted' | 'rejected';
   onValidationChange?: (isValid: boolean, errors: string[]) => void;
   onConfirm: (result: LotBatchSelectionResult) => void;
 }
@@ -228,6 +250,7 @@ export function QAMultiLotBatchAllocationModal({
   initialLotAllocations,
   existingFormAllocations,
   qaStorageLots,
+  qaDisposition,
   onValidationChange,
   onConfirm,
 }: LotBatchSelectionModalProps) {
@@ -494,7 +517,23 @@ export function QAMultiLotBatchAllocationModal({
       setLoading(true);
       try {
         const [lotsData, branchInvLotsData, branchOnhandData, productInvLotsData] = await Promise.all([
-          fetchLotsByBranch(branchId),
+          qaStorageLots
+            ? Promise.resolve(qaStorageLots
+                .filter(lot => lot.is_selectable !== false && !lot.read_only)
+                .map(lot => ({
+                  lot_id: Number(lot.lot_id),
+                  lot_name: lot.lot_name,
+                  branch_id: Number(lot.allocation_branch_id || lot.branch_id || branchId || 0),
+                  unit_id: Number(lot.unit_id ?? (typeof lot.uom_id === 'number' ? lot.uom_id : 0)) || null,
+                  max_batch_capacity: Number(lot.capacity ?? lot.max_batch_capacity ?? 0),
+                  status: ['ACTIVE', 'EMPTY', 'VACANT'].includes(String(lot.status || 'ACTIVE').trim().toUpperCase())
+                    ? 'ACTIVE'
+                    : String(lot.status),
+                  current_stock_quantity: Number(lot.occupiedQuantity || 0),
+                  is_bad_stock: lot.allocation_disposition === 'rejected',
+                  branch_is_bad_stock: lot.allocation_disposition === 'rejected',
+                } as MMLot)))
+            : fetchLotsByBranch(branchId),
           fetchInventoryLots({ branchId }),
           fetchBatchOnhand({ branchId }),
           productId ? fetchInventoryLots({ productId }) : Promise.resolve([]),
@@ -859,12 +898,14 @@ export function QAMultiLotBatchAllocationModal({
         // 1. If item already has structured lot allocations, restore them cleanly
         if (initialLotAllocations && initialLotAllocations.length > 0) {
           const targetClass = resolveProductClassification(productType, productCategory || categoryName, productCode, productName);
-          const preferBad = initialValues?.qa_status && initialValues.qa_status !== 'GOOD';
+          const preferBad = qaDisposition
+            ? qaDisposition === 'rejected'
+            : Boolean(initialValues?.qa_status && initialValues.qa_status !== 'GOOD');
 
           const compatibleLot = (lotsData || []).find((l) => {
             if (l.status && l.status !== 'ACTIVE') return false;
             if (!isLotMatchingUom(l)) return false;
-            const lotIsBad = isBadStockLot(l);
+            const lotIsBad = isBadStockLotForDisposition(l, qaDisposition);
             if (preferBad && !lotIsBad) return false;
             if (!preferBad && lotIsBad) return false;
             const stored = storedMap.get(Number(l.lot_id));
@@ -874,7 +915,7 @@ export function QAMultiLotBatchAllocationModal({
           }) || (lotsData || []).find((l) => {
             if (l.status && l.status !== 'ACTIVE') return false;
             if (!isLotMatchingUom(l)) return false;
-            const lotIsBad = isBadStockLot(l);
+            const lotIsBad = isBadStockLotForDisposition(l, qaDisposition);
             if (preferBad && !lotIsBad) return false;
             if (!preferBad && lotIsBad) return false;
             return true;
@@ -895,7 +936,7 @@ export function QAMultiLotBatchAllocationModal({
             const lId = Number(matchedLot?.lot_id || (qaStorageLots
               ? g.lot_id
               : (isLotMatchingUom({ lot_id: g.lot_id, unit_id: g.unit_id, unit_name: g.unit_name } as MMLot) ? g.lot_id : 0)));
-            const isLotBad = matchedLot ? isBadStockLot(matchedLot) : false;
+            const isLotBad = isBadStockLotForDisposition(matchedLot, qaDisposition);
 
             return {
               ...g,
@@ -924,9 +965,10 @@ export function QAMultiLotBatchAllocationModal({
                   manufacturing_date: mfg,
                   expiry_date: exp,
                   quantity: Number(b.quantity ?? 0),
-                  qa_status: (b.qa_status && b.qa_status !== 'GOOD')
-                    ? b.qa_status
-                    : (isLotBad ? ('EXPIRED' as QAStatus) : (b.qa_status || lookedUp?.qaStatus || 'GOOD')),
+                  qa_status: qaStatusForDisposition(
+                    qaDisposition,
+                    b.qa_status || lookedUp?.qaStatus || (isLotBad ? 'EXPIRED' : 'GOOD')
+                  ),
                 };
               }),
             };
@@ -996,7 +1038,7 @@ export function QAMultiLotBatchAllocationModal({
               expiry_date: lookedUp?.expDate || initExp,
               quantity: bQty,
               unit_cost: initialValues.unit_cost ?? lookedUp?.unitCost,
-              qa_status: initialValues.qa_status || lookedUp?.qaStatus || 'GOOD',
+              qa_status: qaStatusForDisposition(qaDisposition, initialValues.qa_status || lookedUp?.qaStatus),
             };
           });
 
@@ -1027,12 +1069,14 @@ export function QAMultiLotBatchAllocationModal({
         // 3. Fresh clean initialization for new product:
         // Prioritize finding an active, UOM-matching, and product-type compatible lot (matching bad stock preference)
         const targetClass = resolveProductClassification(productType, productCategory || categoryName, productCode, productName);
-        const preferBad = initialValues?.qa_status && initialValues.qa_status !== 'GOOD';
+        const preferBad = qaDisposition
+          ? qaDisposition === 'rejected'
+          : Boolean(initialValues?.qa_status && initialValues.qa_status !== 'GOOD');
 
         const compatibleLot = (lotsData || []).find((l) => {
           if (l.status && l.status !== 'ACTIVE') return false;
           if (!isLotMatchingUom(l)) return false;
-          const lotIsBad = isBadStockLot(l);
+          const lotIsBad = isBadStockLotForDisposition(l, qaDisposition);
           if (preferBad && !lotIsBad) return false;
           if (!preferBad && lotIsBad) return false;
           const stored = storedMap.get(Number(l.lot_id));
@@ -1042,7 +1086,7 @@ export function QAMultiLotBatchAllocationModal({
         }) || (lotsData || []).find((l) => {
           if (l.status && l.status !== 'ACTIVE') return false;
           if (!isLotMatchingUom(l)) return false;
-          const lotIsBad = isBadStockLot(l);
+          const lotIsBad = isBadStockLotForDisposition(l, qaDisposition);
           if (preferBad && !lotIsBad) return false;
           if (!preferBad && lotIsBad) return false;
           return true;
@@ -1054,10 +1098,14 @@ export function QAMultiLotBatchAllocationModal({
 
         if (compatibleLot) {
           const lId = Number(compatibleLot.lot_id);
-          const isLotBad = isBadStockLot(compatibleLot);
-          const defaultQA: QAStatus = isLotBad
-            ? (initialValues?.qa_status && initialValues.qa_status !== 'GOOD' ? initialValues.qa_status : 'EXPIRED')
-            : (initialValues?.qa_status || 'GOOD');
+          const isLotBad = isBadStockLotForDisposition(compatibleLot, qaDisposition);
+          const defaultQA: QAStatus = qaDisposition === 'accepted'
+            ? 'GOOD'
+            : qaDisposition === 'rejected'
+              ? (initialValues?.qa_status && initialValues.qa_status !== 'GOOD' ? initialValues.qa_status : 'DAMAGED')
+              : isLotBad
+                ? (initialValues?.qa_status && initialValues.qa_status !== 'GOOD' ? initialValues.qa_status : 'EXPIRED')
+                : (initialValues?.qa_status || 'GOOD');
           const initialQty = (initialValues as { quantity?: number; total_quantity?: number })?.quantity ?? initialValues?.total_quantity ?? (requestedQuantity || 0);
           const cleanKey = String(initialValues?.batch_no || '').trim().toLowerCase();
           const cleanLookedUp = cleanKey ? batchMetaMap.get(cleanKey) : undefined;
@@ -1085,7 +1133,7 @@ export function QAMultiLotBatchAllocationModal({
               expiry_date: lookedUp?.expDate || cleanExp,
               quantity: bQty,
               unit_cost: initialValues?.unit_cost ?? lookedUp?.unitCost,
-              qa_status: lookedUp?.qaStatus || defaultQA,
+              qa_status: qaStatusForDisposition(qaDisposition, lookedUp?.qaStatus || defaultQA),
             };
           });
 
@@ -1125,7 +1173,7 @@ export function QAMultiLotBatchAllocationModal({
     return () => {
       isMounted = false;
     };
-  }, [open, branchId, productId, requestedQuantity, productUomId, productType, productCategory, categoryName, productCode, productName, initialLotAllocations, initialValues, existingFormAllocations, isLotMatchingUom, allowedLotIds, qaStorageLots]);
+  }, [open, branchId, productId, requestedQuantity, productUomId, productType, productCategory, categoryName, productCode, productName, initialLotAllocations, initialValues, existingFormAllocations, isLotMatchingUom, allowedLotIds, qaStorageLots, qaDisposition]);
 
   // Compute total allocated quantity across all lots & batches
   const totalAllocated = useMemo(() => {
@@ -1148,14 +1196,16 @@ export function QAMultiLotBatchAllocationModal({
     const usedLotIds = new Set(lotGroups.map((g) => Number(g.lot_id)));
 
     // Prioritize selecting an active, UOM-matching, and product-type compatible lot (and matching bad stock state)
-    const currentIsBad = lotGroups.some((g) => (g.batches || []).some((b) => b.qa_status && b.qa_status !== 'GOOD'));
+    const currentIsBad = qaDisposition
+      ? qaDisposition === 'rejected'
+      : lotGroups.some((g) => (g.batches || []).some((b) => b.qa_status && b.qa_status !== 'GOOD'));
 
     const nextLot =
       lots.find((l) => {
         if (usedLotIds.has(Number(l.lot_id))) return false;
         if (l.status && l.status !== 'ACTIVE') return false;
         if (!isLotMatchingUom(l)) return false;
-        const lotIsBad = isBadStockLot(l);
+        const lotIsBad = isBadStockLotForDisposition(l, qaDisposition);
         if (currentIsBad && !lotIsBad) return false;
         if (!currentIsBad && lotIsBad) return false;
         const comp = checkLotCompatibility(Number(l.lot_id));
@@ -1165,7 +1215,7 @@ export function QAMultiLotBatchAllocationModal({
         if (usedLotIds.has(Number(l.lot_id))) return false;
         if (l.status && l.status !== 'ACTIVE') return false;
         if (!isLotMatchingUom(l)) return false;
-        const lotIsBad = isBadStockLot(l);
+        const lotIsBad = isBadStockLotForDisposition(l, qaDisposition);
         if (currentIsBad && !lotIsBad) return false;
         if (!currentIsBad && lotIsBad) return false;
         return true;
@@ -1175,8 +1225,12 @@ export function QAMultiLotBatchAllocationModal({
     if (!nextLot) return;
 
     const lId = Number(nextLot.lot_id);
-    const isNextLotBad = isBadStockLot(nextLot);
-    const defaultQA: QAStatus = isNextLotBad ? 'DAMAGED' : 'GOOD';
+    const isNextLotBad = isBadStockLotForDisposition(nextLot, qaDisposition);
+    const defaultQA: QAStatus = qaDisposition === 'accepted'
+      ? 'GOOD'
+      : qaDisposition === 'rejected'
+        ? 'DAMAGED'
+        : isNextLotBad ? 'DAMAGED' : 'GOOD';
 
     // Calculate unallocated quantity remaining for multi-lot split
     const currentAllocated = lotGroups.reduce((sum, g) => sum + (g.batches || []).reduce((bSum, b) => bSum + Number(b.quantity || 0), 0), 0);
@@ -1235,7 +1289,7 @@ export function QAMultiLotBatchAllocationModal({
     const matchedLot = lots.find((l) => Number(l.lot_id) === newLotId);
     if (!matchedLot) return;
 
-    const newLotIsBad = isBadStockLot(matchedLot);
+    const newLotIsBad = isBadStockLotForDisposition(matchedLot, qaDisposition);
 
     setLotGroups(
       lotGroups.map((g, i) => {
@@ -1244,9 +1298,7 @@ export function QAMultiLotBatchAllocationModal({
           const preservedBatches = (g.batches && g.batches.length > 0)
             ? g.batches.map((b) => ({
                 ...b,
-                qa_status: newLotIsBad
-                  ? (b.qa_status && b.qa_status !== 'GOOD' ? b.qa_status : ('EXPIRED' as QAStatus))
-                  : (b.qa_status === 'EXPIRED' ? 'GOOD' : (b.qa_status || 'GOOD')),
+                qa_status: qaStatusForDisposition(qaDisposition, b.qa_status),
               }))
             : [
                 {
@@ -1281,8 +1333,8 @@ export function QAMultiLotBatchAllocationModal({
       lotGroups.map((g, i) => {
         if (i === groupIndex) {
           const groupLot = lots.find((l) => Number(l.lot_id) === Number(g.lot_id));
-          const isLotBad = isBadStockLot(groupLot);
-          const defaultQA: QAStatus = isLotBad ? 'DAMAGED' : 'GOOD';
+          const isLotBad = isBadStockLotForDisposition(groupLot, qaDisposition);
+          const defaultQA = qaStatusForDisposition(qaDisposition, isLotBad ? 'DAMAGED' : 'GOOD');
 
           const prevBatch = g.batches?.[g.batches.length - 1] || g.batches?.[0];
           const defaultMfg = toolbarDates[groupIndex]?.mfg || prevBatch?.manufacturing_date || (initialValues?.manufacturing_date ? String(initialValues.manufacturing_date).substring(0, 10) : '');
@@ -1382,7 +1434,7 @@ export function QAMultiLotBatchAllocationModal({
           quantity: splitQty,
           mfgDate: b.manufacturing_date || (initialValues?.manufacturing_date ? String(initialValues.manufacturing_date).substring(0, 10) : ''),
           expDate: b.expiry_date || (initialValues?.expiry_date ? String(initialValues.expiry_date).substring(0, 10) : ''),
-          qaStatus: b.qa_status || 'GOOD',
+          qaStatus: qaStatusForDisposition(qaDisposition, b.qa_status),
           unitCost: b.unit_cost,
           inventoryLotId: b.inventory_lot_id,
         });
@@ -1396,7 +1448,7 @@ export function QAMultiLotBatchAllocationModal({
         quantity: targetTotal,
         mfgDate: initialValues?.manufacturing_date ? String(initialValues.manufacturing_date).substring(0, 10) : '',
         expDate: initialValues?.expiry_date ? String(initialValues.expiry_date).substring(0, 10) : '',
-        qaStatus: (initialValues?.qa_status as QAStatus) || 'GOOD',
+        qaStatus: qaStatusForDisposition(qaDisposition, initialValues?.qa_status as QAStatus | undefined),
         unitCost: initialValues?.unit_cost,
         inventoryLotId: initialValues?.inventory_lot_id,
       });
@@ -1417,7 +1469,7 @@ export function QAMultiLotBatchAllocationModal({
       let totalLotAllocated = 0;
 
       const existingBatchNos = (g.batches || []).map((b) => b.batch_no);
-      const isLotBad = matchedLot ? isBadStockLot(matchedLot) : false;
+      const isLotBad = isBadStockLotForDisposition(matchedLot, qaDisposition);
 
       while (remainingStream.length > 0 && (spaceForThisLot > 0 || isLastGroup)) {
         const currentItem = remainingStream[0];
@@ -1433,9 +1485,7 @@ export function QAMultiLotBatchAllocationModal({
         if (canTake <= 0) break;
 
         const bIdx = lotBatches.length;
-        const targetQA: QAStatus = isLotBad
-          ? (currentItem.qaStatus !== 'GOOD' ? currentItem.qaStatus : ('EXPIRED' as QAStatus))
-          : currentItem.qaStatus;
+        const targetQA = qaStatusForDisposition(qaDisposition, currentItem.qaStatus);
 
         lotBatches.push({
           inventory_lot_id: currentItem.inventoryLotId,
@@ -1459,7 +1509,7 @@ export function QAMultiLotBatchAllocationModal({
       }
 
       if (lotBatches.length === 0) {
-        const fallbackQA: QAStatus = isLotBad ? 'DAMAGED' : 'GOOD';
+        const fallbackQA = qaStatusForDisposition(qaDisposition, isLotBad ? 'DAMAGED' : 'GOOD');
         lotBatches.push({
           batch_no: existingBatchNos[0] || initialValues?.batch_no || '',
           quantity: 0,
@@ -1526,7 +1576,7 @@ export function QAMultiLotBatchAllocationModal({
     const matchedLot = lots.find((l) => Number(l.lot_id) === Number(group.lot_id));
     const maxCap = Number(matchedLot?.max_batch_capacity ?? group.max_batch_capacity ?? 0);
     const curStock = Math.max(0, Number(lotStockQtyMap.get(Number(group.lot_id)) ?? group.current_stock_quantity ?? 0));
-    const isLotBad = matchedLot ? isBadStockLot(matchedLot) : false;
+    const isLotBad = isBadStockLotForDisposition(matchedLot, qaDisposition);
 
     const currentBatches = group.batches || [];
     const updatedBatches: BatchRowAllocation[] = [];
@@ -1560,7 +1610,7 @@ export function QAMultiLotBatchAllocationModal({
         quantity: neededForThisLot,
       });
     } else {
-      const fallbackQA: QAStatus = isLotBad ? 'DAMAGED' : 'GOOD';
+      const fallbackQA = qaStatusForDisposition(qaDisposition, isLotBad ? 'DAMAGED' : 'GOOD');
       updatedBatches.push({
         batch_no: initialValues?.batch_no || '',
         quantity: neededForThisLot,
@@ -1602,6 +1652,8 @@ export function QAMultiLotBatchAllocationModal({
     field: keyof BatchRowAllocation,
     value: unknown
   ) => {
+    if (field === 'qa_status' && qaDisposition === 'accepted') return;
+
     setLotGroups(
       lotGroups.map((g, i) => {
         if (i === groupIndex) {
@@ -1653,9 +1705,6 @@ export function QAMultiLotBatchAllocationModal({
     setLotGroups(
       lotGroups.map((g, i) => {
         if (i === groupIndex) {
-          const groupLot = lots.find((l) => Number(l.lot_id) === Number(g.lot_id));
-          const isLotBad = isBadStockLot(groupLot);
-
           const cleanBatch = batchNo.trim().toLowerCase();
           const lookedUp = cleanBatch ? batchMetaLookup.get(cleanBatch) : undefined;
 
@@ -1683,9 +1732,7 @@ export function QAMultiLotBatchAllocationModal({
 
           const updatedBatches = g.batches.map((b, bIdx) => {
             if (bIdx === batchIndex) {
-              const targetQA: QAStatus = isLotBad
-                ? (resolvedQA && resolvedQA !== 'GOOD' ? resolvedQA : 'DAMAGED')
-                : (resolvedQA || 'GOOD');
+              const targetQA = qaStatusForDisposition(qaDisposition, resolvedQA || b.qa_status);
 
               return {
                 ...b,
@@ -1767,7 +1814,7 @@ export function QAMultiLotBatchAllocationModal({
       }
 
       // 3.5 Bad Stock vs Standard Storage Lot Check
-      const lotIsBad = isBadStockLot(lotObj);
+      const lotIsBad = isBadStockLotForDisposition(lotObj, qaDisposition);
 
       (g.batches || []).forEach((b, bIdx) => {
         const batchIsBad = b.qa_status && b.qa_status !== 'GOOD';
@@ -1848,7 +1895,7 @@ export function QAMultiLotBatchAllocationModal({
     });
 
     return errors;
-  }, [lotGroups, totalAllocated, productUomName, adjustmentType, checkLotCompatibility, lotStoredSummaryMap, currentItemClassification, lots, isLotMatchingUom, requestedQuantity, requireBatchDates]);
+  }, [lotGroups, totalAllocated, productUomName, adjustmentType, checkLotCompatibility, lotStoredSummaryMap, currentItemClassification, lots, isLotMatchingUom, requestedQuantity, qaDisposition, requireBatchDates]);
 
   // QA Receiving supplies the authoritative lot lookup, including stored product
   // classifications and capacity. Keep these checks inside this QA-specific
@@ -1862,6 +1909,11 @@ export function QAMultiLotBatchAllocationModal({
     };
     const qaLotsById = new Map(qaStorageLots.map(lot => [Number(lot.lot_id), lot]));
     const targetClassification = currentItemClassification.code;
+    const allowedQaStatuses = qaDisposition === 'accepted'
+      ? new Set<QAStatus>(['GOOD'])
+      : qaDisposition === 'rejected'
+        ? new Set<QAStatus>(['DAMAGED', 'QUARANTINED', 'EXPIRED'])
+        : null;
 
     for (const group of lotGroups) {
       const lotId = Number(group.lot_id);
@@ -1873,7 +1925,16 @@ export function QAMultiLotBatchAllocationModal({
         continue;
       }
 
-      if (lot.status && lot.status !== 'ACTIVE') {
+      if (allowedQaStatuses) {
+        for (const [batchIndex, batch] of (group.batches || []).entries()) {
+          if (!allowedQaStatuses.has(batch.qa_status)) {
+            push(`${label}, Batch #${batchIndex + 1}: choose a QA status allowed for ${qaDisposition} inventory.`);
+          }
+        }
+      }
+
+      const lotStatus = String(lot.status || '').trim().toUpperCase();
+      if (lotStatus && !['ACTIVE', 'EMPTY', 'VACANT'].includes(lotStatus)) {
         push(`${label}: the storage lot is not active.`);
       }
       if (lot.is_selectable === false || lot.read_only) {
@@ -1926,7 +1987,7 @@ export function QAMultiLotBatchAllocationModal({
     }
 
     return errors;
-  }, [currentItemClassification.code, existingFormAllocations, lotGroups, productId, productUomId, productUomName, qaStorageLots]);
+  }, [currentItemClassification.code, existingFormAllocations, lotGroups, productId, productUomId, productUomName, qaDisposition, qaStorageLots]);
 
   const combinedValidationErrors = useMemo(
     () => Array.from(new Set([...validationErrors, ...qaValidationErrors])),
@@ -1956,7 +2017,7 @@ export function QAMultiLotBatchAllocationModal({
       manufacturing_date: firstBatch?.manufacturing_date || null,
       expiry_date: firstBatch?.expiry_date || null,
       unit_cost: firstBatch?.unit_cost,
-      qa_status: firstBatch?.qa_status || 'GOOD',
+      qa_status: qaStatusForDisposition(qaDisposition, firstBatch?.qa_status),
       lot_allocations: lotGroups,
       total_quantity: totalAllocated,
     };
@@ -2185,7 +2246,9 @@ export function QAMultiLotBatchAllocationModal({
                 const projectedTotalStock = currentStockQty + netNewStockQty;
                 const maxCap = group.max_batch_capacity || 0;
 
-                const isGroupBadStock = isBadStockLot(groupLot);
+                const isGroupBadStock = qaDisposition
+                  ? qaDisposition === 'rejected'
+                  : isBadStockLotForDisposition(groupLot, qaDisposition);
                 const hasBadStockConflict = isGroupBadStock
                   ? (group.batches || []).some((b) => b.qa_status === 'GOOD')
                   : (group.batches || []).some((b) => b.qa_status && b.qa_status !== 'GOOD');
@@ -2246,11 +2309,13 @@ export function QAMultiLotBatchAllocationModal({
                           </span>
                           <div className="w-80">
                             {(() => {
-                              const groupIsBad = (group.batches || []).some((b) => b.qa_status && b.qa_status !== 'GOOD');
+                              const groupIsBad = qaDisposition
+                                ? qaDisposition === 'rejected'
+                                : (group.batches || []).some((b) => b.qa_status && b.qa_status !== 'GOOD');
                               const optionsLots = lots.filter((l) => {
                                 if (l.status && l.status !== 'ACTIVE') return false;
                                 if (!isLotMatchingUom(l)) return false;
-                                const lotIsBad = isBadStockLot(l);
+                                const lotIsBad = isBadStockLotForDisposition(l, qaDisposition);
                                 if (groupIsBad && !lotIsBad) return false;
                                 if (!groupIsBad && lotIsBad) return false;
                                 return true;
@@ -2262,7 +2327,7 @@ export function QAMultiLotBatchAllocationModal({
                                     options={optionsLots.map((l) => {
                                       const lComp = checkLotCompatibility(Number(l.lot_id));
                                       const lStored = lotStoredSummaryMap.get(Number(l.lot_id));
-                                      const lotIsBad = isBadStockLot(l);
+                                      const lotIsBad = isBadStockLotForDisposition(l, qaDisposition);
                                       const lStockQty = lotStockQtyMap.get(Number(l.lot_id)) || 0;
                                       const isLotEmpty = !lStored || lStored.is_empty || ((lStored.total_stored_quantity ?? 0) === 0 && lStockQty === 0 && (lStored.stored_products?.length ?? 0) === 0 && (lStored.active_batch_count ?? 0) === 0);
 
@@ -2959,41 +3024,42 @@ export function QAMultiLotBatchAllocationModal({
                                   QA Status *
                                 </Label>
                                 <Select
-                                  value={batch.qa_status}
+                                  value={qaDisposition === 'accepted' ? 'GOOD' : batch.qa_status}
+                                  disabled={readOnly || qaDisposition === 'accepted'}
                                   onValueChange={(val) => handleUpdateBatchField(gIdx, bIdx, 'qa_status', val as QAStatus)}
                                 >
                                   <SelectTrigger
                                     className={`h-9 text-xs font-semibold ${
                                       (!isGroupBadStock && batch.qa_status !== 'GOOD') || (isGroupBadStock && batch.qa_status === 'GOOD')
                                         ? 'border-destructive ring-1 ring-destructive/40 text-destructive bg-destructive/5'
-                                        : ''
+                                        : qaDisposition === 'accepted'
+                                          ? 'disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100'
+                                          : ''
                                     }`}
+                                    title={qaDisposition === 'accepted' ? 'Good quantity is automatically assigned QA status GOOD.' : undefined}
                                   >
                                     <SelectValue placeholder="Status" />
                                   </SelectTrigger>
                                   <SelectContent>
-                                    <SelectItem value="GOOD" className="text-xs">
-                                      <span className="flex items-center gap-1.5 font-bold text-emerald-600 dark:text-emerald-400">
-                                        <span className="w-2 h-2 rounded-full bg-emerald-500" /> GOOD
-                                      </span>
-                                    </SelectItem>
-                                    <SelectItem value="DAMAGED" className="text-xs">
-                                      <span className="flex items-center gap-1.5 font-bold text-rose-600 dark:text-rose-400">
-                                        <span className="w-2 h-2 rounded-full bg-rose-500" /> DAMAGED
-                                      </span>
-                                    </SelectItem>
-                                    <SelectItem value="QUARANTINED" className="text-xs">
-                                      <span className="flex items-center gap-1.5 font-bold text-amber-600 dark:text-amber-400">
-                                        <span className="w-2 h-2 rounded-full bg-amber-500" /> QUARANTINED
-                                      </span>
-                                    </SelectItem>
-                                    <SelectItem value="EXPIRED" className="text-xs">
-                                      <span className="flex items-center gap-1.5 font-bold text-purple-600 dark:text-purple-400">
-                                        <span className="w-2 h-2 rounded-full bg-purple-500" /> EXPIRED
-                                      </span>
-                                    </SelectItem>
+                                    {(qaDisposition === 'accepted'
+                                      ? QA_STATUS_OPTIONS.filter(option => option.value === 'GOOD')
+                                      : qaDisposition === 'rejected'
+                                        ? QA_STATUS_OPTIONS.filter(option => REJECTED_QA_STATUS_VALUES.has(option.value))
+                                        : QA_STATUS_OPTIONS
+                                    ).map(option => (
+                                      <SelectItem key={option.value} value={option.value} className="text-xs">
+                                        <span className={`flex items-center gap-1.5 font-bold ${option.color}`}>
+                                          <span className={`w-2 h-2 rounded-full ${option.dot}`} /> {option.label}
+                                        </span>
+                                      </SelectItem>
+                                    ))}
                                   </SelectContent>
                                 </Select>
+                                {qaDisposition === 'accepted' && (
+                                  <span className="mt-1 block text-[10px] text-muted-foreground">
+                                    Fixed to GOOD for accepted quantity.
+                                  </span>
+                                )}
                                 {!isGroupBadStock && batch.qa_status !== 'GOOD' && (
                                   <span className="text-[10px] text-destructive font-bold flex items-center gap-1 mt-1 leading-tight">
                                     <AlertTriangle className="w-3 h-3 shrink-0" />

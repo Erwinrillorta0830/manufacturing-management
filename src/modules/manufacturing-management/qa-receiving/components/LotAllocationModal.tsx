@@ -29,10 +29,9 @@ function toSharedLotAllocations(
     allocations: ReceivingLotAllocationInput[],
     storageLots: StorageLot[],
     productUomName: string,
-    disposition: AllocationDisposition,
+    defaultQaStatus: QAStatus,
 ): SharedLotAllocationGroup[] {
     const groups = new Map<number, SharedLotAllocationGroup>();
-    const qaStatus: QAStatus = disposition === "rejected" ? "DAMAGED" : "GOOD";
 
     for (const allocation of allocations) {
         const lotId = Number(allocation.storageLotId);
@@ -57,7 +56,7 @@ function toSharedLotAllocations(
             manufacturing_date: allocation.manufacturingDate || "",
             expiry_date: allocation.expirationDate || "",
             quantity: normalizedQuantity,
-            qa_status: qaStatus,
+            qa_status: allocation.qaStatus || defaultQaStatus,
         });
         current.allocated_quantity += normalizedQuantity;
         groups.set(lotId, current);
@@ -76,6 +75,7 @@ function fromSharedLotAllocations(result: LotBatchSelectionResult): ReceivingLot
         manufacturingDate: batch.manufacturing_date ? String(batch.manufacturing_date).slice(0, 10) : "",
         expirationDate: batch.expiry_date ? String(batch.expiry_date).slice(0, 10) : "",
         quantity: Number.isFinite(Number(batch.quantity)) ? Math.max(0, Number(batch.quantity)) : 0,
+        qaStatus: batch.qa_status,
     })));
 }
 
@@ -98,7 +98,6 @@ export interface LotAllocationModalProps {
     expectedQuantity: number;
     storageLots: StorageLot[];
     readOnly: boolean;
-    batchDateDefaults: { manufacturingDate: string; expirationDate: string };
     loadStorageLotBatches: (productId: number, lotId: number, branchId?: number, disposition?: "accepted" | "rejected") => Promise<StorageLotBatch[]>;
     siblingAllocations?: FormSiblingAllocation[];
     onValidationChange?: (isValid: boolean, errors: string[]) => void;
@@ -141,11 +140,16 @@ export function LotAllocationModal({
         return Array.from(ids);
     }, [allocations, otherAllocations, storageLots]);
     const initialLotAllocations = React.useMemo(
-        () => toSharedLotAllocations(allocations, storageLots, productUomName, disposition),
+        () => toSharedLotAllocations(allocations, storageLots, productUomName, disposition === "rejected" ? "DAMAGED" : "GOOD"),
         [allocations, disposition, productUomName, storageLots],
     );
     const existingFormAllocations = React.useMemo(() => {
-        const siblingLotAllocations = toSharedLotAllocations(otherAllocations, storageLots, productUomName, disposition);
+        const siblingLotAllocations = toSharedLotAllocations(
+            otherAllocations,
+            storageLots,
+            productUomName,
+            disposition === "rejected" ? "GOOD" : "DAMAGED",
+        );
         const currentLineAllocations = siblingLotAllocations.length === 0 ? [] : [{
             product_id: productId,
             product_name: productName,
@@ -191,6 +195,7 @@ export function LotAllocationModal({
             existingFormAllocations={existingFormAllocations}
             allowedLotIds={allowedLotIds}
             qaStorageLots={storageLots}
+            qaDisposition={disposition}
             onValidationChange={onValidationChange}
             onConfirm={handleConfirm}
         />
@@ -215,7 +220,6 @@ export interface LotAllocationSectionProps {
     storageLots: StorageLot[];
     readOnly: boolean;
     compact?: boolean;
-    batchDateDefaults: { manufacturingDate: string; expirationDate: string };
     loadStorageLotBatches: (productId: number, lotId: number, branchId?: number, disposition?: "accepted" | "rejected") => Promise<StorageLotBatch[]>;
     siblingAllocations?: FormSiblingAllocation[];
     onValidationChange?: (isValid: boolean, errors: string[]) => void;
@@ -240,7 +244,6 @@ export function LotAllocationSection({
     storageLots,
     readOnly,
     compact = false,
-    batchDateDefaults,
     loadStorageLotBatches,
     siblingAllocations,
     onValidationChange,
@@ -335,7 +338,6 @@ export function LotAllocationSection({
                 expectedQuantity={expectedQuantity}
                 storageLots={storageLots}
                 readOnly={readOnly}
-                batchDateDefaults={batchDateDefaults}
                 loadStorageLotBatches={loadStorageLotBatches}
                 siblingAllocations={siblingAllocations}
                 onValidationChange={onValidationChange}

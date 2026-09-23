@@ -1,3 +1,5 @@
+export type ReceivingInventoryQaStatus = "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED";
+
 export interface ReceivingLotAllocationDraft {
     storageLotId: number;
     quantity: number;
@@ -7,6 +9,8 @@ export interface ReceivingLotAllocationDraft {
     batch_no?: unknown;
     manufacturing_date?: unknown;
     expiration_date?: unknown;
+    qaStatus?: unknown;
+    qa_status?: unknown;
 }
 
 export interface ReceivingLotAllocation {
@@ -15,6 +19,7 @@ export interface ReceivingLotAllocation {
     manufacturingDate: string | null;
     expirationDate: string | null;
     quantity: number;
+    qaStatus: ReceivingInventoryQaStatus;
 }
 
 function text(value: unknown): string {
@@ -26,13 +31,23 @@ function dateValue(value: unknown): string | null {
     return valueText || null;
 }
 
-function normalizeAllocation(allocation: ReceivingLotAllocationDraft): ReceivingLotAllocation {
+function normalizeQaStatus(value: unknown, fallback: ReceivingInventoryQaStatus): ReceivingInventoryQaStatus {
+    return value === "GOOD" || value === "DAMAGED" || value === "QUARANTINED" || value === "EXPIRED"
+        ? value
+        : fallback;
+}
+
+function normalizeAllocation(
+    allocation: ReceivingLotAllocationDraft,
+    fallbackQaStatus: ReceivingInventoryQaStatus
+): ReceivingLotAllocation {
     return {
         storageLotId: Number(allocation.storageLotId),
         batchNumber: text(allocation.batchNumber ?? allocation.batch_no),
         manufacturingDate: dateValue(allocation.manufacturingDate ?? allocation.manufacturing_date),
         expirationDate: dateValue(allocation.expirationDate ?? allocation.expiration_date),
-        quantity: Number(allocation.quantity)
+        quantity: Number(allocation.quantity),
+        qaStatus: normalizeQaStatus(allocation.qaStatus ?? allocation.qa_status, fallbackQaStatus)
     };
 }
 
@@ -41,7 +56,7 @@ export function normalizeReceivingLotAllocations(
     allocations: readonly ReceivingLotAllocationDraft[] | undefined
 ): ReceivingLotAllocation[] {
     if (acceptedQuantity <= 0) return [];
-    return (allocations || []).map(normalizeAllocation);
+    return (allocations || []).map(allocation => normalizeAllocation(allocation, "GOOD"));
 }
 
 function allocationError(
@@ -55,7 +70,8 @@ function allocationError(
             : null;
     }
 
-    const normalized = (allocations || []).map(normalizeAllocation);
+    const defaultQaStatus = disposition === "accepted" ? "GOOD" : "DAMAGED";
+    const normalized = (allocations || []).map(allocation => normalizeAllocation(allocation, defaultQaStatus));
     if (normalized.length === 0) return `Select at least one storage lot for ${disposition} inventory.`;
 
     const seen = new Set<string>();
@@ -69,6 +85,12 @@ function allocationError(
         }
         if (!Number.isFinite(allocation.quantity) || allocation.quantity <= 0) {
             return `Every ${disposition}-lot allocation must have a positive quantity.`;
+        }
+        if (disposition === "accepted" && allocation.qaStatus !== "GOOD") {
+            return "Accepted inventory must have QA status GOOD.";
+        }
+        if (disposition === "rejected" && allocation.qaStatus === "GOOD") {
+            return "Rejected inventory must be marked DAMAGED, QUARANTINED, or EXPIRED.";
         }
         const key = allocationKey(allocation);
         if (seen.has(key)) {
@@ -96,7 +118,7 @@ export function normalizeRejectedLotAllocations(
     allocations: readonly ReceivingLotAllocationDraft[] | undefined
 ): ReceivingLotAllocation[] {
     if (rejectedQuantity <= 0) return [];
-    return (allocations || []).map(normalizeAllocation);
+    return (allocations || []).map(allocation => normalizeAllocation(allocation, "DAMAGED"));
 }
 
 export function rejectedLotAllocationError(

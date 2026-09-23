@@ -199,6 +199,7 @@ export async function previewReceivingQa(payload: {
             manufacturingDate: string | null;
             expirationDate: string | null;
             quantity: number;
+            qaStatus: "GOOD";
         }>;
         rejectedLotAllocations: Array<{
             storageLotId: number;
@@ -206,6 +207,7 @@ export async function previewReceivingQa(payload: {
             manufacturingDate: string | null;
             expirationDate: string | null;
             quantity: number;
+            qaStatus: "DAMAGED" | "QUARANTINED" | "EXPIRED";
         }>;
         remarks: string | null;
         isPackaging: boolean;
