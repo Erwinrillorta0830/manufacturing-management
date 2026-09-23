@@ -110,6 +110,7 @@ export interface FormSiblingAllocation {
 interface LotBatchSelectionModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  inventoryType?: 'FINISHED_GOODS' | 'RAW_MATERIALS';
   branchId?: number;
   productId?: number;
   productName?: string;
@@ -204,6 +205,7 @@ function BatchQuantityInput({
 export function LotBatchSelectionModal({
   open,
   onOpenChange,
+  inventoryType,
   branchId,
   productId,
   productName,
@@ -254,8 +256,34 @@ export function LotBatchSelectionModal({
 
   // Current item classification
   const currentItemClassification = useMemo(() => {
-    return resolveProductClassification(productType, productCategory || categoryName, productCode, productName);
-  }, [productType, productCategory, categoryName, productCode, productName]);
+    const resolved = resolveProductClassification(productType, productCategory || categoryName, productCode, productName);
+    if (resolved.code === 'OTHER' && inventoryType) {
+      if (inventoryType === 'FINISHED_GOODS') {
+        return { code: 'FG' as ProductClassification, label: 'Finished Goods' };
+      }
+      if (inventoryType === 'RAW_MATERIALS') {
+        return { code: 'RM' as ProductClassification, label: 'Raw Materials' };
+      }
+    }
+    return resolved;
+  }, [productType, productCategory, categoryName, productCode, productName, inventoryType]);
+
+  // Deep-reset all internal state when inventory type changes
+  const prevInventoryTypeRef = useRef(inventoryType);
+  useEffect(() => {
+    if (prevInventoryTypeRef.current !== inventoryType) {
+      prevInventoryTypeRef.current = inventoryType;
+      setLotGroups([]);
+      setToolbarDates({});
+      setBranchOnhandList([]);
+      setLots([]);
+      setBranchInvLotsList([]);
+      setLotBatchCountMap(new Map());
+      setLotStockQtyMap(new Map());
+      setLotStoredSummaryMap(new Map());
+      setBatchMetaLookup(new Map());
+    }
+  }, [inventoryType]);
 
   // Helper to look up an existing on-hand record for a specific lot and batch number (strictly matching same product, netting across conditions)
   const getExistingBatchOnhand = useCallback(
@@ -479,6 +507,12 @@ export function LotBatchSelectionModal({
         setLotGroups([]);
         setToolbarDates({});
         setBranchOnhandList([]);
+        setLots([]);
+        setBranchInvLotsList([]);
+        setLotBatchCountMap(new Map());
+        setLotStockQtyMap(new Map());
+        setLotStoredSummaryMap(new Map());
+        setBatchMetaLookup(new Map());
       });
       return;
     }
@@ -1142,7 +1176,7 @@ export function LotBatchSelectionModal({
     return () => {
       isMounted = false;
     };
-  }, [open, branchId, productId, requestedQuantity, productUomId, productType, productCategory, categoryName, productCode, productName, initialLotAllocations, initialValues, existingFormAllocations, isLotMatchingUom]);
+  }, [open, inventoryType, branchId, productId, requestedQuantity, productUomId, productType, productCategory, categoryName, productCode, productName, initialLotAllocations, initialValues, existingFormAllocations, isLotMatchingUom]);
 
   // Compute total allocated quantity across all lots & batches
   const totalAllocated = useMemo(() => {

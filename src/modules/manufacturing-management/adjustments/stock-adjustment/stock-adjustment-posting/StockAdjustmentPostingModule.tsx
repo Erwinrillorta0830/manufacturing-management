@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useStockAdjustment } from "@/modules/manufacturing-management/adjustments/stock-adjustment/stock-adjustment-posting/hooks/useStockAdjustment";
-import { StockAdjustmentForm } from "@/modules/manufacturing-management/adjustments/stock-adjustment/stock-adjustment-posting/components/forms/StockAdjustmentForm";
+import { StockAdjustmentForm } from "./components/forms/StockAdjustmentForm";
 import { ModuleSkeleton } from "@/components/shared/ModuleSkeleton";
 import ErrorPage from "@/components/shared/ErrorPage";
+import { useStockAdjustment } from "./hooks/useStockAdjustment";
 
 interface StockAdjustmentModuleProps {
   mode?: "creation" | "posting";

@@ -17,10 +17,11 @@ interface RawItem {
     product_id: number;
     product_name?: string;
     product_code?: string;
+    product_type?: unknown;
     cost_per_unit?: number;
     price_per_unit?: number;
     product_brand?: { brand_name: string };
-    product_category?: { category_name: string };
+    product_category?: { category_name: string } | number;
     unit_id?: number;
     unit_of_measurement?: { unit_id?: number; unit_name: string; order: number };
     barcode?: string;
@@ -42,6 +43,7 @@ interface RawItem {
   expiry_date?: string | null;
   inventory_condition?: string | null;
   qa_status?: string | null;
+  product_type?: unknown;
 }
 
 interface PPSData {
@@ -332,7 +334,7 @@ export const stockAdjustmentService = {
 
     const docNos = parsedHeaders.map(h => h.doc_no);
     const itemsRes = await directusFetch<{ data: RawItem[] }>(
-      `${DIRECTUS_URL}/items/mm_stock_adjustment?filter={"doc_no":{"_in":${JSON.stringify(docNos)}}}&fields=doc_no,quantity,product_id.product_id,product_id.price_per_unit,product_id.cost_per_unit,unit_id.unit_name&limit=-1`
+      `${DIRECTUS_URL}/items/mm_stock_adjustment?filter={"doc_no":{"_in":${JSON.stringify(docNos)}}}&fields=doc_no,quantity,product_id.product_id,product_id.product_name,product_id.product_code,product_id.description,product_id.product_type,product_id.product_category.category_name,product_id.price_per_unit,product_id.cost_per_unit,unit_id.unit_name&limit=-1`
     );
     const allItems = itemsRes.data || [];
 
@@ -441,7 +443,7 @@ export const stockAdjustmentService = {
     const header = headerRes.data;
 
     const itemsRes = await directusFetch<{ data: RawItem[] }>(
-      `${DIRECTUS_URL}/items/mm_stock_adjustment?filter={"doc_no":{"_eq":"${header.doc_no}"}}&fields=id,doc_no,product_id,inventory_lot_id,lot_id,batch_no,manufacturing_date,expiry_date,branch_id,type,created_at,quantity,unit_cost,inventory_condition,source_type,created_by,updated_by,updated_at,remarks,unit_id,lot_id.lot_id,lot_id.lot_name,product_id.product_id,product_id.product_name,product_id.product_code,product_id.cost_per_unit,product_id.price_per_unit,product_id.unit_of_measurement,product_id.unit_of_measurement.unit_id,product_id.unit_of_measurement.unit_name,product_id.unit_of_measurement.order,product_id.product_brand.brand_name,product_id.product_category.category_name,product_id.barcode,product_id.description,unit_id.unit_id,unit_id.unit_name&limit=-1`
+      `${DIRECTUS_URL}/items/mm_stock_adjustment?filter={"doc_no":{"_eq":"${header.doc_no}"}}&fields=id,doc_no,product_id,inventory_lot_id,lot_id,batch_no,manufacturing_date,expiry_date,branch_id,type,created_at,quantity,unit_cost,inventory_condition,source_type,created_by,updated_by,updated_at,remarks,unit_id,lot_id.lot_id,lot_id.lot_name,product_id.product_id,product_id.product_name,product_id.product_code,product_id.product_type,product_id.cost_per_unit,product_id.price_per_unit,product_id.unit_of_measurement,product_id.unit_of_measurement.unit_id,product_id.unit_of_measurement.unit_name,product_id.unit_of_measurement.order,product_id.product_brand.brand_name,product_id.product_category.category_name,product_id.barcode,product_id.description,unit_id.unit_id,unit_id.unit_name&limit=-1`
     );
     const items = (itemsRes.data || []).map((item: RawItem) => {
       const cost = item.cost_per_unit || item.product_id?.cost_per_unit || item.product_id?.price_per_unit || 0;
@@ -467,7 +469,8 @@ export const stockAdjustmentService = {
         unit_id: resolvedUnitId ? Number(resolvedUnitId) : undefined,
         unit_name: (typeof item.unit_id === 'object' && item.unit_id !== null ? item.unit_id.unit_name : undefined) || item.product_id?.unit_of_measurement?.unit_name || item.unit_name || "pcs",
         brand_name: item.product_id?.product_brand?.brand_name || item.brand_name || "N/A",
-        category_name: item.product_id?.product_category?.category_name || "N/A"
+        category_name: (typeof item.product_id?.product_category === "object" && item.product_id?.product_category !== null ? item.product_id?.product_category?.category_name : undefined) || "N/A",
+        product_type: item.product_id?.product_type || item.product_type
       };
     });
 

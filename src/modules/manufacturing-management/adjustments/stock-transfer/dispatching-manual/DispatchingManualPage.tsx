@@ -13,7 +13,7 @@ import { toast } from 'sonner';
 import { resolveBranchSalesman, getLotAndBatchDisplayLines } from '../services/stock-transfer.helpers';
 import { StockAllocationModal } from '../shared/components/StockAllocationModal';
 import { isBadStockLot } from '../services/lot-tracking.service';
-import { getProductClassification } from '@/modules/manufacturing-management/adjustments/stock-transfer/shared/components/ProductSelectionModal';
+import { getProductClassification } from '../shared/components/ProductSelectionModal';
 import type { EnrichedProduct } from '../types/stock-transfer.types';
 import type { StockAllocationPlan, BatchAllocationResult } from '../types/lot-tracking.types';
 

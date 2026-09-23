@@ -11,6 +11,7 @@ import {
   StockAdjustmentHeader,
   StockAdjustmentItem
 } from "../../stock-adjustment-registration/types/stock-adjustment.schema";
+import { resolveProductClassification } from "../../stock-adjustment-registration/services/lot-tracking.service";
 
 export const stockAdjustmentSummaryService = {
   // Helper to extract if posted or draft
@@ -177,17 +178,28 @@ export const stockAdjustmentSummaryService = {
   },
 
   computeProductData(data: StockAdjustmentHeader[]): ProductItem[] {
-    const productMap = new Map<string, { name: string; code: string; quantity: number; value: number }>();
+    const productMap = new Map<string, ProductItem>();
 
     data.forEach((item) => {
       if (Array.isArray(item.items)) {
         item.items.forEach((sub: StockAdjustmentItem) => {
-          const name = (typeof sub.product_id === "object" && sub.product_id !== null ? (sub.product_id as unknown as { description?: string; product_name?: string }).description : undefined) || sub.product_name || "Unknown Product";
-          const code = sub.product_code || "";
-          const cost = Number(sub.cost_per_unit || (typeof sub.product_id === "object" && sub.product_id !== null ? (sub.product_id as unknown as { cost_per_unit?: number }).cost_per_unit : 0)) || 0;
+          const prodObj = typeof sub.product_id === "object" && sub.product_id !== null ? (sub.product_id as unknown as Record<string, unknown>) : null;
+          const name = (prodObj?.description as string) || (prodObj?.product_name as string) || sub.product_name || "Unknown Product";
+          const code = (prodObj?.product_code as string) || sub.product_code || "";
+          const cost = Number(sub.cost_per_unit || (prodObj?.cost_per_unit as number) || (prodObj?.price_per_unit as number)) || 0;
           const qty = Number(sub.quantity) || 0;
-          const key = `${code}-${name}`;
-          const existing = productMap.get(key) || { name, code, quantity: 0, value: 0 };
+          const rawType = sub.product_type ?? prodObj?.product_type;
+          const rawCat = sub.category_name ?? (typeof prodObj?.product_category === "object" && prodObj?.product_category !== null ? (prodObj.product_category as { category_name?: string }).category_name : prodObj?.product_category);
+
+          const classification = resolveProductClassification(
+            rawType,
+            rawCat,
+            code || undefined,
+            name || undefined
+          );
+          const productType = classification.label || "-";
+          const key = `${code}-${name}-${productType}`;
+          const existing = productMap.get(key) || { name, code, productType, quantity: 0, value: 0 };
 
           existing.quantity += qty;
           existing.value += qty * cost;

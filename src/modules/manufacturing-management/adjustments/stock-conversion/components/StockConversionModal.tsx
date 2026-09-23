@@ -250,10 +250,25 @@ export function StockConversionModal({
               })
             );
 
-            // Filter onhand data for this specific source product
-            const onhandData = (allBranchOnhand || []).filter(
-              (oh) => Number(oh.productId) === Number(product.productId)
-            );
+            const currentUnitId = Number(product.currentUnitId || 0);
+            // Filter onhand data for this specific source product, matching unit, and GOOD inventory condition
+            const onhandData = (allBranchOnhand || []).filter((oh) => {
+              const rawOh = oh as unknown as Record<string, unknown>;
+              const pId = Number(oh.productId ?? rawOh.product_id ?? 0);
+              if (pId !== Number(product.productId)) return false;
+
+              const uId = Number(oh.unitId ?? rawOh.unit_id ?? 0);
+              if (currentUnitId > 0 && uId > 0 && uId !== currentUnitId) {
+                return false;
+              }
+
+              const condition = String(oh.inventoryCondition ?? rawOh.inventory_condition ?? "GOOD").toUpperCase();
+              if (condition !== "GOOD") {
+                return false;
+              }
+
+              return Number(oh.onhandQuantity ?? rawOh.onhand_quantity ?? 0) > 0;
+            });
 
             // Map lot_id to lot_name from lotsData (authoritative database names)
             const lotNameMap = new Map<number, string>();
@@ -313,7 +328,7 @@ export function StockConversionModal({
                 (!il.status || il.status === "ACTIVE")
             );
 
-            // Build live batches strictly from mm_inventory_lots with live on-hand quantities
+            // Build live batches strictly from Spring Boot onhand quantities (never stale Directus available_quantity)
             const liveBatches: MMInventoryLot[] = productInvLots
               .map((invLot) => {
                 const invLotId = Number(invLot.inventory_lot_id || 0);
@@ -324,12 +339,17 @@ export function StockConversionModal({
                 let availableQty = 0;
                 if (invLotId > 0 && onhandByInvLotId.has(invLotId)) {
                   availableQty = onhandByInvLotId.get(invLotId) || 0;
+                  onhandByInvLotId.delete(invLotId);
                 } else if (lotBatchKey && onhandByLotAndBatch.has(lotBatchKey)) {
                   availableQty = onhandByLotAndBatch.get(lotBatchKey) || 0;
+                  onhandByLotAndBatch.delete(lotBatchKey);
                 } else if (batchStr && onhandByBatchNo.has(batchStr)) {
                   availableQty = onhandByBatchNo.get(batchStr) || 0;
+                  onhandByBatchNo.delete(batchStr);
                 } else {
-                  availableQty = Number(invLot.available_quantity || 0);
+                  // Strictly 0 if not found in live Spring Boot on-hand view.
+                  // NEVER fall back to stale invLot.available_quantity from Directus.
+                  availableQty = 0;
                 }
 
                 const resolvedLotName = lotNameMap.get(lId) || invLot.lot_name;
@@ -361,6 +381,42 @@ export function StockConversionModal({
                 };
               })
               .filter((b) => Number(b.available_quantity || 0) > 0);
+
+            // Include any live on-hand batches from Spring Boot that were not in mm_inventory_lots
+            (onhandData || []).forEach((oh) => {
+              const qty = Number(oh.onhandQuantity || 0);
+              if (qty <= 0) return;
+              const invLotId = Number(oh.inventoryLotId || 0);
+              const lotId = Number(oh.mmLotId || 0);
+              const batchStr = String(oh.batchNo || "").trim().toLowerCase();
+
+              const alreadyClaimed = liveBatches.some((b) => {
+                if (invLotId > 0 && b.inventory_lot_id === invLotId) return true;
+                if (lotId > 0 && batchStr && b.lot_id === lotId && b.batch_no.trim().toLowerCase() === batchStr) return true;
+                if (batchStr && b.batch_no.trim().toLowerCase() === batchStr) return true;
+                return false;
+              });
+
+              if (!alreadyClaimed) {
+                const cleanLotName = lotNameMap.get(lotId) || (lotId > 0 ? `Lot #${lotId}` : "Main Lot");
+                liveBatches.push({
+                  inventory_lot_id: invLotId > 0 ? invLotId : lotId,
+                  lot_id: lotId,
+                  branch_id: Number(oh.branchId || branchId),
+                  product_id: Number(oh.productId || product.productId),
+                  batch_no: String(oh.batchNo || ""),
+                  manufacturing_date: (oh.manufacturingDate as string) || null,
+                  expiry_date: (oh.expirationDate as string) || null,
+                  unit_cost: Number(product.pricePerUnit ?? 0),
+                  qa_status: ((oh.inventoryCondition || "GOOD") as string).toUpperCase() as QAStatus,
+                  status: "ACTIVE" as const,
+                  available_quantity: qty,
+                  lot_name: cleanLotName,
+                  product_name: oh.productName || product.productName,
+                  product_code: oh.productCode || product.productCode,
+                });
+              }
+            });
 
             setLots(enrichedLots);
             setSourceBatches(liveBatches);
@@ -573,13 +629,13 @@ export function StockConversionModal({
     return "";
   }, [activeAllocations]);
 
-  // Live total available stock (strictly from registered branch batches in mm_inventory_lots)
+  // Live total available stock (strictly from live on-hand batches in Spring Boot)
   const totalAvailableStock = useMemo(() => {
     if (sourceBatches.length > 0) {
       return sourceBatches.reduce((sum, b) => sum + (Number(b.available_quantity) || 0), 0);
     }
-    return 0;
-  }, [sourceBatches]);
+    return Number(product?.quantity || 0);
+  }, [sourceBatches, product?.quantity]);
 
   // ── Auto-split Target Batches & Cascade MFG / EXP Dates from Source Allocations ──
   useEffect(() => {

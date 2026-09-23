@@ -53,7 +53,11 @@ export function ProductSupplierCharts() {
                   width={100}
                 />
                 <Tooltip
-                  formatter={(value: number) => [`₱${value.toLocaleString()}`, "Adjusted Value"]}
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  formatter={(value: number, _name: string, entry: any) => [
+                    `₱${value.toLocaleString()}`,
+                    `Adjusted Value${entry?.payload?.productType && entry.payload.productType !== "-" ? ` (${entry.payload.productType})` : ""}`,
+                  ]}
                   contentStyle={{ background: "rgba(30, 41, 59, 0.95)", borderRadius: "8px", border: "none" }}
                   itemStyle={{ color: "#fff", fontSize: "12px", fontWeight: "bold" }}
                 />
@@ -92,7 +96,11 @@ export function ProductSupplierCharts() {
                   width={100}
                 />
                 <Tooltip
-                  formatter={(value: number) => [`${value.toLocaleString()} units`, "Adjusted Qty"]}
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  formatter={(value: number, _name: string, entry: any) => [
+                    `${value.toLocaleString()} units`,
+                    `Adjusted Qty${entry?.payload?.productType && entry.payload.productType !== "-" ? ` (${entry.payload.productType})` : ""}`,
+                  ]}
                   contentStyle={{ background: "rgba(30, 41, 59, 0.95)", borderRadius: "8px", border: "none" }}
                   itemStyle={{ color: "#fff", fontSize: "12px", fontWeight: "bold" }}
                 />

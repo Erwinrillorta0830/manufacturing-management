@@ -38,6 +38,7 @@ export interface BranchItem {
 export interface ProductItem {
   name: string;
   code: string;
+  productType: string;
   quantity: number;
   value: number;
 }

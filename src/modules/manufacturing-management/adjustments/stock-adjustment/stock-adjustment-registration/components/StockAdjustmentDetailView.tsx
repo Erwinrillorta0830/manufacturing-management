@@ -199,7 +199,7 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
           (product.product_code || item.product_code) ?? undefined,
           (product.description || product.product_name || item.product_name) ?? undefined
         );
-        const productType = classification.label || "Finished Good";
+        const productType = classification.label || "-";
 
         // Row 1: Product Header Row
         tableRows.push([
@@ -726,7 +726,7 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
                   (product.product_code || item.product_code) ?? undefined,
                   (product.description || product.product_name || item.product_name) ?? undefined
                 );
-                const productType = classification.label || "Finished Good";
+                const productType = classification.label || "-";
 
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const lotAllocations = (item as unknown as { lot_allocations?: any[] }).lot_allocations || [];

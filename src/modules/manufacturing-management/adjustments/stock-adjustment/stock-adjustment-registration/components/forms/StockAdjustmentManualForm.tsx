@@ -830,7 +830,7 @@ export function StockAdjustmentManualForm({
           (item.product_code || (typeof item.product_id === "object" ? (item.product_id as { product_code?: string })?.product_code : undefined)) ?? undefined,
           (item.product_name || (typeof item.product_id === "object" ? (item.product_id as { product_name?: string; description?: string })?.description || (item.product_id as { product_name?: string })?.product_name : undefined)) ?? undefined
         );
-        const productType = classification.label || "Finished Good";
+        const productType = classification.label || "-";
 
         // Row 1: Product Header Row
         tableRows.push([
@@ -1279,6 +1279,16 @@ export function StockAdjustmentManualForm({
   const watchedBranchId = useWatch({ control: form.control, name: "branch_id" });
   const watchedSupplierId = useWatch({ control: form.control, name: "supplier_id" });
   const watchedInventoryType = useWatch({ control: form.control, name: "inventory_type" });
+
+  // Reset lot/batch modal selection state whenever inventory type changes
+  const prevWatchedInventoryTypeRef = useRef(watchedInventoryType);
+  useEffect(() => {
+    if (prevWatchedInventoryTypeRef.current !== watchedInventoryType) {
+      prevWatchedInventoryTypeRef.current = watchedInventoryType;
+      setLotBatchModalOpen(false);
+      setActiveLotBatchIndex(null);
+    }
+  }, [watchedInventoryType]);
 
   useEffect(() => {
     if (watchedBranchId) {
@@ -2016,6 +2026,8 @@ export function StockAdjustmentManualForm({
                                 form.setValue("inventory_type", "" as unknown as "FINISHED_GOODS", { shouldValidate: true });
                                 form.setValue("items", []);
                                 form.setValue("supplier_id", 0, { shouldValidate: true });
+                                setLotBatchModalOpen(false);
+                                setActiveLotBatchIndex(null);
                               }}
                               className="p-0.5 rounded-sm hover:bg-muted text-muted-foreground hover:text-foreground"
                             >
@@ -2046,6 +2058,8 @@ export function StockAdjustmentManualForm({
                                     if (t.id === "FINISHED_GOODS") {
                                       form.setValue("supplier_id", 0, { shouldValidate: true });
                                     }
+                                    setLotBatchModalOpen(false);
+                                    setActiveLotBatchIndex(null);
                                   }
                                   setInventoryTypeOpen(false);
                                 }}
@@ -2510,8 +2524,10 @@ export function StockAdjustmentManualForm({
             />
           ) : (
             <LotBatchSelectionModal
+              key={`lot-batch-modal-${watchedInventoryType || 'none'}-${activeLotBatchIndex ?? 'none'}`}
               open={lotBatchModalOpen}
               onOpenChange={setLotBatchModalOpen}
+              inventoryType={watchedInventoryType}
               branchId={Number(watchedBranchId) || undefined}
               productId={Number(activeItem.product_id) || undefined}
               productName={String(activeItem.product_name || '') || undefined}
