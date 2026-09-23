@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { stockAdjustmentService } from "@/modules/manufacturing-management/stock-adjustment-posting/services/stock-adjustment-service";
-import { handleApiError } from "@/modules/manufacturing-management/stock-adjustment-posting/utils/error-handler";
+import { stockAdjustmentService } from "@/modules/manufacturing-management/adjustments/stock-adjustment/stock-adjustment-posting/services/stock-adjustment-service";
+import { handleApiError } from "@/modules/manufacturing-management/adjustments/stock-adjustment/stock-adjustment-posting/utils/error-handler";
 
 /**
  * GET /api/scm/inventory-management/stock-adjustment-posting/suppliers

@@ -1,0 +1,869 @@
+'use client';
+
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  Layers,
+  Calendar,
+  CheckCircle2,
+  AlertTriangle,
+  Loader2,
+  Clock,
+  RotateCcw,
+  ShieldAlert,
+  Info,
+} from 'lucide-react';
+import {
+  MMInventoryLot,
+  StockAllocationPlan,
+  BatchAllocationResult,
+  AllocationStrategy,
+  QAStatus,
+} from '../../types/lot-tracking.types';
+import { fetchBatchOnhand, fetchLotsByBranch, fetchInventoryLots, isBadStockLot } from '../../services/lot-tracking.service';
+import { allocateStockSync } from '../../services/stock-allocation.engine';
+
+export interface StockAllocationModalProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  productId: number;
+  productName?: string;
+  productClassification?: 'RM' | 'PKG' | 'FG';
+  branchId: number;
+  targetBranchId?: number | null;
+  targetBranchName?: string;
+  isTargetBadStock?: boolean;
+  requestedQuantity: number;
+  uomName?: string;
+  initialAllocations?: BatchAllocationResult[];
+  onConfirm: (plan: StockAllocationPlan) => void;
+}
+
+export function StockAllocationModal({
+  open,
+  onOpenChange,
+  productId,
+  productName,
+  productClassification,
+  branchId,
+  targetBranchName,
+  isTargetBadStock,
+  requestedQuantity,
+  uomName = 'units',
+  initialAllocations,
+  onConfirm,
+}: StockAllocationModalProps) {
+  // PKG uses FIFO (receipt/inward date); RM & FG use FEFO (nearest expiry first)
+  const defaultStrategy: AllocationStrategy = productClassification === 'PKG' ? 'FIFO' : 'FEFO';
+  const [loading, setLoading] = useState(false);
+  const [batches, setBatches] = useState<MMInventoryLot[]>([]);
+  const [strategy, setStrategy] = useState<AllocationStrategy>(defaultStrategy);
+  const [allowExpiredOverride, setAllowExpiredOverride] = useState(false);
+  const [manualAllocations, setManualAllocations] = useState<Record<number, number>>({});
+  const [isManualMode, setIsManualMode] = useState(false);
+  const [prevOpen, setPrevOpen] = useState(open);
+
+  const isTargetBranchBadStock = useMemo(() => {
+    if (isTargetBadStock !== undefined) return isTargetBadStock;
+    if (targetBranchName) return isBadStockLot(undefined, { branch_name: targetBranchName });
+    return false;
+  }, [isTargetBadStock, targetBranchName]);
+
+  // Adjust state during render when modal opens
+  if (open !== prevOpen) {
+    setPrevOpen(open);
+    if (open && isTargetBranchBadStock) {
+      setAllowExpiredOverride(true);
+    }
+  }
+
+  // Load batches when modal opens
+  useEffect(() => {
+    if (!open || !productId || !branchId) return;
+
+    let isMounted = true;
+
+    const loadBatches = async () => {
+      setLoading(true);
+      try {
+        // Spring Boot /api/mm-batch-onhand is authoritative source for live quantities
+        // Also fetch mm_lots and mm_inventory_lots to resolve exact lot names and true inventory_lot_id
+        const [onhandData, branchLots, existingInvLots] = await Promise.all([
+          fetchBatchOnhand({ branchId, productId }),
+          fetchLotsByBranch(branchId).catch(() => []),
+          fetchInventoryLots({ branchId, productId }).catch(() => []),
+        ]);
+
+        if (isMounted) {
+          const lotMap = new Map<number, { name: string; unit_id?: number | null; unit_name?: string }>();
+          (branchLots || []).forEach((l) => {
+            if (l.lot_id && l.lot_name) {
+              lotMap.set(l.lot_id, { name: l.lot_name, unit_id: l.unit_id, unit_name: l.unit_name });
+            }
+          });
+
+          const invLotLookup = new Map<string, number>();
+          (existingInvLots || []).forEach((il) => {
+            if (il.inventory_lot_id && il.batch_no) {
+              const bClean = il.batch_no.trim().toLowerCase();
+              invLotLookup.set(`${il.lot_id}:${bClean}`, il.inventory_lot_id);
+              if (!invLotLookup.has(bClean)) {
+                invLotLookup.set(bClean, il.inventory_lot_id);
+              }
+            }
+          });
+
+          // Group onhand quantities distinctly by lotId, inventoryLotId, and batchNo for the selected branch
+          const batchMap = new Map<string, {
+            inventoryLotId: number;
+            lotId: number;
+            branchId: number;
+            productId: number;
+            batchNo: string;
+            manufacturingDate: string | null;
+            expirationDate: string | null;
+            inventoryCondition: QAStatus;
+            netOnhand: number;
+            lotName?: string;
+            productName?: string;
+            productCode?: string;
+          }>();
+
+          let syntheticCounter = -1;
+
+          for (const oh of onhandData) {
+            if (Number(oh.branchId) !== Number(branchId)) continue;
+            const lotIdNum = Number(oh.mmLotId || 0);
+            let invLotIdNum = Number(oh.inventoryLotId || 0);
+
+            // If inventoryLotId is null/0 from Spring Boot, resolve via mm_inventory_lots by lot_id and batch_no
+            if (invLotIdNum === 0 && oh.batchNo) {
+              const bClean = String(oh.batchNo).trim().toLowerCase();
+              invLotIdNum = invLotLookup.get(`${lotIdNum}:${bClean}`) || invLotLookup.get(bClean) || 0;
+            }
+
+            const batchStr = oh.batchNo ? String(oh.batchNo).trim() : (lotIdNum ? `lot-${lotIdNum}` : 'unassigned');
+            const key = `${lotIdNum}:${invLotIdNum}:${batchStr}`;
+
+            const existing = batchMap.get(key);
+            const qty = Number(oh.onhandQuantity || 0);
+
+            const lotInfo = lotIdNum > 0 ? lotMap.get(lotIdNum) : undefined;
+            const resolvedLotName = lotInfo?.name || oh.lotName;
+            const cleanLotName = resolvedLotName
+              ? resolvedLotName.replace(/^lot\s*[:#-]?\s*/i, '').trim()
+              : (lotIdNum > 0 ? `${lotIdNum}` : '');
+
+            if (existing) {
+              existing.netOnhand += qty;
+              if (!existing.expirationDate && oh.expirationDate) {
+                existing.expirationDate = oh.expirationDate;
+              }
+              if (!existing.manufacturingDate && oh.manufacturingDate) {
+                existing.manufacturingDate = oh.manufacturingDate;
+              }
+              if (invLotIdNum > 0) {
+                existing.inventoryLotId = invLotIdNum;
+              }
+            } else {
+              // Use real inventoryLotId if available; otherwise use a negative synthetic key for modal internal state
+              const modalKeyId = invLotIdNum > 0 ? invLotIdNum : syntheticCounter--;
+              batchMap.set(key, {
+                inventoryLotId: modalKeyId,
+                lotId: lotIdNum,
+                branchId: Number(oh.branchId),
+                productId: Number(oh.productId || productId),
+                batchNo: oh.batchNo,
+                manufacturingDate: oh.manufacturingDate || null,
+                expirationDate: oh.expirationDate || null,
+                inventoryCondition: (oh.inventoryCondition as QAStatus) || 'GOOD',
+                netOnhand: qty,
+                lotName: cleanLotName ? `Lot ${cleanLotName}` : undefined,
+                productName: oh.productName || productName,
+                productCode: oh.productCode,
+              });
+            }
+          }
+
+          const liveBatches: MMInventoryLot[] = Array.from(batchMap.values())
+            .filter((b) => b.netOnhand > 0)
+            .map((b) => ({
+              inventory_lot_id: b.inventoryLotId,
+              lot_id: b.lotId,
+              branch_id: b.branchId,
+              product_id: b.productId,
+              batch_no: b.batchNo,
+              manufacturing_date: b.manufacturingDate,
+              expiry_date: b.expirationDate,
+              unit_cost: 0,
+              qa_status: b.inventoryCondition,
+              status: 'ACTIVE',
+              available_quantity: b.netOnhand,
+              lot_name: b.lotName,
+              product_name: b.productName,
+              product_code: b.productCode,
+            }));
+
+          setBatches(liveBatches);
+
+          // Restore previously applied manual allocation if available
+          if (initialAllocations && initialAllocations.length > 0) {
+            const manualMap: Record<number, number> = {};
+            let hasValidAlloc = false;
+            initialAllocations.forEach((a) => {
+              const matched = liveBatches.find(
+                (b) =>
+                  (a.inventory_lot_id && b.inventory_lot_id === a.inventory_lot_id) ||
+                  (a.batch_no && b.batch_no === a.batch_no)
+              );
+              const lotKey = matched?.inventory_lot_id || a.inventory_lot_id;
+              if (lotKey && Number(a.allocated_quantity) > 0) {
+                manualMap[lotKey] = Number(a.allocated_quantity);
+                hasValidAlloc = true;
+              }
+            });
+
+            if (hasValidAlloc) {
+              setManualAllocations(manualMap);
+              setIsManualMode(true);
+              setStrategy('MANUAL');
+            } else {
+              // Do not auto-fill on initial load
+              setIsManualMode(true);
+              setManualAllocations({});
+              setStrategy(defaultStrategy);
+            }
+          } else {
+            // Do not auto-fill on initial load
+            setIsManualMode(true);
+            setManualAllocations({});
+            setStrategy(defaultStrategy);
+          }
+        }
+      } catch (err) {
+        console.error('[StockAllocationModal] Error loading inventory lots:', err);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+
+    loadBatches();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [open, productId, branchId, productName, initialAllocations, defaultStrategy]);
+
+  // Calculate automatic plan based on strategy
+  const autoPlan = useMemo(() => {
+    if (!batches.length) return null;
+    return allocateStockSync(batches, requestedQuantity, {
+      strategy,
+      includeExpired: allowExpiredOverride,
+      includeNonGoodQA: true, // Show all batches even if bad stock
+    });
+  }, [batches, requestedQuantity, strategy, allowExpiredOverride]);
+
+  // Build active allocations (either manual edits or automatic plan)
+  const currentPlan: StockAllocationPlan = useMemo(() => {
+    if (!autoPlan) {
+      return {
+        productId,
+        productName,
+        branchId,
+        requestedQuantity,
+        totalAllocated: 0,
+        shortage: requestedQuantity,
+        isFullyAllocated: false,
+        strategy,
+        allocations: [],
+        unallocatedBatches: [],
+        ineligibleBatches: [],
+      };
+    }
+
+    if (!isManualMode) {
+      return autoPlan;
+    }
+
+    // Manual allocation calculation
+    let totalAlloc = 0;
+    const manualAllocList: BatchAllocationResult[] = [];
+    const manualUnallocList: BatchAllocationResult[] = [];
+
+    const seenLotIds = new Set<number>();
+    const allCandidateBatches: BatchAllocationResult[] = [];
+    [...autoPlan.allocations, ...autoPlan.unallocatedBatches].forEach((batch) => {
+      if (!seenLotIds.has(batch.inventory_lot_id)) {
+        seenLotIds.add(batch.inventory_lot_id);
+        const originalBatch = batches.find((b) => b.inventory_lot_id === batch.inventory_lot_id);
+        allCandidateBatches.push({
+          ...batch,
+          available_quantity: originalBatch?.available_quantity ?? batch.available_quantity,
+        });
+      }
+    });
+
+    allCandidateBatches.forEach((batch) => {
+      const userQty = Number(manualAllocations[batch.inventory_lot_id] ?? 0);
+      const safeQty = Math.max(0, Math.min(batch.available_quantity, userQty));
+
+      if (safeQty > 0) {
+        totalAlloc += safeQty;
+        manualAllocList.push({
+          ...batch,
+          allocated_quantity: safeQty,
+        });
+      } else {
+        manualUnallocList.push({
+          ...batch,
+          allocated_quantity: 0,
+        });
+      }
+    });
+
+    const shortage = Math.max(0, requestedQuantity - totalAlloc);
+    const excessQuantity = Math.max(0, totalAlloc - requestedQuantity);
+    const isOverAllocated = totalAlloc > requestedQuantity;
+
+    return {
+      productId,
+      productName,
+      branchId,
+      requestedQuantity,
+      totalAllocated: totalAlloc,
+      shortage,
+      excessQuantity,
+      isOverAllocated,
+      isFullyAllocated: totalAlloc === requestedQuantity,
+      strategy: 'MANUAL',
+      allocations: manualAllocList,
+      unallocatedBatches: manualUnallocList,
+      ineligibleBatches: autoPlan.ineligibleBatches,
+    };
+  }, [autoPlan, isManualMode, manualAllocations, batches, productId, productName, branchId, requestedQuantity, strategy]);
+
+  const handleManualQtyChange = (inventoryLotId: number, maxAvailable: number, val: string) => {
+    if (val === '') {
+      setIsManualMode(true);
+      setManualAllocations((prev) => ({
+        ...prev,
+        [inventoryLotId]: 0,
+      }));
+      return;
+    }
+    const num = Number(val);
+    if (isNaN(num)) return;
+    const clamped = Math.max(0, Math.min(maxAvailable, num));
+
+    setIsManualMode(true);
+    setManualAllocations((prev) => ({
+      ...prev,
+      [inventoryLotId]: clamped,
+    }));
+  };
+
+  const handleRunAutoAllocation = () => {
+    if (!batches.length) return;
+    const plan = allocateStockSync(batches, requestedQuantity, {
+      strategy: defaultStrategy,
+      includeExpired: allowExpiredOverride,
+      includeNonGoodQA: true,
+    });
+    if (plan && plan.allocations.length > 0) {
+      const allocMap: Record<number, number> = {};
+      plan.allocations.forEach((a) => {
+        allocMap[a.inventory_lot_id] = a.allocated_quantity;
+      });
+      setManualAllocations(allocMap);
+      setIsManualMode(true);
+      setStrategy(defaultStrategy);
+    }
+  };
+
+  const handleClearAllocations = () => {
+    setManualAllocations({});
+    setIsManualMode(true);
+    setStrategy(defaultStrategy);
+  };
+
+  const handleResetToAuto = () => {
+    handleRunAutoAllocation();
+  };
+
+  const handleConfirm = () => {
+    // Sanitize any negative internal modal keys back to 0 so no synthetic IDs are emitted
+    const sanitizedPlan: StockAllocationPlan = {
+      ...currentPlan,
+      allocations: currentPlan.allocations.map((a) => ({
+        ...a,
+        inventory_lot_id: a.inventory_lot_id > 0 ? a.inventory_lot_id : 0,
+      })),
+      unallocatedBatches: currentPlan.unallocatedBatches.map((b) => ({
+        ...b,
+        inventory_lot_id: b.inventory_lot_id > 0 ? b.inventory_lot_id : 0,
+      })),
+    };
+    onConfirm(sanitizedPlan);
+    onOpenChange(false);
+  };
+
+  // Combine eligible and unallocated batches for full display
+  const displayBatches = useMemo(() => {
+    const list = [...currentPlan.allocations, ...currentPlan.unallocatedBatches];
+    // Deduplicate by inventory_lot_id
+    const seen = new Set<number>();
+    return list.filter((b) => {
+      if (seen.has(b.inventory_lot_id)) return false;
+      seen.add(b.inventory_lot_id);
+      return true;
+    });
+  }, [currentPlan]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-4xl md:max-w-5xl lg:max-w-6xl w-[92vw] max-w-[95vw] p-0 overflow-hidden bg-card border-border shadow-2xl">
+        {/* Header */}
+        <DialogHeader className="p-6 pb-4 border-b border-border bg-muted/20">
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <DialogTitle className="text-lg font-bold tracking-tight text-foreground flex items-center gap-2">
+                <Layers className="w-5 h-5 text-primary" />
+                Stock Allocation Engine
+              </DialogTitle>
+              <DialogDescription className="text-xs text-muted-foreground">
+                {productName ? `${productName} — ` : ''}
+                {defaultStrategy === 'FIFO'
+                  ? 'Allocates packaging inventory according to inward/receipt date priority (FIFO).'
+                  : 'Allocates inventory according to expiration priority (FEFO).'}
+              </DialogDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge
+                variant={currentPlan.totalAllocated > 0 ? (isManualMode && strategy === 'MANUAL' ? 'secondary' : 'default') : 'outline'}
+                className="text-xs font-mono px-2.5 py-0.5"
+              >
+                {currentPlan.totalAllocated === 0
+                  ? `PENDING ALLOCATION (${defaultStrategy})`
+                  : strategy === 'MANUAL'
+                  ? 'MANUAL OVERRIDE'
+                  : `AUTO — ${strategy}`}
+              </Badge>
+            </div>
+          </div>
+        </DialogHeader>
+
+        {loading ? (
+          <div className="flex flex-col items-center justify-center p-12 gap-3">
+            <Loader2 className="w-8 h-8 text-primary animate-spin" />
+            <p className="text-sm text-muted-foreground">Analyzing batch inventory &amp; {defaultStrategy} order...</p>
+          </div>
+        ) : (
+          <div className="p-6 space-y-5">
+            {/* Top Stats Bar */}
+            <div className="grid grid-cols-3 gap-3 bg-muted/30 p-3.5 rounded-xl border border-border">
+              <div>
+                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                  Requested Quantity
+                </p>
+                <p className="text-base font-black text-foreground mt-0.5">
+                  {requestedQuantity.toLocaleString()} <span className="text-xs font-semibold text-muted-foreground">{uomName}</span>
+                </p>
+              </div>
+
+              <div>
+                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                  Allocation Status
+                </p>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  {currentPlan.totalAllocated === requestedQuantity ? (
+                    <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Fully Allocated
+                    </span>
+                  ) : currentPlan.totalAllocated > requestedQuantity ? (
+                    <span className="text-xs font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-600" /> Over-Allocated (+{currentPlan.totalAllocated - requestedQuantity} {uomName})
+                    </span>
+                  ) : (
+                    <span className="text-xs font-bold text-amber-600 flex items-center gap-1">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-600" /> Shortage: {currentPlan.shortage} {uomName}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                  Allocation Strategy
+                </p>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <Select
+                    value={isManualMode ? 'MANUAL' : strategy}
+                    onValueChange={(val) => {
+                      if (val === 'MANUAL') {
+                        setIsManualMode(true);
+                        if (autoPlan) {
+                          setManualAllocations(
+                            autoPlan.allocations.reduce<Record<number, number>>((acc, a) => {
+                              acc[a.inventory_lot_id] = a.allocated_quantity;
+                              return acc;
+                            }, {})
+                          );
+                        }
+                      } else {
+                        setIsManualMode(false);
+                        setStrategy(val as AllocationStrategy);
+                        setManualAllocations({});
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="h-7 text-xs font-semibold">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="FEFO" className="text-xs">
+                        FEFO (First Expired First Out)
+                      </SelectItem>
+                      <SelectItem value="FIFO" className="text-xs">
+                        FIFO (First In First Out)
+                      </SelectItem>
+                      <SelectItem value="MANUAL" className="text-xs">
+                        Manual Override
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+
+            {/* Over-Allocation Warning Banner */}
+            {currentPlan.totalAllocated > requestedQuantity && (
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 flex items-start justify-between gap-3 animate-in fade-in">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-bold text-amber-700 dark:text-amber-400">
+                      Over-Allocation Warning: Total Allocated ({currentPlan.totalAllocated} {uomName}) Exceeds Requested ({requestedQuantity} {uomName})
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      You have allocated <strong className="text-amber-700 dark:text-amber-400">+{currentPlan.totalAllocated - requestedQuantity} {uomName} excess</strong>. Please reduce batch quantities or reset to exact FEFO allocation.
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={handleResetToAuto}
+                  className="h-7 text-xs text-primary hover:text-primary gap-1 shrink-0"
+                >
+                  <RotateCcw className="w-3 h-3" /> Reset to Exact
+                </Button>
+              </div>
+            )}
+
+            {/* Empty Allocation Initial Banner */}
+            {currentPlan.totalAllocated === 0 && (
+              <div className="bg-primary/5 border border-primary/20 rounded-lg p-3.5 flex items-center justify-between gap-3 animate-in fade-in">
+                <div className="flex items-center gap-2.5">
+                  <Info className="w-4 h-4 text-primary shrink-0" />
+                  <div>
+                    <p className="text-xs font-bold text-foreground">
+                      No Batches Allocated Yet
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Click <strong className="text-primary">&quot;Allocate Source Batch and Lot ({defaultStrategy})&quot;</strong> to run {defaultStrategy} allocation, or enter quantities per batch below.
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleRunAutoAllocation}
+                  className="h-8 text-xs font-bold gap-1.5 shrink-0 shadow-xs"
+                >
+                  <Layers className="w-3.5 h-3.5" /> Allocate Source Batch and Lot ({defaultStrategy})
+                </Button>
+              </div>
+            )}
+
+            {/* Manual Mode Banner */}
+            {isManualMode && currentPlan.totalAllocated > 0 && currentPlan.totalAllocated <= requestedQuantity && (
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 flex items-start justify-between gap-3 animate-in fade-in">
+                <div className="flex items-start gap-2">
+                  <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-bold text-amber-700 dark:text-amber-400">
+                      Manual Allocation Active
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      You are manually specifying quantities per batch instead of the {defaultStrategy} recommendation.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={handleClearAllocations}
+                    className="h-7 text-xs text-muted-foreground hover:text-destructive"
+                  >
+                    Clear
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={handleResetToAuto}
+                    className="h-7 text-xs text-primary hover:text-primary gap-1"
+                  >
+                    <RotateCcw className="w-3 h-3" /> Reset to {defaultStrategy}
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Batch Allocation List */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-primary" /> Eligible Batches ({displayBatches.length})
+                  </Label>
+                </div>
+                <label className="text-[11px] text-muted-foreground flex items-center gap-1.5 cursor-pointer hover:text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={allowExpiredOverride}
+                    onChange={(e) => setAllowExpiredOverride(e.target.checked)}
+                    className="rounded border-border w-3.5 h-3.5 text-primary"
+                  />
+                  <span>Show expired stock (Override)</span>
+                </label>
+              </div>
+
+              <ScrollArea className="h-[420px] max-h-[55vh] rounded-xl border border-border bg-muted/10 p-3">
+                {displayBatches.length === 0 ? (
+                  <div className="text-center py-10 text-xs text-muted-foreground italic">
+                    No active stock batches found for this product.
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {displayBatches.map((batch, index) => {
+                      const allocatedQty = isManualMode
+                        ? Number(manualAllocations[batch.inventory_lot_id] ?? 0)
+                        : (currentPlan.allocations.find((a) => a.inventory_lot_id === batch.inventory_lot_id)?.allocated_quantity ?? 0);
+
+                      const isAllocated = allocatedQty > 0;
+                      const days = batch.days_until_expiry;
+                      const isExpired = batch.is_expired;
+
+                      return (
+                        <div
+                          key={batch.inventory_lot_id}
+                          className={`p-3.5 rounded-xl border transition-all ${
+                            isAllocated
+                              ? 'border-primary/50 bg-primary/5 shadow-sm'
+                              : 'border-border/60 bg-card hover:border-border'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            {/* Left: Batch Info */}
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-foreground text-xs">
+                                  {batch.batch_no}
+                                </span>
+
+                                <Badge
+                                  className={`text-[10px] py-0 h-4 ${
+                                    index === 0
+                                      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-300'
+                                      : index === 1
+                                      ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-300'
+                                      : 'bg-muted text-muted-foreground'
+                                  }`}
+                                >
+                                  PRIORITY {index + 1}
+                                </Badge>
+
+                                <Badge
+                                  variant={
+                                    batch.qa_status === 'GOOD'
+                                      ? 'outline'
+                                      : batch.qa_status === 'DAMAGED'
+                                      ? 'destructive'
+                                      : 'secondary'
+                                  }
+                                  className="text-[10px] px-1.5 py-0 h-4"
+                                >
+                                  {batch.qa_status}
+                                </Badge>
+
+                                {isExpired && (
+                                  <Badge variant="destructive" className="text-[10px] py-0 h-4">
+                                    Expired
+                                  </Badge>
+                                )}
+                              </div>
+
+                              <div className="text-[11px] text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5">
+                                <span>Lot: <strong className="text-foreground/80">{(() => {
+                                  const raw = batch.lot_name || (batch.lot_id ? `${batch.lot_id}` : '');
+                                  const clean = raw.replace(/^lot\s*[:#-]?\s*/i, '').trim();
+                                  return clean && clean !== 'null' && clean !== 'undefined' ? `Lot ${clean}` : '—';
+                                })()}</strong></span>
+                                <span>Available: <strong className="text-foreground">{batch.available_quantity}</strong> {uomName}</span>
+                                {batch.expiry_date && (
+                                  <span className={`flex items-center gap-1 font-mono ${days !== null && days <= 30 ? (days < 0 ? 'text-destructive font-bold' : 'text-amber-600 font-bold') : ''}`}>
+                                    <Calendar className="w-3 h-3" />
+                                    Exp: {batch.expiry_date.substring(0, 10)} {days !== null ? `(${days < 0 ? `Expired ${Math.abs(days)}d ago` : `in ${days}d`})` : ''}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Right: Allocation Quantity Input */}
+                            <div className="flex flex-col items-end gap-1 shrink-0">
+                              <span className="text-[10px] font-bold text-muted-foreground uppercase">
+                                Allocate ({uomName})
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  max={batch.available_quantity}
+                                  value={allocatedQty === 0 ? '' : allocatedQty}
+                                  placeholder="0"
+                                  onFocus={(e) => {
+                                    e.target.select();
+                                  }}
+                                  onClick={(e) => {
+                                    (e.target as HTMLInputElement).select();
+                                  }}
+                                  onChange={(e) =>
+                                    handleManualQtyChange(
+                                      batch.inventory_lot_id,
+                                      batch.available_quantity,
+                                      e.target.value
+                                    )
+                                  }
+                                  onBlur={(e) => {
+                                    if (e.target.value === '' || isNaN(Number(e.target.value))) {
+                                      handleManualQtyChange(
+                                        batch.inventory_lot_id,
+                                        batch.available_quantity,
+                                        '0'
+                                      );
+                                    }
+                                  }}
+                                  className={`w-24 h-8 text-xs font-bold text-right ${
+                                    isAllocated
+                                      ? 'border-primary text-primary focus-visible:ring-primary'
+                                      : 'text-muted-foreground'
+                                  }`}
+                                />
+                                {isAllocated && (
+                                  <CheckCircle2 className="w-4 h-4 text-primary shrink-0" />
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </ScrollArea>
+            </div>
+
+            {/* Ineligible / Blocked Batches Notice if any */}
+            {currentPlan.ineligibleBatches.length > 0 && !allowExpiredOverride && (
+              <div className="text-[11px] text-muted-foreground flex items-center gap-1.5 px-1">
+                <ShieldAlert className="w-3.5 h-3.5 text-amber-500" />
+                <span>
+                  {currentPlan.ineligibleBatches.length} batch(es) excluded by policy (Expired / Non-GOOD QA).
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Footer */}
+        <DialogFooter className="p-4 border-t border-border bg-muted/10 flex items-center justify-between">
+          <div className="text-xs text-muted-foreground font-semibold flex items-center gap-2">
+            <span>
+              Allocated:{" "}
+              <strong
+                className={
+                  currentPlan.totalAllocated > requestedQuantity
+                    ? "text-amber-600 dark:text-amber-400 font-bold"
+                    : currentPlan.totalAllocated === requestedQuantity && currentPlan.totalAllocated > 0
+                    ? "text-emerald-600 dark:text-emerald-400 font-bold"
+                    : "text-foreground font-bold"
+                }
+              >
+                {currentPlan.totalAllocated}
+              </strong>{" "}
+              / {requestedQuantity} {uomName}
+            </span>
+            {currentPlan.totalAllocated > requestedQuantity && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/30">
+                <AlertTriangle className="w-3 h-3" /> +{currentPlan.totalAllocated - requestedQuantity} {uomName} Excess
+              </span>
+            )}
+            {currentPlan.totalAllocated < requestedQuantity && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-destructive/10 text-destructive border border-destructive/30">
+                <AlertTriangle className="w-3 h-3" /> -{requestedQuantity - currentPlan.totalAllocated} {uomName} Shortage
+              </span>
+            )}
+            {currentPlan.isFullyAllocated && currentPlan.totalAllocated === requestedQuantity && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">
+                <CheckCircle2 className="w-3 h-3" /> Fully Allocated
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onOpenChange(false)}
+              className="text-xs"
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleConfirm}
+              disabled={loading || currentPlan.totalAllocated <= 0}
+              className="text-xs gap-1.5"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              Apply Allocation
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

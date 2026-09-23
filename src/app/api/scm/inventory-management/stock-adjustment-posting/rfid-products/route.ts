@@ -1,12 +1,12 @@
 import { NextResponse, NextRequest } from "next/server";
-import { stockAdjustmentService } from "@/modules/manufacturing-management/stock-adjustment-posting/services/stock-adjustment-service";
-import { handleApiError } from "@/modules/manufacturing-management/stock-adjustment-posting/utils/error-handler";
+import { stockAdjustmentService } from "@/modules/manufacturing-management/adjustments/stock-adjustment/stock-adjustment-posting/services/stock-adjustment-service";
+import { handleApiError } from "@/modules/manufacturing-management/adjustments/stock-adjustment/stock-adjustment-posting/utils/error-handler";
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const branchId = searchParams.get("branchId");
-    
+
     if (!branchId) {
       return NextResponse.json({ error: "Missing branchId" }, { status: 400 });
     }

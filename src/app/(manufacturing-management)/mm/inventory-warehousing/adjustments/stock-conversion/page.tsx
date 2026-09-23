@@ -1,4 +1,4 @@
-import StockConversionModule from "@/modules/manufacturing-management/stock-conversion/StockConversionModule";
+import StockConversionModule from "@/modules/manufacturing-management/adjustments/stock-conversion/StockConversionModule";
 import {
   Breadcrumb,
   BreadcrumbItem,

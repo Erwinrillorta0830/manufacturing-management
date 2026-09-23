@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { stockAdjustmentService } from "@/modules/manufacturing-management/stock-adjustment-registration/services/stock-adjustment-service";
-import { handleApiError } from "@/modules/manufacturing-management/stock-adjustment-registration/utils/error-handler";
-import { getUserIdFromToken } from "@/modules/manufacturing-management/stock-adjustment-registration/utils/auth-utils";
+import { stockAdjustmentService } from "@/modules/manufacturing-management/adjustments/stock-adjustment/stock-adjustment-registration/services/stock-adjustment-service";
+import { handleApiError } from "@/modules/manufacturing-management/adjustments/stock-adjustment/stock-adjustment-registration/utils/error-handler";
+import { getUserIdFromToken } from "@/modules/manufacturing-management/adjustments/stock-adjustment/stock-adjustment-registration/utils/auth-utils";
 
 export async function GET(request: NextRequest) {
   try {

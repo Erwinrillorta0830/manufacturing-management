@@ -1660,7 +1660,26 @@ export function useFinishedGoods(initialTab: string = "details") {
         }
 
         setSavingBOM(true);
+        setSaveProgress(15);
         setSaveStatus("Creating revision draft...");
+
+        let progress = 15;
+        const interval = setInterval(() => {
+            if (progress < 90) {
+                if (progress < 40) {
+                    progress += 6;
+                    setSaveStatus("Branching specification baseline...");
+                } else if (progress < 70) {
+                    progress += 4;
+                    setSaveStatus("Cloning routes and bill of materials...");
+                } else {
+                    progress += 2;
+                    setSaveStatus("Finalizing revision draft...");
+                }
+                setSaveProgress(Math.min(progress, 90));
+            }
+        }, 140);
+
         try {
             const res = await initiateVersionDraft(params);
             if (res.draft) {
@@ -1737,13 +1756,19 @@ export function useFinishedGoods(initialTab: string = "details") {
                     setSelectedVersionId(res.draft.draft_id);
                 }
 
+                setSaveProgress(100);
+                setSaveStatus("Revision draft ready!");
                 toast.success(`Revision draft initiated: ${res.draft.version_name}`);
             }
         } catch (err: any) {
             toast.error(err.message || "Failed to initiate revision draft");
         } finally {
-            setSavingBOM(false);
-            setSaveStatus("");
+            clearInterval(interval);
+            setTimeout(() => {
+                setSavingBOM(false);
+                setSaveProgress(0);
+                setSaveStatus("");
+            }, 350);
         }
     };
 

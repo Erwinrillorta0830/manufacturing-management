@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { stockConversionService } from "@/modules/manufacturing-management/stock-conversion/services";
-import { stockConversionPayloadSchema } from "@/modules/manufacturing-management/stock-conversion/types";
-import { AppError } from "@/modules/manufacturing-management/stock-conversion/utils/error-handler";
+import { stockConversionService } from "@/modules/manufacturing-management/adjustments/stock-conversion/services";
+import { stockConversionPayloadSchema } from "@/modules/manufacturing-management/adjustments/stock-conversion/types";
+import { AppError } from "@/modules/manufacturing-management/adjustments/stock-conversion/utils/error-handler";
 
 export const runtime = "nodejs";
 export const revalidate = 0;

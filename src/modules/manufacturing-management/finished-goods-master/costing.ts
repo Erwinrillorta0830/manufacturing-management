@@ -255,6 +255,7 @@ export interface BottleneckCalculationResult {
     netProductionHours: number;
     grossOutput: number;
     computedBaseQuantity: number;
+    netBaseQuantity: number;
     cappedSteps: BottleneckStepCapacity[];
 }
 
@@ -354,7 +355,9 @@ export function calculateBottleneckBaseQuantity(input: {
 
     const grossOutput = bottleneckRate * netProductionHours;
     const yieldPct = Number(input.expectedYieldPercentage) > 0 ? Number(input.expectedYieldPercentage) : 100;
-    const computedBaseQuantity = grossOutput * (yieldPct / 100);
+    // In Finished Goods, base quantity is the gross output (batch gross capacity) rather than net output
+    const computedBaseQuantity = grossOutput;
+    const netBaseQuantity = grossOutput * (yieldPct / 100);
     const cappedSteps = stepCapacities.filter(s => s.isCapped);
 
     return {
@@ -365,6 +368,7 @@ export function calculateBottleneckBaseQuantity(input: {
         netProductionHours,
         grossOutput,
         computedBaseQuantity,
+        netBaseQuantity,
         cappedSteps
     };
 }

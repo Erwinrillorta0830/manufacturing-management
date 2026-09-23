@@ -1,6 +1,6 @@
 import { NextResponse, NextRequest } from "next/server";
-import { stockAdjustmentService } from "@/modules/manufacturing-management/stock-adjustment-registration/services/stock-adjustment-service";
-import { handleApiError } from "@/modules/manufacturing-management/stock-adjustment-registration/utils/error-handler";
+import { stockAdjustmentService } from "@/modules/manufacturing-management/adjustments/stock-adjustment/stock-adjustment-registration/services/stock-adjustment-service";
+import { handleApiError } from "@/modules/manufacturing-management/adjustments/stock-adjustment/stock-adjustment-registration/utils/error-handler";
 
 /**
  * GET /api/scm/inventory-management/stock-adjustment-registration/branch-inventory?branchId=190

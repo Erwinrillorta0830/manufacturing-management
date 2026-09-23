@@ -1,0 +1,407 @@
+// ─── Stock Transfer Module — TypeScript Interfaces ──────────
+// All shared types for the stock-transfer feature module.
+// No Zod here — see stock-transfer.schema.ts for validation schemas.
+
+import type { LotAllocationGroup } from "../types/lot-tracking.types";
+
+// ─── Master-Data Row Shapes ─────────────────────────────────
+
+/** Row from the `branches` collection. */
+export interface BranchRow {
+  id: number;
+  branch_name?: string;
+  name?: string;
+  branch_code?: string;
+  branch_description?: string;
+  branch_head?: number | null;
+  salesman_name?: string;
+  isActive?: number | boolean | string;
+}
+
+/** Resolved unit-of-measurement object from Directus relational expansion. */
+export interface UnitOfMeasurement {
+  unit_id: number;
+  unit_name: string;
+}
+
+/** Resolved brand object from Directus relational expansion. */
+export interface ProductBrand {
+  brand_id: number;
+  brand_name: string;
+}
+
+/** Resolved category object from Directus relational expansion. */
+export interface ProductCategory {
+  category_id: number;
+  category_name: string;
+}
+
+/** Resolved supplier shortcut from Directus nested junction expansion. */
+export interface SupplierShortcut {
+  supplier_shortcut: string;
+}
+
+/** Supplier junction row from `product_per_supplier`. */
+export interface ProductPerSupplier {
+  supplier_id: SupplierShortcut;
+}
+
+/** Product row from the `products` collection with relational fields expanded. */
+export interface ProductRow {
+  product_id: number;
+  product_name: string;
+  description?: string;
+  barcode?: string;
+  product_code?: string;
+  cost_per_unit?: number;
+  price_per_unit?: number;
+  product_image?: string | null;
+  unit_of_measurement: UnitOfMeasurement | number;
+  unit_of_measurement_count?: number;
+  product_brand?: ProductBrand | number;
+  product_category?: ProductCategory | number;
+  product_per_supplier?: ProductPerSupplier[];
+  is_serialized?: number;
+}
+
+/** Product enriched with classifications and catalog-selection quantities. */
+export interface EnrichedProduct extends ProductRow {
+  qtyAvailable?: number;
+  quantity?: number;
+  totalAmount?: number;
+  _classification?: 'RM' | 'PKG' | 'FG';
+}
+
+// ─── Stock Transfer Row Shapes ──────────────────────────────
+
+/** Raw row from the `stock_transfer` collection (Directus). */
+export interface StockTransferRow {
+  id: number;
+  order_no: string;
+  product_id: ProductRow | number;
+  source_branch_id?: BranchRow | number | null;
+  target_branch_id?: BranchRow | number | null;
+  source_branch?: number | null;
+  target_branch?: number | null;
+  unit_id?: { unit_id: number; unit_name: string } | number | null;
+  lead_date: string | null;
+  ordered_quantity: number;
+  received_quantity: number;
+  allocated_quantity?: number;
+  picked_quantity?: number;
+  dispatched_quantity?: number;
+  scanned_quantity?: number;
+  amount: number;
+  status: string;
+  remarks: string | null;
+  date_requested: string;
+  date_encoded: string;
+  date_received: string | null;
+  encoder_id: number;
+  receiver_id: number | null;
+  /** Attached by the GET handler after fetching dispatched RFIDs. */
+  dispatched_rfids?: string[];
+  // Lot & Batch Tracking
+  source_lot_id?: number | null;
+  source_lot_name?: string | null;
+  source_inventory_lot_id?: number | null;
+  destination_lot_id?: number | null;
+  batch_no?: string | null;
+  manufacturing_date?: string | null;
+  expiry_date?: string | null;
+  qa_status?: string | null;
+  inventory_condition?: string | null;
+  lot_allocations?: LotAllocationGroup[];
+}
+
+/** Row from the `stock_transfer_rfid` tracking collection. */
+export interface StockTransferRfidRow {
+  id?: number;
+  stock_transfer_id: number;
+  rfid_tag: string;
+  scan_type: "DISPATCH" | "RECEIVE";
+}
+
+// ─── Scanned / Manual Item (Client-Side) ────────────────────
+
+/** A product scanned via RFID or manually added in the Request form. */
+export interface ScannedItem {
+  rfid: string;
+  productId: number;
+  productName: string;
+  description: string;
+  brandName: string;
+  productType?: string;
+  unit: string;
+  unitId?: number;
+  qtyAvailable: number;
+  unitQty: number;
+  unitPrice: number;
+  totalAmount: number;
+  productImage?: string | null;
+  batch_no?: string | null;
+  lot_id?: number | null;
+  inventory_lot_id?: number | null;
+  manufacturing_date?: string | null;
+  expiry_date?: string | null;
+  qa_status?: string | null;
+  inventory_condition?: string | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  allocations?: any[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  allocation_plan?: any;
+}
+
+/** 
+ * A single scan event recorded during dispatch or receive verification. 
+ * Linked to a specific stock transfer line item by productId.
+ */
+export interface ScanLog {
+  rfid: string;
+  productId?: number;
+  productName?: string;
+  timestamp: number;
+  status: 'SUCCESS' | 'ERROR';
+  errorType?: string;
+}
+
+// ─── Order Grouping ────────────────────────────────────────
+
+/**
+ * Items within an OrderGroup, extending the raw StockTransferRow
+ * with client-side enrichment fields added by dispatching/receive hooks.
+ */
+export interface OrderGroupItem extends StockTransferRow {
+  /** Number of RFID scans recorded during dispatch picking. */
+  scannedQty?: number;
+  /** Number of items received at the target branch. */
+  receivedQty?: number;
+  /** RFID tags scanned/received for this item during pick/receipt. */
+  scannedRfids: string[];
+  receivedRfids: string[];
+  /** Available qty at source branch (fetched from inventory). */
+  qtyAvailable?: number;
+  /** Whether this item is a loose-pack variant. */
+  isLoosePack?: boolean;
+}
+
+/**
+ * A group of stock transfer line items sharing the same `order_no`.
+ * Used by all downstream modules (approval, dispatching, receive).
+ */
+export interface OrderGroup {
+  orderNo: string;
+  sourceBranch: number | null;
+  targetBranch: number | null;
+  leadDate: string | null;
+  dateRequested: string;
+  dateEncoded: string;
+  items: OrderGroupItem[];
+  totalAmount: number;
+  status: string;
+  sourceBranchName?: string;
+  targetBranchName?: string;
+}
+
+// ─── API Response Shapes ────────────────────────────────────
+
+/** Standard Directus collection response wrapper. */
+export interface DirectusResponse<T> {
+  data: T[];
+  meta?: {
+    total_count?: number;
+    filter_count?: number;
+  };
+}
+
+/** Directus single-item response wrapper. */
+export interface DirectusSingleResponse<T> {
+  data: T;
+}
+
+/** Response from the stock transfer GET handler (default action). */
+export interface StockTransferListResponse {
+  stockTransfers: StockTransferRow[];
+  branches: BranchRow[];
+}
+
+/** Response from the RFID lookup action. */
+export interface RfidLookupResponse {
+  rfid: string;
+  productId: number;
+  productName: string;
+  barcode: string;
+  unitPrice: number;
+  branchId?: string;
+  qtyAvailable: number;
+}
+
+/** Response from the products action. */
+export interface ProductListResponse {
+  data: EnrichedProduct[];
+}
+
+// ─── API Request Payloads ───────────────────────────────────
+
+/** Single scanned item in the POST request body. */
+export interface CreateTransferItem {
+  rfid: string;
+  productId: number;
+  unitId?: number;
+  unitQty: number;
+  unitPrice: number;
+  totalAmount: number;
+  source_lot_id?: number | null;
+  source_inventory_lot_id?: number | null;
+  batch_no?: string | null;
+}
+
+/** POST request body for creating a stock transfer. */
+export interface CreateTransferPayload {
+  sourceBranch: string;
+  targetBranch: string;
+  leadDate: string;
+  scannedItems: CreateTransferItem[];
+}
+
+/** Single item in the PATCH request body (modern format). */
+export interface UpdateTransferItem {
+  id: number;
+  status: string;
+  allocated_quantity?: number;
+  picked_quantity?: number;
+  dispatched_quantity?: number;
+  scanned_quantity?: number;
+  received_quantity?: number;
+  date_received?: string | null;
+  destination_lot_id?: number | null;
+  destination_batch_no?: string | null;
+  manufacturing_date?: string | null;
+  expiration_date?: string | null;
+  lot_allocations?: LotAllocationGroup[];
+  remarks?: string | null;
+}
+
+/** RFID tracking entry in the PATCH request body. */
+export interface RfidTrackingEntry {
+  stock_transfer_id: number;
+  rfid_tag: string;
+}
+
+/** PATCH request body for updating stock transfer statuses. */
+export interface UpdateTransferPayload {
+  /** Modern format: individual items with per-item status/quantity. */
+  items?: UpdateTransferItem[];
+  /** Legacy format: batch IDs with a single status. */
+  ids?: number[];
+  /** Status for legacy format. */
+  status?: string;
+  /** Optional transaction remarks / deposit notes. */
+  remarks?: string | null;
+  /** RFID tags to record in tracking table. */
+  rfids?: RfidTrackingEntry[];
+  /** Scan type for RFID tracking ('DISPATCH' or 'RECEIVE'). */
+  scanType?: "DISPATCH" | "RECEIVE";
+  /** ID of the user performing the update. */
+  userId?: number;
+  /** Directus file IDs attached to the receiving transaction. */
+  attachments?: string[];
+  destination_lot_id?: number | null;
+  token?: string;
+}
+
+/** Directus payload for batch-inserting a stock_transfer row. */
+export interface StockTransferInsertPayload {
+  order_no: string;
+  source_branch_id: number;
+  target_branch_id: number;
+  source_branch?: number | null;
+  target_branch?: number | null;
+  unit_id: number;
+  lead_date?: string | null;
+  product_id: number;
+  ordered_quantity: number;
+  allocated_quantity?: number;
+  picked_quantity?: number;
+  dispatched_quantity?: number;
+  received_quantity: number;
+  amount: number;
+  status: string;
+  remarks?: string | null;
+  date_requested: string;
+  date_encoded: string;
+  encoder_id?: number | null;
+  source_lot_id?: number | null;
+  source_inventory_lot_id?: number | null;
+  destination_lot_id?: number | null;
+  batch_no?: string | null;
+  manufacturing_date?: string | null;
+  expiration_date?: string | null;
+}
+
+// ─── Valid Statuses ─────────────────────────────────────────
+
+/** All valid statuses in the stock transfer lifecycle. */
+export type StockTransferStatus =
+  | "Requested"
+  | "For Picking"
+  | "Picking"
+  | "Picked"
+  | "For Loading"
+  | "Dispatched"
+  | "Received"
+  | "Rejected"
+  | "Cancelled";
+
+/** All valid RFID scan types. */
+export type RfidScanType = "DISPATCH" | "RECEIVE";
+
+/** Corporate branding and contact data for PDF generation. */
+export interface CompanyData {
+  company_name: string;
+  company_address: string;
+  company_brgy: string;
+  company_city: string;
+  company_province: string;
+  company_zipCode: string;
+  company_contact: string;
+  company_email: string;
+  company_logo: string;
+}
+
+/** Logged-in user information for metadata and signatures. */
+export interface CurrentUser {
+  name: string;
+  email: string;
+  avatar?: string;
+}
+
+/** Row shape for mm_stock_transfer_details table */
+export interface MMStockTransferDetail {
+  id?: number;
+  stock_transfer_id: number;
+  inventory_lot_id: number;
+  target_inventory_lot_id?: number | null;
+  lot_id: number;
+  target_lot_id?: number | null;
+  product_id: number;
+  unit_id: number;
+  batch_no: string;
+  manufacturing_date?: string | null;
+  expiration_date?: string | null;
+  expiry_date?: string | null;
+  inventory_condition: 'GOOD' | 'DAMAGED' | 'QUARANTINED' | 'EXPIRED';
+  unit_cost: number;
+  allocated_quantity: number;
+  picked_quantity: number;
+  dispatched_quantity: number;
+  received_quantity: number;
+  variance_quantity: number;
+  bay_id?: number | null;
+  date_encoded?: string;
+  encoded_at?: string;
+  updated_at?: string;
+  date_updated?: string;
+  remarks?: string | null;
+}
+

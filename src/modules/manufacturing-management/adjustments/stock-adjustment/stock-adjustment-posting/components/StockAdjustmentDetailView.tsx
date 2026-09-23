@@ -1,0 +1,1045 @@
+"use client";
+
+import React, { useState, useEffect } from "react";
+import {
+  ChevronLeft,
+  Printer,
+  Calendar,
+  User,
+  MapPin,
+  FileText,
+  BadgeCheck,
+  Package,
+  ArrowUpCircle,
+  ArrowDownCircle,
+  Clock,
+  UserCheck,
+  Tag,
+  Image as ImageIcon,
+  Layers,
+  Warehouse,
+} from "lucide-react";
+import { AttachmentViewerModal } from "./modals/AttachmentViewerModal";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import { PdfEngine } from "@/components/pdf-layout-design/PdfEngine";
+import { pdfTemplateService } from "@/components/pdf-layout-design/services/pdf-template";
+import { PAPER_SIZES } from "@/components/pdf-layout-design/constants";
+import { CompanyData } from "@/components/pdf-layout-design/types";
+import { resolveProductClassification } from "../services/lot-tracking.service";
+import { useStockAdjustmentForm } from "../hooks/useStockAdjustmentForm";
+import {
+  StockAdjustmentDetail as DetailType,
+  StockAdjustmentProduct
+} from "../types/stock-adjustment.schema";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "@/components/ui/table";
+import { formatPhDateTime } from "../utils/date-utils";
+import { isPostedStatus } from "../utils/status-utils";
+import { Skeleton } from "@/components/ui/skeleton";
+import { getAssetUrl } from "@/lib/assets";
+
+interface StockAdjustmentDetailProps {
+  id: number;
+  onBack: () => void;
+  mode?: "creation" | "posting";
+  isModal?: boolean;
+}
+
+interface LocalAttachmentFile {
+  id: string;
+  type?: string;
+  filename_download?: string;
+  filesize?: number | string;
+}
+
+interface LocalAttachment {
+  attachment: LocalAttachmentFile | string;
+}
+
+interface ActiveAttachment {
+  fileUrl: string;
+  filename?: string;
+  isImage?: boolean;
+}
+
+export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isModal = false }: StockAdjustmentDetailProps) {
+  const { fetchById } = useStockAdjustmentForm();
+  const [data, setData] = useState<DetailType | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [companyData, setCompanyData] = useState<CompanyData | null>(null);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [activeAttachment, setActiveAttachment] = useState<ActiveAttachment | null>(null);
+
+  useEffect(() => {
+    const loadDetails = async () => {
+      setLoading(true);
+      try {
+        const details = await fetchById(id);
+        setData(details);
+      } catch (error) {
+        console.error("Failed to load details:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadDetails();
+  }, [id, fetchById]);
+
+  useEffect(() => {
+    const fetchCompanyData = async () => {
+      try {
+        const res = await fetch("/api/pdf/company");
+        if (res.ok) {
+          const result = await res.json();
+          const company = result.data?.[0] || (Array.isArray(result.data) ? null : result.data);
+          setCompanyData(company);
+        }
+      } catch (err) {
+        console.error("Error fetching company data:", err);
+      }
+    };
+    fetchCompanyData();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="p-6 space-y-6 max-w-7xl mx-auto w-full">
+        <Skeleton className="h-10 w-48" />
+        <Skeleton className="h-40 w-full" />
+        <Skeleton className="h-60 w-full" />
+      </div>
+    );
+  }
+
+  if (!data) return <div className="p-12 text-center font-bold">Record not found.</div>;
+
+  const isPosted = isPostedStatus(data.isPosted);
+
+  const generatePDF = async () => {
+    if (!data) return;
+
+    // --- Find Best Match Template (similar to generatePoPdf) ---
+    const templates = await pdfTemplateService.fetchTemplates();
+    const template = templates.find(t => t.name === "MEN2")
+      || templates.find(t => t.name.toLowerCase().includes("men2"))
+      || templates[0];
+    const templateName = template?.name || "MEN2";
+
+    const doc = await PdfEngine.generateWithFrame(templateName, companyData, (doc, startY, config) => {
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const margins = {
+        top: config.margins?.top ?? 10,
+        bottom: config.margins?.bottom ?? 10,
+        left: 15,
+        right: 15
+      };
+
+      // --- Title ---
+      const titleY = startY + 5;
+      doc.setFontSize(14);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(37, 99, 235); // enterprise-blue
+      doc.text("STOCK ADJUSTMENT SLIP", pageWidth / 2, titleY, { align: "center" });
+
+      doc.setDrawColor(37, 99, 235);
+      doc.setLineWidth(0.5);
+      doc.line(pageWidth / 2 - 40, titleY + 3, pageWidth / 2 + 40, titleY + 3);
+
+      // --- Metadata Section ---
+      const metaY = titleY + 10;
+      doc.setFontSize(9);
+      doc.setTextColor(100, 116, 139);
+
+      // Left Column
+      doc.setFont("helvetica", "bold");
+      doc.text("Document No:", margins.left, metaY);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(15, 23, 42);
+      doc.text(data.doc_no || "-", margins.left + 30, metaY);
+
+      doc.setTextColor(100, 116, 139);
+      doc.setFont("helvetica", "bold");
+      doc.text("Date Created:", margins.left, metaY + 6);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(15, 23, 42);
+      doc.text(data.created_at ? formatPhDateTime(data.created_at, { formatType: "pdf" }) : "-", margins.left + 30, metaY + 6);
+
+      // Right Column
+      const rightColX = pageWidth / 2 + 10;
+      doc.setTextColor(100, 116, 139);
+      doc.setFont("helvetica", "bold");
+      doc.text("Branch:", rightColX, metaY);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(15, 23, 42);
+      const branchName = typeof data.branch_id === 'object' ? data.branch_id?.branch_name : data.branch_id || "Main Warehouse";
+      doc.text(String(branchName).toUpperCase(), rightColX + 35, metaY);
+
+      doc.setTextColor(100, 116, 139);
+      doc.setFont("helvetica", "bold");
+      doc.text("Adjustment Type:", rightColX, metaY + 6);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(data.type === 'IN' ? 22 : 185, data.type === 'IN' ? 101 : 28, data.type === 'IN' ? 52 : 28);
+      const adjTypeFull = data.type === 'IN' ? 'Stock In' : data.type === 'OUT' ? 'Stock Out' : (data.type || "-");
+      doc.text(adjTypeFull, rightColX + 35, metaY + 6);
+
+      // --- Product Table (Hierarchical: Product Line -> Lot -> Batches) ---
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tableRows: any[] = [];
+      let rowNumber = 1;
+      data.items?.forEach((item) => {
+        const product = (item.product_id as unknown as StockAdjustmentProduct) || {};
+        const unitPrice = Number(item.cost_per_unit || product.cost_per_unit || product.price_per_unit || 0);
+        const itemQty = Number(item.quantity || 0);
+        const totalAmount = itemQty * unitPrice;
+        const brandName = item.brand_name || product.brand_name || (product as unknown as { product_brand?: { brand_name?: string } })?.product_brand?.brand_name || "—";
+        const productName = `${product.description || product.product_name || item.product_name || "Unknown Product"}${product.product_code || item.product_code ? `\n(${product.product_code || item.product_code})` : ""}`;
+        const uomName = item.unit_name || (product.unit_of_measurement as { unit_name?: string })?.unit_name || "pcs";
+        const classification = resolveProductClassification(
+          product.product_type || item.product_type,
+          product.product_category || product.category_name || item.category_name,
+          (product.product_code || item.product_code) ?? undefined,
+          (product.description || product.product_name || item.product_name) ?? undefined
+        );
+        const productType = classification.label || "-";
+
+        // Row 1: Product Header Row
+        tableRows.push([
+          { content: String(rowNumber++), styles: { halign: "center", fontStyle: "bold", fillColor: [241, 245, 249] } },
+          { content: brandName, styles: { halign: "left", fontStyle: "bold", fillColor: [241, 245, 249] } },
+          { content: productName, styles: { halign: "left", fontStyle: "bold", fillColor: [241, 245, 249] } },
+          { content: String(productType), styles: { halign: "center", fontStyle: "bold", fillColor: [241, 245, 249] } },
+          { content: uomName, styles: { halign: "center", fontStyle: "bold", fillColor: [241, 245, 249] } },
+          { content: `PHP ${unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, styles: { halign: "right", fontStyle: "bold", fillColor: [241, 245, 249] } },
+          { content: `PHP ${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, styles: { halign: "right", fontStyle: "bold", fillColor: [241, 245, 249] } },
+          { content: itemQty.toLocaleString(), styles: { halign: "center", fontStyle: "bold", fillColor: [241, 245, 249] } },
+        ]);
+
+        // Check for multi-lot allocations
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const lotAllocations = (item as unknown as { lot_allocations?: any[] }).lot_allocations || [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const allocations = (item as unknown as { allocations?: any[] }).allocations || [];
+
+        if (lotAllocations.length > 0) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          lotAllocations.forEach((lg: any) => {
+            const lotName = lg.lot_name || (lg.lot_id ? `Lot #${lg.lot_id}` : "Unassigned Lot");
+            const batches = lg.batches || [];
+            const lotGroupTotal =
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              batches.reduce((sum: number, b: any) => sum + (Number(b.quantity) || 0), 0) ||
+              Number(lg.allocated_quantity || 0);
+
+            // Row 2: Lot Row
+            tableRows.push([
+              { content: "", styles: { fillColor: [248, 250, 252] } },
+              {
+                content: `  Storage Lot: ${lotName} (Lot Total: ${Number(lotGroupTotal).toLocaleString()} ${uomName})`,
+                colSpan: 7,
+                styles: { halign: "left", fontStyle: "bold", textColor: [37, 99, 235], fillColor: [248, 250, 252] },
+              },
+            ]);
+
+            // Row 3: Discrete Batches
+            if (batches.length > 0) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              batches.forEach((b: any) => {
+                const bCost = b.unit_cost !== undefined ? Number(b.unit_cost) : unitPrice;
+                const bQty = Number(b.quantity || 0);
+                const bTotal = bQty * bCost;
+                const mfgStr = b.manufacturing_date ? ` | Mfg: ${String(b.manufacturing_date).substring(0, 10)}` : "";
+                const expStr = b.expiry_date ? ` | Exp: ${String(b.expiry_date).substring(0, 10)}` : "";
+                const qaStr = b.qa_status ? ` | QA: ${b.qa_status}` : "";
+
+                tableRows.push([
+                  { content: "" },
+                  {
+                    content: `      • Batch: ${b.batch_no || "N/A"}${mfgStr}${expStr}${qaStr}`,
+                    colSpan: 4,
+                    styles: { halign: "left", textColor: [51, 65, 85] },
+                  },
+                  {
+                    content: `PHP ${bCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                    styles: { halign: "right", textColor: [71, 85, 105] },
+                  },
+                  {
+                    content: `PHP ${bTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                    styles: { halign: "right", textColor: [71, 85, 105] },
+                  },
+                  {
+                    content: bQty.toLocaleString(),
+                    styles: { halign: "center", textColor: [71, 85, 105] },
+                  },
+                ]);
+              });
+            }
+          });
+        } else if (allocations.length > 0) {
+          // Group allocations by lot
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const lotMap = new Map<string, any[]>();
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          allocations.forEach((alloc: any) => {
+            const lotKey = alloc.lot_name || (alloc.lot_id ? `Lot #${alloc.lot_id}` : "Unassigned Lot");
+            if (!lotMap.has(lotKey)) lotMap.set(lotKey, []);
+            lotMap.get(lotKey)!.push(alloc);
+          });
+
+          lotMap.forEach((allocs, lotName) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const lotTotal = allocs.reduce((sum: number, a: any) => sum + Number(a.allocated_quantity || a.quantity || 0), 0);
+            tableRows.push([
+              { content: "", styles: { fillColor: [248, 250, 252] } },
+              {
+                content: `  Storage Lot: ${lotName} (Lot Total: ${Number(lotTotal).toLocaleString()} ${uomName})`,
+                colSpan: 7,
+                styles: { halign: "left", fontStyle: "bold", textColor: [37, 99, 235], fillColor: [248, 250, 252] },
+              },
+            ]);
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            allocs.forEach((alloc: any) => {
+              const aQty = Number(alloc.allocated_quantity || alloc.quantity || 0);
+              const aCost = alloc.unit_cost !== undefined ? Number(alloc.unit_cost) : unitPrice;
+              const aTotal = aQty * aCost;
+              const mfgStr = alloc.manufacturing_date ? ` | Mfg: ${String(alloc.manufacturing_date).substring(0, 10)}` : "";
+              const expStr = alloc.expiry_date ? ` | Exp: ${String(alloc.expiry_date).substring(0, 10)}` : "";
+              const qaStr = alloc.qa_status ? ` | QA: ${alloc.qa_status}` : "";
+
+              tableRows.push([
+                { content: "" },
+                {
+                  content: `      • Batch: ${alloc.batch_no || "N/A"}${mfgStr}${expStr}${qaStr}`,
+                  colSpan: 4,
+                  styles: { halign: "left", textColor: [51, 65, 85] },
+                },
+                {
+                  content: `PHP ${aCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                  styles: { halign: "right", textColor: [71, 85, 105] },
+                },
+                {
+                  content: `PHP ${aTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                  styles: { halign: "right", textColor: [71, 85, 105] },
+                },
+                {
+                  content: aQty.toLocaleString(),
+                  styles: { halign: "center", textColor: [71, 85, 105] },
+                },
+              ]);
+            });
+          });
+        } else {
+          // Single lot and batch direct assignment
+          const lotName = item.lot_name || (item.lot_id ? (typeof item.lot_id === 'object' ? (item.lot_id as { lot_name?: string })?.lot_name || `Lot #${(item.lot_id as { id?: number })?.id}` : `Lot #${item.lot_id}`) : "Unassigned Lot");
+          const batchNo = item.batch_no || "N/A";
+          const mfgStr = item.manufacturing_date ? ` | Mfg: ${String(item.manufacturing_date).substring(0, 10)}` : "";
+          const expStr = item.expiry_date ? ` | Exp: ${String(item.expiry_date).substring(0, 10)}` : "";
+          const qaStr = item.qa_status ? ` | QA: ${item.qa_status}` : "";
+
+          // Row 2: Lot Row
+          tableRows.push([
+            { content: "", styles: { fillColor: [248, 250, 252] } },
+            {
+              content: `  Storage Lot: ${lotName} (Lot Total: ${Number(itemQty).toLocaleString()} ${uomName})`,
+              colSpan: 7,
+              styles: { halign: "left", fontStyle: "bold", textColor: [37, 99, 235], fillColor: [248, 250, 252] },
+            },
+          ]);
+
+          // Row 3: Single Batch Row
+          tableRows.push([
+            { content: "" },
+            {
+              content: `      • Batch: ${batchNo}${mfgStr}${expStr}${qaStr}`,
+              colSpan: 4,
+              styles: { halign: "left", textColor: [51, 65, 85] },
+            },
+            {
+              content: `PHP ${unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+              styles: { halign: "right", textColor: [71, 85, 105] },
+            },
+            {
+              content: `PHP ${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+              styles: { halign: "right", textColor: [71, 85, 105] },
+            },
+            {
+              content: itemQty.toLocaleString(),
+              styles: { halign: "center", textColor: [71, 85, 105] },
+            },
+          ]);
+        }
+      });
+
+      // Calculate dynamic bottom margin based on Body End indicator
+      const baseSize = config.paperSize === 'Custom' ? config.customSize : (PAPER_SIZES[config.paperSize] || PAPER_SIZES.A4);
+      const paperHeight = config.orientation === 'landscape' ? baseSize.width : baseSize.height;
+      const bottomMargin = config.bodyEnd ? (paperHeight - config.bodyEnd) : margins.bottom;
+
+      autoTable(doc, {
+        startY: metaY + 12,
+        margin: { ...margins, bottom: bottomMargin },
+        head: [["#", "Brand", "Product Name", "Product Type", "UOM", "Unit Price", "Total Amount", "Qty"]],
+        body: tableRows,
+        headStyles: { fillColor: [248, 250, 252], textColor: [71, 85, 105], fontSize: 8, fontStyle: 'bold' },
+        bodyStyles: { fontSize: 7, textColor: [30, 41, 59] },
+        columnStyles: {
+          0: { halign: 'center', cellWidth: 8 },
+          1: { halign: 'left', cellWidth: 20 },
+          2: { halign: 'left' },
+          3: { halign: 'center', cellWidth: 22 },
+          4: { halign: 'center', cellWidth: 14 },
+          5: { halign: 'right', cellWidth: 22 },
+          6: { halign: 'right', fontStyle: 'bold', cellWidth: 24 },
+          7: { halign: 'center', fontStyle: 'bold', cellWidth: 14 }
+        },
+        theme: 'grid',
+        styles: { cellPadding: 1.5 }
+      });
+
+      const finalY = ((doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 100) + 8;
+
+      // --- Totals & Remarks Section ---
+      doc.setFontSize(9);
+      doc.setTextColor(100, 116, 139);
+      doc.setFont("helvetica", "normal");
+      doc.text("Total Adjusted Amount", pageWidth - margins.right, finalY, { align: 'right' });
+
+      // Remarks on the left
+      doc.setFontSize(8);
+      doc.setTextColor(100, 116, 139);
+      doc.setFont("helvetica", "bold");
+      doc.text("REMARKS:", margins.left, finalY);
+      doc.setFontSize(7);
+      doc.setFont("helvetica", "italic");
+      doc.setTextColor(30, 41, 59);
+      const remarks = data.remarks || "N/A";
+      const splitRemarks = doc.splitTextToSize(remarks.toUpperCase(), 100);
+      doc.text(splitRemarks, margins.left, finalY + 5);
+
+      doc.setFontSize(14);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(30, 58, 138);
+      const formattedAmount = Math.abs(data.amount || 0).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+      doc.text(`PHP ${formattedAmount}`, pageWidth - margins.right, finalY + 7, { align: 'right' });
+
+      // --- Signatures Section ---
+      let sigY = finalY + 25;
+
+      if (sigY + 20 > paperHeight) {
+        doc.addPage();
+        sigY = 30;
+      }
+
+      doc.setDrawColor(200, 200, 200);
+      doc.setLineWidth(0.3);
+      doc.line(margins.left, sigY - 5, pageWidth - margins.right, sigY - 5);
+
+      doc.setFontSize(8);
+      doc.setTextColor(100, 116, 139);
+      doc.setFont("helvetica", "normal");
+
+      doc.setLineWidth(0.2);
+      doc.setDrawColor(148, 163, 184);
+
+      // Created By
+      doc.text("CREATED BY:", margins.left, sigY);
+      doc.line(margins.left, sigY + 12, margins.left + 50, sigY + 12);
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(15, 23, 42);
+      const createdBy = typeof data.created_by === 'object' ? `${data.created_by?.user_fname} ${data.created_by?.user_lname}` : data.created_by || "System";
+      doc.text(createdBy, margins.left, sigY + 10);
+
+      // Posted BY
+      doc.setFontSize(8);
+      doc.setTextColor(100, 116, 139);
+      doc.setFont("helvetica", "normal");
+      doc.setLineWidth(0.2);
+      doc.setDrawColor(148, 163, 184);
+      doc.text("POSTED BY:", pageWidth - margins.right - 50, sigY);
+      doc.line(pageWidth - margins.right - 50, sigY + 12, pageWidth - margins.right, sigY + 12);
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(15, 23, 42);
+      const postedBy = typeof data.posted_by === 'object' ? `${data.posted_by?.user_fname} ${data.posted_by?.user_lname}` : data.posted_by || "System";
+      doc.text(postedBy, pageWidth - margins.right - 50, sigY + 10);
+    });
+
+    doc.save(`StockAdjustment_${data.doc_no}.pdf`);
+  };
+
+  return (
+    <div className="flex flex-col gap-6 p-8 max-w-7xl mx-auto w-full overflow-y-auto bg-background min-h-screen relative">
+      <div className="print:hidden flex flex-col gap-6">
+        {/* Module Header */}
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-3">
+            <div className="bg-primary p-2 rounded-lg shadow-sm">
+              <Package className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-foreground leading-tight">
+                {mode === "posting" ? "Stock Adjustment Posting" : "Stock Adjustment Module"}
+              </h2>
+              <p className="text-xs text-muted-foreground font-medium">Inventory Management System</p>
+            </div>
+          </div>
+          <div className={`flex items-center gap-2 print:hidden ${isModal ? "mr-10" : ""}`}>
+            <Button
+              variant="outline"
+              onClick={generatePDF}
+              className="gap-2 h-10 border-border bg-background shadow-sm font-bold text-muted-foreground hover:bg-muted rounded-lg transition-all"
+            >
+              <Printer className="h-4 w-4" />
+              Download PDF
+            </Button>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-4 mt-2 mb-4">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onBack}
+            className="rounded-full hover:bg-muted shadow-sm border border-border h-10 w-10 print:hidden transition-colors"
+          >
+            <ChevronLeft className="h-5 w-5 text-muted-foreground" />
+          </Button>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-bold tracking-tight text-foreground">{data.doc_no}</h1>
+              <Badge variant="outline" className={data.type === 'IN' ? 'bg-success-bg text-success border-success/20 font-bold uppercase' : 'bg-destructive/10 text-destructive border-destructive/20 font-bold uppercase'}>
+                Stock {data.type === 'IN' ? 'In' : 'Out'}
+              </Badge>
+              {isPosted && (
+                <Badge variant="outline" className="bg-info-bg text-info border-info/20 flex items-center gap-1 font-bold uppercase">
+                  <BadgeCheck className="h-3 w-3" />
+                  Posted
+                </Badge>
+              )}
+            </div>
+            <p className="text-sm text-muted-foreground">View detailed stock adjustment information</p>
+          </div>
+        </div>
+
+        <Card className="border-none shadow-sm bg-card overflow-hidden rounded-xl border border-border/40">
+          <CardContent className="p-0">
+            {/* Vibrant Hero Section */}
+            <div className="bg-primary p-8 text-white relative overflow-hidden transition-colors duration-300">
+              <div className="absolute right-[-20px] top-[-20px] opacity-10">
+                {data.type === 'IN' ? <ArrowUpCircle className="h-48 w-48" /> : <ArrowDownCircle className="h-48 w-48" />}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-8 relative z-10">
+                <div className="space-y-1">
+                  <p className="text-white/60 text-[10px] uppercase font-bold tracking-widest">Branch Location</p>
+                  <div className="flex items-center gap-2 font-bold text-lg">
+                    <MapPin className="h-4 w-4 text-white/80" />
+                    {typeof data.branch_id === 'object' ? data.branch_id?.branch_name : data.branch_id || "Main Warehouse"}
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <p className="text-white/60 text-[10px] uppercase font-bold tracking-widest">Date Created</p>
+                  <div className="flex items-center gap-2 font-bold text-lg">
+                    <Calendar className="h-4 w-4 text-white/80" />
+                    {data.created_at ? formatPhDateTime(data.created_at, { formatType: "dateOnly" }) : "-"}
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <p className="text-white/60 text-[10px] uppercase font-bold tracking-widest">Created By</p>
+                  <div className="flex items-center gap-2 font-bold text-lg">
+                    <User className="h-4 w-4 text-white/80" />
+                    {(() => {
+                      const createdBy = data.created_by;
+                      if (typeof createdBy === 'object' && createdBy !== null) {
+                        const fname = createdBy.user_fname || "";
+                        const lname = createdBy.user_lname || "";
+                        const fullName = `${fname} ${lname}`.trim();
+                        return fullName || "System User";
+                      }
+                      return createdBy || "System User";
+                    })()}
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <p className="text-white/60 text-[10px] uppercase font-bold tracking-widest">Total Amount</p>
+                  <div className="text-3xl font-bold text-white flex items-center gap-2">
+                    ₱{data.amount?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div className="space-y-4">
+                <div>
+                  <div className="flex items-center gap-2 text-foreground mb-2">
+                    <FileText className="h-4 w-4 text-primary" />
+                    <h3 className="font-bold">Remarks & Notes</h3>
+                  </div>
+                  <div className="p-4 bg-muted/30 rounded-xl border border-border text-sm text-muted-foreground min-h-[60px]">
+                    {data.remarks || "No additional remarks provided."}
+                  </div>
+                </div>
+
+                {(() => {
+                  const attachments = (data as unknown as { stock_adjustment_attachment?: LocalAttachment[] }).stock_adjustment_attachment;
+                  if (!attachments || attachments.length === 0) return null;
+                  return (
+                    <div className="space-y-3 mt-6">
+                      <div className="flex items-center gap-2 text-foreground">
+                        <ImageIcon className="h-4 w-4 text-primary" />
+                        <h3 className="font-bold">Attachments ({attachments.length})</h3>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {attachments.map((att, idx) => {
+                          const file = att.attachment;
+                          if (!file) return null;
+                          const fileId = typeof file === 'object' ? file.id : file;
+                          const filename = typeof file === 'object' ? file.filename_download : `Attachment ${idx + 1}`;
+                          const isImage = typeof file === 'object'
+                            ? Boolean(file.type?.startsWith('image') || (file.filename_download && /\.(png|jpe?g|webp|gif|svg|avif|bmp)$/i.test(file.filename_download)))
+                            : true;
+                          const sizeInMb = typeof file === 'object' && file.filesize
+                            ? (Number(file.filesize) / (1024 * 1024)).toFixed(2)
+                            : null;
+
+                          const fileUrl = getAssetUrl(fileId) || "";
+
+                          return (
+                            <div key={idx} className="flex items-center justify-between p-3 bg-muted/10 border border-border/40 rounded-xl shadow-xs hover:bg-muted/20 transition-colors">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setActiveAttachment({ fileUrl, filename, isImage });
+                                  setViewerOpen(true);
+                                }}
+                                className="flex items-center gap-3 flex-1 min-w-0 text-left bg-transparent border-none p-0 cursor-pointer focus:outline-none"
+                                title="Click to view file"
+                              >
+                                <div className="h-9 w-9 shrink-0 bg-primary/5 rounded-lg flex items-center justify-center text-primary">
+                                  {isImage ? <ImageIcon className="h-4.5 w-4.5" /> : <FileText className="h-4.5 w-4.5" />}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs font-bold truncate text-foreground hover:text-primary transition-colors">{filename}</p>
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    {sizeInMb && (
+                                      <span className="text-[9px] text-muted-foreground font-semibold">
+                                        {sizeInMb} MB
+                                      </span>
+                                    )}
+                                    <span className="text-[9px] text-primary font-bold uppercase tracking-wider">
+                                      View File
+                                    </span>
+                                  </div>
+                                </div>
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              <div className="grid gap-4 grid-cols-2">
+                <div className="bg-muted/30 p-4 rounded-xl border border-border">
+                  <p className="text-[10px] uppercase font-bold text-muted-foreground/60 mb-1">Status</p>
+                  <p className="font-bold text-foreground/80">{isPosted ? "Posted (Finalized)" : "Draft (Pending Posting)"}</p>
+                </div>
+                <div className="bg-muted/30 p-4 rounded-xl border border-border">
+                  <p className="text-[10px] uppercase font-bold text-muted-foreground/60 mb-1">Items Count</p>
+                  <p className="font-bold text-foreground/80">{data.items?.length || 0} Products</p>
+                </div>
+                {isPosted && (
+                  <>
+                    <div className="bg-primary/5 dark:bg-blue-900/10 p-4 rounded-xl border border-primary/20 dark:border-blue-800/20 flex flex-col gap-1 animate-in fade-in slide-in-from-left-2 duration-300">
+                      <div className="flex items-center gap-2">
+                        <Clock className="h-3 w-3 text-primary" />
+                        <p className="text-[10px] uppercase font-bold text-primary/70">Posted At</p>
+                      </div>
+                      <p className="font-bold text-primary/95">
+                        {data.postedAt ? formatPhDateTime(data.postedAt) : "-"}
+                      </p>
+                    </div>
+                    <div className="bg-primary/5 dark:bg-blue-900/10 p-4 rounded-xl border border-primary/20 dark:border-blue-800/20 flex flex-col gap-1 animate-in fade-in slide-in-from-left-2 duration-300">
+                      <div className="flex items-center gap-2">
+                        <UserCheck className="h-3 w-3 text-primary" />
+                        <p className="text-[10px] uppercase font-bold text-primary/70">Posted By</p>
+                      </div>
+                      <p className="font-bold text-primary/95">
+                        {(() => {
+                          const postedBy = data.posted_by;
+                          if (typeof postedBy === 'object' && postedBy !== null) {
+                            const fname = postedBy.user_fname || "";
+                            const lname = postedBy.user_lname || "";
+                            const fullName = `${fname} ${lname}`.trim();
+                            return fullName || "System User";
+                          }
+                          return postedBy || "System User";
+                        })()}
+                      </p>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Product Line Items with Expected Stock & RFID Arrays */}
+      <div className="space-y-4 print:hidden">
+        <h3 className="text-lg font-bold text-foreground">Product Line Items</h3>
+
+        <div className="rounded-xl border border-border overflow-hidden shadow-sm bg-card">
+          <Table>
+            <TableHeader className="bg-muted/30">
+              <TableRow className="hover:bg-transparent border-border">
+                <TableHead className="w-12 text-center text-xs font-bold text-muted-foreground uppercase tracking-wider">#</TableHead>
+                <TableHead className="w-28 text-xs font-bold text-muted-foreground uppercase tracking-wider">Brand</TableHead>
+                <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Product Information</TableHead>
+                <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider text-center">Product Type</TableHead>
+                <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider text-right">Cost/Unit</TableHead>
+                <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider text-center">Unit</TableHead>
+                <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider text-center">Adj. Qty</TableHead>
+                <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider text-right">Total Price</TableHead>
+                <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider text-center">New Stock</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.items?.map((item, idx) => {
+                const product = (item.product_id as unknown as StockAdjustmentProduct) || {};
+                const qty = Number(item.quantity) || 0;
+                const cost = Number(item.cost_per_unit || product.cost_per_unit || product.price_per_unit) || 0;
+                const total = qty * cost;
+                const current = Number(item.current_stock) || 0;
+                const unitName = item.unit_name || product.unit_name || "pcs";
+
+                // Color-coded Delta quantities
+                const isIncoming = data.type === 'IN';
+                const newStock = isIncoming ? current + qty : current - qty;
+
+                const classification = resolveProductClassification(
+                  product.product_type || item.product_type,
+                  product.product_category || product.category_name || item.category_name,
+                  (product.product_code || item.product_code) ?? undefined,
+                  (product.description || product.product_name || item.product_name) ?? undefined
+                );
+                const productType = classification.label || "-";
+
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const lotAllocations = (item as unknown as { lot_allocations?: any[] }).lot_allocations || [];
+
+                if (lotAllocations.length > 0) {
+                  let subBatchCounter = 1;
+                  return (
+                    <React.Fragment key={item.id || idx}>
+                      {/* Product Summary Row */}
+                      <TableRow
+                        className={`border-b border-border/70 bg-muted/40 hover:bg-muted/50 transition-colors duration-150 font-semibold ${idx > 0 ? "border-t-2 border-t-border" : "border-t border-border/50"
+                          }`}
+                      >
+                        <TableCell className="text-center font-bold">
+                          <div className="flex items-center justify-center">
+                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-md bg-primary/10 text-primary font-bold text-xs">
+                              {idx + 1}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="font-bold text-foreground">{item.brand_name || "—"}</TableCell>
+                        <TableCell>
+                          <div className="flex flex-col gap-1 py-1">
+                            <span className="font-bold text-foreground leading-tight">
+                              {product.description || product.product_name || "Unknown Product"}
+                            </span>
+                            <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                              {product.product_code && (
+                                <span className="text-[10px] text-muted-foreground font-mono">({product.product_code})</span>
+                              )}
+                              <Badge
+                                variant="outline"
+                                className="text-[9px] py-0 h-4 px-1.5 font-bold bg-primary/10 text-primary border-primary/30 gap-1"
+                              >
+                                <Layers className="w-2.5 h-2.5 text-primary" />
+                                {lotAllocations.length} {lotAllocations.length === 1 ? "Lot" : "Lots"}
+                              </Badge>
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant="outline" className="text-[10px] font-semibold bg-muted/50 text-foreground/80 border-border/60">
+                            {productType}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right font-medium text-muted-foreground">
+                          ₱{Number(cost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </TableCell>
+                        <TableCell className="text-center font-bold text-primary">
+                          <span className="text-[10px] font-bold text-primary bg-blue-50 dark:bg-blue-900/20 px-1.5 py-0.5 rounded uppercase">
+                            {unitName}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <span className={`font-black px-2.5 py-1 rounded-full text-xs ${isIncoming ? 'bg-success-bg text-success' : 'bg-destructive/10 text-destructive'}`}>
+                            {isIncoming ? `+${Number(qty).toLocaleString()}` : `-${Number(qty).toLocaleString()}`}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right font-bold text-primary">
+                          ₱{Number(total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </TableCell>
+                        <TableCell className="text-center font-bold text-foreground">
+                          {Number(newStock).toLocaleString()}
+                        </TableCell>
+                      </TableRow>
+
+                      {/* Storage Lot & Batch Breakdown */}
+                      {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                      {lotAllocations.map((lotGroup: any, lgIdx: number) => {
+                        const lotGroupTotal =
+                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                          lotGroup.batches?.reduce((sum: number, b: any) => sum + (Number(b.quantity) || 0), 0) ??
+                          lotGroup.allocated_quantity ??
+                          0;
+
+                        return (
+                          <React.Fragment key={`lot-${lgIdx}`}>
+                            {/* Storage Lot Sub-Header */}
+                            <TableRow className="bg-muted/20 border-b border-border/40 text-xs">
+                              <TableCell className="p-2 text-center border-r border-border/50 bg-muted/20"></TableCell>
+                              <TableCell colSpan={8} className="px-4 py-1.5 bg-muted/20">
+                                <div className="flex items-center justify-between text-xs font-bold text-foreground">
+                                  <span className="flex items-center gap-1.5 text-primary">
+                                    <Warehouse className="w-3.5 h-3.5 text-primary shrink-0" />
+                                    <span>{lotGroup.lot_name || `Lot #${lotGroup.lot_id}`}</span>
+                                  </span>
+                                  <span className="text-[10px] text-muted-foreground font-mono bg-background/80 px-2 py-0.5 rounded border border-border/50">
+                                    Lot Total: <span className="font-bold text-foreground">{Number(lotGroupTotal).toLocaleString()}</span> {unitName}
+                                  </span>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+
+                            {/* Discrete Batches in this Storage Lot */}
+                            {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                            {(lotGroup.batches || []).map((batch: any, bIdx: number) => {
+                              const bCount = subBatchCounter++;
+                              const batchCost = batch.unit_cost !== undefined ? Number(batch.unit_cost) : Number(cost);
+                              const batchQty = Number(batch.quantity || 0);
+                              const batchNetTotal = batchQty * batchCost;
+
+                              return (
+                                <TableRow
+                                  key={`batch-${bIdx}`}
+                                  className="bg-card hover:bg-muted/10 border-b border-border/30 text-xs transition-colors"
+                                >
+                                  <TableCell className="p-2 text-center text-muted-foreground/60 font-mono text-[10px] border-r border-border/50">
+                                    {idx + 1}.{bCount}
+                                  </TableCell>
+                                  <TableCell className="p-2 text-muted-foreground/40 text-xs">—</TableCell>
+                                  <TableCell className="p-2 min-w-[280px] pl-6">
+                                    <div className="flex flex-wrap items-center gap-2 font-mono">
+                                      <Badge
+                                        variant="outline"
+                                        className="text-[9px] py-0 h-4 px-1.5 font-bold bg-primary/10 text-primary border-primary/30 gap-1"
+                                      >
+                                        <Tag className="w-2.5 h-2.5 text-primary" />
+                                        {batch.batch_no || "—"}
+                                      </Badge>
+                                      {batch.manufacturing_date && (
+                                        <span className="text-[10px] text-muted-foreground">
+                                          Mfg: {String(batch.manufacturing_date).substring(0, 10)}
+                                        </span>
+                                      )}
+                                      {batch.expiry_date && (
+                                        <span className="text-[10px] text-muted-foreground">
+                                          Exp: {String(batch.expiry_date).substring(0, 10)}
+                                        </span>
+                                      )}
+                                      {batch.qa_status && (
+                                        <Badge
+                                          variant={batch.qa_status === "GOOD" ? "outline" : batch.qa_status === "DAMAGED" ? "destructive" : "secondary"}
+                                          className="text-[8px] py-0 h-3.5 px-1 uppercase"
+                                        >
+                                          {batch.qa_status}
+                                        </Badge>
+                                      )}
+                                    </div>
+                                  </TableCell>
+                                  <TableCell className="p-2 text-center text-muted-foreground/40 text-xs">—</TableCell>
+                                  <TableCell className="text-right text-xs text-muted-foreground font-mono">
+                                    ₱{Number(batchCost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </TableCell>
+                                  <TableCell className="text-center">
+                                    <span className="text-[10px] font-bold text-primary bg-blue-50 dark:bg-blue-900/20 px-1.5 py-0.5 rounded uppercase shrink-0">
+                                      {unitName}
+                                    </span>
+                                  </TableCell>
+                                  <TableCell className="text-center">
+                                    <span className={`font-black px-2 py-0.5 rounded-full text-xs ${isIncoming ? 'bg-success-bg text-success' : 'bg-destructive/10 text-destructive'}`}>
+                                      {isIncoming ? `+${Number(batchQty).toLocaleString()}` : `-${Number(batchQty).toLocaleString()}`}
+                                    </span>
+                                  </TableCell>
+                                  <TableCell className="text-right font-bold text-foreground/80">
+                                    ₱{Number(batchNetTotal).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </TableCell>
+                                  <TableCell className="text-center text-muted-foreground/40 text-xs">—</TableCell>
+                                </TableRow>
+                              );
+                            })}
+                          </React.Fragment>
+                        );
+                      })}
+                    </React.Fragment>
+                  );
+                }
+
+                return (
+                  <TableRow
+                    key={item.id || idx}
+                    className={`border-b border-border/60 hover:bg-muted/35 transition-colors duration-150 ${idx > 0 ? "border-t-2 border-t-border" : "border-t border-border/50"
+                      }`}
+                  >
+                    <TableCell className="text-center font-bold">
+                      <div className="flex items-center justify-center">
+                        <span className="inline-flex items-center justify-center w-6 h-6 rounded-md bg-primary/10 text-primary font-bold text-xs">
+                          {idx + 1}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="font-bold text-foreground">{item.brand_name || "—"}</TableCell>
+                    <TableCell>
+                      <div className="flex flex-col gap-1.5 py-1">
+                        <span className="font-bold text-foreground leading-tight">{product.description || product.product_name || "Unknown Product"}</span>
+                        <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                          <span className="text-[10px] text-muted-foreground font-mono">{product.product_code || "N/A"}</span>
+                          {item.batch_no ? (
+                            (() => {
+                              const batches = item.batch_no.split(',').map((s) => s.trim()).filter(Boolean);
+                              const label = batches.length > 1 ? `${batches.length} Batches` : batches[0];
+                              return (
+                                <Badge
+                                  variant="outline"
+                                  title={item.batch_no ? `Batches:\n${batches.join('\n')}` : undefined}
+                                  className="text-[10px] py-0 h-4 px-1.5 font-mono bg-muted/40 gap-1 border-border/60"
+                                >
+                                  <Layers className="w-2.5 h-2.5 text-primary" />
+                                  {label} {item.lot_name ? `(${item.lot_name})` : item.lot_id ? `(Lot #${item.lot_id})` : ''}
+                                </Badge>
+                              );
+                            })()
+                          ) : data.type === 'OUT' ? (
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] py-0 h-4 px-1.5 font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 gap-1"
+                            >
+                              <Layers className="w-2.5 h-2.5 text-emerald-600" />
+                              AUTO — FEFO
+                            </Badge>
+                          ) : null}
+                          {item.expiry_date && (
+                            <span className="text-[9px] text-muted-foreground/80 font-mono">
+                              Exp: {String(item.expiry_date).substring(0, 10)}
+                            </span>
+                          )}
+                          {item.qa_status && (
+                            <Badge
+                              variant={item.qa_status === "GOOD" ? "outline" : item.qa_status === "DAMAGED" ? "destructive" : "secondary"}
+                              className="text-[9px] py-0 h-3.5 px-1 font-mono"
+                            >
+                              {item.qa_status}
+                            </Badge>
+                          )}
+                        </div>
+                        {/* RFID Tags */}
+                        {item.rfid_tags && item.rfid_tags.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-2 animate-in fade-in duration-300">
+                            {item.rfid_tags.map((tag) => (
+                              <Badge
+                                key={tag}
+                                variant="secondary"
+                                className="bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 border border-amber-200/50 dark:border-amber-800/30 font-mono text-[9px] py-0.5 px-2 flex items-center gap-1 rounded-md shadow-sm"
+                              >
+                                <Tag className="h-2.5 w-2.5" />
+                                {tag}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Badge variant="outline" className="text-[10px] font-semibold bg-muted/50 text-foreground/80 border-border/60">
+                        {productType}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right font-medium text-muted-foreground">
+                      ₱{Number(cost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </TableCell>
+                    <TableCell className="text-center font-bold text-muted-foreground/80">{unitName}</TableCell>
+                    <TableCell className="text-center">
+                      <span className={`font-black px-2.5 py-1 rounded-full text-xs ${isIncoming ? 'bg-success-bg text-success' : 'bg-destructive/10 text-destructive'}`}>
+                        {isIncoming ? `+${Number(qty).toLocaleString()}` : `-${Number(qty).toLocaleString()}`}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right font-bold text-primary">
+                      ₱{Number(total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </TableCell>
+                    {/* Live New Stock Preview */}
+                    <TableCell className="text-center font-bold text-foreground">
+                      {Number(newStock).toLocaleString()}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+
+          <div className="p-8 bg-muted/30 border-t border-border flex flex-col items-end gap-3">
+            <div className="flex items-center gap-12 w-full max-w-md justify-between">
+              <span className="text-muted-foreground font-bold uppercase tracking-wider text-[11px]">Total Quantity:</span>
+              <span className={`font-black text-lg ${data.type === 'IN' ? 'text-success' : 'text-destructive'}`}>
+                {data.type === 'OUT' ? '-' : '+'}{Number(data.items?.reduce((acc, item) => acc + (Number(item.quantity) || 0), 0) || 0).toLocaleString()} units
+              </span>
+            </div>
+            <div className="h-px bg-border w-full max-w-md" />
+            <div className="flex items-center gap-12 w-full max-w-md justify-between">
+              <span className="text-muted-foreground font-bold uppercase tracking-wider text-[11px]">Total Adjusted Amount:</span>
+              <span className="text-2xl font-bold text-primary">
+                ₱{Number(data.amount || data.items?.reduce((acc, item) => acc + ((Number(item.quantity) || 0) * (Number(item.cost_per_unit) || 0)), 0) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Attachment Viewer Modal */}
+      {activeAttachment && (
+        <AttachmentViewerModal
+          open={viewerOpen}
+          fileUrl={activeAttachment.fileUrl}
+          filename={activeAttachment.filename}
+          isImage={activeAttachment.isImage}
+          onClose={() => setViewerOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
