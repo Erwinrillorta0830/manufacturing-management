@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import { useDebounce } from "use-debounce";
 import { QuotationHeader, QuotationSnapshotNode, CatalogProduct, SelectedQuoteProduct, Customer, Project } from "../types";
+import { calculateProductVersionCOGS } from "../utils/costing";
 
 import { generateQuotationPDF } from "../utils/exportQuotationPDF";
 
@@ -603,20 +604,45 @@ export function useQuotation() {
         setIsConfirmModalOpen(false);
         setSavingQuote(true);
         try {
+            const wcRes = await fetch("/api/manufacturing/finished-goods/work-centers").catch(() => null);
+            const wcRaw = wcRes && wcRes.ok ? (await wcRes.json()) : [];
+            const workCenters = Array.isArray(wcRaw) ? wcRaw : (wcRaw && Array.isArray(wcRaw.data) ? wcRaw.data : []);
+
             // Dynamically fetch and verify the COGS/BOM Cost for each selected product
             const productsWithLatestCost = await Promise.all(selectedProductsList.map(async (item) => {
                 if (!item.product) return null;
                 let latestCost = Number(item.product.cost_per_unit || 0);
                 try {
                     const parentId = item.parent_product_id || item.product.parent_product_id || item.product.product_id;
-                    const url = item.versionId 
-                        ? `/api/manufacturing/finished-goods/bom-cost?productId=${parentId}&versionId=${item.versionId}`
-                        : `/api/manufacturing/finished-goods/bom-cost?productId=${item.product.product_id}`;
-                    const resBOM = await fetch(url);
-                    if (resBOM.ok) {
-                        const costData = await resBOM.json();
-                        if (costData && typeof costData.cost === "number" && costData.cost > 0) {
-                            latestCost = costData.cost;
+                    if (item.versionId) {
+                        let versionData: Record<string, unknown> | null = null;
+                        const candidateIds = Array.from(new Set([parentId, item.product.product_id])).filter((id): id is number => typeof id === "number" && id > 0);
+                        for (const qId of candidateIds) {
+                            try {
+                                const vRes = await fetch(`/api/manufacturing/finished-goods/bom-details?productId=${qId}&versionId=${item.versionId}`);
+                                if (vRes.ok) {
+                                    const resJson = await vRes.json();
+                                    if (resJson) {
+                                        versionData = resJson;
+                                        break;
+                                    }
+                                }
+                            } catch { }
+                        }
+                        if (versionData && (versionData.routes || versionData.labor_positions || versionData.base_quantity)) {
+                            const calculatedCOGS = calculateProductVersionCOGS(versionData, workCenters);
+                            if (calculatedCOGS > 0) {
+                                latestCost = calculatedCOGS;
+                            }
+                        }
+                    } else {
+                        const url = `/api/manufacturing/finished-goods/bom-cost?productId=${item.product.product_id}`;
+                        const resBOM = await fetch(url);
+                        if (resBOM.ok) {
+                            const costData = await resBOM.json();
+                            if (costData && typeof costData.cost === "number" && costData.cost > 0) {
+                                latestCost = costData.cost;
+                            }
                         }
                     }
                 } catch (err) {

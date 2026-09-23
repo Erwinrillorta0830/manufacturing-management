@@ -9,14 +9,16 @@ const acceptedLotAllocationSchema = z.object({
     quantity: nonNegativeNumber,
     batch_no: z.string().trim().min(1).max(50),
     manufacturing_date: z.string().date().nullable().optional(),
-    expiration_date: z.string().date().nullable().optional()
+    expiration_date: z.string().date().nullable().optional(),
+    qa_status: z.literal("GOOD").default("GOOD")
 });
 const rejectedLotAllocationSchema = z.object({
     storage_lot_id: positiveId,
     quantity: nonNegativeNumber,
     batch_no: z.string().trim().min(1).max(50),
     manufacturing_date: z.string().date().nullable().optional(),
-    expiration_date: z.string().date().nullable().optional()
+    expiration_date: z.string().date().nullable().optional(),
+    qa_status: z.enum(["DAMAGED", "QUARANTINED", "EXPIRED"]).default("DAMAGED")
 });
 const qaResultSchema = z.object({
     spec_id: positiveId,
@@ -56,7 +58,8 @@ export const receivingLineSchema = z.object({
             quantity: allocation.quantity,
             batchNumber: allocation.batch_no,
             manufacturingDate: allocation.manufacturing_date,
-            expirationDate: allocation.expiration_date
+            expirationDate: allocation.expiration_date,
+            qaStatus: allocation.qa_status
         }))
     );
     if (allocationMessage) context.addIssue({ code: z.ZodIssueCode.custom, path: ["accepted_lot_allocations"], message: allocationMessage });
@@ -67,7 +70,8 @@ export const receivingLineSchema = z.object({
             quantity: allocation.quantity,
             batchNumber: allocation.batch_no,
             manufacturingDate: allocation.manufacturing_date,
-            expirationDate: allocation.expiration_date
+            expirationDate: allocation.expiration_date,
+            qaStatus: allocation.qa_status
         }))
     );
     if (rejectedAllocationMessage) context.addIssue({ code: z.ZodIssueCode.custom, path: ["rejected_lot_allocations"], message: rejectedAllocationMessage });

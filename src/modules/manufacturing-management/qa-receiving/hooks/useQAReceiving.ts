@@ -43,7 +43,8 @@ function emptyLotAllocation(): ReceivingLotAllocationInput {
         batchNumber: "",
         manufacturingDate: "",
         expirationDate: "",
-        quantity: ""
+        quantity: "",
+        qaStatus: "GOOD"
     };
 }
 
@@ -84,10 +85,12 @@ function hydrateStoredAllocations(
         manufacturing_date?: string | null;
         expiration_date?: string | null;
         quantity: number;
+        qa_status?: "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED";
     }> | undefined,
     fallbackLotId: number | null,
     fallbackQuantity: number,
-    fallback: Pick<ReceivingLotAllocationInput, "batchNumber" | "manufacturingDate" | "expirationDate">
+    fallback: Pick<ReceivingLotAllocationInput, "batchNumber" | "manufacturingDate" | "expirationDate">,
+    defaultQaStatus: "GOOD" | "DAMAGED"
 ): ReceivingLotAllocationInput[] {
     if (allocations?.length) {
         const groupIdsByLot = new Map<string, string>();
@@ -103,12 +106,13 @@ function hydrateStoredAllocations(
                 batchNumber: allocation.batch_number || fallback.batchNumber,
                 manufacturingDate: allocation.manufacturing_date || fallback.manufacturingDate,
                 expirationDate: allocation.expiration_date || fallback.expirationDate,
-                quantity: Number(allocation.quantity) || 0
+                quantity: Number(allocation.quantity) || 0,
+                qaStatus: allocation.qa_status || defaultQaStatus
             };
         });
     }
     return fallbackLotId && fallbackQuantity > 0
-        ? [{ clientId: uuidv4(), allocationGroupId: uuidv4(), storageLotId: String(fallbackLotId), ...fallback, quantity: fallbackQuantity }]
+        ? [{ clientId: uuidv4(), allocationGroupId: uuidv4(), storageLotId: String(fallbackLotId), ...fallback, quantity: fallbackQuantity, qaStatus: defaultQaStatus }]
         : [];
 }
 
@@ -682,13 +686,15 @@ export function useQAReceiving({
                         latestReceipt?.accepted_lot_allocations,
                         latestStorageLotId,
                         historicalReceipt ? selectedAcceptedQuantity : 0,
-                        { batchNumber: fallbackBatchNumber, manufacturingDate: fallbackManufacturingDate, expirationDate: fallbackExpirationDate }
+                        { batchNumber: fallbackBatchNumber, manufacturingDate: fallbackManufacturingDate, expirationDate: fallbackExpirationDate },
+                        "GOOD"
                     ),
                     rejectedLotAllocations: hydrateStoredAllocations(
                         latestReceipt?.rejected_lot_allocations,
                         latestStorageLotId,
                         historicalReceipt ? initialRejectedQuantity : 0,
-                        { batchNumber: fallbackBatchNumber, manufacturingDate: fallbackManufacturingDate, expirationDate: fallbackExpirationDate }
+                        { batchNumber: fallbackBatchNumber, manufacturingDate: fallbackManufacturingDate, expirationDate: fallbackExpirationDate },
+                        "DAMAGED"
                     ),
                     rejectionReason: isReplacement ? "" : latestReceipt?.rejection_reason || l.rejection_reason || "",
                     isPackaging: isPkg
@@ -1003,41 +1009,6 @@ export function useQAReceiving({
         }));
     };
 
-    const handleApplyBatchDates = (manufacturingDate: string, expirationDate: string) => {
-        if (receivingIsReadOnly || !manufacturingDate || !expirationDate || expirationDate < manufacturingDate) return;
-        previewController.current?.abort();
-        setValidatingInspection(false);
-        setReceivingCommitContext(null);
-        setCommittedResult(null);
-        setPreviewOpen(false);
-        setPreviewAcknowledged(false);
-        setPreviewError(null);
-        setProcessOverDeliveryState(false);
-        setQaEvaluationResults({});
-        setInspectionRows(previous => {
-            const next = { ...previous };
-            for (const key of Object.keys(next)) {
-                const lineId = Number(key);
-                const row = next[lineId];
-                if (!row) continue;
-                next[lineId] = {
-                    ...row,
-                    acceptedLotAllocations: row.acceptedLotAllocations.map(allocation => ({
-                        ...allocation,
-                        manufacturingDate,
-                        expirationDate
-                    })),
-                    rejectedLotAllocations: row.rejectedLotAllocations.map(allocation => ({
-                        ...allocation,
-                        manufacturingDate,
-                        expirationDate
-                    }))
-                };
-            }
-            return next;
-        });
-    };
-
     const handleUpdateQaReading = (lineId: number, specId: number, value: string) => {
         if (receivingIsReadOnly) return;
         previewController.current?.abort();
@@ -1299,7 +1270,8 @@ export function useQAReceiving({
                             batchNumber: allocation.batchNumber.trim(),
                             manufacturingDate: allocation.manufacturingDate || null,
                             expirationDate: allocation.expirationDate || null,
-                            quantity: Number(allocation.quantity)
+                            quantity: Number(allocation.quantity),
+                            qaStatus: "GOOD" as const
                         })),
                     rejectedLotAllocations: row.rejectedLotAllocations
                         .filter(allocation => Number(allocation.storageLotId) > 0 && Number(allocation.quantity) > 0)
@@ -1308,7 +1280,10 @@ export function useQAReceiving({
                             batchNumber: allocation.batchNumber.trim(),
                             manufacturingDate: allocation.manufacturingDate || null,
                             expirationDate: allocation.expirationDate || null,
-                            quantity: Number(allocation.quantity)
+                            quantity: Number(allocation.quantity),
+                            qaStatus: allocation.qaStatus === "QUARANTINED" || allocation.qaStatus === "EXPIRED" || allocation.qaStatus === "DAMAGED"
+                                ? allocation.qaStatus
+                                : "DAMAGED" as const
                         })),
                     remarks: row.rejectionReason.trim() || null,
                     isPackaging: row.isPackaging,
@@ -1666,7 +1641,6 @@ export function useQAReceiving({
         handleUpdateRow,
         handleUpdateAllocations,
         handleUpdateRejectedAllocations,
-        handleApplyBatchDates,
         handleUpdateQaReading,
         handleSubmitInspection,
         clearInspection,

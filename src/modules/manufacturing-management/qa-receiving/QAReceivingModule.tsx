@@ -107,7 +107,6 @@ export default function QAReceivingModule({
         handleUpdateRow,
         handleUpdateAllocations,
         handleUpdateRejectedAllocations,
-        handleApplyBatchDates,
         handleUpdateQaReading,
         handleSubmitInspection,
         clearInspection,
@@ -212,7 +211,6 @@ export default function QAReceivingModule({
                 handleUpdateRow={handleUpdateRow}
                 handleUpdateAllocations={handleUpdateAllocations}
                 handleUpdateRejectedAllocations={handleUpdateRejectedAllocations}
-                onApplyBatchDates={handleApplyBatchDates}
                 handleUpdateQaReading={handleUpdateQaReading}
                 handleSubmitInspection={handleSubmitInspection}
                 onReviewPreview={() => setPreviewOpen(true)}

@@ -40,17 +40,7 @@ export const salesOrderPostSchema = z.object({
     branchId: optionalId,
     submitForApproval: z.boolean().optional()
 }).strict().superRefine((value, context) => {
-    if (value.quotationId) {
-        if (value.customerId !== undefined || value.items !== undefined) {
-            context.addIssue({
-                code: "custom",
-                message: "customerId and items are not accepted when converting a quotation"
-            });
-        }
-        return;
-    }
-
-    if (!value.customerId) {
+    if (!value.customerId && !value.quotationId) {
         context.addIssue({ code: "custom", path: ["customerId"], message: "Customer is required" });
     }
     if (!value.branchId) {

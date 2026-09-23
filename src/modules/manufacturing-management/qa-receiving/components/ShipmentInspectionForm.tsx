@@ -13,7 +13,7 @@ import { configuredBadStockBranchId } from "../services/qa-api";
 import { formatPhtTimestamp } from "../../shared/pht-date";
 import { LotAllocationSection } from "./LotAllocationModal";
 import type { FormSiblingAllocation } from "./QAMultiLotBatchAllocationModal";
-import type { LotAllocationGroup } from "../../shared/types/lot-tracking.types";
+import type { LotAllocationGroup, QAStatus } from "../../shared/types/lot-tracking.types";
 import QAProductItemsAllocationTable from "./QAProductItemsAllocationTable";
 
 function relationNumber(value: unknown, keys: string[]): number | null {
@@ -38,6 +38,7 @@ function formatQuantity(value: number | null | undefined): string {
 function toSiblingLotAllocations(
     allocations: ReceivingLotAllocationInput[],
     storageLots: StorageLot[],
+    fallbackQaStatus: QAStatus,
 ): LotAllocationGroup[] {
     const groups = new Map<number, LotAllocationGroup>();
     for (const allocation of allocations) {
@@ -61,7 +62,7 @@ function toSiblingLotAllocations(
             manufacturing_date: allocation.manufacturingDate || "",
             expiry_date: allocation.expirationDate || "",
             quantity: normalizedQuantity,
-            qa_status: "GOOD",
+            qa_status: allocation.qaStatus || fallbackQaStatus,
         });
         group.allocated_quantity += normalizedQuantity;
         groups.set(lotId, group);
@@ -113,7 +114,6 @@ interface ShipmentInspectionFormProps {
     handleUpdateRow: (lineId: number, field: string, value: string | number | boolean) => void;
     handleUpdateAllocations: (lineId: number, allocations: ReceivingLotAllocationInput[]) => void;
     handleUpdateRejectedAllocations: (lineId: number, allocations: ReceivingLotAllocationInput[]) => void;
-    onApplyBatchDates: (manufacturingDate: string, expirationDate: string) => void;
     handleUpdateQaReading: (lineId: number, specId: number, value: string) => void;
     handleSubmitInspection: (e: React.FormEvent) => void;
     onReviewPreview: () => void;
@@ -172,11 +172,8 @@ export default function ShipmentInspectionForm({
     onCancel,
     onForceReceived,
     forceReceivedSubmitting = false,
-    onApplyBatchDates
 }: ShipmentInspectionFormProps) {
     const [forceReceivedOpen, setForceReceivedOpen] = React.useState(false);
-    const [batchDateDefaults, setBatchDateDefaults] = React.useState({ manufacturingDate: "", expirationDate: "" });
-    const [batchDateError, setBatchDateError] = React.useState<string | null>(null);
     const [allocationValidity, setAllocationValidity] = React.useState<Record<string, boolean>>({});
     const forceClosed = Boolean(selectedShipment.isForceReceived || isForceReceived(selectedShipment.forceReceivedAt));
     const historicalReceiptOnly = Boolean(
@@ -195,8 +192,6 @@ export default function ShipmentInspectionForm({
         : null;
 
     React.useEffect(() => {
-        setBatchDateDefaults({ manufacturingDate: "", expirationDate: "" });
-        setBatchDateError(null);
         setAllocationValidity({});
     }, [isReplacement, selectedReceipt?.key, selectedShipment.shipment_id]);
 
@@ -211,10 +206,10 @@ export default function ShipmentInspectionForm({
                 ...(storageLotsByProductId[productId] || []),
                 ...(rejectedStorageLotsByProductId[productId] || []),
             ].filter((lot, index, lots) => lots.findIndex(candidate => Number(candidate.lot_id) === Number(lot.lot_id)) === index);
-            const lotAllocations = toSiblingLotAllocations(
-                [...(row.acceptedLotAllocations || []), ...(row.rejectedLotAllocations || [])],
-                storageLots,
-            );
+            const lotAllocations = [
+                ...toSiblingLotAllocations(row.acceptedLotAllocations || [], storageLots, "GOOD"),
+                ...toSiblingLotAllocations(row.rejectedLotAllocations || [], storageLots, "DAMAGED"),
+            ];
             if (lotAllocations.length === 0) return [];
 
             return [{
@@ -236,19 +231,6 @@ export default function ShipmentInspectionForm({
             : { ...previous, [key]: isValid });
     }, []);
 
-    const applyBatchDates = () => {
-        const { manufacturingDate, expirationDate } = batchDateDefaults;
-        if (!manufacturingDate || !expirationDate) {
-            setBatchDateError("Manufacturing date and expiry date are required.");
-            return;
-        }
-        if (expirationDate < manufacturingDate) {
-            setBatchDateError("Expiry date cannot be earlier than the manufacturing date.");
-            return;
-        }
-        setBatchDateError(null);
-        onApplyBatchDates(manufacturingDate, expirationDate);
-    };
     const totalOrderedQty = React.useMemo(() => {
         return lineItems.reduce((sum, l) => sum + Number(l.quantity_ordered || 0), 0);
     }, [lineItems]);
@@ -742,61 +724,6 @@ export default function ShipmentInspectionForm({
                 </div>
             )}
 
-            {!readOnly && (
-                <div
-                    data-testid="universal-batch-dates"
-                    className="mx-4 mt-4 rounded-xl border border-primary/20 bg-primary/5 p-3"
-                >
-                    <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-                        <div className="min-w-0">
-                            <p className="text-[10px] font-extrabold uppercase tracking-wider text-primary">Batch date defaults</p>
-                            <p className="mt-1 text-[10px] text-muted-foreground">
-                                Apply the same manufacturing and expiry dates to every accepted and rejected batch in this receipt. You can still override dates per batch.
-                            </p>
-                        </div>
-                        <div className="grid w-full gap-2 sm:grid-cols-2 lg:w-auto lg:min-w-[440px]">
-                            <label className="min-w-0 space-y-1">
-                                <span className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Manufacturing date *</span>
-                                <input
-                                    type="date"
-                                    value={batchDateDefaults.manufacturingDate}
-                                    max={batchDateDefaults.expirationDate || undefined}
-                                    onChange={event => {
-                                        setBatchDateDefaults(previous => ({ ...previous, manufacturingDate: event.target.value }));
-                                        setBatchDateError(null);
-                                    }}
-                                    className="h-10 w-full rounded-lg border bg-background px-2.5 text-xs font-semibold text-foreground outline-none focus:ring-1 focus:ring-primary"
-                                />
-                            </label>
-                            <label className="min-w-0 space-y-1">
-                                <span className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Expiry date *</span>
-                                <input
-                                    type="date"
-                                    value={batchDateDefaults.expirationDate}
-                                    min={batchDateDefaults.manufacturingDate || undefined}
-                                    onChange={event => {
-                                        setBatchDateDefaults(previous => ({ ...previous, expirationDate: event.target.value }));
-                                        setBatchDateError(null);
-                                    }}
-                                    className="h-10 w-full rounded-lg border bg-background px-2.5 text-xs font-semibold text-foreground outline-none focus:ring-1 focus:ring-primary"
-                                />
-                            </label>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={applyBatchDates}
-                            className="h-10 shrink-0 rounded-lg border border-primary bg-primary px-3 text-[10px] font-extrabold text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-                            disabled={!batchDateDefaults.manufacturingDate || !batchDateDefaults.expirationDate}
-                        >
-                            Apply to All Batches
-                        </button>
-                    </div>
-                    {batchDateError && (
-                        <p className="mt-2 text-[9px] font-semibold text-red-600" role="alert">{batchDateError}</p>
-                    )}
-                </div>
-            )}
-
             {!readOnly && overDeliveryLines.length > 0 && (
                 <div className="mx-4 mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-amber-800" role="alert">
                     <div className="flex items-start gap-2">
@@ -1198,7 +1125,6 @@ export default function ShipmentInspectionForm({
                                                         storageLots={lineStorageLots}
                                                         readOnly={readOnly || !hasCurrentReceipt || lineStorageLotLookup.status !== "loaded"}
                                                         compact
-                                                        batchDateDefaults={batchDateDefaults}
                                                         loadStorageLotBatches={loadStorageLotBatches}
                                                         siblingAllocations={siblingFormAllocations}
                                                         onValidationChange={isValid => handleAllocationValidationChange(line.line_id, "accepted", isValid)}
@@ -1256,7 +1182,6 @@ export default function ShipmentInspectionForm({
                                                     expectedQuantity={rejectedVal}
                                                     storageLots={lineRejectedStorageLots}
                                                     readOnly={readOnly || !hasCurrentReceipt || lineRejectedStorageLotLookup.status !== "loaded"}
-                                                    batchDateDefaults={batchDateDefaults}
                                                     loadStorageLotBatches={loadStorageLotBatches}
                                                     siblingAllocations={siblingFormAllocations}
                                                     onValidationChange={isValid => handleAllocationValidationChange(line.line_id, "rejected", isValid)}

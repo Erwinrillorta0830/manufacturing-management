@@ -12,20 +12,23 @@ export function receiptNumberForLine(receiptNumber: string, lineId: number): str
 }
 
 const quantity = z.number().finite().nonnegative();
+const rejectedInventoryQaStatus = z.enum(["DAMAGED", "QUARANTINED", "EXPIRED"]);
 const optionalDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable();
 const acceptedLotAllocation = z.object({
     storageLotId: z.number().int().positive(),
     quantity,
     batchNumber: z.string().trim().min(1).max(50),
     manufacturingDate: optionalDate.optional(),
-    expirationDate: optionalDate.optional()
+    expirationDate: optionalDate.optional(),
+    qaStatus: z.literal("GOOD").default("GOOD")
 });
 const rejectedLotAllocation = z.object({
     storageLotId: z.number().int().positive(),
     quantity,
     batchNumber: z.string().trim().min(1).max(50),
     manufacturingDate: optionalDate.optional(),
-    expirationDate: optionalDate.optional()
+    expirationDate: optionalDate.optional(),
+    qaStatus: rejectedInventoryQaStatus.default("DAMAGED")
 });
 
 export const receivingCommitLineSchema = z.object({
