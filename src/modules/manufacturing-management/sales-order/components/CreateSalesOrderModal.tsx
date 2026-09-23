@@ -699,7 +699,26 @@ export function CreateSalesOrderModal({
             : remarks;
 
         try {
+            const mappedItems = items.map(item => {
+                const prod = products.find(p => Number(p.product_id) === Number(item.parent_product_id));
+                const typeObj = item.product_type_id
+                    ? productTypes.find(t => Number(t.id) === Number(item.product_type_id))
+                    : (prod ? productTypes.find(t => String(t.id) === String(prod.product_type)) : null);
+                const isFinishedGood = Boolean(typeObj?.name?.toLowerCase().includes("finished"));
+                return {
+                    parent_product_id: item.parent_product_id,
+                    product_id: item.product_id,
+                    quantity: item.quantity,
+                    unit_price: item.unit_price,
+                    discount_type: item.discount_type,
+                    discount_amount: item.discount_amount,
+                    discount_percent: item.discount_percent,
+                    bom_version_id: isFinishedGood ? (item.bom_version_id || versionStates[item.parent_product_id]?.defaultVersionId || null) : null
+                };
+            });
+
             const payload: Partial<CreateSalesOrderPayload> = {
+                customerId: Number(customerId),
                 poNo,
                 branchId: Number(branchId),
                 paymentTerms: Number(paymentTermId),
@@ -707,31 +726,10 @@ export function CreateSalesOrderModal({
                 deliveryDate,
                 dueDate,
                 remarks: finalRemarks,
-                submitForApproval: false
+                submitForApproval: false,
+                items: mappedItems,
+                quotationId: prefillPayload?.quoteId ? Number(prefillPayload.quoteId) : undefined
             };
-
-            if (prefillPayload?.quoteId) {
-                payload.quotationId = Number(prefillPayload.quoteId);
-            } else {
-                payload.customerId = Number(customerId);
-                payload.items = items.map(item => {
-                    const prod = products.find(p => Number(p.product_id) === Number(item.parent_product_id));
-                    const typeObj = item.product_type_id
-                        ? productTypes.find(t => Number(t.id) === Number(item.product_type_id))
-                        : (prod ? productTypes.find(t => String(t.id) === String(prod.product_type)) : null);
-                    const isFinishedGood = Boolean(typeObj?.name?.toLowerCase().includes("finished"));
-                    return {
-                        parent_product_id: item.parent_product_id,
-                        product_id: item.product_id,
-                        quantity: item.quantity,
-                        unit_price: item.unit_price,
-                        discount_type: item.discount_type,
-                        discount_amount: item.discount_amount,
-                        discount_percent: item.discount_percent,
-                        bom_version_id: isFinishedGood ? (item.bom_version_id || versionStates[item.parent_product_id]?.defaultVersionId || null) : null
-                    };
-                });
-            }
 
             await onSubmit(payload as CreateSalesOrderPayload);
             onClose();
