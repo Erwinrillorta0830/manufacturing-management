@@ -206,17 +206,12 @@ export async function fetchLotsByBranch(branchId?: number, token?: string): Prom
     }
     const queryStr = filterParts.length > 0 ? `&${filterParts.join("&")}` : "";
     
-    let res = await fetch(`${DIRECTUS_URL}/items/mm_lots?limit=-1&fields=*,unit_id.unit_name,branch_id.branch_name,branch_id.branch_code,branch_id.isBadStock${queryStr}`, {
+    const res = await fetch(`${DIRECTUS_URL}/items/mm_lots?limit=-1&fields=*,unit_id.unit_name,branch_id.branch_name,branch_id.branch_code,branch_id.isBadStock${queryStr}`, {
       headers: getHeaders(token),
       cache: "no-store",
     });
 
-    if (!res.ok) {
-      res = await fetch(`${DIRECTUS_URL}/items/lots?limit=-1&fields=*,unit_id.unit_name,branch_id.branch_name,branch_id.branch_code,branch_id.isBadStock${queryStr}`, {
-        headers: getHeaders(token),
-        cache: "no-store",
-      });
-    }
+
 
     if (!res.ok) {
       console.warn(`[LotTracking] Failed to fetch lots server-side: ${res.status}`);
@@ -296,18 +291,12 @@ export async function ensureLotForBranch(branchId: number, token?: string): Prom
       }
     }
 
-    let res = await fetch(`${DIRECTUS_URL}/items/mm_lots`, {
+    const res = await fetch(`${DIRECTUS_URL}/items/mm_lots`, {
       method: "POST",
       headers: getHeaders(token),
       body: JSON.stringify(lotPayload),
     });
-    if (!res.ok) {
-      res = await fetch(`${DIRECTUS_URL}/items/lots`, {
-        method: "POST",
-        headers: getHeaders(token),
-        body: JSON.stringify(lotPayload),
-      });
-    }
+
     if (res.ok) {
       const json = await res.json();
       const r = json.data;
@@ -406,17 +395,11 @@ export async function fetchInventoryLots(params: {
 
     const fields = "*,lot_id.lot_id,lot_id.lot_name,lot_id.branch_id,branch_id.id,branch_id.branch_name,branch_id.branch_code,product_id.product_id,product_id.product_name,product_id.product_code,product_id.product_type,product_id.product_category.category_name,product_id.unit_of_measurement.unit_name";
     
-    let res = await fetch(`${DIRECTUS_URL}/items/mm_inventory_lots?limit=-1&fields=${fields}${queryStr}`, {
+    const res = await fetch(`${DIRECTUS_URL}/items/mm_inventory_lots?limit=-1&fields=${fields}${queryStr}`, {
       headers: getHeaders(params.token),
       cache: "no-store",
     });
 
-    if (!res.ok) {
-      res = await fetch(`${DIRECTUS_URL}/items/inventory_lots?limit=-1&fields=${fields}${queryStr}`, {
-        headers: getHeaders(params.token),
-        cache: "no-store",
-      });
-    }
 
     if (!res.ok) {
       console.warn(`[LotTracking] Failed to fetch inventory lots server-side: ${res.status}`);
@@ -501,19 +484,13 @@ export async function createInventoryLot(payload: CreateInventoryLotPayload, tok
       return { success: true, data: data.data };
     }
 
-    let res = await fetch(`${DIRECTUS_URL}/items/mm_inventory_lots`, {
+    const res = await fetch(`${DIRECTUS_URL}/items/mm_inventory_lots`, {
       method: "POST",
       headers: getHeaders(token),
       body: JSON.stringify(body),
     });
 
-    if (!res.ok) {
-      res = await fetch(`${DIRECTUS_URL}/items/inventory_lots`, {
-        method: "POST",
-        headers: getHeaders(token),
-        body: JSON.stringify(body),
-      });
-    }
+
 
     if (!res.ok) {
       const errTxt = await res.text();
@@ -536,19 +513,12 @@ export async function updateInventoryLot(
   token?: string
 ): Promise<{ success: boolean; data?: MMInventoryLot; error?: string }> {
   try {
-    let res = await fetch(`${DIRECTUS_URL}/items/mm_inventory_lots/${inventoryLotId}`, {
+    const res = await fetch(`${DIRECTUS_URL}/items/mm_inventory_lots/${inventoryLotId}`, {
       method: "PATCH",
       headers: getHeaders(token),
       body: JSON.stringify(payload),
     });
 
-    if (!res.ok) {
-      res = await fetch(`${DIRECTUS_URL}/items/inventory_lots/${inventoryLotId}`, {
-        method: "PATCH",
-        headers: getHeaders(token),
-        body: JSON.stringify(payload),
-      });
-    }
 
     if (!res.ok) {
       const errTxt = await res.text();

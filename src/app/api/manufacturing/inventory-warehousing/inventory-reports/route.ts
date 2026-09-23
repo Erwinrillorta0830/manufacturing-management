@@ -191,17 +191,15 @@ export async function GET(request: Request) {
         if (!productTypeMap.has(390)) productTypeMap.set(390, "Packaging Items");
 
         // Parse mm_lots (with fallback to 'lots')
-        let rawMmLots: Array<{ lot_id?: number | string; id?: number | string; lot_name?: string; branch_id?: number | string }> =
-            mmLotsRes && mmLotsRes.ok ? (await mmLotsRes.json()).data || [] : [];
-        if (rawMmLots.length === 0) {
-            const fallbackLotsRes = await fetch(
-                `${DIRECTUS_URL}/items/lots?limit=-1&fields=lot_id,lot_name,branch_id,status&_t=${timestamp}`,
-                { headers: directusHeaders, cache: "no-store" }
-            ).catch(() => null);
-            if (fallbackLotsRes && fallbackLotsRes.ok) {
-                rawMmLots = (await fallbackLotsRes.json()).data || [];
-            }
-        }
+        const rawMmLots: Array<{
+            lot_id?: number | string;
+            id?: number | string;
+            lot_name?: string;
+            branch_id?: number | string;
+        }> =
+            mmLotsRes && mmLotsRes.ok
+                ? (await mmLotsRes.json()).data || []
+                : [];
 
         const mmLotMap = new Map<number, { lot_id: number; lot_name: string; branch_id: number }>();
         rawMmLots.forEach((l) => {

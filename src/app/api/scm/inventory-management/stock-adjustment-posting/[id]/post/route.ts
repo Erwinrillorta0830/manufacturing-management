@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { stockAdjustmentService } from "@/modules/manufacturing-management/stock-adjustment-posting/services/stock-adjustment-service";
-import { handleApiError } from "@/modules/manufacturing-management/stock-adjustment-posting/utils/error-handler";
-import { getUserIdFromToken } from "@/modules/manufacturing-management/stock-adjustment-posting/utils/auth-utils";
+import { stockAdjustmentService } from "@/modules/manufacturing-management/adjustments/stock-adjustment/stock-adjustment-posting/services/stock-adjustment-service";
+import { handleApiError } from "@/modules/manufacturing-management/adjustments/stock-adjustment/stock-adjustment-posting/utils/error-handler";
+import { getUserIdFromToken } from "@/modules/manufacturing-management/adjustments/stock-adjustment/stock-adjustment-posting/utils/auth-utils";
 
 export async function POST(
     request: NextRequest,
@@ -9,7 +9,7 @@ export async function POST(
 ) {
     try {
         const { id } = await params;
-        
+
         // Extract userId from cookie
         const token =
             request.cookies.get("vos_access_token")?.value ||
@@ -17,10 +17,10 @@ export async function POST(
             request.cookies.get("directus_session_token")?.value ||
             request.cookies.get("auth_token")?.value;
         const userId = getUserIdFromToken(token);
-        
+
         console.log(`[API] Posting adjustment ${id} with userId: ${userId}`);
         await stockAdjustmentService.postStockAdjustment(Number(id), userId || undefined);
-        
+
         return NextResponse.json({ success: true });
     } catch (error) {
         return handleApiError(error);

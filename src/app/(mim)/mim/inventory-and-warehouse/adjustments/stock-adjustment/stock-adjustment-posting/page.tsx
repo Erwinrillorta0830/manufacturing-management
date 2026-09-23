@@ -10,7 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { cookies } from "next/headers";
-import StockAdjustmentPostingModule from "@/modules/manufacturing-management/stock-adjustment-posting/StockAdjustmentPostingModule";
+import StockAdjustmentPostingModule from "@/modules/manufacturing-management/adjustments/stock-adjustment/stock-adjustment-posting/StockAdjustmentPostingModule";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -100,14 +100,14 @@ export default async function StockAdjustmentPostingPage(props: {
                                     <BreadcrumbLink href="#">Manufacturing</BreadcrumbLink>
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
-                                                                <BreadcrumbItem className="hidden md:block shrink-0">
+                                <BreadcrumbItem className="hidden md:block shrink-0">
                                     <BreadcrumbLink href="#">Inventory & Warehousing</BreadcrumbLink>
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
-                                                                <BreadcrumbItem className="hidden md:block shrink-0">
+                                <BreadcrumbItem className="hidden md:block shrink-0">
                                     <BreadcrumbLink href="#">Adjustments</BreadcrumbLink>
                                 </BreadcrumbItem>
-                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
+                                <BreadcrumbSeparator className="hidden md:block shrink-0" />
                                 <BreadcrumbItem className="hidden md:block shrink-0">
                                     <BreadcrumbLink href="#">Stock Adjustment</BreadcrumbLink>
                                 </BreadcrumbItem>

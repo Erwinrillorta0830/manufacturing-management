@@ -1,0 +1,707 @@
+import { fetchItems, createItems, updateItem, bulkUpdateItems } from "./api";
+import { getCached, setCache } from "@/modules/manufacturing-management/adjustments/stock-conversion/utils/cache";
+import { fetchProductOnhand } from "../services/lot-tracking.service";
+import { formatStatusForDb } from "./stock-transfer.helpers";
+import type {
+  BranchRow,
+  StockTransferRow,
+  StockTransferRfidRow,
+  ProductRow,
+  StockTransferInsertPayload,
+  MMStockTransferDetail,
+} from "../types/stock-transfer.types";
+
+const SPRING_API_BASE_URL = process.env.SPRING_API_BASE_URL;
+
+/**
+ * Fetches stock transfer rows from Directus with relational expansion.
+ */
+export async function fetchStockTransfers(status?: string): Promise<StockTransferRow[]> {
+  const params: Record<string, unknown> = {
+    fields: [
+      "*",
+      "source_inventory_lot_id.inventory_lot_id",
+      "source_inventory_lot_id.batch_no",
+      "source_inventory_lot_id.manufacturing_date",
+      "source_inventory_lot_id.expiry_date",
+      "source_inventory_lot_id.qa_status",
+      "source_inventory_lot_id.lot_id",
+      "source_lot_id.lot_id",
+      "source_lot_id.lot_name",
+      "product_id.product_id",
+      "product_id.product_name",
+      "product_id.description",
+      "product_id.barcode",
+      "product_id.product_code",
+      "product_id.cost_per_unit",
+      "product_id.price_per_unit",
+      "product_id.product_image",
+      "product_id.unit_of_measurement.unit_id",
+      "product_id.unit_of_measurement.unit_name",
+      "product_id.unit_of_measurement_count",
+      "product_id.product_brand.brand_id",
+      "product_id.product_brand.brand_name",
+      "product_id.product_category.category_id",
+      "product_id.product_category.category_name",
+      "product_id.product_type.id",
+      "product_id.product_type.name",
+      "product_id.product_type",
+      "product_id.product_per_supplier.supplier_id.supplier_shortcut",
+    ].join(","),
+    limit: -1,
+  };
+
+  if (status && status.trim() !== "") {
+    const rawStatuses = status.split(",").map(s => s.trim()).filter(Boolean);
+    const expandedStatuses = Array.from(new Set([
+      ...rawStatuses,
+      ...rawStatuses.map(s => formatStatusForDb(s)),
+      ...rawStatuses.map(s => s.toUpperCase()),
+      ...rawStatuses.map(s => s.replace(/\s+/g, "_").toUpperCase()),
+    ]));
+
+    if (expandedStatuses.length === 1) {
+      params.filter = JSON.stringify({
+        status: { _eq: expandedStatuses[0] }
+      });
+    } else if (expandedStatuses.length > 1) {
+      params.filter = JSON.stringify({
+        status: { _in: expandedStatuses }
+      });
+    }
+  }
+
+  const res = await fetchItems<StockTransferRow>("items/mm_stock_transfer", params);
+  return res.data;
+}
+
+/**
+ * Fetches branches for dropdown selection.
+ */
+export async function fetchBranches(): Promise<BranchRow[]> {
+  try {
+    const [branchesRes, salesmenRes] = await Promise.all([
+      fetchItems<BranchRow>("items/branches", {
+        fields: "id,branch_name,branch_code,branch_description,branch_head,isActive",
+        limit: -1,
+      }),
+      fetchItems<{
+        id: number;
+        salesman_name: string;
+        branch_code: unknown;
+        bad_branch_code: unknown;
+        isActive?: boolean | number | string;
+      }>("items/salesman", {
+        fields: "*",
+        limit: -1,
+      }).catch((err) => {
+        console.error("[StockTransferRepo] Directus fetchItems('items/salesman') failed:", err);
+        return { data: [] };
+      }),
+    ]);
+
+    const extractId = (val: unknown): number | null => {
+      if (typeof val === "number") return val;
+      if (typeof val === "string" && !isNaN(Number(val)) && Number(val) > 0) return Number(val);
+      if (typeof val === "object" && val !== null) {
+        const obj = val as Record<string, unknown>;
+        if (obj.id) return Number(obj.id);
+      }
+      return null;
+    };
+
+    const allSalesmen = (salesmenRes.data || [])
+      .map((s) => {
+        const regularBranchId = extractId(s.branch_code);
+        const badBranchId = extractId(s.bad_branch_code);
+        const name = s.salesman_name?.trim() || "";
+        const isActive = s.isActive === undefined || s.isActive === true || s.isActive === 1 || s.isActive === "1";
+        return {
+          id: s.id,
+          salesman_name: name,
+          regularBranchId,
+          badBranchId,
+          isActive,
+        };
+      })
+      .filter((s) => s.salesman_name && s.salesman_name !== "0");
+
+    const processedBranches = (branchesRes.data || [])
+      .filter(
+        (b) => b.isActive === undefined || b.isActive === 1 || b.isActive === true || b.isActive === "1"
+      )
+      .map((b) => {
+        // Priority 1: Active salesman whose regular branch_code matches b.id
+        let match = allSalesmen.find((s) => s.isActive && s.regularBranchId === b.id);
+
+        // Priority 2: Active salesman whose bad_branch_code matches b.id
+        if (!match) {
+          match = allSalesmen.find((s) => s.isActive && s.badBranchId === b.id);
+        }
+
+        // Priority 3: Salesman whose regular branch_code matches b.id
+        if (!match) {
+          match = allSalesmen.find((s) => s.regularBranchId === b.id);
+        }
+
+        // Priority 4: Salesman whose bad_branch_code matches b.id
+        if (!match) {
+          match = allSalesmen.find((s) => s.badBranchId === b.id);
+        }
+
+        return {
+          ...b,
+          salesman_name: match ? match.salesman_name : undefined,
+        };
+      });
+
+    // console.log(
+    //   "[StockTransferRepo:fetchBranches] Processed branches summary:",
+    //   processedBranches.map((b) => ({ id: b.id, name: b.branch_name, code: b.branch_code, salesman: b.salesman_name }))
+    // );
+
+    return processedBranches;
+  } catch (err) {
+    console.error("[StockTransferRepo] Failed to fetch branches with salesmen:", err);
+    return [];
+  }
+}
+
+/**
+ * Fetches RFID tracking records for a set of stock transfer IDs.
+ */
+export async function fetchDispatchedRfids(_transferIds: number[]): Promise<StockTransferRfidRow[]> {
+  void _transferIds;
+  return [];
+}
+
+/**
+ * Fetches products that can be transferred.
+ */
+export async function fetchProducts(search?: string): Promise<ProductRow[]> {
+  const params: Record<string, unknown> = {
+    fields: [
+      "product_id",
+      "product_name",
+      "description",
+      "barcode",
+      "product_code",
+      "cost_per_unit",
+      "price_per_unit",
+      "product_image",
+      "unit_of_measurement.unit_id",
+      "unit_of_measurement.unit_name",
+      "unit_of_measurement_count",
+      "product_brand.brand_id",
+      "product_brand.brand_name",
+      "product_category.category_id",
+      "product_category.category_name",
+      "product_type.id",
+      "product_type.name",
+      "product_type",
+      "product_per_supplier.supplier_id.supplier_shortcut",
+    ].join(","),
+    limit: -1,
+  };
+
+  if (search) {
+    params.filter = JSON.stringify({
+      _or: [
+        { product_name: { _icontains: search } },
+        { description: { _icontains: search } },
+        { barcode: { _icontains: search } },
+        { product_code: { _icontains: search } },
+      ]
+    });
+  }
+
+  const res = await fetchItems<ProductRow>("items/products", params);
+  return res.data;
+}
+
+type SupplierRecord = { product_id: number; supplier_id: { supplier_shortcut: string } };
+
+/**
+ * Fetches the product_per_supplier relationships for an array of product IDs.
+ * Since product_per_supplier is not available directly on the products collection 
+ * as an alias, we must fetch it directly from the junction table.
+ */
+export async function fetchProductSuppliers(productIds: number[]): Promise<Record<number, SupplierRecord[]>> {
+  if (productIds.length === 0) return {};
+
+  const uniqueIds = Array.from(new Set(productIds)).filter(id => id > 0);
+  if (uniqueIds.length === 0) return {};
+
+  // Fetch in chunks to avoid URL length limits
+  const CHUNK_SIZE = 100;
+  const allRecords: SupplierRecord[] = [];
+
+  for (let i = 0; i < uniqueIds.length; i += CHUNK_SIZE) {
+    const chunk = uniqueIds.slice(i, i + CHUNK_SIZE);
+    const params = {
+      "filter[product_id][_in]": chunk.join(","),
+      fields: "product_id,supplier_id.supplier_shortcut",
+      limit: -1,
+    };
+    const res = await fetchItems<SupplierRecord>("items/product_per_supplier", params);
+    allRecords.push(...(res.data || []));
+  }
+
+  // Group by product_id
+  const supplierMap: Record<number, SupplierRecord[]> = {};
+  for (const record of allRecords) {
+    const pId = record.product_id;
+    if (!supplierMap[pId]) supplierMap[pId] = [];
+    supplierMap[pId].push(record);
+  }
+
+  return supplierMap;
+}
+
+/**
+ * Fetches a single product by its primary ID.
+ */
+export async function fetchProductById(productId: number): Promise<ProductRow | null> {
+  const params: Record<string, unknown> = {
+    fields: [
+      "product_id",
+      "product_name",
+      "description",
+      "barcode",
+      "product_code",
+      "cost_per_unit",
+      "price_per_unit",
+      "product_image",
+      "unit_of_measurement.unit_id",
+      "unit_of_measurement.unit_name",
+      "unit_of_measurement_count",
+      "product_brand.brand_id",
+      "product_brand.brand_name",
+      "product_category.category_id",
+      "product_category.category_name",
+      "product_per_supplier.supplier_id.supplier_shortcut",
+    ].join(","),
+    filter: JSON.stringify({
+      product_id: { _eq: productId }
+    }),
+    limit: 1
+  };
+  const res = await fetchItems<ProductRow | ProductRow[]>("items/products", params);
+  return res.data ? (Array.isArray(res.data) ? res.data[0] : res.data) as ProductRow : null;
+}
+
+/**
+ * Fetches real-time inventory from the Spring Boot movements API.
+ * Aggregates quantityIn - quantityOut and merges with Directus on-hand.
+ * Cached for 60 seconds per branch to prevent redundant slow calls.
+ */
+export async function fetchBranchInventory(branchId: number, token?: string, bypassCache: boolean = false): Promise<Record<string, unknown>[]> {
+  if (!SPRING_API_BASE_URL && branchId === undefined) return [];
+
+  // Check cache first
+  const CACHE_KEY = `st_inventory_${branchId}`;
+  const TTL = 60 * 1000; // 60 seconds
+  if (!bypassCache) {
+    const cached = getCached<Record<string, unknown>[]>(CACHE_KEY);
+    if (cached) {
+      // console.log(`[Stock Transfer Repo] Inventory cache HIT for branch ${branchId}`);
+      return cached;
+    }
+  }
+
+  let effectiveToken = token;
+  if (!effectiveToken) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const fs = require('fs');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const path = require('path');
+      const tokenFile = path.resolve(process.cwd(), 'node_modules/.cache/vos-tokens/latest_token.txt');
+      if (fs.existsSync(tokenFile)) {
+        effectiveToken = fs.readFileSync(tokenFile, 'utf8').trim();
+      }
+    } catch {
+      // Ignore fallback token read
+    }
+  }
+
+  const reqHeaders: Record<string, string> = {
+    Accept: "application/json",
+    ...(effectiveToken ? { Authorization: `Bearer ${effectiveToken}` } : {}),
+  };
+
+  const invMap: Record<number, number> = {};
+
+  // 1. Query mm-inventory-movements filter
+  if (SPRING_API_BASE_URL) {
+    try {
+      const movementsUrl = `${SPRING_API_BASE_URL.replace(/\/$/, '')}/api/mm-inventory-movements/filter?branch=${branchId}`;
+      const res = await fetch(movementsUrl, { headers: reqHeaders, cache: "no-store" });
+      if (res.ok) {
+        const json = await res.json();
+        const list = Array.isArray(json) ? json : (json?.data || []);
+        list.forEach((m: Record<string, unknown>) => {
+          const pId = Number(m.productId || m.product_id || 0);
+          const itemBranchId = m.branchId ?? m.branch_id;
+          if (branchId !== undefined && itemBranchId !== undefined && Number(itemBranchId) !== Number(branchId)) {
+            return;
+          }
+          const qIn = Number(m.quantityIn || m.quantity_in || 0);
+          const qOut = Number(m.quantityOut || m.quantity_out || 0);
+          const netQty = qIn - qOut;
+          if (!isNaN(pId) && pId > 0) {
+            invMap[pId] = (invMap[pId] || 0) + netQty;
+          }
+        });
+      } else {
+        console.warn(`[Stock Transfer Repo] mm-inventory-movements API returned HTTP ${res.status}`);
+      }
+    } catch (e) {
+      console.warn("[Stock Transfer Repo] mm-inventory-movements fetch error:", e);
+    }
+  }
+
+  // 2. Merge Directus onhand (includes posted adjustments, initial stock, and lots)
+  if (branchId !== undefined && branchId > 0) {
+    try {
+      const directusOnhand = await fetchProductOnhand({ branchId });
+      directusOnhand.forEach((item) => {
+        const pId = Number(item.productId);
+        const onhand = Number(item.onhandQuantity || 0);
+        if (!isNaN(pId) && onhand > 0) {
+          invMap[pId] = Math.max(invMap[pId] || 0, onhand);
+        }
+      });
+    } catch (err) {
+      console.warn("[Stock Transfer Repo] Directus onhand merge failed:", err);
+    }
+  }
+
+  const result = Object.entries(invMap).map(([pId, qty]) => ({
+    productId: Number(pId),
+    product_id: Number(pId),
+    runningInventory: Math.max(0, qty),
+    running_inventory: Math.max(0, qty),
+    onhandQuantity: Math.max(0, qty),
+  }));
+
+  setCache(CACHE_KEY, result, TTL);
+  return result;
+}
+
+/**
+ * Batch creates stock transfer records.
+ */
+export async function createStockTransfers(payloads: StockTransferInsertPayload[]): Promise<StockTransferRow[]> {
+  const res = await createItems<StockTransferRow[]>("items/mm_stock_transfer", payloads);
+  return res.data;
+}
+
+/**
+ * Updates status and allocated quantity for a batch of items.
+ */
+export async function updateTransfersStatus(
+  items: {
+    id: number;
+    status: string;
+    allocated_quantity?: number;
+    picked_quantity?: number;
+    dispatched_quantity?: number;
+    scanned_quantity?: number;
+    received_quantity?: number;
+    source_lot_id?: number | null;
+    source_inventory_lot_id?: number | null;
+    batch_no?: string | null;
+    manufacturing_date?: string | null;
+    expiration_date?: string | null;
+    expiry_date?: string | null;
+    date_received?: string | null;
+    receiver_id?: number | null;
+    dispatched_by?: number | null;
+    dispatched_at?: string | null;
+    approved_by?: number | null;
+    rejected_by?: number | null;
+    rejected_at?: string | null;
+    remarks?: string | null;
+  }[]
+): Promise<void> {
+  if (items.length === 0) return;
+
+  // Group items by their update payload shape so we can batch them
+  const grouped: Record<string, number[]> = {};
+  items.forEach((item) => {
+    const key = JSON.stringify({
+      status: item.status,
+      ...(item.allocated_quantity !== undefined ? { allocated_quantity: item.allocated_quantity } : {}),
+      ...(item.picked_quantity !== undefined ? { picked_quantity: item.picked_quantity } : {}),
+      ...(item.dispatched_quantity !== undefined ? { dispatched_quantity: item.dispatched_quantity } : {}),
+      ...(item.scanned_quantity !== undefined ? { scanned_quantity: item.scanned_quantity } : {}),
+      ...(item.received_quantity !== undefined ? { received_quantity: item.received_quantity } : {}),
+      ...(item.source_lot_id !== undefined ? { source_lot_id: item.source_lot_id } : {}),
+      ...(item.source_inventory_lot_id !== undefined ? { source_inventory_lot_id: item.source_inventory_lot_id } : {}),
+      ...(item.batch_no !== undefined ? { batch_no: item.batch_no } : {}),
+      ...(item.manufacturing_date !== undefined ? { manufacturing_date: item.manufacturing_date } : {}),
+      ...(item.expiration_date !== undefined ? { expiration_date: item.expiration_date, expiry_date: item.expiration_date } : {}),
+      ...(item.expiry_date !== undefined ? { expiry_date: item.expiry_date, expiration_date: item.expiry_date } : {}),
+      ...(item.date_received !== undefined ? { date_received: item.date_received } : {}),
+      ...(item.receiver_id !== undefined ? { receiver_id: item.receiver_id } : {}),
+      ...(item.dispatched_by !== undefined ? { dispatched_by: item.dispatched_by } : {}),
+      ...(item.dispatched_at !== undefined ? { dispatched_at: item.dispatched_at } : {}),
+      ...(item.approved_by !== undefined ? { approved_by: item.approved_by } : {}),
+      ...(item.rejected_by !== undefined ? { rejected_by: item.rejected_by } : {}),
+      ...(item.rejected_at !== undefined ? { rejected_at: item.rejected_at } : {}),
+      ...(item.remarks !== undefined ? { remarks: item.remarks } : {}),
+    });
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(item.id);
+  });
+
+  // Execute one bulk PATCH per unique payload shape
+  await Promise.all(
+    Object.entries(grouped).map(([dataJson, ids]) => {
+      // console.log("[DEBUG] Executing bulkUpdateItems for IDs:", ids, "Payload:", dataJson);
+      return bulkUpdateItems("items/mm_stock_transfer", ids, JSON.parse(dataJson) as Record<string, unknown>);
+    })
+  );
+}
+
+/**
+ * Updates a single stock transfer record.
+ */
+export async function updateTransfer(id: number, data: Partial<StockTransferRow>): Promise<void> {
+  await updateItem("items/mm_stock_transfer", id, data);
+}
+
+/**
+ * Records RFID scan events in the tracking table.
+ */
+export async function insertRfidTracking(
+  _entries: {
+    stock_transfer_id: number;
+    rfid_tag: string;
+    scan_type: string;
+    created_by?: number | null;
+    created_at?: string;
+  }[]
+): Promise<void> {
+  void _entries;
+  return;
+}
+
+/**
+ * Fetches stock transfers filtered by specific IDs.
+ * Avoids fetching the entire table when only a subset is needed.
+ */
+export async function fetchStockTransfersByIds(ids: number[]): Promise<StockTransferRow[]> {
+  if (ids.length === 0) return [];
+
+  const CHUNK_SIZE = 100;
+  const allRows: StockTransferRow[] = [];
+
+  for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+    const chunk = ids.slice(i, i + CHUNK_SIZE);
+    const res = await fetchItems<StockTransferRow>("items/mm_stock_transfer", {
+      "filter[id][_in]": chunk.join(","),
+      fields: "*, product_id.product_id,product_id.product_name,product_id.product_type",
+      limit: -1,
+    });
+    allRows.push(...res.data);
+  }
+
+  return allRows;
+}
+
+/**
+ * Fallback for RFID lookup using Directus receiving records when Spring Boot is unavailable.
+ */
+export async function fallbackRfidLookup(rfid: string): Promise<ProductRow | null> {
+  interface DirectusRfidRecord {
+    product_id?: ProductRow;
+  }
+
+  // 1. Check Receiving records
+  const receivingRes = await fetchItems<DirectusRfidRecord>("items/purchase_order_receiving_items", {
+    "filter[rfid_tag][_eq]": rfid,
+    fields: "product_id.*",
+    limit: 1,
+  });
+  if (receivingRes.data?.[0]?.product_id) return receivingRes.data[0].product_id as ProductRow;
+
+  return null;
+}
+
+/**
+ * Inserts rows into the stock_transfer_attachment table.
+ */
+export async function insertStockTransferAttachments(
+  entries: {
+    stock_transfer_id: number;
+    directus_file_id: string;
+    created_by?: number | null;
+  }[]
+): Promise<void> {
+  if (entries.length === 0) return;
+  await createItems("items/mm_stock_transfer_attachment", entries);
+}
+
+/**
+ * Fetches transfer detail lines from mm_stock_transfer_details table.
+ */
+export async function fetchStockTransferDetails(transferIds: number[]): Promise<MMStockTransferDetail[]> {
+  if (transferIds.length === 0) return [];
+  const res = await fetchItems<MMStockTransferDetail>("items/mm_stock_transfer_details", {
+    "filter[stock_transfer_id][_in]": transferIds.join(","),
+    fields: "*,inventory_lot_id.inventory_lot_id,inventory_lot_id.batch_no,inventory_lot_id.manufacturing_date,inventory_lot_id.expiry_date,inventory_lot_id.qa_status,lot_id.lot_id,lot_id.lot_name,target_inventory_lot_id.inventory_lot_id,target_inventory_lot_id.batch_no,target_inventory_lot_id.manufacturing_date,target_inventory_lot_id.expiry_date,target_lot_id.lot_id,target_lot_id.lot_name,product_id.product_id,product_id.product_name,unit_id.unit_id,unit_id.unit_name",
+    limit: -1,
+  });
+  return res.data;
+}
+
+/**
+ * Fetches lot master records from mm_lots by lot_ids.
+ */
+export async function fetchMmLotsByIds(lotIds: number[]): Promise<Record<number, { lot_id: number; lot_name: string }>> {
+  if (lotIds.length === 0) return {};
+  const res = await fetchItems<{ lot_id: number; lot_name: string }>("items/mm_lots", {
+    "filter[lot_id][_in]": lotIds.join(","),
+    fields: "lot_id,lot_name",
+    limit: -1,
+  });
+  const map: Record<number, { lot_id: number; lot_name: string }> = {};
+  (res.data || []).forEach(l => {
+    if (l && l.lot_id) {
+      map[l.lot_id] = l;
+    }
+  });
+  return map;
+}
+
+/**
+ * Fetches inventory lot master records from mm_inventory_lots by inventory_lot_ids.
+ */
+export async function fetchInventoryLotsByIds(invLotIds: number[]): Promise<Record<number, {
+  inventory_lot_id: number;
+  lot_id: number;
+  product_id: number;
+  batch_no: string;
+  manufacturing_date?: string | null;
+  expiry_date?: string | null;
+  qa_status?: string | null;
+  unit_cost?: number;
+}>> {
+  if (invLotIds.length === 0) return {};
+  const cleanIds = Array.from(new Set(invLotIds)).filter(id => id > 0);
+  if (cleanIds.length === 0) return {};
+  const res = await fetchItems<{
+    inventory_lot_id: number;
+    lot_id: number;
+    product_id: number;
+    batch_no: string;
+    manufacturing_date?: string | null;
+    expiry_date?: string | null;
+    qa_status?: string | null;
+    unit_cost?: number;
+  }>("items/mm_inventory_lots", {
+    "filter[inventory_lot_id][_in]": cleanIds.join(","),
+    fields: "inventory_lot_id,lot_id,product_id,batch_no,manufacturing_date,expiry_date,qa_status,unit_cost",
+    limit: -1,
+  }).catch(() => ({ data: [] }));
+
+  const map: Record<number, {
+    inventory_lot_id: number;
+    lot_id: number;
+    product_id: number;
+    batch_no: string;
+    manufacturing_date?: string | null;
+    expiry_date?: string | null;
+    qa_status?: string | null;
+    unit_cost?: number;
+  }> = {};
+  (res.data || []).forEach(item => {
+    if (item && item.inventory_lot_id) {
+      map[item.inventory_lot_id] = item;
+    }
+  });
+  return map;
+}
+
+/**
+ * Helper to get current Asia/Manila PH timestamp.
+ */
+function getPhNowString(): string {
+  return new Date().toLocaleString("sv-SE", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).replace(" ", "T");
+}
+
+/**
+ * Inserts line detail rows into mm_stock_transfer_details table with local PH timestamps.
+ */
+export async function createStockTransferDetails(details: MMStockTransferDetail[]): Promise<MMStockTransferDetail[]> {
+  if (details.length === 0) return [];
+  const nowPHT = getPhNowString();
+  const enriched = details.map((d) => ({
+    ...d,
+    encoded_at: d.encoded_at || d.date_encoded || nowPHT,
+    date_encoded: d.date_encoded || d.encoded_at || nowPHT,
+    updated_at: d.updated_at || nowPHT,
+  }));
+  const res = await createItems<MMStockTransferDetail[]>("items/mm_stock_transfer_details", enriched);
+  return res.data;
+}
+
+function sanitizeDetailPayload(data: Partial<MMStockTransferDetail>): Record<string, unknown> {
+  const sanitized: Record<string, unknown> = { ...data };
+  if (sanitized.lot_id && typeof sanitized.lot_id === "object") {
+    sanitized.lot_id = (sanitized.lot_id as { lot_id?: number }).lot_id;
+  }
+  if (sanitized.inventory_lot_id && typeof sanitized.inventory_lot_id === "object") {
+    sanitized.inventory_lot_id = (sanitized.inventory_lot_id as { inventory_lot_id?: number }).inventory_lot_id;
+  }
+  if (sanitized.target_lot_id && typeof sanitized.target_lot_id === "object") {
+    sanitized.target_lot_id = (sanitized.target_lot_id as { lot_id?: number }).lot_id;
+  }
+  if (sanitized.target_inventory_lot_id && typeof sanitized.target_inventory_lot_id === "object") {
+    sanitized.target_inventory_lot_id = (sanitized.target_inventory_lot_id as { inventory_lot_id?: number }).inventory_lot_id;
+  }
+  if (sanitized.product_id && typeof sanitized.product_id === "object") {
+    sanitized.product_id = (sanitized.product_id as { product_id?: number }).product_id;
+  }
+  if (sanitized.unit_id && typeof sanitized.unit_id === "object") {
+    sanitized.unit_id = (sanitized.unit_id as { unit_id?: number }).unit_id;
+  }
+  return sanitized;
+}
+
+/**
+ * Updates a single transfer detail record with local PH timestamp.
+ */
+export async function updateStockTransferDetail(id: number, data: Partial<MMStockTransferDetail>): Promise<void> {
+  const nowPHT = getPhNowString();
+  const cleanData = sanitizeDetailPayload(data);
+  await updateItem("items/mm_stock_transfer_details", id, {
+    ...cleanData,
+    updated_at: cleanData.updated_at || nowPHT,
+  });
+}
+
+/**
+ * Bulk updates multiple transfer detail records with local PH timestamp.
+ */
+export async function bulkUpdateStockTransferDetails(ids: number[], data: Partial<MMStockTransferDetail>): Promise<void> {
+  if (ids.length === 0) return;
+  const nowPHT = getPhNowString();
+  const cleanData = sanitizeDetailPayload(data);
+  await bulkUpdateItems("items/mm_stock_transfer_details", ids, {
+    ...cleanData,
+    updated_at: cleanData.updated_at || nowPHT,
+  } as Record<string, unknown>);
+}
+
+
