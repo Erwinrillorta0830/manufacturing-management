@@ -411,15 +411,10 @@ export async function fetchInventoryLots(params: {
       cache: "no-store",
     });
 
-    if (!res.ok) {
-      res = await fetch(`${DIRECTUS_URL}/items/inventory_lots?limit=-1&fields=${fields}${queryStr}`, {
-        headers: getHeaders(params.token),
-        cache: "no-store",
-      });
-    }
+
 
     if (!res.ok) {
-      console.warn(`[LotTracking] Failed to fetch inventory lots server-side: ${res.status}`);
+      console.warn(`[LotTracking] Failed to fetch inventory mm_lots server-side: ${res.status}`);
       return [];
     }
 

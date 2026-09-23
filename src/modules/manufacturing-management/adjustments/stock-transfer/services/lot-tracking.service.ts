@@ -211,12 +211,7 @@ export async function fetchLotsByBranch(branchId?: number, token?: string): Prom
       cache: "no-store",
     });
 
-    if (!res.ok) {
-      res = await fetch(`${DIRECTUS_URL}/items/lots?limit=-1&fields=*,unit_id.unit_name,branch_id.branch_name,branch_id.branch_code,branch_id.isBadStock${queryStr}`, {
-        headers: getHeaders(token),
-        cache: "no-store",
-      });
-    }
+
 
     if (!res.ok) {
       console.warn(`[LotTracking] Failed to fetch lots server-side: ${res.status}`);
@@ -301,13 +296,7 @@ export async function ensureLotForBranch(branchId: number, token?: string): Prom
       headers: getHeaders(token),
       body: JSON.stringify(lotPayload),
     });
-    if (!res.ok) {
-      res = await fetch(`${DIRECTUS_URL}/items/lots`, {
-        method: "POST",
-        headers: getHeaders(token),
-        body: JSON.stringify(lotPayload),
-      });
-    }
+
     if (res.ok) {
       const json = await res.json();
       const r = json.data;
@@ -411,12 +400,6 @@ export async function fetchInventoryLots(params: {
       cache: "no-store",
     });
 
-    if (!res.ok) {
-      res = await fetch(`${DIRECTUS_URL}/items/inventory_lots?limit=-1&fields=${fields}${queryStr}`, {
-        headers: getHeaders(params.token),
-        cache: "no-store",
-      });
-    }
 
     if (!res.ok) {
       console.warn(`[LotTracking] Failed to fetch inventory lots server-side: ${res.status}`);
@@ -507,13 +490,6 @@ export async function createInventoryLot(payload: CreateInventoryLotPayload, tok
       body: JSON.stringify(body),
     });
 
-    if (!res.ok) {
-      res = await fetch(`${DIRECTUS_URL}/items/inventory_lots`, {
-        method: "POST",
-        headers: getHeaders(token),
-        body: JSON.stringify(body),
-      });
-    }
 
     if (!res.ok) {
       const errTxt = await res.text();
@@ -542,13 +518,6 @@ export async function updateInventoryLot(
       body: JSON.stringify(payload),
     });
 
-    if (!res.ok) {
-      res = await fetch(`${DIRECTUS_URL}/items/inventory_lots/${inventoryLotId}`, {
-        method: "PATCH",
-        headers: getHeaders(token),
-        body: JSON.stringify(payload),
-      });
-    }
 
     if (!res.ok) {
       const errTxt = await res.text();
