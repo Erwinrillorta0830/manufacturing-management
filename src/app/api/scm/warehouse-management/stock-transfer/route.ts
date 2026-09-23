@@ -5,12 +5,12 @@ import {
   getEnrichedProducts, 
   createTransfer, 
   updateTransferStatus 
-} from "@/modules/manufacturing-management/stock-transfer/services/stock-transfer.service";
-import * as repo from "@/modules/manufacturing-management/stock-transfer/services/stock-transfer.repo";
+} from "@/modules/manufacturing-management/adjustments/stock-transfer/services/stock-transfer.service";
+import * as repo from "@/modules/manufacturing-management/adjustments/stock-transfer/services/stock-transfer.repo";
 import type { 
   CreateTransferPayload, 
   UpdateTransferPayload 
-} from "@/modules/manufacturing-management/stock-transfer/types/stock-transfer.types";
+} from "@/modules/manufacturing-management/adjustments/stock-transfer/types/stock-transfer.types";
 import { decodeJwtPayload } from "@/lib/auth-utils";
 
 export const dynamic = "force-dynamic";

@@ -9,7 +9,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { cookies } from "next/headers";
-import { StockTransferDispatchManualView } from "@/modules/manufacturing-management/stock-transfer";
+import { StockTransferDispatchManualView } from "@/modules/manufacturing-management/adjustments/stock-transfer";
 import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { decodeJwtPayload } from "@/lib/auth-utils";
 

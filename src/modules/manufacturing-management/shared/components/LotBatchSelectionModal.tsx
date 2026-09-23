@@ -122,9 +122,6 @@ interface LotBatchSelectionModalProps {
   requestedQuantity?: number;
   adjustmentType?: 'IN' | 'OUT';
   mode?: 'SELECT_EXISTING' | 'CREATE_OR_ASSIGN';
-  requireBatchDates?: boolean;
-  readOnly?: boolean;
-  allowedLotIds?: number[];
   initialValues?: Partial<LotBatchSelectionResult>;
   initialLotAllocations?: LotAllocationGroup[];
   existingFormAllocations?: FormSiblingAllocation[];
@@ -218,9 +215,6 @@ export function LotBatchSelectionModal({
   categoryName,
   requestedQuantity = 0,
   adjustmentType = 'IN',
-  requireBatchDates,
-  readOnly = false,
-  allowedLotIds,
   initialValues,
   initialLotAllocations,
   existingFormAllocations,
@@ -503,10 +497,7 @@ export function LotBatchSelectionModal({
 
         if (!isMounted) return;
 
-        const filteredLots = allowedLotIds && allowedLotIds.length > 0
-          ? (lotsData || []).filter((l) => allowedLotIds.includes(l.lot_id))
-          : (lotsData || []);
-        setLots(filteredLots);
+        setLots(lotsData || []);
         setBranchOnhandList(branchOnhandData || []);
         setBranchInvLotsList(branchInvLotsData || []);
 
@@ -1124,7 +1115,7 @@ export function LotBatchSelectionModal({
     return () => {
       isMounted = false;
     };
-  }, [open, branchId, productId, requestedQuantity, productUomId, productType, productCategory, categoryName, productCode, productName, initialLotAllocations, initialValues, existingFormAllocations, isLotMatchingUom, allowedLotIds]);
+  }, [open, branchId, productId, requestedQuantity, productUomId, productType, productCategory, categoryName, productCode, productName, initialLotAllocations, initialValues, existingFormAllocations, isLotMatchingUom]);
 
   // Compute total allocated quantity across all lots & batches
   const totalAllocated = useMemo(() => {
@@ -1133,14 +1124,6 @@ export function LotBatchSelectionModal({
       return lotSum + batchSum;
     }, 0);
   }, [lotGroups]);
-
-  // Check if allocating quantity matches requested target
-  const isTargetQuantityMatched = useMemo(() => {
-    if (requestedQuantity && requestedQuantity > 0) {
-      return Math.abs(totalAllocated - requestedQuantity) < 0.0001;
-    }
-    return totalAllocated > 0;
-  }, [totalAllocated, requestedQuantity]);
 
   // Add a new storage lot allocation group (supports splitting across multiple lots)
   const handleAddLotGroup = () => {
@@ -1490,107 +1473,7 @@ export function LotBatchSelectionModal({
     if (hasOverage) {
       toast.info('Reallocated across lots. Some bays remain over capacity; consider assigning another storage lot.');
     } else {
-      toast.success(
-        updatedGroups.length > 1
-          ? 'Successfully reallocated across storage lots within capacity limits!'
-          : 'Successfully reallocated batches within capacity limits!'
-      );
-    }
-  };
-
-  // Re-sync and reallocate batches for a specific lot group
-  const handleReallocateLotBatches = (gIdx: number) => {
-    const targetTotal =
-      requestedQuantity ||
-      ((initialValues as { quantity?: number; total_quantity?: number })?.quantity ??
-        initialValues?.total_quantity ??
-        totalAllocated ??
-        0);
-    if (targetTotal <= 0 || !lotGroups[gIdx]) return;
-
-    const group = lotGroups[gIdx];
-    if (!group.lot_id || Number(group.lot_id) === 0) {
-      toast.error(`Please select a storage lot / bay first for Lot #${gIdx + 1}`);
-      return;
-    }
-
-    // Calculate how much quantity is allocated to other lots
-    const allocatedElsewhere = lotGroups.reduce((sum, g, idx) => {
-      if (idx === gIdx) return sum;
-      return sum + (Number(g.allocated_quantity) || (g.batches || []).reduce((bs, b) => bs + Number(b.quantity || 0), 0));
-    }, 0);
-
-    const neededForThisLot = Math.max(0, targetTotal - allocatedElsewhere);
-
-    const matchedLot = lots.find((l) => Number(l.lot_id) === Number(group.lot_id));
-    const maxCap = Number(matchedLot?.max_batch_capacity ?? group.max_batch_capacity ?? 0);
-    const curStock = Math.max(0, Number(lotStockQtyMap.get(Number(group.lot_id)) ?? group.current_stock_quantity ?? 0));
-    const isLotBad = matchedLot ? isBadStockLot(matchedLot) : false;
-
-    const currentBatches = group.batches || [];
-    const updatedBatches: BatchRowAllocation[] = [];
-
-    if (currentBatches.length > 1) {
-      // Pro-rate across existing batch splits
-      const currentSum = currentBatches.reduce((s, b) => s + Number(b.quantity || 0), 0);
-      let rem = neededForThisLot;
-      currentBatches.forEach((b, bIdx) => {
-        if (rem <= 0) {
-          updatedBatches.push({ ...b, quantity: 0 });
-          return;
-        }
-        let split = 0;
-        if (bIdx === currentBatches.length - 1) {
-          split = rem;
-        } else if (currentSum > 0) {
-          split = Math.min(rem, Math.round((Number(b.quantity || 0) / currentSum) * neededForThisLot));
-        } else {
-          split = Math.min(rem, Math.round(neededForThisLot / currentBatches.length));
-        }
-        rem -= split;
-        updatedBatches.push({ ...b, quantity: split });
-      });
-      if (rem > 0 && updatedBatches.length > 0) {
-        updatedBatches[updatedBatches.length - 1].quantity += rem;
-      }
-    } else if (currentBatches.length === 1) {
-      updatedBatches.push({
-        ...currentBatches[0],
-        quantity: neededForThisLot,
-      });
-    } else {
-      const fallbackQA: QAStatus = isLotBad ? 'DAMAGED' : 'GOOD';
-      updatedBatches.push({
-        batch_no: initialValues?.batch_no || '',
-        quantity: neededForThisLot,
-        manufacturing_date: toolbarDates[gIdx]?.mfg || (initialValues?.manufacturing_date ? String(initialValues.manufacturing_date).substring(0, 10) : ''),
-        expiry_date: toolbarDates[gIdx]?.exp || (initialValues?.expiry_date ? String(initialValues.expiry_date).substring(0, 10) : ''),
-        qa_status: fallbackQA,
-      });
-    }
-
-    const updatedGroupAllocated = updatedBatches.reduce((s, b) => s + Number(b.quantity || 0), 0);
-
-    setLotGroups(
-      lotGroups.map((g, idx) => {
-        if (idx === gIdx) {
-          return {
-            ...g,
-            lot_name: matchedLot?.lot_name || g.lot_name,
-            max_batch_capacity: maxCap,
-            current_stock_quantity: curStock,
-            allocated_quantity: updatedGroupAllocated,
-            batches: updatedBatches,
-          };
-        }
-        return g;
-      })
-    );
-
-    if (maxCap > 0 && curStock + updatedGroupAllocated > maxCap) {
-      toast.info(`Lot #${gIdx + 1} rebalanced to ${updatedGroupAllocated.toLocaleString()} ${productUomName}, but exceeds rack capacity (${(curStock + updatedGroupAllocated).toLocaleString()} / ${maxCap.toLocaleString()}).`);
-    } else {
-      toast.success(`Lot #${gIdx + 1} batches rebalanced to ${updatedGroupAllocated.toLocaleString()} ${productUomName}!`);
+      toast.success('Successfully reallocated across storage lots within capacity limits!');
     }
   };
 
@@ -1733,13 +1616,9 @@ export function LotBatchSelectionModal({
       return errors;
     }
 
-    // 1. Total Allocating Quantity Check (Must be greater than 0 and match requested quantity if provided)
+    // 1. Total Allocating Quantity Check (Must be greater than 0)
     if (totalAllocated <= 0) {
       errors.push('Total allocating quantity must be greater than 0.');
-    } else if (requestedQuantity && requestedQuantity > 0 && Math.abs(totalAllocated - requestedQuantity) > 0.0001) {
-      errors.push(
-        `Total allocated quantity (${totalAllocated.toLocaleString()} ${productUomName}) does not match the requested target (${requestedQuantity.toLocaleString()} ${productUomName}). Please use "Auto-Balance Batches" or adjust batches.`
-      );
     }
 
     lotGroups.forEach((g, gIdx) => {
@@ -1826,14 +1705,11 @@ export function LotBatchSelectionModal({
           if (bQty <= 0) {
             errors.push(`Lot #${gIdx + 1}, Batch #${bIdx + 1}: Quantity must be greater than 0.`);
           }
-          const datesRequired = requireBatchDates !== undefined ? requireBatchDates : true;
-          if (datesRequired) {
-            if (!b.manufacturing_date) {
-              errors.push(`Lot #${gIdx + 1}, Batch #${bIdx + 1}: Manufacturing date is required.`);
-            }
-            if (!b.expiry_date) {
-              errors.push(`Lot #${gIdx + 1}, Batch #${bIdx + 1}: Expiration date is required.`);
-            }
+          if (!b.manufacturing_date) {
+            errors.push(`Lot #${gIdx + 1}, Batch #${bIdx + 1}: Manufacturing date is required.`);
+          }
+          if (!b.expiry_date) {
+            errors.push(`Lot #${gIdx + 1}, Batch #${bIdx + 1}: Expiration date is required.`);
           }
           if (b.manufacturing_date && b.expiry_date) {
             const mTime = new Date(b.manufacturing_date).getTime();
@@ -1847,7 +1723,7 @@ export function LotBatchSelectionModal({
     });
 
     return errors;
-  }, [lotGroups, totalAllocated, productUomName, adjustmentType, checkLotCompatibility, lotStoredSummaryMap, currentItemClassification, lots, isLotMatchingUom, requestedQuantity, requireBatchDates]);
+  }, [lotGroups, totalAllocated, productUomName, adjustmentType, checkLotCompatibility, lotStoredSummaryMap, currentItemClassification, lots, isLotMatchingUom]);
 
   const isValid = validationErrors.length === 0;
 
@@ -1870,7 +1746,6 @@ export function LotBatchSelectionModal({
       total_quantity: totalAllocated,
     };
 
-    if (readOnly) return;
     onConfirm(result);
     onOpenChange(false);
   };
@@ -1928,7 +1803,7 @@ export function LotBatchSelectionModal({
               {/* UNIFIED ALLOCATION & RECONCILIATION SUMMARY TRACKER */}
               <div
                 className={`p-3.5 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition-all ${
-                  isTargetQuantityMatched && totalAllocated > 0
+                  totalAllocated > 0
                     ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-900 dark:text-emerald-300'
                     : 'bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-300'
                 }`}
@@ -1936,36 +1811,25 @@ export function LotBatchSelectionModal({
                 <div className="flex items-center gap-3">
                   <div
                     className={`w-9 h-9 rounded-lg flex items-center justify-center font-bold text-base shrink-0 ${
-                      isTargetQuantityMatched && totalAllocated > 0 ? 'bg-emerald-600 text-white' : 'bg-amber-500 text-white'
+                      totalAllocated > 0 ? 'bg-emerald-600 text-white' : 'bg-amber-500 text-white'
                     }`}
                   >
-                    {isTargetQuantityMatched && totalAllocated > 0 ? <CheckCircle2 className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}
+                    {totalAllocated > 0 ? <CheckCircle2 className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}
                   </div>
                   <div>
                     <div className="text-xs font-black uppercase tracking-wider flex items-center gap-2 flex-wrap">
-                      <span>
-                        {isTargetQuantityMatched && totalAllocated > 0
-                          ? 'Quantity Balanced & Ready'
-                          : totalAllocated === 0
-                            ? 'No Quantity Allocated'
-                            : `Quantity Mismatch (${totalAllocated.toLocaleString()} / ${(requestedQuantity || 0).toLocaleString()} ${productUomName})`}
-                      </span>
+                      <span>{totalAllocated > 0 ? 'Quantity Balanced & Ready' : 'No Quantity Allocated'}</span>
                       {totalAllocated > 0 && reconciledBatches.length > 0 && (
                         <Badge variant="outline" className="text-[10px] bg-sky-500/15 text-sky-800 dark:text-sky-300 border-sky-500/30 font-bold gap-1 py-0">
+                       
                           <span>{reconciledBatches.length} Deficit Reconciled</span>
                         </Badge>
                       )}
                     </div>
                     <div className="text-xs opacity-90 mt-0.5 flex items-center gap-2 flex-wrap">
-                      {requestedQuantity && requestedQuantity > 0 && !isTargetQuantityMatched ? (
-                        <span>
-                          Allocating <strong className="font-mono font-black">{totalAllocated.toLocaleString()}</strong> of <strong className="font-mono font-black">{requestedQuantity.toLocaleString()}</strong> {productUomName} ({Math.abs(requestedQuantity - totalAllocated).toLocaleString()} {requestedQuantity > totalAllocated ? 'short' : 'over'}).
-                        </span>
-                      ) : (
-                        <span>
-                          Total Allocating: <strong className="font-mono font-black">{totalAllocated.toLocaleString()}</strong> {productUomName} across {lotGroups.length} lot(s).
-                        </span>
-                      )}
+                      <span>
+                        Total Allocating: <strong className="font-mono font-black">{totalAllocated.toLocaleString()}</strong> {productUomName} across {lotGroups.length} lot(s).
+                      </span>
                       {totalAllocated > 0 && reconciledBatches.length === 1 && (
                         <span className="text-sky-800 dark:text-sky-300 font-medium">
                           (Offsets {reconciledBatches[0].existingDeficitQty} deficit on &ldquo;{reconciledBatches[0].batchNo}&rdquo; to net {reconciledBatches[0].netBalance})
@@ -1976,31 +1840,17 @@ export function LotBatchSelectionModal({
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap">
-                  {!isTargetQuantityMatched && requestedQuantity && requestedQuantity > 0 && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={handleReallocateLots}
-                      className="h-8 text-xs font-bold gap-1.5 shrink-0 bg-amber-500/20 hover:bg-amber-500/30 border-amber-500/40 text-amber-900 dark:text-amber-200 cursor-pointer"
-                      title="Auto-balance batches to match requested target quantity"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5 text-amber-700 dark:text-amber-300" />
-                      Auto-Balance Batches
-                    </Button>
-                  )}
-
-                  {lotGroups.length > 0 && (
+                  {lotGroups.length > 1 && (
                     <Button
                       type="button"
                       size="sm"
                       variant="outline"
                       onClick={handleReallocateLots}
                       className="h-8 text-xs font-bold gap-1.5 shrink-0 bg-background border-border shadow-xs hover:bg-muted cursor-pointer text-foreground"
-                      title={lotGroups.length > 1 ? "Reallocate target quantity across lots according to each lot's capacity" : "Reallocate target quantity to balance batches"}
+                      title="Reallocate target quantity across lots according to each lot's capacity"
                     >
                       <RotateCcw className="w-3.5 h-3.5 text-primary" />
-                      {lotGroups.length > 1 ? "Reallocate across Lots" : "Reallocate Target Batches"}
+                      Reallocate across Lots
                     </Button>
                   )}
 
@@ -2698,28 +2548,15 @@ export function LotBatchSelectionModal({
                             </Button>
                           </div>
 
-                          <div className="flex items-center gap-1.5">
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleReallocateLotBatches(gIdx)}
-                              className="h-8 text-xs font-bold text-muted-foreground hover:text-foreground hover:bg-muted/50 gap-1 px-2.5 shrink-0 border border-border cursor-pointer"
-                              title="Rebalance batch quantities for this lot"
-                            >
-                              <RotateCcw className="w-3.5 h-3.5 text-primary" /> Auto-Balance
-                            </Button>
-
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => handleAddBatch(gIdx)}
-                              className="h-8 text-xs font-bold text-primary hover:bg-primary/10 gap-1 px-3 shrink-0 border border-primary/20 cursor-pointer"
-                            >
-                              <Plus className="w-3.5 h-3.5" /> Add Batch Split
-                            </Button>
-                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => handleAddBatch(gIdx)}
+                            className="h-8 text-xs font-bold text-primary hover:bg-primary/10 gap-1 px-3 shrink-0 border border-primary/20"
+                          >
+                            <Plus className="w-3.5 h-3.5" /> Add Batch Split
+                          </Button>
                         </div>
                       </div>
 
@@ -2973,7 +2810,7 @@ export function LotBatchSelectionModal({
               type="button"
               size="sm"
               onClick={handleConfirm}
-              disabled={!isValid || loading || readOnly}
+              disabled={!isValid || loading}
               className="text-xs font-bold h-9 bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm gap-1.5"
             >
               <CheckCircle2 className="w-4 h-4" />

@@ -1,6 +1,6 @@
 
 import { NextResponse } from "next/server";
-import { stockAdjustmentService } from "@/modules/manufacturing-management/stock-adjustment-posting/services/stock-adjustment-service";
+import { stockAdjustmentService } from "@/modules/manufacturing-management/adjustments/stock-adjustment/stock-adjustment-posting/services/stock-adjustment-service";
 
 export async function GET() {
   try {

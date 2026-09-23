@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { stockConversionRepo } from "@/modules/manufacturing-management/stock-conversion/services/stock-conversion.repo";
-import { stockConversionService } from "@/modules/manufacturing-management/stock-conversion/services/stock-conversion.service";
-import { stockConversionManualService } from "@/modules/manufacturing-management/stock-conversion-manual/services/stock-conversion-manual.service";
+import { stockConversionRepo } from "@/modules/manufacturing-management/adjustments/stock-conversion/services/stock-conversion.repo";
+import { stockConversionService } from "@/modules/manufacturing-management/adjustments/stock-conversion/services/stock-conversion.service";
+import { stockConversionManualService } from "@/modules/manufacturing-management/adjustments/stock-conversion/manual/services/stock-conversion-manual.service";
 
 export const runtime = "nodejs";
 export const revalidate = 0;
@@ -12,14 +12,14 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const type = searchParams.get("type");
     const branchId = searchParams.get("branchId") ? Number(searchParams.get("branchId")) : undefined;
-    
+
     // 1. Inventory Fetch (Reusing existing logic)
     if (type === "inventory") {
-        const queryParams = searchParams.toString().replace(/type=inventory&?/, "").replace(/branchId=\d+&?/, "");
-        const data = await stockConversionRepo.fetchInventory(springToken, branchId, queryParams || undefined);
-        return NextResponse.json({ data }, {
-          headers: { "Cache-Control": "no-store, max-age=0" }
-        });
+      const queryParams = searchParams.toString().replace(/type=inventory&?/, "").replace(/branchId=\d+&?/, "");
+      const data = await stockConversionRepo.fetchInventory(springToken, branchId, queryParams || undefined);
+      return NextResponse.json({ data }, {
+        headers: { "Cache-Control": "no-store, max-age=0" }
+      });
     }
 
     // 2. Product List Fetch (Reusing existing logic)

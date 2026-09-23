@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { updateTransferStatus } from "@/modules/manufacturing-management/stock-transfer/services/stock-transfer.service";
+import { updateTransferStatus } from "@/modules/manufacturing-management/adjustments/stock-transfer/services/stock-transfer.service";
 import { decodeJwtPayload } from "@/lib/auth-utils";
 
 export const dynamic = "force-dynamic";
