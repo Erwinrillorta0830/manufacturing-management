@@ -4,9 +4,8 @@ import { Loader2, Package, Layers, Clock, CheckCircle, ShieldAlert } from "lucid
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SearchableVersionSelect } from "../SearchableVersionSelect";
-import { formatHoursToHMS } from "../../utils/containerization-helper";
+import { formatHoursToHMS, formatInventoryQuantity } from "../../utils/containerization-helper";
 import {
-    formatManufacturingMoney,
     getFactoryOverheadBasisLabel
 } from "../../utils/cogs-helper";
 import { calculateAggregateRunHours, calculateMaterialRequirementPlan, calculatePerUnitMaterialRequirement, formatProductionValue } from "../../utils/production-timing";
@@ -175,23 +174,31 @@ export function Step2BOMReview({
                         <div className="bg-background border border-border/60 rounded-lg p-2">
                             <span className="text-[10px] font-medium text-muted-foreground block">🌾 Batch Mix & Sacks</span>
                             <span className="font-extrabold text-foreground text-xs">{containerMetrics.mixCount} Full Mixes</span>
-                            <span className="text-[10px] text-muted-foreground block">Demand: {containerMetrics.requestedMixCount.toFixed(2)} mixes / {containerMetrics.requestedSackCount.toFixed(2)} sacks / {(containerMetrics.requestedFlourGrams / 1000).toFixed(2)} kg</span>
-                            <span className="text-[10px] text-muted-foreground block">Planned: {containerMetrics.sackCount.toFixed(2)} sacks / {(containerMetrics.flourGramsTotal / 1000).toFixed(2)} kg Flour</span>
+                            <span className="text-[10px] text-muted-foreground block">
+                                Demand: {containerMetrics.requestedMixCount.toFixed(2)} mixes
+                                {containerMetrics.hasSackEstimate ? ` / ${containerMetrics.requestedSackCount.toFixed(2)} ${containerMetrics.containerUnitLabel}` : ""}
+                                {containerMetrics.hasFlourWeightEstimate ? ` / ${(containerMetrics.requestedFlourGrams / 1000).toFixed(2)} kg` : ""}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground block">
+                                Planned: {containerMetrics.mixCount} mixes
+                                {containerMetrics.hasSackEstimate ? ` / ${containerMetrics.sackCount.toFixed(2)} ${containerMetrics.containerUnitLabel}` : ""}
+                                {containerMetrics.hasFlourWeightEstimate ? ` / ${(containerMetrics.flourGramsTotal / 1000).toFixed(2)} kg` : ""}
+                            </span>
                         </div>
                         <div className="bg-background border border-border/60 rounded-lg p-2">
                             <span className="text-[10px] font-medium text-muted-foreground block">🏭 Expected Net Pcs</span>
-                            <span className="font-extrabold text-foreground text-xs">{Math.round(containerMetrics.netPieces).toLocaleString()} Pcs</span>
-                            <span className="text-[10px] text-muted-foreground block">({(containerMetrics.scrapRate * 100).toFixed(1)}% Waste Scrap)</span>
+                            <span className="font-extrabold text-foreground text-xs">{containerMetrics.hasOutputEstimate ? `${Math.round(containerMetrics.netPieces).toLocaleString()} Pcs` : "Not configured"}</span>
+                            {containerMetrics.hasOutputEstimate && <span className="text-[10px] text-muted-foreground block">({(containerMetrics.scrapRate * 100).toFixed(1)}% Waste Scrap)</span>}
                         </div>
                         <div className="bg-background border border-border/60 rounded-lg p-2">
                             <span className="text-[10px] font-medium text-muted-foreground block">📦 Cases / Bundles</span>
-                            <span className="font-extrabold text-foreground text-xs">{containerMetrics.totalCasesBundlesFull} Full</span>
-                            <span className="text-[10px] text-muted-foreground block">(+{containerMetrics.remainingPcs} pcs remaining)</span>
+                            <span className="font-extrabold text-foreground text-xs">{containerMetrics.hasOutputEstimate ? `${containerMetrics.totalCasesBundlesFull} Full` : "Not configured"}</span>
+                            {containerMetrics.hasOutputEstimate && <span className="text-[10px] text-muted-foreground block">(+{containerMetrics.remainingPcs} pcs remaining)</span>}
                         </div>
                         <div className="bg-background border border-border/60 rounded-lg p-2">
                             <span className="text-[10px] font-medium text-muted-foreground block">🚛 Pallet Allocation</span>
-                            <span className="font-extrabold text-emerald-600 dark:text-emerald-400 text-xs">{containerMetrics.totalPalletsFull} Pallets</span>
-                            <span className="text-[10px] text-muted-foreground block">(+{containerMetrics.remainingCasesBundles} cases/bundles)</span>
+                            <span className="font-extrabold text-emerald-600 dark:text-emerald-400 text-xs">{containerMetrics.hasPalletEstimate ? `${containerMetrics.totalPalletsFull} Pallets` : "Not configured"}</span>
+                            {containerMetrics.hasPalletEstimate && <span className="text-[10px] text-muted-foreground block">(+{containerMetrics.remainingCasesBundles} cases/bundles)</span>}
                         </div>
                     </div>
                 </div>
@@ -218,10 +225,10 @@ export function Step2BOMReview({
                             </span>
                         </div>
                     </div>
-                    <div className="grid grid-cols-3 gap-2 pt-1 text-[11px]">
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 pt-1 text-[11px]">
                         <div className="bg-background border border-border/60 rounded-lg p-2">
                             <span className="text-[10px] font-medium text-muted-foreground block">🥦 Direct Materials</span>
-                                <span className="font-extrabold text-foreground text-xs">₱{formatManufacturingMoney(cogsBreakdown.materialCostPerUnit)}</span>
+                                <span className="font-extrabold text-foreground text-xs">₱{formatProductionValue(cogsBreakdown.materialCostPerUnit)}</span>
                             <span className="text-[9px] text-muted-foreground block">Raw Materials & Packaging</span>
                         </div>
                         <div className="bg-background border border-border/60 rounded-lg p-2">
@@ -232,8 +239,15 @@ export function Step2BOMReview({
                             </span>
                         </div>
                         <div className="bg-background border border-border/60 rounded-lg p-2">
-                            <span className="text-[10px] font-medium text-muted-foreground block">🏭 Factory Overhead</span>
-                                <span className="font-extrabold text-foreground text-xs">₱{formatProductionValue(cogsBreakdown.factoryOverheadCostPerUnit)}</span>
+                            <span className="text-[10px] font-medium text-muted-foreground block">🏭 Machine & Routing Overhead</span>
+                            <span className="font-extrabold text-foreground text-xs">₱{formatProductionValue(cogsBreakdown.machineOverheadCostPerUnit)} / unit</span>
+                            <span className="text-[9px] text-muted-foreground block">
+                                Work-center runtime
+                            </span>
+                        </div>
+                        <div className="bg-background border border-border/60 rounded-lg p-2">
+                            <span className="text-[10px] font-medium text-muted-foreground block">Configured Factory Overhead</span>
+                            <span className="font-extrabold text-foreground text-xs">₱{formatProductionValue(cogsBreakdown.fixedOverheadCostPerUnit)} / unit</span>
                             <span className="text-[9px] text-muted-foreground block">
                                 {getFactoryOverheadBasisLabel(cogsBreakdown.factoryOverheadBasis)}
                             </span>
@@ -289,6 +303,11 @@ export function Step2BOMReview({
                                     const shortfall = Math.max(0, needed - available);
                                     const isSufficient = shortfall === 0;
                                     const uom = comp.unit_of_measurement || "pcs";
+                                    const kilogramsPerUnit = comp.component_product_id?.kilograms_per_inventory_unit;
+                                    const neededDisplay = formatInventoryQuantity(needed, uom, kilogramsPerUnit);
+                                    const demandDisplay = formatInventoryQuantity(materialPlan.demandRequired, uom, kilogramsPerUnit);
+                                    const availableDisplay = formatInventoryQuantity(available, uom, kilogramsPerUnit);
+                                    const shortfallDisplay = formatInventoryQuantity(shortfall, uom, kilogramsPerUnit);
                                     const children = subAssemblyBoms[Number(compProductId)] || [];
                                     const isSubAssembly = children.length > 0 || comp.component_product_id?.product_type === 388 || comp.component_product_id?.is_finished_good;
 
@@ -388,18 +407,20 @@ export function Step2BOMReview({
                                                     )}
                                                 </td>
                                                 <td className="p-2.5 text-center font-semibold text-foreground">
-                                                    <div>{needed.toLocaleString(undefined, {maximumFractionDigits:2})} <span className="text-[9px] text-muted-foreground font-normal">{uom}</span></div>
-                                                    <div className="text-[9px] font-normal text-muted-foreground">
-                                                        Demand: {materialPlan.demandRequired.toLocaleString(undefined, {maximumFractionDigits:2})} {uom}
-                                                    </div>
+                                                    <div>{neededDisplay.quantity}</div>
+                                                    {neededDisplay.kilograms && <div className="text-[9px] font-normal text-muted-foreground">{neededDisplay.kilograms}</div>}
+                                                    <div className="text-[9px] font-normal text-muted-foreground">Demand: {demandDisplay.quantity}</div>
+                                                    {demandDisplay.kilograms && <div className="text-[9px] font-normal text-muted-foreground">{demandDisplay.kilograms}</div>}
                                                 </td>
                                                 <td className="p-2.5 text-center text-muted-foreground">
-                                                    {available.toLocaleString(undefined, {maximumFractionDigits:2})} <span className="text-[9px] text-muted-foreground font-normal">{uom}</span>
+                                                    <div>{availableDisplay.quantity}</div>
+                                                    {availableDisplay.kilograms && <div className="text-[9px]">{availableDisplay.kilograms}</div>}
                                                 </td>
                                                 <td className={`p-2.5 text-center font-bold ${shortfall > 0 ? (isSubAssembly ? "text-sky-600 dark:text-sky-400" : "text-red-600 dark:text-red-400") : "text-muted-foreground/60"}`}>
                                                     {shortfall > 0 ? (
                                                         <>
-                                                            {shortfall.toLocaleString(undefined, {maximumFractionDigits:2})} <span className={`text-[9px] font-normal ${isSubAssembly ? "text-sky-600/60 dark:text-sky-400/60" : "text-red-600/60 dark:text-red-400/60"}`}>{uom}</span>
+                                                            <div>{shortfallDisplay.quantity}</div>
+                                                            {shortfallDisplay.kilograms && <div className={`text-[9px] font-normal ${isSubAssembly ? "text-sky-600/60 dark:text-sky-400/60" : "text-red-600/60 dark:text-red-400/60"}`}>{shortfallDisplay.kilograms}</div>}
                                                         </>
                                                     ) : "-"}
                                                 </td>
@@ -431,6 +452,10 @@ export function Step2BOMReview({
                                                 const ccAvailable = ccId ? (inventories[Number(ccId)]?.on_hand || 0) : 0;
                                                 const ccShortfall = Math.max(0, ccNeeded - ccAvailable);
                                                 const ccUom = cc.unit_of_measurement || "pcs";
+                                                const ccKilogramsPerUnit = cc.component_product_id?.kilograms_per_inventory_unit;
+                                                const ccNeededDisplay = formatInventoryQuantity(ccNeeded, ccUom, ccKilogramsPerUnit);
+                                                const ccAvailableDisplay = formatInventoryQuantity(ccAvailable, ccUom, ccKilogramsPerUnit);
+                                                const ccShortfallDisplay = formatInventoryQuantity(ccShortfall, ccUom, ccKilogramsPerUnit);
                                                 const ccSufficient = ccShortfall === 0;
 
                                                 return (
@@ -461,13 +486,18 @@ export function Step2BOMReview({
                                                             )}
                                                         </td>
                                                         <td className="p-2.5 text-center text-muted-foreground">
-                                                            {ccNeeded.toLocaleString(undefined, {maximumFractionDigits:2})} <span className="text-[8px] text-muted-foreground/60">{ccUom}</span>
+                                                            <div>{ccNeededDisplay.quantity}</div>
+                                                            {ccNeededDisplay.kilograms && <div className="text-[8px] text-muted-foreground/60">{ccNeededDisplay.kilograms}</div>}
                                                         </td>
                                                         <td className="p-2.5 text-center text-muted-foreground">
-                                                            {ccAvailable.toLocaleString(undefined, {maximumFractionDigits:2})} <span className="text-[8px] text-muted-foreground/60">{ccUom}</span>
+                                                            <div>{ccAvailableDisplay.quantity}</div>
+                                                            {ccAvailableDisplay.kilograms && <div className="text-[8px] text-muted-foreground/60">{ccAvailableDisplay.kilograms}</div>}
                                                         </td>
                                                         <td className={`p-2.5 text-center font-bold ${ccShortfall > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground/60"}`}>
-                                                            {ccShortfall > 0 ? ccShortfall.toLocaleString(undefined, {maximumFractionDigits:2}) : "-"}
+                                                            {ccShortfall > 0 ? <>
+                                                                <div>{ccShortfallDisplay.quantity}</div>
+                                                                {ccShortfallDisplay.kilograms && <div className="text-[8px] font-normal text-muted-foreground">{ccShortfallDisplay.kilograms}</div>}
+                                                            </> : "-"}
                                                         </td>
                                                         <td className="p-2.5 text-right pr-4">
                                                             {ccSufficient ? (

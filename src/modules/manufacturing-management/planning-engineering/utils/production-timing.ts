@@ -1,6 +1,6 @@
 import { DecimalValue } from "../../decimal";
 
-export const PRODUCTION_TIMING_POLICY = "FULL_BATCH_CEILING" as const;
+export const PRODUCTION_TIMING_POLICY = "PROPORTIONAL_RUN_TIME" as const;
 
 export const PRODUCTION_DECIMAL_SCALE = 4;
 const BATCH_BOUNDARY_TOLERANCE = DecimalValue.from("0.001");
@@ -205,10 +205,11 @@ export function calculateAggregateRunHours(
     setupTimeHours: number,
     runTimeHoursPerUnit: number
 ): number {
-    const multiplier = calculateEffectiveBatchMultiplier(targetQuantity, baseQuantity);
-    const standardRunHours = Math.max(0, Number(runTimeHoursPerUnit) || 0) * baseQuantity;
-    const plannedSetupHours = multiplier * Math.max(0, Number(setupTimeHours) || 0);
-    return plannedSetupHours + (multiplier * standardRunHours);
+    requirePositiveProductionNumber(baseQuantity, "Recipe base quantity");
+    const quantity = Math.max(0, Number(targetQuantity) || 0);
+    const plannedSetupHours = quantity > 0 ? Math.max(0, Number(setupTimeHours) || 0) : 0;
+    const plannedRunHours = quantity * Math.max(0, Number(runTimeHoursPerUnit) || 0);
+    return plannedSetupHours + plannedRunHours;
 }
 
 /**

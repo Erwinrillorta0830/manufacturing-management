@@ -29,9 +29,12 @@ import {
 } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
 import {
     calculateRecipeMaterialCostPerUnit,
-    roundManufacturingMoney
+    roundManufacturingUnitCost
 } from "@/modules/manufacturing-management/planning-engineering/utils/cogs-helper";
-import { parseContainerizationProfile } from "@/modules/manufacturing-management/planning-engineering/utils/containerization-helper";
+import {
+    getKilogramsPerInventoryUnit,
+    parseContainerizationProfile
+} from "@/modules/manufacturing-management/planning-engineering/utils/containerization-helper";
 
 const WIZARD_STEP_TIMEOUT_MS = 20000;
 
@@ -1528,10 +1531,17 @@ export async function handleGET(request: Request) {
             // Fetch product details for all collected product IDs to enrich component objects
             const productsMap = new Map<number, any>();
             if (allProductIds.length > 0) {
-                const prodRes = await fetch(
-                    `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${allProductIds.join(",")}&fields=product_id,product_name,product_code,cost_per_unit,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type&limit=-1`,
+                const productFilter = `filter[product_id][_in]=${allProductIds.join(",")}&limit=-1`;
+                let prodRes = await fetch(
+                    `${DIRECTUS_URL}/items/products?${productFilter}&fields=product_id,product_name,product_code,cost_per_unit,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type,net_weight,weight,weight_unit_id.*`,
                     { headers }
                 );
+                if (!prodRes.ok) {
+                    prodRes = await fetch(
+                        `${DIRECTUS_URL}/items/products?${productFilter}&fields=product_id,product_name,product_code,cost_per_unit,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type`,
+                        { headers }
+                    );
+                }
                 if (prodRes.ok) {
                     const prods = (await prodRes.json()).data || [];
                     prods.forEach((p: any) => productsMap.set(Number(p.product_id), p));
@@ -1573,7 +1583,8 @@ export async function handleGET(request: Request) {
                         product_code: pDetails?.product_code || "",
                         category_name: resolveCategoryName(pDetails, pDetails?.product_code, pDetails?.product_type ?? item.product_type),
                         product_type: pDetails?.product_type ?? item.product_type,
-                        cost_per_unit: unitCost
+                        cost_per_unit: unitCost,
+                        kilograms_per_inventory_unit: getKilogramsPerInventoryUnit(pDetails)
                     },
                     cost_per_unit: unitCost,
                     quantity_required: quantityRequired,
@@ -1585,7 +1596,7 @@ export async function handleGET(request: Request) {
                 };
             });
 
-            const materialCostPerUnit = roundManufacturingMoney(calculateRecipeMaterialCostPerUnit(
+            const materialCostPerUnit = roundManufacturingUnitCost(calculateRecipeMaterialCostPerUnit(
                 components.map((component: any) => ({
                     quantity_required: Number(component.quantity_required || 0),
                     wastage_factor_percentage: Number(component.wastage_factor_percentage || 0),
@@ -1621,7 +1632,8 @@ export async function handleGET(request: Request) {
                             product_code: pDetails?.product_code || "",
                             category_name: resolveCategoryName(pDetails, pDetails?.product_code, pDetails?.product_type ?? item.product_type),
                             product_type: pDetails?.product_type ?? item.product_type,
-                            cost_per_unit: unitCost
+                            cost_per_unit: unitCost,
+                            kilograms_per_inventory_unit: getKilogramsPerInventoryUnit(pDetails)
                         },
                         cost_per_unit: unitCost,
                         quantity_required: Number(item.quantity_required || 0),
@@ -1717,10 +1729,17 @@ export async function handleGET(request: Request) {
 
             const productsMap = new Map<number, any>();
             if (childProductIds.length > 0) {
-                const prodRes = await fetch(
-                    `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${childProductIds.join(",")}&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type&limit=-1`,
+                const productFilter = `filter[product_id][_in]=${childProductIds.join(",")}&limit=-1`;
+                let prodRes = await fetch(
+                    `${DIRECTUS_URL}/items/products?${productFilter}&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type,net_weight,weight,weight_unit_id.*`,
                     { headers }
                 );
+                if (!prodRes.ok) {
+                    prodRes = await fetch(
+                        `${DIRECTUS_URL}/items/products?${productFilter}&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type`,
+                        { headers }
+                    );
+                }
                 if (prodRes.ok) {
                     const prods = (await prodRes.json()).data || [];
                     prods.forEach((p: any) => productsMap.set(Number(p.product_id), p));
@@ -1754,7 +1773,8 @@ export async function handleGET(request: Request) {
                         product_name: pDetails?.product_name || `Product #${cPid}`,
                         product_code: pDetails?.product_code || "",
                         category_name: resolveCategoryName(pDetails, pDetails?.product_code, pDetails?.product_type ?? item.product_type),
-                        product_type: pDetails?.product_type ?? item.product_type
+                        product_type: pDetails?.product_type ?? item.product_type,
+                        kilograms_per_inventory_unit: getKilogramsPerInventoryUnit(pDetails)
                     },
                     quantity_required: Number(item.quantity_required || 0),
                     wastage_factor_percentage: Number(item.wastage_factor_percentage || 0),
@@ -1830,7 +1850,11 @@ export async function handleGET(request: Request) {
             const componentProductIds = Array.from(new Set(allBomItems.map(item => Number(item.product_id)).filter(Boolean)));
             const productsMap = new Map<number, any>();
             if (componentProductIds.length > 0) {
-                const prodRes = await fetch(`${DIRECTUS_URL}/items/products?filter[product_id][_in]=${componentProductIds.join(",")}&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut,product_category.category_name,product_type&limit=-1`, { headers });
+                const productFilter = `filter[product_id][_in]=${componentProductIds.join(",")}&limit=-1`;
+                let prodRes = await fetch(`${DIRECTUS_URL}/items/products?${productFilter}&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type,net_weight,weight,weight_unit_id.*`, { headers });
+                if (!prodRes.ok) {
+                    prodRes = await fetch(`${DIRECTUS_URL}/items/products?${productFilter}&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut,product_category.category_name,product_type`, { headers });
+                }
                 if (prodRes.ok) {
                     const prods = (await prodRes.json()).data || [];
                     prods.forEach((p: any) => productsMap.set(Number(p.product_id), p));
@@ -1847,7 +1871,8 @@ export async function handleGET(request: Request) {
                         product_name: pDetails?.product_name || `Product #${item.product_id}`,
                         product_code: pDetails?.product_code || "",
                         category_name: pDetails?.product_category?.category_name || "Uncategorized",
-                        product_type: pDetails?.product_type
+                        product_type: pDetails?.product_type,
+                        kilograms_per_inventory_unit: getKilogramsPerInventoryUnit(pDetails)
                     },
                     quantity_required: item.quantity_required,
                     wastage_factor_percentage: item.wastage_factor_percentage || 0,

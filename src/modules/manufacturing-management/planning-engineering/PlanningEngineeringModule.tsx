@@ -25,7 +25,6 @@ import { JOFilterBar } from "./components/JOFilterBar";
 import { JOTable } from "./components/JOTable";
 import { JobOrderTraveler } from "./components/JobOrderTraveler";
 import { fetchJobMaterials } from "./services/planning-api";
-import Link from "next/link";
 import { resolveJobOrderJourney } from "../shared/job-order-journey";
 import { JobOrderJourneyBar } from "../shared/components/JobOrderJourneyBar";
 import { JobOrderStatusBadge } from "../shared/components/JobOrderStatusBadge";
@@ -1139,12 +1138,12 @@ export default function PlanningEngineeringModule() {
                                 <span className="text-border">→</span>
                                 <span>
                                     <strong className="text-foreground">3.</strong>{" "}
-                                    <Link href="/mm/material-staging" className="text-primary underline underline-offset-2">Stage materials</Link>
+                                    <span className="text-primary underline underline-offset-2">Stage materials</span>
                                 </span>
                                 <span className="text-border">→</span>
                                 <span>
                                     <strong className="text-foreground">4.</strong>{" "}
-                                    <Link href="/mm/production-workflow" className="text-primary underline underline-offset-2">Produce</Link>
+                                    <span className="text-primary underline underline-offset-2">Produce</span>
                                 </span>
                             </div>
                         </div>

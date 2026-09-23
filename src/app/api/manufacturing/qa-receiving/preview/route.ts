@@ -438,7 +438,7 @@ export async function POST(request: Request) {
         }
         const movementRows = await loadMovementRowsForMmLots(
             storageLotIds,
-            "movement_id,product_id,mm_lot_id,lot_id,quantity,batch_no,manufacturing_date,expiry_date"
+            [...new Set(lotBranchById.values())]
         );
         const netQuantityByLotProduct = new Map<string, number>();
         const storedProductIds = new Set<number>();
