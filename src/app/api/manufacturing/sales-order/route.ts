@@ -963,19 +963,33 @@ export async function POST(request: Request) {
         if (!quoteRes.ok) throw new ApiError(404, "Quotation not found.");
         const quote = (await quoteRes.json()).data;
 
-        // 2. Fetch the quotation snapshots
-        const snapRes = await fetch(`${DIRECTUS_URL}/items/quotation_snapshots?filter[quotation_id][_eq]=${quotationId}&limit=-1`, { headers, cache: "no-store" });
-        if (!snapRes.ok) throw new Error(`Failed to fetch quotation snapshots: ${snapRes.status}`);
-        const snapshots = (await snapRes.json()).data;
+        // 2. Resolve items: if submitted in body, use them; otherwise fetch from snapshots
+        let quoteItems: any[] = [];
+        let quoteTotal = 0;
+        let totalDiscount = 0;
+        let quoteParentIds: number[] = [];
 
-        // Filter snapshots that are actual product quotas
-        // disabled-lint-next-line @typescript-eslint/no-explicit-any
-        const quoteItems = snapshots.filter((s: any) => s.node_type === "product_quota");
-        if (quoteItems.length === 0) {
-            throw new ApiError(400, "No finished goods found in this quotation.");
+        if (items && items.length > 0) {
+            quoteItems = items;
+            quoteTotal = quoteItems.reduce((sum, item) => sum + Number(item.unit_price) * Number(item.quantity), 0);
+            totalDiscount = quoteItems.reduce((sum, item) => sum + (Number(item.discount_amount) || 0), 0);
+            quoteParentIds = quoteItems.map((item: any) => Number(item.parent_product_id || item.product_id));
+        } else {
+            // Fetch the quotation snapshots
+            const snapRes = await fetch(`${DIRECTUS_URL}/items/quotation_snapshots?filter[quotation_id][_eq]=${quotationId}&limit=-1`, { headers, cache: "no-store" });
+            if (!snapRes.ok) throw new Error(`Failed to fetch quotation snapshots: ${snapRes.status}`);
+            const snapshots = (await snapRes.json()).data;
+
+            // Filter snapshots that are actual product quotas
+            quoteItems = snapshots.filter((s: any) => s.node_type === "product_quota");
+            if (quoteItems.length === 0) {
+                throw new ApiError(400, "No finished goods found in this quotation.");
+            }
+
+            quoteTotal = Number(quote.total_selling_price);
+            quoteParentIds = quoteItems.map((item: any) => Number(item.parent_id || item.product_id));
         }
 
-        const quoteTotal = Number(quote.total_selling_price);
         if (!Number.isFinite(quoteTotal) || quoteTotal < 0) {
             throw new ApiError(409, "The quotation has an invalid selling total.");
         }
@@ -985,7 +999,7 @@ export async function POST(request: Request) {
         const invalidQuoteItem = quoteItems.some((item: any) => {
             const productId = Number(item.product_id);
             const quantity = Number(item.quantity);
-            const unitPrice = Number(item.frozen_total_cost_php);
+            const unitPrice = Number(item.unit_price !== undefined ? item.unit_price : item.frozen_total_cost_php);
             return !Number.isSafeInteger(productId) || productId < 1
                 || !Number.isFinite(quantity) || quantity <= 0
                 || !Number.isFinite(unitPrice) || unitPrice < 0;
@@ -993,9 +1007,10 @@ export async function POST(request: Request) {
         if (invalidQuoteItem) throw new ApiError(409, "The quotation contains invalid product quantities or prices.");
 
         // 3. Fetch customer details
-        const custRes = await fetch(`${DIRECTUS_URL}/items/customer/${quote.customer_id}`, { headers, cache: "no-store" });
+        const targetCustomerId = customerId || quote.customer_id;
+        const custRes = await fetch(`${DIRECTUS_URL}/items/customer/${targetCustomerId}`, { headers, cache: "no-store" });
         let customerCode = "CUST-GEN";
-        let actualQuoteCustomerId = Number(quote.customer_id);
+        let actualQuoteCustomerId = Number(targetCustomerId);
         if (custRes.ok) {
             const cust = (await custRes.json()).data;
             customerCode = cust.customer_code || cust.customer_name || "CUST-GEN";
@@ -1003,7 +1018,6 @@ export async function POST(request: Request) {
         }
 
         // Resolve an explicit customer override, then Standard BOM Version 1, then a legacy active version.
-        const quoteParentIds = quoteItems.map((item: any) => Number(item.parent_id || item.product_id));
         const quoteProductParams = new URLSearchParams({
             "filter[product_id][_in]": quoteParentIds.join(","),
             fields: "product_id,product_name,product_type",
@@ -1043,6 +1057,7 @@ export async function POST(request: Request) {
             throw new ApiError(409, `Sales order ${orderNo} already exists for this quotation.`);
         }
 
+        const effectiveDiscount = items && items.length > 0 ? totalDiscount + (discountAmount || 0) : discountAmount;
         const salesOrderPayload = {
             order_no: orderNo,
             po_no: poNo,
@@ -1050,8 +1065,8 @@ export async function POST(request: Request) {
             customer_code: customerCode,
             order_status: body.submitForApproval ? "For Approval" : "Draft", // Start as Draft or Submit
             total_amount: quoteTotal,
-            discount_amount: discountAmount,
-            net_amount: quoteTotal - discountAmount,
+            discount_amount: items && items.length > 0 ? 0 : discountAmount,
+            net_amount: quoteTotal - effectiveDiscount,
             remarks: remarks || `Converted 1:1 from Quote ${quote.quote_number}.`,
             created_date: localCreatedDate,
             draft_at: body.submitForApproval ? null : localCreatedDate,
@@ -1066,20 +1081,23 @@ export async function POST(request: Request) {
             exchange_rate: 1
         };
         const detailPayloads = quoteItems.map((item: any) => {
-            const unitPrice = Number(item.frozen_total_cost_php);
+            const unitPrice = Number(item.unit_price !== undefined ? item.unit_price : item.frozen_total_cost_php);
             const quantity = Number(item.quantity);
             const productId = Number(item.product_id);
-            const parentId = Number(item.parent_id || item.product_id);
+            const parentId = Number(item.parent_product_id || item.parent_id || item.product_id);
+            const itemDiscount = Number(item.discount_amount || 0);
             return {
                 product_id: productId,
-                bom_version_id: quoteVersionMap.get(parentId),
+                bom_version_id: item.bom_version_id || quoteVersionMap.get(parentId) || null,
                 unit_price: unitPrice,
                 ordered_quantity: quantity,
                 allocated_quantity: 0,
                 served_quantity: 0,
                 allocated_amount: 0,
-                net_amount: unitPrice * quantity,
+                net_amount: (unitPrice * quantity) - itemDiscount,
                 gross_amount: unitPrice * quantity,
+                discount_type: item.discount_type || null,
+                discount_amount: itemDiscount,
                 created_date: localCreatedDate
             };
         });

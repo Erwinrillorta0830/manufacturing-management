@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Trash2, Coins, Percent, Plus } from "lucide-react";
 import { SelectedQuoteProduct, CatalogProduct } from "../types";
 import { CreatableSelect } from "../../finished-goods-master/components/CreatableSelect";
+import { calculateProductVersionCOGS } from "../utils/costing";
 
 interface SelectedProductsListProps {
     selectedProductsList: SelectedQuoteProduct[];
@@ -33,7 +34,7 @@ export function SelectedProductsList({
 }: SelectedProductsListProps) {
     const [cogsMap, setCogsMap] = useState<Record<string, number | null>>({});
     const [loadingCogs, setLoadingCogs] = useState<Record<string, boolean>>({});
-    const [versionsMap, setVersionsMap] = useState<Record<number, { id: number; version_name: string; created_at?: string }[]>>({});
+    const [versionsMap, setVersionsMap] = useState<Record<number, { id: number; product_id?: number; version_name: string; created_at?: string }[]>>({});
     const [loadingVersions, setLoadingVersions] = useState<Record<number, boolean>>({});
 
     // Fetch versions dynamically for selected product/variant
@@ -73,8 +74,24 @@ export function SelectedProductsList({
         });
     }, [selectedProductsList, versionsMap, loadingVersions, changeProductVersion]);
 
+    const [workCenters, setWorkCenters] = useState<Array<{ work_center_id: number; overhead_cost_per_hour?: number | null }>>([]);
+    const [loadingWorkCenters, setLoadingWorkCenters] = useState<boolean>(true);
+
+    useEffect(() => {
+        fetch("/api/manufacturing/finished-goods/work-centers")
+            .then(res => res.ok ? res.json() : [])
+            .then(data => {
+                const list = Array.isArray(data) ? data : (data && Array.isArray(data.data) ? data.data : []);
+                setWorkCenters(list);
+            })
+            .catch(() => {})
+            .finally(() => setLoadingWorkCenters(false));
+    }, []);
+
     // Fetch cost for selected product + version cache key
     useEffect(() => {
+        if (loadingWorkCenters) return;
+
         selectedProductsList.forEach(item => {
             if (!item.product) return;
 
@@ -87,28 +104,73 @@ export function SelectedProductsList({
 
             setLoadingCogs(prev => ({ ...prev, [cacheKey]: true }));
 
-            // Note: cost depends on the BOM of the parent but price is based on the variant
-            const url = vid
-                ? `/api/manufacturing/finished-goods/bom-cost?productId=${parentId}&versionId=${vid}`
-                : `/api/manufacturing/finished-goods/bom-cost?productId=${pid}`;
+            if (vid) {
+                // Find version metadata from versionsMap to obtain exact product_id
+                const knownVersion = (versionsMap[pid] || versionsMap[Number(parentId)] || []).find(v => Number(v.id) === Number(vid));
+                const candidateProductIds = Array.from(new Set([
+                    knownVersion?.product_id,
+                    Number(parentId),
+                    Number(pid)
+                ])).filter((id): id is number => typeof id === "number" && !isNaN(id) && id > 0);
 
-            fetch(url)
-                .then(res => res.ok ? res.json() : { cost: 0, hasCogs: false })
-                .then(data => {
-                    const hasCogs = data.hasCogs !== undefined ? data.hasCogs : (typeof data.cost === "number" && data.cost > 0);
-                    const resolvedCost = hasCogs
-                        ? (typeof data.cost === "number" ? data.cost : Number(item.product!.cost_per_unit || 0))
-                        : (item.product!.has_cogs ? Number(item.product!.cost_per_unit || 0) : null);
-                    setCogsMap(prev => ({ ...prev, [cacheKey]: resolvedCost }));
-                })
-                .catch(() => {
-                    setCogsMap(prev => ({ ...prev, [cacheKey]: item.product!.has_cogs ? Number(item.product!.cost_per_unit || 0) : null }));
-                })
-                .finally(() => {
-                    setLoadingCogs(prev => ({ ...prev, [cacheKey]: false }));
-                });
+                const fetchDetails = async () => {
+                    for (const qId of candidateProductIds) {
+                        try {
+                            const res = await fetch(`/api/manufacturing/finished-goods/bom-details?productId=${qId}&versionId=${vid}`);
+                            if (res.ok) {
+                                const data = await res.json();
+                                if (data) return data;
+                            }
+                        } catch { }
+                    }
+                    return null;
+                };
+
+                fetchDetails()
+                    .then(versionData => {
+                        if (versionData && (versionData.routes || versionData.labor_positions || versionData.base_quantity)) {
+                            const calculatedCOGS = calculateProductVersionCOGS(versionData, workCenters);
+                            if (calculatedCOGS > 0) {
+                                setCogsMap(prev => ({ ...prev, [cacheKey]: calculatedCOGS }));
+                                return;
+                            }
+                        }
+                        // Fallback to bom-cost endpoint
+                        return fetch(`/api/manufacturing/finished-goods/bom-cost?productId=${parentId}&versionId=${vid}`)
+                            .then(res => res.ok ? res.json() : { cost: 0, hasCogs: false })
+                            .then(data => {
+                                const hasCogs = data.hasCogs !== undefined ? data.hasCogs : (typeof data.cost === "number" && data.cost > 0);
+                                const resolvedCost = hasCogs
+                                    ? (typeof data.cost === "number" ? data.cost : Number(item.product!.cost_per_unit || 0))
+                                    : (item.product!.has_cogs ? Number(item.product!.cost_per_unit || 0) : null);
+                                setCogsMap(prev => ({ ...prev, [cacheKey]: resolvedCost }));
+                            });
+                    })
+                    .catch(() => {
+                        setCogsMap(prev => ({ ...prev, [cacheKey]: item.product!.has_cogs ? Number(item.product!.cost_per_unit || 0) : null }));
+                    })
+                    .finally(() => {
+                        setLoadingCogs(prev => ({ ...prev, [cacheKey]: false }));
+                    });
+            } else {
+                fetch(`/api/manufacturing/finished-goods/bom-cost?productId=${pid}`)
+                    .then(res => res.ok ? res.json() : { cost: 0, hasCogs: false })
+                    .then(data => {
+                        const hasCogs = data.hasCogs !== undefined ? data.hasCogs : (typeof data.cost === "number" && data.cost > 0);
+                        const resolvedCost = hasCogs
+                            ? (typeof data.cost === "number" ? data.cost : Number(item.product!.cost_per_unit || 0))
+                            : (item.product!.has_cogs ? Number(item.product!.cost_per_unit || 0) : null);
+                        setCogsMap(prev => ({ ...prev, [cacheKey]: resolvedCost }));
+                    })
+                    .catch(() => {
+                        setCogsMap(prev => ({ ...prev, [cacheKey]: item.product!.has_cogs ? Number(item.product!.cost_per_unit || 0) : null }));
+                    })
+                    .finally(() => {
+                        setLoadingCogs(prev => ({ ...prev, [cacheKey]: false }));
+                    });
+            }
         });
-    }, [selectedProductsList, cogsMap, loadingCogs]);
+    }, [selectedProductsList, cogsMap, loadingCogs, workCenters, loadingWorkCenters, versionsMap]);
 
     return (
         <div className="space-y-4 rounded-2xl border bg-card/40 backdrop-blur-md p-6 shadow-xl w-full">

@@ -77,6 +77,7 @@ export interface ReceivingLotAllocationInput {
     manufacturingDate: string;
     expirationDate: string;
     quantity: number | string;
+    qaStatus?: "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED";
 }
 
 export interface Shipment {
@@ -164,6 +165,7 @@ export interface ShipmentLineItem {
             manufacturing_date?: string | null;
             expiration_date?: string | null;
             quantity: number;
+            qa_status?: "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED";
         }>;
         rejected_lot_allocations: Array<{
             storage_lot_id: number;
@@ -171,6 +173,7 @@ export interface ShipmentLineItem {
             manufacturing_date?: string | null;
             expiration_date?: string | null;
             quantity: number;
+            qa_status?: "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED";
         }>;
         manufacturing_date: string | null;
         expiration_date: string | null;
@@ -306,6 +309,7 @@ export interface ReceivingCommitPayload {
             manufacturingDate: string | null;
             expirationDate: string | null;
             quantity: number;
+            qaStatus: "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED";
         }>;
         rejectedLotAllocations: Array<{
             storageLotId: number;
@@ -313,6 +317,7 @@ export interface ReceivingCommitPayload {
             manufacturingDate: string | null;
             expirationDate: string | null;
             quantity: number;
+            qaStatus: "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED";
         }>;
         remarks: string | null;
         isPackaging: boolean;
