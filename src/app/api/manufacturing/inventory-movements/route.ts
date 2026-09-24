@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
 import {
   fetchMmInventoryMovements,
   movementErrorStatus,
-  type MmInventoryMovement
+  type MmInventoryMovement,
+  type NormalizedMmInventoryMovement,
 } from "@/app/api/manufacturing/services/mm-inventory-movements.service";
+import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -62,6 +64,124 @@ export async function GET(req: Request) {
     const inventoryLotNumber = numberOrNull(inventoryLotId);
     const transactionTypeNumber = numberOrNull(transactionTypeId);
     const movementNumber = numberOrNull(movementId);
+
+    // Directus rejected-leg supplement: the Spring movement mirror does not
+    // carry QA Reject / Bad Order Receipt legs (transaction_type_id 5), which
+    // left bad-stock lots with empty movement history. Spring rows stay
+    // canonical: a supplement leg already covered by Spring is dropped to
+    // avoid duplicates if the mirror catches up later.
+    try {
+        const supplementParams = new URLSearchParams({
+            "filter[transaction_type_id][_eq]": "5",
+            fields: "movement_id,inventory_lot_id,mm_lot_id,product_id,branch_id,batch_no,quantity,source_document_id,source_document_no,created_at,created_by,remarks,manufacturing_date,expiry_date",
+            limit: "-1",
+        });
+        if (mmLotNumber) supplementParams.set("filter[mm_lot_id][_eq]", String(mmLotNumber));
+        if (inventoryLotNumber) supplementParams.set("filter[inventory_lot_id][_eq]", String(inventoryLotNumber));
+        if (branchNumber) supplementParams.set("filter[branch_id][_eq]", String(branchNumber));
+        if (productNumber) supplementParams.set("filter[product_id][_eq]", String(productNumber));
+        const supplementRes = await fetch(
+            `${DIRECTUS_URL}/items/inventory_movements?${supplementParams.toString()}`,
+            { headers, cache: "no-store" },
+        );
+        if (supplementRes.ok) {
+            const supplementJson = await supplementRes.json();
+            const rejectedRows: Record<string, unknown>[] = supplementJson.data || [];
+            if (rejectedRows.length > 0) {
+                const springCovered = new Set<string>();
+                for (const m of filtered) {
+                    const lotId = Number(m.mmLotId ?? m.mm_lot_id ?? m.lotId ?? m.lot_id ?? 0);
+                    const productId = Number(m.productId ?? m.product_id ?? 0);
+                    const batchNo = String(m.batchNo ?? m.batch_no ?? "").trim().toLowerCase();
+                    if (lotId > 0 && productId > 0 && batchNo) {
+                        springCovered.add(`${lotId}_${productId}_${batchNo}`);
+                    }
+                }
+                const qaStatusByInvLotId = new Map<number, string>();
+                const invIds = Array.from(new Set(
+                    rejectedRows.map((row) => Number(row.inventory_lot_id ?? 0)).filter((id) => id > 0),
+                ));
+                if (invIds.length > 0) {
+                    const lotsRes = await fetch(
+                        `${DIRECTUS_URL}/items/mm_inventory_lots?filter[inventory_lot_id][_in]=${invIds.join(",")}&fields=inventory_lot_id,qa_status&limit=${invIds.length}`,
+                        { headers, cache: "no-store" },
+                    ).catch(() => null);
+                    if (lotsRes && lotsRes.ok) {
+                        const lotsJson = await lotsRes.json().catch(() => null);
+                        for (const lotRow of (lotsJson?.data || []) as Record<string, unknown>[]) {
+                            const invId = Number(lotRow.inventory_lot_id ?? 0);
+                            const qa = String(lotRow.qa_status || "").trim().toUpperCase();
+                            if (invId > 0 && qa) qaStatusByInvLotId.set(invId, qa);
+                        }
+                    }
+                }
+                const supplemented: NormalizedMmInventoryMovement[] = [];
+                for (const row of rejectedRows) {
+                    const lotId = Number(row.mm_lot_id ?? 0);
+                    const productId = Number(row.product_id ?? 0);
+                    const batchNo = String(row.batch_no || "").trim();
+                    const quantity = Number(row.quantity ?? 0);
+                    if (!(lotId > 0 && productId > 0 && batchNo && Number.isFinite(quantity) && quantity !== 0)) continue;
+                    if (springCovered.has(`${lotId}_${productId}_${batchNo.toLowerCase()}`)) continue;
+                    const movementId = Number(row.movement_id ?? 0) || null;
+                    const invId = Number(row.inventory_lot_id ?? 0) || null;
+                    const branchId = Number(row.branch_id ?? 0) || null;
+                    const createdAt = String(row.created_at || "");
+                    supplemented.push({
+                        movementKey: movementId ? `DIRECTUS-${movementId}` : null,
+                        movementId,
+                        transactionTypeId: 5,
+                        versionId: null,
+                        transactionType: "QA Reject / Bad Order Receipt",
+                        movementDirection: "IN",
+                        sourceModule: null,
+                        referenceId: Number(row.source_document_id ?? 0) || null,
+                        referenceDetailId: null,
+                        referenceNo: String(row.source_document_no || ""),
+                        transactionDate: createdAt || null,
+                        postedAt: createdAt || null,
+                        postedBy: Number(row.created_by ?? 0) || null,
+                        branchId,
+                        inventoryLotId: invId,
+                        mmLotId: lotId,
+                        productId,
+                        productCode: null,
+                        productName: null,
+                        productTypeId: null,
+                        productTypeName: null,
+                        unitId: null,
+                        batchNo,
+                        manufacturingDate: String(row.manufacturing_date || "") || null,
+                        expirationDate: String(row.expiry_date || "") || null,
+                        inventoryCondition: (invId && qaStatusByInvLotId.get(invId)) || null,
+                        quantity,
+                        movement_id: movementId,
+                        transaction_type_id: 5,
+                        version_id: null,
+                        source_document_id: Number(row.source_document_id ?? 0) || null,
+                        source_document_no: String(row.source_document_no || ""),
+                        product_id: productId,
+                        branch_id: branchId,
+                        inventory_lot_id: invId,
+                        mm_lot_id: lotId,
+                        batch_no: batchNo,
+                        expiry_date: String(row.expiry_date || "") || null,
+                        manufacturing_date: String(row.manufacturing_date || "") || null,
+                        created_at: createdAt || null,
+                        created_by: Number(row.created_by ?? 0) || null,
+                        quantity_in: Math.max(0, quantity),
+                        quantity_out: Math.max(0, -quantity),
+                        quantityIn: Math.max(0, quantity),
+                        quantityOut: Math.max(0, -quantity),
+                        remarks: String(row.remarks || "") || null,
+                    });
+                }
+                filtered = [...filtered, ...supplemented];
+            }
+        }
+    } catch (supplementError) {
+        console.error("[MM Inventory Movements BFF] Rejected-leg supplement failed:", supplementError);
+    }
 
     if (branchNumber) filtered = filtered.filter((movement) => Number(movement.branchId) === branchNumber);
     if (productTypeNumber) filtered = filtered.filter((movement) => Number(movement.productTypeId) === productTypeNumber);

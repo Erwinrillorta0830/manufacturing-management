@@ -237,7 +237,12 @@ export async function createJobOrder(
             }
             mergedProducts[key].quantity += Number(p.quantity || 0);
             mergedProducts[key].timing_target_quantity += Number(
-                (p as any).requested_quantity ?? (p as any).requestedQuantity ?? p.quantity ?? 0
+                (p as any).timing_target_quantity
+                    ?? (p as any).timingTargetQuantity
+                    ?? (p as any).requested_quantity
+                    ?? (p as any).requestedQuantity
+                    ?? p.quantity
+                    ?? 0
             );
             const materialTargetQuantity = Number((p as any).material_target_quantity ?? (p as any).materialTargetQuantity);
             if (Number.isFinite(materialTargetQuantity) && materialTargetQuantity > 0) {
@@ -342,8 +347,6 @@ export async function createJobOrder(
                     if (Number.isFinite(materialTargetQuantity)) materialTargetQuantity /= pCount;
                 }
             }
-
-            (p as any).timing_target_quantity = timingTargetQuantity;
 
             const recipeBaseQuantity = Number(version?.base_quantity);
             if (Number.isFinite(recipeBaseQuantity) && recipeBaseQuantity > 0) {

@@ -106,6 +106,7 @@ export interface ReleaseJOPayload {
             quantity: number;
             requested_quantity?: number;
             material_target_quantity?: number;
+            timing_target_quantity?: number;
             bom: {
                 version_id: number | null | undefined;
             };

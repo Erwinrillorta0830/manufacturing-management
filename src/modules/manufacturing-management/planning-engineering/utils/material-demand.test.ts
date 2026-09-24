@@ -8,7 +8,7 @@ import {
 
 const recipeBatchSize = 6986.19;
 const salesOrderQuantity = 12001;
-const netOutputQuantity = 983;
+const netOutputQuantity = 996;
 const plannedProductionQuantity = calculateFullBatchTarget(salesOrderQuantity, recipeBatchSize);
 
 assert.equal(plannedProductionQuantity, 13972.38);
@@ -20,8 +20,8 @@ const qaReleasePlan = calculateReleaseMaterialRequirementPlan(
     2,
     netOutputQuantity
 );
-assert.equal(formatProductionValue(qaReleasePlan.demandRequired), "1002.6600");
-assert.equal(formatProductionValue(qaReleasePlan.plannedRequired), "1002.6600");
+assert.equal(formatProductionValue(qaReleasePlan.demandRequired), "1015.9200");
+assert.equal(formatProductionValue(qaReleasePlan.plannedRequired), "1015.9200");
 assert.equal(qaReleasePlan.wastageFactorPercentage, 0);
 
 const unconfiguredContainerizationPlan = calculateReleaseMaterialRequirementPlan(
@@ -34,4 +34,4 @@ assert.equal(formatProductionValue(unconfiguredContainerizationPlan.plannedRequi
 
 const previousFullBatchBasis = calculatePerUnitMaterialRequirement(recipeBatchSize, 1.02, 2);
 assert.equal(formatProductionValue(previousFullBatchBasis), "7268.4321");
-assert.notEqual(formatProductionValue(previousFullBatchBasis), "1002.6600");
+assert.notEqual(formatProductionValue(previousFullBatchBasis), "1015.9200");

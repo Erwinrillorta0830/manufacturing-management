@@ -667,7 +667,8 @@ export function usePlanningEngineering() {
         selectedSubAssemblyVersions?: Record<number, number>,
         groupConfigurations?: Record<string, { subAssemblyVersions: Record<number, number>; assignments: Record<number, number[]> }>,
         initialize = false,
-        materialTargetQuantity?: number
+        materialTargetQuantity?: number,
+        timingTargetQuantity?: number
     ) => {
         const branchId = parseValidBranchId(selectedBranchId);
         if (branchId === null) {
@@ -748,6 +749,7 @@ export function usePlanningEngineering() {
                             quantity: targetQuantity,
                             requested_quantity: targetQuantity,
                             material_target_quantity: materialTargetQuantity,
+                            timing_target_quantity: timingTargetQuantity ?? materialTargetQuantity ?? targetQuantity,
                             bom: { version_id: firstLine.bom_version_id }
                         }]
                     },

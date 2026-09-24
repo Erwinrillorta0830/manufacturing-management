@@ -188,7 +188,7 @@ export function Step2BOMReview({
                         <div className="bg-background border border-border/60 rounded-lg p-2">
                             <span className="text-[10px] font-medium text-muted-foreground block">🏭 Expected Net Pcs</span>
                             <span className="font-extrabold text-foreground text-xs">{containerMetrics.hasOutputEstimate ? `${Math.round(containerMetrics.netPieces).toLocaleString()} Pcs` : "Not configured"}</span>
-                            {containerMetrics.hasOutputEstimate && <span className="text-[10px] text-muted-foreground block">({(containerMetrics.scrapRate * 100).toFixed(1)}% Waste Scrap)</span>}
+                            {containerMetrics.hasOutputEstimate && containerMetrics.expectedYieldPercentage < 100 && <span className="text-[10px] text-muted-foreground block">({containerMetrics.expectedYieldPercentage.toFixed(1)}% Expected Yield)</span>}
                         </div>
                         <div className="bg-background border border-border/60 rounded-lg p-2">
                             <span className="text-[10px] font-medium text-muted-foreground block">📦 Cases / Bundles</span>

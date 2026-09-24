@@ -57,7 +57,8 @@ interface ReleaseJODialogProps {
         selectedSubAssemblyVersions?: Record<number, number>,
         groupConfigurations?: Record<string, { subAssemblyVersions: Record<number, number>; assignments: Record<number, number[]> }>,
         initialize?: boolean,
-        materialTargetQuantity?: number
+        materialTargetQuantity?: number,
+        timingTargetQuantity?: number
     ) => void;
     priority: number;
     setPriority: (val: number) => void;
@@ -305,6 +306,36 @@ export function ReleaseJODialog({
         ? calculateRequiredBatchCount(targetQuantity, bomBaseQty)
         : 0;
 
+    const containerMetrics = useMemo(() => {
+        if (!selectedLines || selectedLines.length === 0) return null;
+        const first = selectedLines[0] as any;
+        const prodObj = first?.product_id;
+        if (!prodObj) return null;
+        const verObj = bomData || first?.version_id || first?.bom_version_id || first?.version;
+        return calculateContainerizationMetrics(
+            prodObj.product_name || prodObj.product_code || "Product",
+            targetQuantity,
+            prodObj.unit_of_measurement_count || prodObj.pcs_per_bundle || prodObj.pcs_per_case || prodObj.uom_count,
+            verObj?.expected_yield_percentage || prodObj.expected_yield_percentage,
+            verObj?.scrap_rate || verObj?.scrap_percentage || verObj?.wastage_factor_percentage,
+            verObj?.cutting_unit_weight_grams || verObj?.unit_weight_grams || prodObj.net_weight_grams || prodObj.piece_weight_grams,
+            verObj?.cases_per_pallet || prodObj.cases_per_pallet || prodObj.bundles_per_pallet,
+            verObj?.sacks_per_mix || verObj?.sacks_per_batch,
+            verObj?.batch_weight_per_sack || verObj?.base_batch_weight_grams,
+            components,
+            bomBaseQty,
+            requestedTargetQuantity,
+            bomData?.containerization_profile || null
+        );
+    }, [selectedLines, targetQuantity, requestedTargetQuantity, components, bomBaseQty, bomData]);
+
+    const materialTargetQuantity = containerMetrics?.hasOutputEstimate
+        && Number.isFinite(containerMetrics.netPieces)
+        && containerMetrics.netPieces > 0
+        ? Math.round(containerMetrics.netPieces)
+        : null;
+    const productionTimingTargetQuantity = materialTargetQuantity ?? requestedTargetQuantity;
+
     const productionMetricsResult = useMemo(() => {
         if (!hasLoadedDetails || routings.length === 0 || targetQuantity <= 0) {
             return { metrics: null, error: null };
@@ -319,7 +350,7 @@ export function ReleaseJODialog({
             const product = first?.product_id as any;
             const metrics = calculateProductionMetrics({
                 targetQuantity,
-                timingTargetQuantity: requestedTargetQuantity,
+                timingTargetQuantity: productionTimingTargetQuantity,
                 baseQuantity: bomBaseQty,
                 targetUomId: readUomId(first?.uom_id ?? first?.unit_of_measurement ?? first?.uom),
                 baseUomId: readUomId(bomData?.uom_id ?? bomData?.unit_of_measurement ?? bomData?.uom),
@@ -353,40 +384,12 @@ export function ReleaseJODialog({
                 error: error instanceof Error ? error.message : "Unable to calculate production metrics."
             };
         }
-    }, [hasLoadedDetails, routings, targetQuantity, bomBaseQty, selectedLines, components, bomData]);
+    }, [hasLoadedDetails, routings, targetQuantity, productionTimingTargetQuantity, bomBaseQty, selectedLines, components, bomData]);
 
     const productionMetrics = productionMetricsResult.metrics;
     const productionMetricsError = productionMetricsResult.error;
     const boxEstimatedHours = productionMetrics?.lineLeadTimeHours || 0;
 
-    const containerMetrics = useMemo(() => {
-        if (!selectedLines || selectedLines.length === 0) return null;
-        const first = selectedLines[0] as any;
-        const prodObj = first?.product_id;
-        if (!prodObj) return null;
-        const verObj = bomData || first?.version_id || first?.bom_version_id || first?.version;
-        return calculateContainerizationMetrics(
-            prodObj.product_name || prodObj.product_code || "Product",
-            targetQuantity,
-            prodObj.unit_of_measurement_count || prodObj.pcs_per_bundle || prodObj.pcs_per_case || prodObj.uom_count,
-            verObj?.expected_yield_percentage || prodObj.expected_yield_percentage,
-            verObj?.scrap_rate || verObj?.scrap_percentage || verObj?.wastage_factor_percentage,
-            verObj?.cutting_unit_weight_grams || verObj?.unit_weight_grams || prodObj.net_weight_grams || prodObj.piece_weight_grams,
-            verObj?.cases_per_pallet || prodObj.cases_per_pallet || prodObj.bundles_per_pallet,
-            verObj?.sacks_per_mix || verObj?.sacks_per_batch,
-            verObj?.batch_weight_per_sack || verObj?.base_batch_weight_grams,
-            components,
-            bomBaseQty,
-            requestedTargetQuantity,
-            bomData?.containerization_profile || null
-        );
-    }, [selectedLines, targetQuantity, requestedTargetQuantity, components, bomBaseQty, bomData]);
-
-    const materialTargetQuantity = containerMetrics?.hasOutputEstimate
-        && Number.isFinite(containerMetrics.netPieces)
-        && containerMetrics.netPieces > 0
-        ? Math.round(containerMetrics.netPieces)
-        : null;
     const getMaterialRequirementPlan = useCallback((
         quantityRequired: number,
         wastagePercentage: number
@@ -1104,7 +1107,7 @@ export function ReleaseJODialog({
                                                     <div className="bg-background border border-border/60 rounded-lg p-2">
                                                         <span className="text-[10px] font-medium text-muted-foreground block">🏭 Expected Net Pcs</span>
                                                         <span className="font-extrabold text-foreground text-xs">{containerMetrics.hasOutputEstimate ? `${Math.round(containerMetrics.netPieces).toLocaleString()} Pcs` : "Not configured"}</span>
-                                                        {containerMetrics.hasOutputEstimate && <span className="text-[10px] text-muted-foreground block">({(containerMetrics.scrapRate * 100).toFixed(1)}% Waste Scrap)</span>}
+                                                        {containerMetrics.hasOutputEstimate && containerMetrics.expectedYieldPercentage < 100 && <span className="text-[10px] text-muted-foreground block">({containerMetrics.expectedYieldPercentage.toFixed(1)}% Expected Yield)</span>}
                                                     </div>
                                                     <div className="bg-background border border-border/60 rounded-lg p-2">
                                                         <span className="text-[10px] font-medium text-muted-foreground block">📦 Cases / Bundles</span>
@@ -1748,7 +1751,8 @@ export function ReleaseJODialog({
                                             ]))
                                             : undefined,
                                         false,
-                                        materialTargetQuantity ?? undefined
+                                        materialTargetQuantity ?? undefined,
+                                        productionTimingTargetQuantity
                                     )}
                                     disabled={releasingJO || !!productionMetricsError}
                                     className="border-primary/30 text-primary hover:bg-primary/5 h-8 font-semibold"
@@ -1771,7 +1775,8 @@ export function ReleaseJODialog({
                                             ]))
                                             : undefined,
                                         true,
-                                        materialTargetQuantity ?? undefined
+                                        materialTargetQuantity ?? undefined,
+                                        productionTimingTargetQuantity
                                     )}
                                     disabled={releasingJO || !!productionMetricsError || !plannedDate || priority < 0}
                                     className="bg-emerald-600 hover:bg-emerald-500 text-white h-8 font-semibold shadow-lg shadow-emerald-500/20"

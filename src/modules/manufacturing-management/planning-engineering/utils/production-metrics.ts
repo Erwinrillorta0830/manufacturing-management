@@ -24,8 +24,8 @@ export interface ProductionRouteMetric {
 export interface ProductionMetricsInput {
     targetQuantity: number;
     /**
-     * Requested output used only for route timing. The target quantity may be
-     * rounded up to a full recipe batch for costing and material planning.
+     * Net output used for route timing. The target quantity may be rounded up
+     * to a full recipe batch for costing and production planning.
      */
     timingTargetQuantity?: number;
     baseQuantity: number;
@@ -76,7 +76,7 @@ export function calculateProductionMetrics(input: ProductionMetricsInput): Produ
         const setupTimeHours = Math.max(0, Number(route.setup_time_hours || 0));
         const runTimeHours = Math.max(0, Number(route.run_time_hours || 0));
         const timingBatchRatio = timingTargetQuantity / stepBatchSize;
-        const plannedSetupHours = setupTimeHours;
+        const plannedSetupHours = setupTimeHours * timingBatchRatio;
         const plannedRunHours = timingBatchRatio * runTimeHours;
 
         return {
