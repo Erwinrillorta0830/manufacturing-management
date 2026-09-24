@@ -147,11 +147,16 @@ export async function POST(req: NextRequest) {
                 totalProduced += effectiveProduced;
             }
 
+            const hasDeficit = liveOnhand < 0;
             const meetsByOnhand = liveOnhand >= orderedQty;
             const meetsByProduction = totalProduced >= orderedQty;
 
-            if (!meetsByOnhand && !meetsByProduction) {
-                const shortage = Math.max(0, orderedQty - Math.max(liveOnhand, totalProduced));
+            if (hasDeficit) {
+                unfulfilledItems.push(
+                    `Product ID #${line.product_id}: On-hand quantity is negative (${liveOnhand}). Stock deficit must be resolved before proceeding.`
+                );
+            } else if (!meetsByOnhand && !meetsByProduction) {
+                const shortage = Math.max(0, orderedQty - Math.max(Math.max(0, liveOnhand), totalProduced));
                 unfulfilledItems.push(
                     `Product ID #${line.product_id}: Ordered ${orderedQty}, On-Hand ${liveOnhand}, Produced ${totalProduced} (Deficit: ${shortage})`
                 );
