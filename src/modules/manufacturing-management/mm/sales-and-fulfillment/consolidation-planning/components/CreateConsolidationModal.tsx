@@ -584,7 +584,8 @@ export default function CreateConsolidationModal({
         const otherBatchesAlloc = currentAlloc - currentBatchAlloc;
         const remainingDemand = Math.max(0, totalRequired - otherBatchesAlloc);
         
-        const allowedMax = Math.min(maxAvail, remainingDemand);
+        // Allow allocating more than available, but not more than total remaining demand of the product
+        const allowedMax = remainingDemand;
 
         const parsed = Math.max(0, Math.min(allowedMax, Number(val) || 0));
         setManualAllocations((prev) => ({
