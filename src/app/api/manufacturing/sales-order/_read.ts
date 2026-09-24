@@ -233,7 +233,7 @@ async function fetchProductGraph(read: DirectusReader, initialProductIds: number
         const params = new URLSearchParams({
             "filter[_or][0][product_id][_in]": frontier.join(","),
             "filter[_or][1][parent_id][_in]": frontier.join(","),
-            fields: "product_id,product_name,product_code,description,unit_of_measurement,unit_of_measurement.unit_name,unit_of_measurement.unit_shortcut,unit_of_measurement_count,product_brand.brand_name,product_category.category_name,parent_id",
+            fields: "product_id,product_name,product_code,description,unit_of_measurement,unit_of_measurement.unit_name,unit_of_measurement.unit_shortcut,unit_of_measurement_count,product_brand.brand_name,product_category.category_name,parent_id,has_bom",
             limit: "-1"
         });
         const rows = (await read("products", params)).data;
@@ -412,7 +412,10 @@ export async function enrichSalesOrderReadModel(
             unit_count: Number(product.unit_of_measurement_count || 1),
             parent_id: product.parent_id ? Number(typeof product.parent_id === "object" ? product.parent_id.product_id : product.parent_id) : null,
             brand_name: product.product_brand?.brand_name || null,
-            category_name: product.product_category?.category_name || null
+            category_name: product.product_category?.category_name || null,
+            has_bom: product.has_bom === undefined || product.has_bom === null
+                ? true
+                : Boolean(product.has_bom === 1 || product.has_bom === true || String(product.has_bom) === "1")
         } : {
             product_id: rawProductId,
             product_name: `Product #${rawProductId}`,
@@ -425,7 +428,8 @@ export async function enrichSalesOrderReadModel(
             uom_count: 1,
             parent_id: null,
             brand: "N/A",
-            category: "N/A"
+            category: "N/A",
+            has_bom: true
         };
 
         const order = orderById.get(orderId);

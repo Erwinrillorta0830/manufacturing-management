@@ -21,6 +21,13 @@ const formatUomLabel = (product: Record<string, unknown>): string => {
     return String((product as any).unit_of_measurement?.unit_shortcut || (product as any).unit_shortcut || "Unit");
 };
 
+const requiresBom = (product: Record<string, unknown> | CatalogProduct | undefined | null): boolean => {
+    if (!product) return true;
+    const p = product as Record<string, unknown>;
+    if (p.has_bom === false || p.has_bom === 0 || p.has_bom === "0") return false;
+    return true;
+};
+
 export function SelectedProductsList({
     selectedProductsList,
     handleAgreedPriceChange,
@@ -157,13 +164,22 @@ export function SelectedProductsList({
                     .then(res => res.ok ? res.json() : { cost: 0, hasCogs: false })
                     .then(data => {
                         const hasCogs = data.hasCogs !== undefined ? data.hasCogs : (typeof data.cost === "number" && data.cost > 0);
-                        const resolvedCost = hasCogs
-                            ? (typeof data.cost === "number" ? data.cost : Number(item.product!.cost_per_unit || 0))
-                            : (item.product!.has_cogs ? Number(item.product!.cost_per_unit || 0) : null);
+                        let resolvedCost: number | null = null;
+                        if (hasCogs) {
+                            resolvedCost = typeof data.cost === "number" ? data.cost : Number(item.product!.cost_per_unit || 0);
+                        } else if (item.product!.has_cogs) {
+                            resolvedCost = Number(item.product!.cost_per_unit || 0);
+                        } else if (!requiresBom(item.product)) {
+                            // When BOM is not required, fallback directly to the product unit cost
+                            resolvedCost = Number(item.product!.cost_per_unit || 0);
+                        }
                         setCogsMap(prev => ({ ...prev, [cacheKey]: resolvedCost }));
                     })
                     .catch(() => {
-                        setCogsMap(prev => ({ ...prev, [cacheKey]: item.product!.has_cogs ? Number(item.product!.cost_per_unit || 0) : null }));
+                        const fallbackCost = item.product!.has_cogs || !requiresBom(item.product)
+                            ? Number(item.product!.cost_per_unit || 0)
+                            : null;
+                        setCogsMap(prev => ({ ...prev, [cacheKey]: fallbackCost }));
                     })
                     .finally(() => {
                         setLoadingCogs(prev => ({ ...prev, [cacheKey]: false }));
@@ -235,14 +251,14 @@ export function SelectedProductsList({
                             const parentOptions = allProducts.filter(p => (p as unknown as Record<string, unknown>).is_parent)
                                 .filter(p => {
                                     if (item.product_type_id && Number((p as unknown as Record<string, unknown>).product_type) !== item.product_type_id) return false;
-                                    if (isFinishedGoods) {
-                                        const pRec = p as unknown as Record<string, unknown>;
+                                    const pRec = p as unknown as Record<string, unknown>;
+                                    if (isFinishedGoods && requiresBom(pRec)) {
                                         const parentHasVer = Boolean(pRec.has_active_version);
                                         const childHasVer = allProducts.some(child => {
-                                            const cRec = child as unknown as Record<string, unknown>;
-                                            return Number(cRec.parent_product_id) === Number(p.product_id) && Boolean(cRec.has_active_version);
-                                        });
-                                        if (!parentHasVer && !childHasVer) return false;
+                                             const cRec = child as unknown as Record<string, unknown>;
+                                             return Number(cRec.parent_product_id) === Number(p.product_id) && Boolean(cRec.has_active_version);
+                                         });
+                                         if (!parentHasVer && !childHasVer) return false;
                                     }
                                     // Check if parent still has at least one selectable UOM variant
                                     const isCurrentParent = Number(p.product_id) === Number(parentId);
@@ -251,10 +267,11 @@ export function SelectedProductsList({
                                             .filter(child => Number((child as unknown as Record<string, unknown>).parent_product_id) === Number(p.product_id))
                                             .filter(child => !otherSelectedVariantIds.includes(Number(child.product_id)))
                                             .filter(child => {
-                                                if (!isFinishedGoods) return true;
-                                                const cRec = child as unknown as Record<string, unknown>;
-                                                return Boolean(cRec.has_active_uom_version ?? cRec.has_active_version);
-                                            });
+                                                 if (!isFinishedGoods) return true;
+                                                 const cRec = child as unknown as Record<string, unknown>;
+                                                 if (!requiresBom(cRec)) return true;
+                                                 return Boolean(cRec.has_active_uom_version ?? cRec.has_active_version);
+                                             });
                                         if (availableVariants.length === 0) return false;
                                     }
                                     return true;
@@ -266,12 +283,14 @@ export function SelectedProductsList({
                                 .filter(p => {
                                     if (!isFinishedGoods) return true;
                                     const pRec = p as unknown as Record<string, unknown>;
+                                    if (!requiresBom(pRec)) return true;
                                     return Boolean(pRec.has_active_uom_version ?? pRec.has_active_version);
                                 })
                                 .sort((a, b) => Number((b as unknown as Record<string, unknown>).is_parent) - Number((a as unknown as Record<string, unknown>).is_parent) || Number((a as unknown as Record<string, unknown>).unit_count) - Number((b as unknown as Record<string, unknown>).unit_count))
                                 .map(p => ({ value: String(p.product_id), label: formatUomLabel(p as unknown as Record<string, unknown>) }));
 
                             const activeVersions = (pid && versionsMap[pid]) || (parentId && versionsMap[parentId]) || [];
+                            const isBomNotRequired = Boolean(item.product && !requiresBom(item.product));
 
                             return (
                                 <tr key={lineId} className="hover:bg-muted/35 transition-colors group">
@@ -328,9 +347,9 @@ export function SelectedProductsList({
                                                 const vObj = activeVersions.find(v => String(v.id) === val);
                                                 changeProductVersion(lineId, Number(val), vObj ? vObj.version_name : null);
                                             }}
-                                            placeholder="Choose Version..."
+                                            placeholder={isBomNotRequired && activeVersions.length === 0 ? "N/A (No BOM)" : "Choose Version..."}
                                             className="h-8 text-xs font-semibold"
-                                            disabled={!parentId || activeVersions.length === 0}
+                                            disabled={!parentId || (activeVersions.length === 0 && !vid)}
                                         />
                                     </td>
                                     <td className="p-3.5 text-right font-semibold text-foreground">

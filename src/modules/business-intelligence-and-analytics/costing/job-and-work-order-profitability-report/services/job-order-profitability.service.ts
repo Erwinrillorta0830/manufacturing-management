@@ -13,7 +13,7 @@ export class JobOrderProfitabilityService {
         summary: ProfitabilitySummaryKPIs;
     }> {
         try {
-            const res = await fetch("/api/bia/costing/job-order-profitability-report", {
+            const res = await fetch("/api/bia/costing/job-and-work-order-profitability-report", {
                 method: "GET",
                 headers: { "Content-Type": "application/json" },
                 cache: "no-store"
@@ -67,7 +67,7 @@ export class JobOrderProfitabilityService {
      */
     static async fetchJobOrderCostBreakdown(jobOrderId: number): Promise<JobOrderCostBreakdown | null> {
         try {
-            const res = await fetch(`/api/bia/costing/job-order-profitability-report?jobOrderId=${jobOrderId}`, {
+            const res = await fetch(`/api/bia/costing/job-and-work-order-profitability-report?jobOrderId=${jobOrderId}`, {
                 method: "GET",
                 headers: { "Content-Type": "application/json" },
                 cache: "no-store"

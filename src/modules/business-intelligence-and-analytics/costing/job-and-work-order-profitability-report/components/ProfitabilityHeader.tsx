@@ -30,7 +30,7 @@ export function ProfitabilityHeader({
                     </div>
                     <div>
                         <h1 className="text-xl font-bold tracking-tight text-foreground">
-                            Job Order Profitability Report
+                            Job & Work Order Profitability Report
                         </h1>
                         <p className="text-xs text-muted-foreground">
                             Calculates exact gross margin per production run by comparing total manufacturing costs (materials, labor, overhead) against order sales price.
