@@ -357,7 +357,7 @@ export function useQAReceiving({
     const filteredShipments = useMemo(() => {
         return shipments
         .filter(s => {
-            // Warehouse-received orders enter QA; legacy For Pickup orders remain supported.
+            // Warehouse-received orders enter QA; legacy For Pickup orders remain readable during migration.
             if (!isReceivingQueueShipmentStatus(s.inventory_status ?? s.status) && s.status !== "Received") return false;
 
             // 1. PO# filter (case-insensitive search on PO number, reference, or shipment ID)

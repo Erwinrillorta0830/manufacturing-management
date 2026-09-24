@@ -33,19 +33,19 @@ const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const purchaseOrderCategoryType = z.enum(["RAW_MATERIAL", "PACKAGING", "FINISHED_GOODS"]);
 
 export const purchaseOrderStatusSchema = z.enum([
-    "Ordered", "Approved", "Awaiting Payment", "Cancelled", "For Pickup",
-    "Warehouse Receiving", "Receiving (QA)", "Partially Received", "Received", "Revision", "Rejected"
+    "Ordered", "Approved", "Awaiting Payment", "Cancelled",
+    "Warehouse Receiving", "QA Receiving", "Partially Received", "Received", "Revision", "Rejected"
 ]);
 
 const initialPurchaseOrderStatusSchema = z.enum(["Ordered"]);
 
 export const purchaseOrderListStatusSchema = z.enum([
-    "For Approval", "Requested", "Ordered", "Approved", "Awaiting Payment", "Cancelled", "For Pickup",
-    "Warehouse Receiving", "Receiving (QA)", "Partially Received", "Received", "Revision", "Rejected"
+    "For Approval", "Requested", "Ordered", "Approved", "Awaiting Payment", "Cancelled",
+    "Warehouse Receiving", "QA Receiving", "Partially Received", "Received", "Revision", "Rejected"
 ]);
 
 const receivingQueueStatusSchema = z.enum([
-    "For Pickup", "Receiving (QA)", "Partially Received", "Received"
+    "QA Receiving", "Partially Received", "Received"
 ]);
 
 export const purchaseOrderApprovalStageSchema = z.enum(["Finance"]);
@@ -205,7 +205,7 @@ export const purchaseOrderListQuerySchema = z.object({
         context.addIssue({
             code: "custom",
             path: ["status"],
-            message: "Receiving queue status must be For Pickup, Receiving (QA), Partially Received, or Received."
+            message: "Receiving queue status must be QA Receiving, Partially Received, or Received."
         });
     }
     if (query.startDate && query.endDate && query.startDate > query.endDate) {
@@ -221,7 +221,7 @@ export type PurchaseOrderListQuery = z.infer<typeof purchaseOrderListQuerySchema
 
 export function modulesForStatus(status: z.infer<typeof purchaseOrderStatusSchema>) {
     if (status === "Warehouse Receiving") return [MODULE_PATHS.warehouseReceiving];
-    return status === "For Pickup" || status === "Receiving (QA)" || status === "Partially Received" || status === "Received"
+    return status === "QA Receiving" || status === "Partially Received" || status === "Received"
         ? [MODULE_PATHS.receiving]
         : [MODULE_PATHS.procurement, MODULE_PATHS.financeApproval];
 }

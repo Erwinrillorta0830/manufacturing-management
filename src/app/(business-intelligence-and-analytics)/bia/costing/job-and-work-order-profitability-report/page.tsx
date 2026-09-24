@@ -11,12 +11,12 @@ import {
     BreadcrumbPage,
     BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import JobOrderProfitabilityReportModule from "@/modules/business-intelligence-and-analytics/costing/job-order-profitability-report/JobOrderProfitabilityReportModule";
+import JobOrderProfitabilityReportModule from "@/modules/business-intelligence-and-analytics/costing/job-and-work-order-profitability-report/JobOrderProfitabilityReportModule";
 
 export const dynamic = "force-dynamic";
 
 export const metadata = {
-    title: "Job Order Profitability Report | VOS ERP",
+    title: "Job & Work Order Profitability Report | VOS ERP",
     description: "Calculates exact gross margin per production run by comparing total manufacturing costs against order sales price."
 };
 
@@ -102,7 +102,7 @@ export default async function JobOrderProfitabilityReportPage() {
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
                                 <BreadcrumbItem className="min-w-0 overflow-hidden">
                                     <BreadcrumbPage className="truncate max-w-[56vw] sm:max-w-[60vw] md:max-w-none">
-                                        Job Order Profitability Report
+                                        Job & Work Order Profitability Report
                                     </BreadcrumbPage>
                                 </BreadcrumbItem>
                             </BreadcrumbList>

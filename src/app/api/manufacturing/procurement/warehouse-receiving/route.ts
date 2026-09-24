@@ -5,6 +5,7 @@ import { formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 import { procurementDirectusFetch } from "../_directus";
 import {
     INVENTORY_STATUS,
+    LEGACY_FOR_PICKUP_STATUS_ID,
     WAREHOUSE_RECEIVING_QUEUE_INVENTORY_STATUS_IDS,
     WAREHOUSE_RECEIVING_STARTABLE_INVENTORY_STATUS_IDS,
     inventoryStatusToPurchaseOrderStatus,
@@ -481,7 +482,7 @@ function buildReceiptHistory(
         const receiptNumber = String(header?.receiving_ticket_no || row.receipt_no || "Unnumbered receipt").trim();
         const key = rowHeaderId ? `header:${rowHeaderId}` : `legacy:${receiptNumber}`;
         const status: WarehouseReceiptHistoryStatus = isCurrent
-            ? currentStatus === INVENTORY_STATUS.FOR_PICKUP ? "Awaiting QA" : "Current Draft"
+            ? currentStatus === INVENTORY_STATUS.QA_RECEIVING || currentStatus === LEGACY_FOR_PICKUP_STATUS_ID ? "Awaiting QA" : "Current Draft"
             : rowHeaderId ? "Posted" : "Legacy";
         const existing = grouped.get(key);
         const entry = existing || {
@@ -539,7 +540,7 @@ async function buildOrderView(order: DirectusOrder) {
         loadBranch(orderBranchId(order))
     ]);
     const warehouseHeaders = headers.filter(header => String(header.posting_status || "") === "Reserved");
-    const currentWarehouseHeader = [INVENTORY_STATUS.WAREHOUSE_RECEIVING, INVENTORY_STATUS.FOR_PICKUP].some(status => status === statusId(order))
+    const currentWarehouseHeader = [INVENTORY_STATUS.WAREHOUSE_RECEIVING, INVENTORY_STATUS.QA_RECEIVING, LEGACY_FOR_PICKUP_STATUS_ID].some(status => status === statusId(order))
         ? warehouseHeaders.find(header => Number(header.workflow_revision) === workflowRevision(order)) || null
         : null;
     const warehouseHeaderId = Number(currentWarehouseHeader?.id || 0);
@@ -617,7 +618,7 @@ async function buildOrderView(order: DirectusOrder) {
                 postingStatus: String(currentWarehouseHeader.posting_status || "Reserved")
             }
             : null,
-        pendingQaReceipt: statusId(order) === INVENTORY_STATUS.FOR_PICKUP && currentWarehouseHeader
+        pendingQaReceipt: [INVENTORY_STATUS.QA_RECEIVING, LEGACY_FOR_PICKUP_STATUS_ID].some(status => status === statusId(order)) && currentWarehouseHeader
             ? {
                 id: Number(currentWarehouseHeader.id),
                 receiptNumber: String(currentWarehouseHeader.receiving_ticket_no || ""),
@@ -866,7 +867,7 @@ async function submitWarehouseReceiving(order: DirectusOrder, command: Warehouse
     const nextRevision = currentRevision + 1;
     const previousWarehouseReceivedBy = relationId(order.warehouse_received_by, ["id", "user_id"]);
     const updated = await patchPurchaseOrderConditionally(purchaseOrderId, currentStatus, currentRevision, {
-        inventory_status: INVENTORY_STATUS.FOR_PICKUP,
+        inventory_status: INVENTORY_STATUS.QA_RECEIVING,
         workflow_revision: nextRevision,
         warehouse_received_by: actorId
     });
@@ -881,14 +882,14 @@ async function submitWarehouseReceiving(order: DirectusOrder, command: Warehouse
             action: "WarehouseReceivingSubmittedToQa",
             actorId,
             fromStatus: currentStatus,
-            toStatus: INVENTORY_STATUS.FOR_PICKUP,
+            toStatus: INVENTORY_STATUS.QA_RECEIVING,
             revisionBefore: currentRevision,
             revisionAfter: nextRevision,
             remarks: "Warehouse receipt completed and submitted to QA Receiving."
         });
     } catch (error) {
         await patchHeader(headerIdValue, { workflow_revision: currentRevision }).catch(() => undefined);
-        await patchPurchaseOrderConditionally(purchaseOrderId, INVENTORY_STATUS.FOR_PICKUP, nextRevision, {
+        await patchPurchaseOrderConditionally(purchaseOrderId, INVENTORY_STATUS.QA_RECEIVING, nextRevision, {
             inventory_status: currentStatus,
             workflow_revision: currentRevision,
             warehouse_received_by: previousWarehouseReceivedBy

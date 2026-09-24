@@ -56,6 +56,12 @@ const formatUomLabel = (product: any): string => {
     return String(product.unit_name || product.unit_shortcut || "Unit");
 };
 
+const requiresBom = (product: any): boolean => {
+    if (!product) return true;
+    if (product.has_bom === false || product.has_bom === 0 || product.has_bom === "0") return false;
+    return true;
+};
+
 export function SalesOrderDraftEditor({
     selectedOrder,
     orderDetails,
@@ -389,11 +395,14 @@ export function SalesOrderDraftEditor({
             if (item.product_id) {
                 seenProductIds.add(item.product_id);
                 const prod = products.find(p => Number(p.product_id) === Number(item.parent_product_id));
+                const variantProd = products.find(p => Number(p.product_id) === Number(item.product_id));
                 const typeObj = item.product_type_id
                     ? productTypes.find(t => Number(t.id) === Number(item.product_type_id))
                     : (prod ? productTypes.find(t => String(t.id) === String(prod.product_type)) : null);
                 const isFinishedGood = Boolean(typeObj?.name?.toLowerCase().includes("finished"));
-                if (isFinishedGood) {
+                const productRequiresBom = requiresBom(prod) && requiresBom(variantProd);
+
+                if (isFinishedGood && productRequiresBom) {
                     const versionState = versionStates[item.product_id] || versionStates[item.parent_product_id];
                     if (!versionState || versionState.status === "loading") lineErrors.product = "BOM version is still loading.";
                     if (versionState?.status === "unavailable") lineErrors.product = "No active BOM version is available.";
@@ -734,7 +743,7 @@ export function SalesOrderDraftEditor({
                                                 const rawT = typeof p.product_type === "object" && p.product_type !== null ? (p.product_type as any).id : p.product_type;
                                                 if (rawT !== undefined && rawT !== null && String(rawT) !== String(item.product_type_id)) return false;
                                             }
-                                            if (isFinishedGoods) {
+                                            if (isFinishedGoods && requiresBom(p)) {
                                                 const parentHasVer = Boolean(p.has_active_version);
                                                 const childHasVer = products.some(child => Number(child.parent_product_id) === Number(p.product_id) && Boolean(child.has_active_version));
                                                 if (!parentHasVer && !childHasVer) return false;
@@ -745,7 +754,11 @@ export function SalesOrderDraftEditor({
                                                 const availableVariants = products
                                                     .filter(child => Number(child.parent_product_id) === Number(p.product_id))
                                                     .filter(child => !otherSelectedVariantIds.includes(Number(child.product_id)))
-                                                    .filter(child => !isFinishedGoods || Boolean(child.has_active_uom_version));
+                                                    .filter(child => {
+                                                        if (!isFinishedGoods) return true;
+                                                        if (!requiresBom(child)) return true;
+                                                        return Boolean(child.has_active_uom_version);
+                                                    });
                                                 if (availableVariants.length === 0) return false;
                                             }
                                             return true;
@@ -755,6 +768,7 @@ export function SalesOrderDraftEditor({
                                         .filter(p => Number(p.product_id) === Number(item.product_id) || !otherSelectedVariantIds.includes(Number(p.product_id)))
                                         .filter(p => {
                                             if (!isFinishedGoods) return true;
+                                            if (!requiresBom(p)) return true;
                                             return Boolean(p.has_active_uom_version);
                                         })
                                         .sort((a, b) => Number(b.is_parent) - Number(a.is_parent) || Number(a.unit_count) - Number(b.unit_count))
@@ -765,6 +779,10 @@ export function SalesOrderDraftEditor({
                                         : (Number(item.parent_product_id) > 0 && versionStates[item.parent_product_id]?.status === "resolved" && versionStates[item.parent_product_id]?.versions?.length)
                                             ? versionStates[item.parent_product_id]
                                             : versionStates[item.product_id] || versionStates[item.parent_product_id];
+
+                                    const selectedParent = products.find(p => Number(p.product_id) === Number(item.parent_product_id));
+                                    const selectedVariant = products.find(p => Number(p.product_id) === Number(item.product_id));
+                                    const isNonBomProduct = !requiresBom(selectedParent) || !requiresBom(selectedVariant);
 
                                     return (
                                         <tr key={item.line_id} className="grid grid-cols-1 gap-3 p-3 font-semibold text-foreground hover:bg-muted/5 md:table-row md:p-0">
@@ -795,8 +813,8 @@ export function SalesOrderDraftEditor({
                                                                         <option key={v.version_id} value={v.version_id}>{v.version_name} {v.is_primary ? "(Primary)" : Number(v.version_id) === activeVerState.defaultVersionId ? "(Default)" : ""}</option>
                                                                     ))}
                                                                 </select>
-                                                            ) : <span className="text-[10px] text-muted-foreground">Unavailable</span>
-                                                    ) : <span className="text-muted-foreground text-xs font-semibold text-center block">-</span>
+                                                            ) : <span className="text-[10px] text-muted-foreground">{isNonBomProduct ? "N/A" : "Unavailable"}</span>
+                                                    ) : <span className="text-muted-foreground text-xs font-semibold text-center block">{isNonBomProduct ? "N/A" : "-"}</span>
                                                 ) : <span className="text-muted-foreground text-xs font-semibold text-center block">N/A</span>}
                                             </td>
                                             <td className="block p-0 md:table-cell md:w-28 md:min-w-[100px] md:px-3 md:py-2.5 md:text-right">

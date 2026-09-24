@@ -113,7 +113,7 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
 
     const isStarted = selectedOrder?.status === "Warehouse Receiving";
     const isContinuation = selectedOrder?.status === "Partially Received";
-    const isPendingQa = selectedOrder?.status === "Receiving (QA)";
+    const isPendingQa = selectedOrder?.status === "QA Receiving";
     const isReceived = selectedOrder?.status === "Received";
     const hasRemainingQuantity = selectedLines.some(line => line.remainingQuantity > 1e-9);
     const actionBusy = submitting !== null || printing;
@@ -179,7 +179,7 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
                                     <option value="Approved">Approved</option>
                                     <option value="Partially Received">Partially Received</option>
                                     <option value="Warehouse Receiving">Warehouse Receiving</option>
-                                    <option value="Receiving (QA)">Receiving (QA)</option>
+                                    <option value="QA Receiving">QA Receiving</option>
                                     <option value="Received">Received</option>
                                 </select>
                             </div>

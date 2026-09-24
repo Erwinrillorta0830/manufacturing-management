@@ -72,6 +72,10 @@ export function calculateMaterialCost(input: CostingMaterialInput): number {
     return input.isByProduct ? -Math.abs(cost) : cost;
 }
 
+export function calculateMaterialsCostPerUnit(materials: readonly CostingMaterialInput[]): number {
+    return materials.reduce((total, material) => total + calculateMaterialCost(material), 0);
+}
+
 export function calculateRouteBreakdown(input: CostingRouteInput): CostingRouteBreakdown {
     const baseQuantity = Number(input.baseQuantity) > 0 ? Number(input.baseQuantity) : 1;
     const stepBatchSize = Number(input.stepBatchSize) > 0 ? Number(input.stepBatchSize) : 1;
@@ -83,13 +87,7 @@ export function calculateRouteBreakdown(input: CostingRouteInput): CostingRouteB
     const totalMachineCost = machineHours * machineHourlyRate;
     const machineCostPerUnit = totalMachineCost / baseQuantity;
 
-    const totalMaterialCostSum = (input.materials || []).reduce(
-        (total, material) => total + calculateMaterialCost(material),
-        0
-    );
-    const materialsCost = (totalMaterialCostSum > 500 && baseQuantity > 50)
-        ? totalMaterialCostSum / baseQuantity
-        : totalMaterialCostSum;
+    const materialsCost = calculateMaterialsCostPerUnit(input.materials || []);
     const machineOverheadCost = machineCostPerUnit;
 
     return {

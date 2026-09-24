@@ -8,7 +8,7 @@ import {
     MaterialCostItem,
     LaborCostItem,
     OverheadCostItem
-} from "@/modules/business-intelligence-and-analytics/costing/job-order-profitability-report/types";
+} from "@/modules/business-intelligence-and-analytics/costing/job-and-work-order-profitability-report/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

@@ -1,7 +1,7 @@
 import type { VersionOverheadItem, VersionPosition } from "../../finished-goods-master/types";
 import {
     calculateDirectLaborCost,
-    calculateMaterialCost,
+    calculateMaterialsCostPerUnit,
     calculateRouteBreakdown
 } from "../../finished-goods-master/costing";
 import { DecimalValue } from "../../decimal";
@@ -12,6 +12,7 @@ export const MANUFACTURING_UNIT_COST_DECIMAL_SCALE = 4;
 export interface RouteStepCosting {
     sequence_order?: number;
     work_center_id?: number;
+    qaTemplateId?: number | string | null;
     setup_time_hours?: number;
     run_time_hours?: number;
     step_batch_size?: number;
@@ -91,7 +92,7 @@ export function roundManufacturingUnitCost(value: number | string | null | undef
 }
 
 export function formatManufacturingUnitCostForDisplay(value: number | string | null | undefined): string {
-    return DecimalValue.from(roundManufacturingMoney(value)).toFixed(MANUFACTURING_UNIT_COST_DECIMAL_SCALE);
+    return DecimalValue.from(roundManufacturingUnitCost(value)).toFixed(MANUFACTURING_UNIT_COST_DECIMAL_SCALE);
 }
 
 export function calculateMaterialSpend(
@@ -121,11 +122,11 @@ export function calculateMaterialSpend(
  * recipe batch size.
  */
 export function calculateRecipeMaterialCostPerUnit(bomItems: RouteBOMCosting[]): number {
-    return bomItems.reduce((sum, item) => sum + calculateMaterialCost({
+    return calculateMaterialsCostPerUnit(bomItems.map((item) => ({
         quantity: Number(item.quantity_required || 0),
         unitCost: Number(item.cost_per_unit || 0),
         wastagePercent: Number(item.wastage_factor_percentage || 0)
-    }), 0);
+    })));
 }
 
 export function calculateUnitCOGSBreakdown(

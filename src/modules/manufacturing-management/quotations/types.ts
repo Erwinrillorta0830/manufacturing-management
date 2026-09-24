@@ -39,7 +39,7 @@ export interface QuotationSnapshotNode {
     parent_product_name?: string | null;
     product_type_id?: number | null;
     product_type_name?: string | null;
-    version_id: number;
+    version_id?: number | null;
     version_name?: string;
     node_name: string;
     node_type: string;
@@ -70,6 +70,9 @@ export interface CatalogProduct {
     parent_product_id?: number;
     has_cogs?: boolean;
     product_type?: number | string;
+    has_bom?: boolean;
+    has_active_version?: boolean;
+    has_active_uom_version?: boolean;
 }
 
 export interface SelectedQuoteProduct {

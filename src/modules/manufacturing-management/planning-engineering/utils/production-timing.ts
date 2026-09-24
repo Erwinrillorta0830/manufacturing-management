@@ -244,6 +244,7 @@ export interface BottleneckLeadTimeRoute {
     setupTimeHours?: number | null;
     runTimeHours?: number | null;
     workCenterCapacityPerHour?: number | null;
+    qaTemplateId?: number | string | null;
 }
 
 export function calculateGrossRouteRate(route: BottleneckLeadTimeRoute): number {
@@ -264,9 +265,8 @@ export function calculateGrossRouteRate(route: BottleneckLeadTimeRoute): number 
 }
 
 /**
- * Scales the saved recipe's standard batch runtime to the quantity planned for
- * this Job Order. Recipe base quantity is gross batch output; expected yield
- * converts that standard batch into its net output before scaling.
+ * Scales the recipe's bottleneck pace to a planned net output quantity.
+ * QA-template routes are inspections and do not pace continuous production.
  */
 export function calculateBottleneckLeadTimeHours(input: {
     targetQuantity?: number;
@@ -284,7 +284,12 @@ export function calculateBottleneckLeadTimeHours(input: {
     const yieldFactor = Number.isFinite(configuredYieldPercentage) && configuredYieldPercentage > 0
         ? Math.min(configuredYieldPercentage, 100) / 100
         : 1;
-    const grossRates = input.routes
+    const productionRoutes = input.routes.filter((route) => {
+        const qaTemplateId = Number(route.qaTemplateId);
+        return !Number.isFinite(qaTemplateId) || qaTemplateId <= 0;
+    });
+    const pacingRoutes = productionRoutes.length > 0 ? productionRoutes : input.routes;
+    const grossRates = pacingRoutes
         .map(calculateGrossRouteRate)
         .filter((rate) => rate > 0);
 

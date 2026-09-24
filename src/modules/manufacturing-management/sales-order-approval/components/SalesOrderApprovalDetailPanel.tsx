@@ -44,6 +44,16 @@ export function SalesOrderApprovalDetailPanel({
     const netSum = Math.max(0, grossSum - discount);
     const isZeroNet = netSum <= 0;
 
+    // Check BOM availability across all order line items
+    // Product has BOM by default unless explicitly false (has_bom: 0 / false)
+    const hasAnyBom = orderDetails.some(item => {
+        const prod = typeof item.product_id === "object" ? item.product_id : null;
+        return prod?.has_bom !== false;
+    });
+
+    const isSendToJoDisabled = isZeroNet || !hasAnyBom || orderDetails.length === 0;
+    const isSendToConsolidationDisabled = isZeroNet || orderDetails.length === 0;
+
     return (
         <>
             <Dialog open={!!selectedOrder} onOpenChange={(open) => !open && setSelectedOrder(null)}>
@@ -276,10 +286,16 @@ export function SalesOrderApprovalDetailPanel({
                         <div className="flex flex-col gap-2.5 pt-1">
                             <div className="grid grid-cols-2 gap-2">
                                 <button
-                                    disabled={updatingStatusId === selectedOrder.order_id || isZeroNet}
+                                    disabled={updatingStatusId === selectedOrder.order_id || isSendToJoDisabled}
                                     onClick={() => handleSendToJO(selectedOrder.order_id)}
                                     className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 hover:bg-amber-500 py-3.5 text-xs font-black text-white shadow-md shadow-amber-500/10 hover:shadow-amber-500/25 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed border-none"
-                                    title={isZeroNet ? "Approval blocked due to ₱0.00 net total" : "Send to JO"}
+                                    title={
+                                        isZeroNet
+                                            ? "Approval blocked due to ₱0.00 net total"
+                                            : !hasAnyBom
+                                            ? "Send to JO is disabled because all items do not have a Bill of Materials (BOM)"
+                                            : "Send to JO"
+                                    }
                                 >
                                     {updatingStatusId === selectedOrder.order_id ? (
                                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -290,7 +306,7 @@ export function SalesOrderApprovalDetailPanel({
                                 </button>
 
                                 <button
-                                    disabled={updatingStatusId === selectedOrder.order_id || isZeroNet}
+                                    disabled={updatingStatusId === selectedOrder.order_id || isSendToConsolidationDisabled}
                                     onClick={() => setIsInvoiceConfirmOpen(true)}
                                     className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 py-3.5 text-xs font-black text-white shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/25 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed border-none"
                                     title={isZeroNet ? "Approval blocked due to ₱0.00 net total" : "Send to Consolidation"}
