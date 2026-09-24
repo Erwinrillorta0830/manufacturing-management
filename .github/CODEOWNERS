@@ -44,7 +44,7 @@
 
 /tsconfig.json @Jakeeeey @ECuerdo @Xerman09 @Erwinrillorta0830
 
-# ─── Fierrez Folders ───────────────────────────────────────────────────────────
+# ─── Fierrez Modules/Folders ───────────────────────────────────────────────────────────
 # Lot Management
 /src/modules/manufacturing-management/lot-management/ @Fierrez
 /src/app/api/manufacturing/inventory-warehousing/lot-management/ @Fierrez
@@ -114,5 +114,6 @@
 /src/app/api/manufacturing/sales-and-fulfillment/sales-order-fulfillment/ @Fierrez
 /src/app/(manufacturing-management)/mm/sales-and-fulfillment/sales-order-fulfillment/ @Fierrez
 
-
-
+# Finished Goods Master
+/src/modules/manufacturing-management/inventory-warehousing/finished-goods-master/ @Fierrez
+/src/app/api/manufacturing/inventory-warehousing/finished-goods-master/ @Fierrez

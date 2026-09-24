@@ -423,6 +423,7 @@ export async function updateProductDetails(
         product_section?: number;
         product_shelf_life?: number;
         unit_of_measurement_count?: number;
+        maintaining_quantity?: number | null;
         product_image?: string;
         unit_of_measurement?: number | null;
     },

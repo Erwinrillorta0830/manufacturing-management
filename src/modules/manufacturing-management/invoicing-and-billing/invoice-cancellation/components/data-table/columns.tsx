@@ -44,7 +44,7 @@ export const columns = (
         header: ({ column }) => (
             <DataTableColumnHeader column={column} label="S.O No." />
         ),
-        meta: { label: "S.O No" },
+        meta: { label: "Sales Order Id" },
         cell: ({ row }) => (
             <span className="text-xs text-muted-foreground">
           {row.original.order_id}
@@ -56,7 +56,7 @@ export const columns = (
         header: ({ column }) => (
             <DataTableColumnHeader column={column} label="Amount" />
         ),
-        meta: { label: "Amount" },
+        meta: { label: "Total Amount" },
         cell: ({ row }) => {
             const amount = row.original.total_amount;
             const formatted = new Intl.NumberFormat("en-PH", {
@@ -69,6 +69,7 @@ export const columns = (
     {
         accessorKey: "transaction_status",
         header: "Status",
+        meta: { label: "Status" },
         cell: ({ row }) => {
             const status = row.original.transaction_status;
             return (
@@ -82,6 +83,7 @@ export const columns = (
     {
         id: "actions",
         header: "Actions",
+        enableHiding: false,
         cell: ({ row }) => {
             const invoice = row.original;
             return (

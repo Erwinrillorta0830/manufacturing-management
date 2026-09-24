@@ -9,7 +9,7 @@ import {
     WorkCenterQueueSummary,
     WipMasterData
 } from "@/modules/business-intelligence-and-analytics/costing/wip-tracking-report/types";
-import { normalizeJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
+import { normalizeJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/business-intelligence-and-analytics/costing/wip-tracking-report/job-order-status";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

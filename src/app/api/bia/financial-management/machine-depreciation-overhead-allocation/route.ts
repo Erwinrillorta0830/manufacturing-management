@@ -357,9 +357,9 @@ export async function GET(req: NextRequest) {
         const assetsJson = await assetsRes.json();
         const rawAssets: Record<string, unknown>[] = Array.isArray(assetsJson.data) ? assetsJson.data : [];
 
-        // Fetch work center options & build lookup map by asset_id
+        // Fetch work center options & build multi-value lookup map by asset_id
         const wcData: Record<string, unknown>[] = wcRes && wcRes.ok ? (await wcRes.json()).data || [] : [];
-        const wcByAssetId = new Map<number, WorkCenterOption>();
+        const wcByAssetId = new Map<number, WorkCenterOption[]>();
         const allWorkCenters: WorkCenterOption[] = wcData.map((wc) => {
             const opt: WorkCenterOption = {
                 work_center_id: Number(wc.work_center_id),
@@ -370,7 +370,9 @@ export async function GET(req: NextRequest) {
                 is_active: wc.is_active !== 0 && wc.is_active !== false
             };
             if (opt.asset_id) {
-                wcByAssetId.set(opt.asset_id, opt);
+                const existing = wcByAssetId.get(opt.asset_id) || [];
+                existing.push(opt);
+                wcByAssetId.set(opt.asset_id, existing);
             }
             return opt;
         });
@@ -424,8 +426,9 @@ export async function GET(req: NextRequest) {
             const maxCapacity = Number(row.maximum_unit_produced_capacity ?? 0);
             const deprPerUnit = maxCapacity > 0 ? depreciableAmount / maxCapacity : null;
 
-            // Linked operational work center from Manufacturing
-            const linkedWc = wcByAssetId.get(assetId);
+            // Linked operational work centers from Manufacturing (supports multiple work centers per asset)
+            const linkedWcs = wcByAssetId.get(assetId) || [];
+            const primaryWc = linkedWcs[0];
 
             return {
                 asset_id: assetId,
@@ -451,10 +454,11 @@ export async function GET(req: NextRequest) {
                 production_units: Number(springItem?.productionUnits ?? 0),
                 remaining_production_capacity: Number(springItem?.remainingProductionCapacity ?? 0),
                 production_depreciation: Number(springItem?.productionDepreciation ?? 0),
-                work_center_id: linkedWc?.work_center_id ?? null,
-                work_center_name: linkedWc?.work_center_name ?? null,
-                current_work_center_rate: linkedWc?.overhead_cost_per_hour || 0,
-                work_center_capacity_per_hour: linkedWc?.capacity_per_hour ?? null
+                work_center_id: primaryWc?.work_center_id ?? null,
+                work_center_name: primaryWc?.work_center_name ?? null,
+                current_work_center_rate: primaryWc?.overhead_cost_per_hour || 0,
+                work_center_capacity_per_hour: primaryWc?.capacity_per_hour ?? null,
+                assigned_work_centers: linkedWcs
             };
         });
 
@@ -466,7 +470,7 @@ export async function GET(req: NextRequest) {
             return sum;
         }, 0);
 
-        const assignedWcCount = mergedAssets.filter(a => Boolean(a.work_center_id)).length;
+        const assignedWcCount = mergedAssets.filter(a => Boolean(a.work_center_id || (a.assigned_work_centers && a.assigned_work_centers.length > 0))).length;
         const unassignedCount = mergedAssets.length - assignedWcCount;
 
         const activeRates = allWorkCenters.filter(w => w.overhead_cost_per_hour > 0);
@@ -583,15 +587,16 @@ export async function PATCH(req: NextRequest) {
             );
         }
 
-        // 3. Asset Linkage Check (if asset_id is provided)
-        if (body.asset_id && existingWc.asset_id) {
+        // 3. Prepare Update Payload
+        const updatePayload: Record<string, unknown> = {
+            overhead_cost_per_hour: newRate
+        };
+
+        // If asset_id is provided, optionally link or update work center asset assignment
+        if (body.asset_id) {
             const bodyAssetId = Number(body.asset_id);
-            const dbAssetId = Number(existingWc.asset_id);
-            if (bodyAssetId > 0 && dbAssetId > 0 && bodyAssetId !== dbAssetId) {
-                return NextResponse.json(
-                    { ok: false, error: "The selected machine does not match the asset assigned to this work center." },
-                    { status: 400 }
-                );
+            if (bodyAssetId > 0 && (!existingWc.asset_id || body.assign_asset)) {
+                updatePayload.asset_id = bodyAssetId;
             }
         }
 
@@ -601,9 +606,7 @@ export async function PATCH(req: NextRequest) {
             {
                 method: "PATCH",
                 headers: directusHeaders,
-                body: JSON.stringify({
-                    overhead_cost_per_hour: newRate
-                })
+                body: JSON.stringify(updatePayload)
             }
         );
 

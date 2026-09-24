@@ -330,7 +330,7 @@ export async function GET(req: NextRequest) {
                             totalProduced += effectiveProduced;
                         }
 
-                        const isLineReady = onhand >= orderedQty || totalProduced >= orderedQty;
+                        const isLineReady = onhand >= 0 && (onhand >= orderedQty || totalProduced >= orderedQty);
                         if (!isLineReady) {
                             allReady = false;
                             break;

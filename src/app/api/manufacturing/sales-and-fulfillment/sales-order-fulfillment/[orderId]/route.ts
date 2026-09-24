@@ -319,22 +319,31 @@ export async function GET(
             // Live On-Hand
             const onhandInfo = onhandByProduct.get(pId) || { onhandQuantity: 0, error: null };
             const liveOnhand = onhandInfo.onhandQuantity;
+            const hasDeficit = liveOnhand < 0;
 
             // Fulfillment evaluation:
             // "if the product on hand or the produced qty is meet with ordered it will enable the Proceed To Consolidation Button"
+            // Strict Validation: Cannot proceed if on-hand quantity is negative (inventory deficit), even if produced quantity meets ordered.
             const meetsByOnhand = liveOnhand >= orderedQty;
             const meetsByProduction = totalProduced >= orderedQty;
-            const isReady = meetsByOnhand || meetsByProduction;
+            const isReady = !hasDeficit && (meetsByOnhand || meetsByProduction);
 
-            const shortageQty = isReady ? 0 : Math.max(0, orderedQty - Math.max(liveOnhand, totalProduced));
+            const shortageQty = isReady ? 0 : Math.max(0, orderedQty - Math.max(Math.max(0, liveOnhand), totalProduced));
 
             if (isReady) {
                 readyCount++;
             } else {
                 const prodName = prod?.description || prod?.product_name || `Product #${pId}`;
-                blockers.push(
-                    `${prodName}: Ordered ${orderedQty}, but only ${liveOnhand} on hand and ${totalProduced} produced (Shortage: ${shortageQty})`
-                );
+                const uName = prod?.unit_name || "pcs";
+                if (hasDeficit) {
+                    blockers.push(
+                        `${prodName}: On-hand quantity is negative (${liveOnhand.toLocaleString()} ${uName}). Stock deficit must be resolved before proceeding.`
+                    );
+                } else {
+                    blockers.push(
+                        `${prodName}: Ordered ${orderedQty} ${uName}, but only ${liveOnhand.toLocaleString()} on hand and ${totalProduced} produced (Shortage: ${shortageQty})`
+                    );
+                }
             }
 
             return {
@@ -354,6 +363,7 @@ export async function GET(
                 net_amount: Number(line.net_amount || 0),
                 remarks: line.remarks || "",
                 live_onhand_quantity: liveOnhand,
+                has_deficit: hasDeficit,
                 onhand_error: onhandInfo.error || null,
                 total_produced_quantity: totalProduced,
                 meets_by_onhand: meetsByOnhand,

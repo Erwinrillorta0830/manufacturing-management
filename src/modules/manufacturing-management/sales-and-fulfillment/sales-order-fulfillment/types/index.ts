@@ -57,6 +57,7 @@ export interface SalesOrderDetailLine {
     net_amount: number;
     remarks: string;
     live_onhand_quantity: number;
+    has_deficit?: boolean;
     onhand_error: string | null;
     total_produced_quantity: number;
     meets_by_onhand: boolean;
