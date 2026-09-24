@@ -58,6 +58,7 @@ export default function ProductionWorkflowModule() {
         routeOperators,
         loadingJobs,
         loadingOperators,
+        pendingTimerKey,
         searchQuery,
         setSearchQuery,
         inProductionJobOrders,
@@ -617,6 +618,7 @@ export default function ProductionWorkflowModule() {
                                 routeOperators={routeOperators}
                                 users={users}
                                 loadingOperators={loadingOperators}
+                                pendingTimerKey={pendingTimerKey}
                                 handleAddOperator={handleAddOperator}
                                 handleRemoveOperator={handleRemoveOperator}
                                 handleSwapOperator={handleSwapOperator}

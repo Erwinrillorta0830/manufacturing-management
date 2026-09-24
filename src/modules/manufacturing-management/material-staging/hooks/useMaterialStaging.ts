@@ -210,7 +210,9 @@ export function useMaterialStaging() {
             toast.error(`Cannot stage JO #${jobOrder.job_order_no}: no active work-center destination is configured.`);
             return;
         }
-        const materialIds = jobOrder.materials.filter(material => material.required_quantity > material.staged_quantity + 0.000001).map(material => material.jo_material_id);
+        const materialIds = [...new Set(jobOrder.materials
+            .filter(material => material.required_quantity > material.staged_quantity + 0.000001)
+            .flatMap(material => material.jo_material_ids?.length ? material.jo_material_ids : [material.jo_material_id]))];
         if (materialIds.length === 0) {
             toast.info("All material requirements are already staged.");
             return;
