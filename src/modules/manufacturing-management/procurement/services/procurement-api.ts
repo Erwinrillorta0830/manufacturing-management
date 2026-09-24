@@ -283,6 +283,7 @@ async function fetchCatalogProducts(limit = 250, productScope?: "raw-materials")
 
         return {
             product_id: p.product_id,
+            has_bom: p.has_bom,
             parent_id: parentIdValue,
             parent_name: parentItem ? parentItem.product_name : null,
             product_code: p.product_code || `SKU-${p.product_id}`,

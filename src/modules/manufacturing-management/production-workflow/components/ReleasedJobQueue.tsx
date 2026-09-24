@@ -34,7 +34,6 @@ interface ReleasedJobQueueProps {
     statusOptions: { value: string; label: string }[];
     hasActiveFilters: boolean;
     onClearFilters?: () => void;
-    onAssignWorkstation?: (jo: JobOrder) => void;
 }
 
 function StepProgressBar({ completedSteps, totalSteps }: { completedSteps: number; totalSteps: number }) {
@@ -90,8 +89,7 @@ export function ReleasedJobQueue({
     setStatusFilter,
     statusOptions,
     hasActiveFilters,
-    onClearFilters,
-    onAssignWorkstation
+    onClearFilters
 }: ReleasedJobQueueProps) {
     const parentByChildId = new Map(
         filteredJobOrders
@@ -111,7 +109,7 @@ export function ReleasedJobQueue({
                     </Badge>
                 </CardTitle>
                 <CardDescription className="text-sm">
-                    Start production for Picked orders or open the terminal for Job Orders already In Production.
+                    Start production for Picked orders, continue In Production orders, or review held Job Orders.
                 </CardDescription>
             </CardHeader>
 
@@ -200,7 +198,7 @@ export function ReleasedJobQueue({
                 ) : filteredJobOrders.length === 0 ? (
                     <div className="border-2 border-dashed rounded-lg py-12 text-center text-sm text-muted-foreground">
                         <AlertCircle className="mx-auto mb-2 h-8 w-8 text-muted-foreground/60" />
-                        <p>No staged or In Production Job Orders found.</p>
+                        <p>No matching shop-floor Job Orders found.</p>
                         <p className="mt-1 text-xs">Try different filters or reset them.</p>
                     </div>
                 ) : (
@@ -221,7 +219,8 @@ export function ReleasedJobQueue({
                                     const isSelected = jo.jo_id === selectedJobOrderId;
                                     const isPicked = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.PICKED);
                                     const isInProduction = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.IN_PRODUCTION);
-                                    const needsWorkstation = isPicked && !jo.primary_work_center_id;
+                                    const isOnHold = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD);
+                                    const canOpenTerminal = isPicked || isInProduction || isOnHold;
                                     const parent = parentByChildId.get(jo.jo_id);
                                     const producedQty = jo.productionOutputQuantity ?? jo.producedQty ?? jo.completed_quantity ?? 0;
                                     const workstationLabel = jo.primary_work_center_name
@@ -284,17 +283,6 @@ export function ReleasedJobQueue({
                                                     <Building2 className="h-3.5 w-3.5 shrink-0" />
                                                     <span>{workstationLabel}</span>
                                                 </div>
-                                                {needsWorkstation && (
-                                                    <Button
-                                                        type="button"
-                                                        size="sm"
-                                                        variant="outline"
-                                                        onClick={() => onAssignWorkstation?.(jo)}
-                                                        className="mt-2 h-7 border-emerald-500/30 px-2 text-xs font-bold text-emerald-700 hover:text-emerald-800 dark:text-emerald-400"
-                                                    >
-                                                        <Building2 className="mr-1 h-3 w-3" /> Assign
-                                                    </Button>
-                                                )}
                                             </td>
                                             <td className="px-3 py-3 align-top text-sm font-semibold text-muted-foreground">
                                                 {jo.due_date ? new Date(jo.due_date).toLocaleDateString() : "—"}
@@ -304,13 +292,13 @@ export function ReleasedJobQueue({
                                                     type="button"
                                                     size="sm"
                                                     onClick={() => openTerminal(jo)}
-                                                    disabled={!isPicked && !isInProduction}
+                                                    disabled={!canOpenTerminal}
                                                     className={isPicked
                                                         ? "h-9 bg-primary px-3 text-xs font-bold text-primary-foreground hover:bg-primary/90"
                                                         : "h-9 px-3 text-xs font-bold"}
                                                 >
                                                     {isPicked ? <Play className="mr-1.5 h-3.5 w-3.5" /> : <ExternalLink className="mr-1.5 h-3.5 w-3.5" />}
-                                                    {isPicked ? "Start Production" : isInProduction ? "Open Terminal" : "Unavailable"}
+                                                    {isPicked ? "Start Production" : isInProduction ? "Open Terminal" : isOnHold ? "Review Hold" : "Unavailable"}
                                                 </Button>
                                             </td>
                                         </tr>

@@ -24,6 +24,7 @@ import {
     cancelRejectedPurchaseOrder
 } from "../services/purchase-order-api";
 import { resolveProductParentId } from "../../procurement/product-relation";
+import { hasBomDisabled } from "../../procurement/purchase-order-product-eligibility";
 import { purchaseOrderMaterialTypeFromProduct } from "../../procurement/components/incoming-shipments/types";
 import { calculatePercentageDiscount } from "../../procurement/discount-calculation";
 import {
@@ -177,7 +178,12 @@ export function usePurchaseOrder({ mode = "queue", shipmentId, onCreated }: UseP
 
         const request = fetchPurchaseOrderProductCatalog()
             .then(materials => {
-                setRawMaterials(materials);
+                setRawMaterials(mode === "create"
+                    ? materials.filter(material =>
+                        purchaseOrderMaterialTypeFromProduct(material, materials) !== "finished_goods"
+                        || hasBomDisabled(material)
+                    )
+                    : materials);
                 rawMaterialsLoaded.current = true;
             })
             .catch(error => {
@@ -190,7 +196,7 @@ export function usePurchaseOrder({ mode = "queue", shipmentId, onCreated }: UseP
 
         rawMaterialsLoad.current = request;
         return request;
-    }, []);
+    }, [mode]);
 
     const loadShipments = useCallback(async (query: PurchaseOrderListQuery = lastQuery.current) => {
         lastQuery.current = query;
