@@ -713,7 +713,7 @@ async function executeCancellation(
     computed: ComputedCancellation,
     options: {
         reason: string;
-        actorUserId: number | null;
+        actorUserId: number;
         writeStatus: boolean;
         writer?: MaterialReturnWriter;
         eventKey?: string;
@@ -721,6 +721,14 @@ async function executeCancellation(
         cancellationImageId?: string | null;
     }
 ): Promise<JobOrderCancellationExecution> {
+    if (!Number.isSafeInteger(options.actorUserId) || options.actorUserId <= 0) {
+        throw new JobOrderCancellationError(
+            "An authenticated user is required to record material returns.",
+            401,
+            "AUTHENTICATION_REQUIRED"
+        );
+    }
+
     const createdMovementIds: number[] = [];
     const createdInventoryLotIds: number[] = [];
     const reservationSnapshots: ReservationSnapshot[] = [];
@@ -852,7 +860,7 @@ async function executeCancellation(
                     sourceType: "JOB_ORDER_RETURN",
                     sourceReference: jobOrder.jobOrderNo,
                     remarks: `Returned material from Job Order ${jobOrder.jobOrderNo}`,
-                    createdBy: options.actorUserId && options.actorUserId > 0 ? options.actorUserId : 1,
+                    createdBy: options.actorUserId,
                     onCreate: async (body) => {
                         const created = await materialReturnWriter.create<RawRecord>(
                             "mm_inventory_lots",
@@ -927,7 +935,7 @@ async function executeCancellation(
                 quantity: line.returnableQuantity,
                 remarks
             };
-            if (options.actorUserId && options.actorUserId > 0) base.created_by = options.actorUserId;
+            base.created_by = options.actorUserId;
             const created = await materialReturnWriter.create<RawRecord>(
                 "inventory_movements",
                 base,
@@ -1119,7 +1127,7 @@ export async function previewJobOrderCancellation(joId: string | number): Promis
 export async function cancelJobOrderAndReturnMaterials(input: {
     joId: string | number;
     reason: string;
-    actorUserId?: number | null;
+    actorUserId: number;
     eventKey?: string;
     cancellationImageId?: string | null;
 }): Promise<JobOrderCancellationExecution> {
@@ -1157,7 +1165,7 @@ export async function cancelJobOrderAndReturnMaterials(input: {
 
     return executeCancellation(jobOrder, computed, {
         reason: input.reason,
-        actorUserId: input.actorUserId ?? null,
+        actorUserId: input.actorUserId,
         writeStatus: true,
         eventKey: input.eventKey,
         workflowAction: "cancel",
@@ -1168,7 +1176,7 @@ export async function cancelJobOrderAndReturnMaterials(input: {
 export async function returnCancelledJobOrderMaterials(input: {
     joId: string | number;
     reason?: string;
-    actorUserId?: number | null;
+    actorUserId: number;
 }): Promise<JobOrderCancellationExecution> {
     const jobOrder = await fetchJobOrder(input.joId);
     if (!isCancelledJobOrderStatus(jobOrder.status)) {
@@ -1190,7 +1198,7 @@ export async function returnCancelledJobOrderMaterials(input: {
 
     return executeCancellation(jobOrder, computed, {
         reason: input.reason?.trim() || "Return raw materials from cancelled Job Order",
-        actorUserId: input.actorUserId ?? null,
+        actorUserId: input.actorUserId,
         writeStatus: false
     });
 }
@@ -1198,7 +1206,7 @@ export async function returnCancelledJobOrderMaterials(input: {
 export async function executeJobOrderMaterialReturns(
     jobOrder: ResolvedJobOrder,
     computed: ComputedCancellation,
-    options: { reason: string; actorUserId: number | null; writeStatus: boolean; writer?: MaterialReturnWriter }
+    options: { reason: string; actorUserId: number; writeStatus: boolean; writer?: MaterialReturnWriter }
 ): Promise<JobOrderCancellationExecution> {
     return executeCancellation(jobOrder, computed, options);
 }
@@ -1206,7 +1214,7 @@ export async function executeJobOrderMaterialReturns(
 export interface ReturnLeftoverMaterialsInput {
     joId: string | number;
     reason?: string;
-    actorUserId?: number | null;
+    actorUserId: number;
     destinations?: Array<{ joMaterialId: number; mmLotId: number; inventoryLotId?: number; batchNo?: string }>;
     writer?: MaterialReturnWriter;
 }
@@ -1254,7 +1262,7 @@ export async function returnJobOrderMaterialLeftovers(input: ReturnLeftoverMater
 
     return executeJobOrderMaterialReturns(jobOrder, computed, {
         reason: input.reason?.trim() || "Return leftover raw materials",
-        actorUserId: input.actorUserId ?? null,
+        actorUserId: input.actorUserId,
         writeStatus: false,
         writer: input.writer
     });

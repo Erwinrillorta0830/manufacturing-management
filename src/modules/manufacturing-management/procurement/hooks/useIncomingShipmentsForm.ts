@@ -472,9 +472,9 @@ export function useIncomingShipmentsForm({
         }
     };
 
-    const handleAddLineForm = () => {
+    const handleAddLineForm = (materialType: ManifestLineFormItem["material_type"] = "") => {
         setLinesForm([...linesForm, {
-            parent_product_id: "", product_id: "", material_type: "", quantity_ordered: "", base_unit_cost_php: "",
+            parent_product_id: "", product_id: "", material_type: materialType, quantity_ordered: "", base_unit_cost_php: "",
             purchase_intent: "Buffer_Stock", job_order_id: "", discount_mode: "Percentage", discount_type_id: "", discount_source: "none", discount_amount: "0", discount_percent: "0", price_source: "none"
         }]);
     };

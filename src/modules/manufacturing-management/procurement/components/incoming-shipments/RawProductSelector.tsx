@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
+    PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS,
     SUPPLIER_PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS,
     PurchaseOrderMaterialType
 } from "./types";
@@ -144,7 +145,10 @@ export function RawProductSelector({
     onSelect
 }: RawProductSelectorProps) {
     const filteredMaterials = useMemo(() => {
-        const productTypeId = SUPPLIER_PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS.find(
+        const materialTypeOptions = canonicalDrafting
+            ? PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS
+            : SUPPLIER_PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS;
+        const productTypeId = materialTypeOptions.find(
             option => option.value === materialType
         )?.productTypeId;
 
@@ -157,7 +161,7 @@ export function RawProductSelector({
                 : null;
             return Number(parent?.product_type) === productTypeId;
         });
-    }, [materialType, rawMaterials]);
+    }, [canonicalDrafting, materialType, rawMaterials]);
 
     const options = useMemo(() => {
         const families = new Map<number, RawMaterial[]>();

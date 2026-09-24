@@ -11,6 +11,7 @@ import {
     type JobOrderWorkflowAction
 } from "@/modules/manufacturing-management/job-order-workflow";
 import { JobOrderOperatorAssignmentError } from "../../_operator-assignment-service";
+import { AuthenticatedActorError, requireManufacturingActorId } from "@/app/api/manufacturing/production/_authenticated-actor";
 import {
     deleteJobOrderTerminationImage,
     JobOrderTerminationImageError,
@@ -193,6 +194,10 @@ export async function POST(
             }
         }
 
+        const actorUserId = action === "cancel"
+            ? await requireManufacturingActorId()
+            : actor.userId;
+
         if (action === "terminate-production") {
             if (!terminationImage) {
                 return NextResponse.json({
@@ -243,7 +248,7 @@ export async function POST(
 
         const result = await executeJobOrderWorkflow(id, {
             action,
-            actorUserId: actor.userId,
+            actorUserId,
             idempotencyKey: String(body?.idempotencyKey || request.headers.get("idempotency-key") || "").trim(),
             remarks: typeof body?.remarks === "string" ? body.remarks.trim() : undefined,
             resolutionRemarks: typeof body?.resolutionRemarks === "string"
@@ -301,6 +306,13 @@ export async function POST(
             }, { status: error.status });
         }
         if (error instanceof JobOrderOperatorAssignmentError) {
+            return NextResponse.json({
+                success: false,
+                error: error.message,
+                code: error.code
+            }, { status: error.status });
+        }
+        if (error instanceof AuthenticatedActorError) {
             return NextResponse.json({
                 success: false,
                 error: error.message,

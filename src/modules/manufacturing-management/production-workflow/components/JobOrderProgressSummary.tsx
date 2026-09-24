@@ -210,8 +210,8 @@ export function JobOrderProgressSummary({ jobOrder }: { jobOrder: JobOrder }) {
                                     <TableHeader className="bg-muted/40">
                                         <TableRow>
                                             <TableHead className="h-8 min-w-[180px] whitespace-nowrap px-3 text-[10px] font-bold uppercase">Material</TableHead>
-                                            <TableHead className="h-8 min-w-[150px] whitespace-nowrap px-3 text-[10px] font-bold uppercase">Lot / Batch No.</TableHead>
-                                            <TableHead className="h-8 min-w-[170px] whitespace-nowrap px-3 text-[10px] font-bold uppercase">Storage Location</TableHead>
+                                            <TableHead className="h-8 min-w-[170px] whitespace-nowrap px-3 text-[10px] font-bold uppercase">LOT</TableHead>
+                                            <TableHead className="h-8 min-w-[150px] whitespace-nowrap px-3 text-[10px] font-bold uppercase">BATCH</TableHead>
                                             <TableHead className="h-8 min-w-[140px] whitespace-nowrap px-3 text-[10px] font-bold uppercase">Reservation Status</TableHead>
                                             <TableHead className="h-8 min-w-[80px] whitespace-nowrap px-3 text-[10px] font-bold uppercase">UOM</TableHead>
                                             <TableHead className="h-8 min-w-[110px] whitespace-nowrap px-3 text-right text-[10px] font-bold uppercase">Reserved</TableHead>
@@ -236,8 +236,8 @@ export function JobOrderProgressSummary({ jobOrder }: { jobOrder: JobOrder }) {
                                             return (
                                                 <TableRow key={rowKey}>
                                                     <TableCell className="px-3 py-2 text-xs font-semibold">{line.productName}</TableCell>
-                                                    <TableCell className="whitespace-nowrap px-3 py-2 font-mono text-xs text-muted-foreground">{lotOrBatch}</TableCell>
                                                     <TableCell className="whitespace-nowrap px-3 py-2 text-xs font-semibold text-foreground">{lot?.storageLocation || lot?.lotName || "-"}</TableCell>
+                                                    <TableCell className="whitespace-nowrap px-3 py-2 font-mono text-xs text-muted-foreground">{lotOrBatch}</TableCell>
                                                     <TableCell className="px-3 py-2">
                                                         {lot?.status ? (
                                                             <span className={`inline-flex items-center whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${LOT_STATUS_STYLES[lot.status] || LOT_STATUS_STYLES.SOFT}`}>

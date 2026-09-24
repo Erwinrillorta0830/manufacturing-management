@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
+import { AuthenticatedActorError, requireManufacturingActorId } from "../_authenticated-actor";
 import {
     cancelJobOrderAndReturnMaterials,
     previewJobOrderCancellation,
@@ -16,29 +16,10 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-async function resolveActorUserId(bodyActorId: unknown): Promise<number | null> {
-    const bodyId = Number(bodyActorId);
-    if (Number.isSafeInteger(bodyId) && bodyId > 0) return bodyId;
-    try {
-        const cookieStore = await cookies();
-        const token = cookieStore.get("vos_access_token")?.value;
-        if (token) {
-            const parts = token.split(".");
-            if (parts.length >= 2) {
-                let base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-                while (base64.length % 4) base64 += "=";
-                const payload = JSON.parse(Buffer.from(base64, "base64").toString("utf8"));
-                const id = Number(payload?.id || payload?.user_id || payload?.sub);
-                if (Number.isSafeInteger(id) && id > 0) return id;
-            }
-        }
-    } catch (error) {
-        console.warn("Unable to resolve the cancellation actor from the session:", error);
-    }
-    return null;
-}
-
 function errorResponse(error: unknown) {
+    if (error instanceof AuthenticatedActorError) {
+        return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+    }
     if (error instanceof JobOrderCancellationImageError) {
         return NextResponse.json(
             { error: error.message, code: error.code },
@@ -125,11 +106,10 @@ export async function POST(request: Request) {
             body = parsedBody as Record<string, unknown>;
         }
 
-        const { action, joId, reason, actorUserId } = body as Record<string, unknown>;
+        const { action, joId, reason } = body as Record<string, unknown>;
         if (!joId) {
             return NextResponse.json({ error: "joId is required." }, { status: 400 });
         }
-        const actor = await resolveActorUserId(actorUserId);
 
         if (action === "cancel-and-return") {
             const trimmedReason = typeof reason === "string" ? reason.trim() : "";
@@ -149,6 +129,7 @@ export async function POST(request: Request) {
                     { status: 422 }
                 );
             }
+            const actor = await requireManufacturingActorId();
             uploadedImageId = await uploadJobOrderCancellationImage(cancellationImage, String(joId));
             const execution = await cancelJobOrderAndReturnMaterials({
                 joId: String(joId),
@@ -160,6 +141,7 @@ export async function POST(request: Request) {
         }
 
         if (action === "return-materials") {
+            const actor = await requireManufacturingActorId();
             const execution = await returnJobOrderMaterialLeftovers({
                 joId: String(joId),
                 reason: typeof reason === "string" ? reason : undefined,
