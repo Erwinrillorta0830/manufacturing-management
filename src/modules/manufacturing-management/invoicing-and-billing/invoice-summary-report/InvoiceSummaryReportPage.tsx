@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useMemo, useState, useEffect } from "react";
+import { motion } from "framer-motion";
+import { toast } from "sonner";
 import { ColumnFiltersState } from "@tanstack/react-table";
 import { Bookmark, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { startOfDay, endOfDay, parseISO } from "date-fns";
@@ -25,12 +27,11 @@ import {
   CommandList,
   CommandSeparator,
 } from "@/components/ui/command";
-import { ActiveFilters } from "./components/data-table/table-active-filters";
-
+ 
 const STATUS_FILLS: Record<string, string> = {
-  APPROVED: "var(--chart-2)",
-  REJECTED: "var(--chart-1)",
-  PENDING: "var(--chart-3)",
+  APPROVED: "#22c55e",
+  REJECTED: "#ef4444",
+  PENDING: "#94a3b8",
 };
 
 type SavedView = {
@@ -51,17 +52,25 @@ export default function InvoiceSummaryReportPage() {
   }, []);
 
   const handleSaveView = (name: string) => {
-    const newView = { name, filters: columnFilters };
+    const trimmed = name.trim();
+    if (!trimmed) {
+      toast.error("Invalid View Name", { description: "View name cannot be empty." });
+      return;
+    }
+    const newView = { name: trimmed, filters: columnFilters };
     const updated = [...savedViews, newView];
     setSavedViews(updated);
     localStorage.setItem("invoice_report_presets", JSON.stringify(updated));
+    toast.success("Filter Preset Saved", { description: `Saved preset "${trimmed}".` });
   };
 
   const handleDeleteView = (e: React.MouseEvent, indexToDelete: number) => {
     e.stopPropagation();
+    const targetName = savedViews[indexToDelete]?.name;
     const updated = savedViews.filter((_, i) => i !== indexToDelete);
     setSavedViews(updated);
     localStorage.setItem("invoice_report_presets", JSON.stringify(updated));
+    toast.info("Filter Preset Deleted", { description: `Deleted preset "${targetName}".` });
   };
 
   const handleRenameView = (e: React.MouseEvent, indexToRename: number) => {
@@ -69,11 +78,12 @@ export default function InvoiceSummaryReportPage() {
     const currentName = savedViews[indexToRename].name;
     const newName = prompt("Rename this view:", currentName);
 
-    if (newName && newName !== currentName) {
+    if (newName && newName.trim() && newName.trim() !== currentName) {
       const updated = [...savedViews];
-      updated[indexToRename] = { ...updated[indexToRename], name: newName };
+      updated[indexToRename] = { ...updated[indexToRename], name: newName.trim() };
       setSavedViews(updated);
       localStorage.setItem("invoice_report_presets", JSON.stringify(updated));
+      toast.success("Filter Preset Renamed", { description: `Renamed to "${newName.trim()}".` });
     }
   };
   // 1. DYNAMIC FILTERING LOGIC
@@ -86,11 +96,16 @@ export default function InvoiceSummaryReportPage() {
       return columnFilters.every(({ id, value }) => {
         if (!value) return true;
 
-        // 1. Handle Customer Search (String)
+        // 1. Handle Multi-Field Search (Customer, Invoice, S.O., Reason)
         if (id === "customer_name") {
-          return item.customer_name
-            .toLowerCase()
-            .includes((value as string).toLowerCase());
+          const search = (value as string).toLowerCase().trim();
+          return Boolean(
+            item.customer_name?.toLowerCase().includes(search) ||
+            item.original_invoice?.toLowerCase().includes(search) ||
+            item.sales_order_no?.toLowerCase().includes(search) ||
+            item.defect_reason?.toLowerCase().includes(search) ||
+            item.csr_remarks?.toLowerCase().includes(search)
+          );
         }
 
         // 2. Handle Date/Time logic
@@ -117,6 +132,7 @@ export default function InvoiceSummaryReportPage() {
 
         // 3. Handle Faceted Filters (Status, Type, etc.)
         if (Array.isArray(value)) {
+          if (value.length === 0) return true;
           return value.includes(item[id as keyof typeof item]);
         }
 
@@ -184,12 +200,17 @@ export default function InvoiceSummaryReportPage() {
 
   return (
     <div className="flex flex-1 flex-col gap-4 p-4">
-      <div className="flex items-center justify-end">
+      <motion.div
+        initial={{ opacity: 0, y: -8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.25, ease: "easeOut" }}
+        className="flex items-center justify-end"
+      >
         <div className="flex flex-end gap-2">
           {/* SEARCHABLE SAVED VIEWS */}
           <Popover>
             <PopoverTrigger asChild>
-              <Button variant="outline" size="sm" className="h-8 gap-2">
+              <Button variant="outline" size="sm" className="h-8 gap-2 transition-all hover:bg-muted">
                 <Bookmark className="h-4 w-4" />
                 <span className="text-xs">Saved Filters</span>
               </Button>
@@ -264,40 +285,42 @@ export default function InvoiceSummaryReportPage() {
             variant="outline"
             size="sm"
             onClick={() => refresh()}
-            className="h-8 gap-2"
+            className="h-8 gap-2 transition-all hover:bg-muted"
           >
             <RefreshCw className="h-4 w-4" />
             <span className="text-xs">Refresh</span>
           </Button>
         </div>
-      </div>
-
-      <ActiveFilters
-        filters={columnFilters}
-        onRemove={(id) =>
-          setColumnFilters((prev) => prev.filter((f) => f.id !== id))
-        }
-        onClearAll={() => setColumnFilters([])}
-        onSaveView={handleSaveView}
-      />
+      </motion.div>
 
       <InvoiceSummaryCard stats={dynamicStats} />
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.15, ease: "easeOut" }}
+        className="grid grid-cols-1 gap-4 lg:grid-cols-2"
+      >
         <InvoiceSummaryBarChart
           data={dynamicStats.barData}
           totalAmount={dynamicStats.totalAmount}
           totalRequests={dynamicStats.totalRequests}
         />
         <InvoiceSummaryPieChart data={dynamicStats.pieData} />
-      </div>
+      </motion.div>
 
-      <InvoiceReportTable
-        columns={columns}
-        data={filteredData}
-        columnFilters={columnFilters}
-        setColumnFilters={setColumnFilters}
-      />
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, delay: 0.22, ease: "easeOut" }}
+      >
+        <InvoiceReportTable
+          columns={columns}
+          data={filteredData}
+          columnFilters={columnFilters}
+          setColumnFilters={setColumnFilters}
+        />
+      </motion.div>
     </div>
   );
 }
