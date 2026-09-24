@@ -13,7 +13,7 @@ import { movementMmLotReference, movementStockKey, sumMovementQuantitiesByStock,
 import { loadYieldMaterials, YieldMaterialsError } from "../../production/_yield-materials";
 import { enrichDispositions, readDispositions } from "../../qa/_dispositions";
 import { fetchMmInventoryMovements, MmInventoryMovementError, movementErrorStatus } from "../../services/mm-inventory-movements.service";
-import { loadMmLots, MmLotError, mmLotId, unitId } from "../../services/mm-lots.service";
+import { loadMmInventoryLots, loadMmLots, MmLotError, mmInventoryLotId, mmLotId, unitId } from "../../services/mm-lots.service";
 import { getAvailableInventoryLots } from "../helpers/inventory-helper";
 import { paginate } from "../../_pagination";
 import { JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
@@ -637,6 +637,38 @@ export async function handleGET(request: Request) {
                 }
             }
 
+            const reservationRows = [...reservationsMap.values()].flat();
+            const reservationMmLotIds = [...new Set(
+                reservationRows
+                    .map((reservation: any) => mmLotId(reservation.mm_lot_id))
+                    .filter((lotId): lotId is number => lotId !== null)
+            )];
+            const reservationInventoryLotIds = [...new Set(
+                reservationRows
+                    .map((reservation: any) => mmInventoryLotId(reservation.inventory_lot_id))
+                    .filter((lotId): lotId is number => lotId !== null)
+            )];
+            const [reservationMmLots, reservationInventoryLots] = await Promise.all([
+                reservationMmLotIds.length > 0
+                    ? loadMmLots({ ids: reservationMmLotIds, onlyActive: false }).catch((error) => {
+                        console.error("Error resolving WIP reservation MM lot labels:", error);
+                        return [];
+                    })
+                    : Promise.resolve([]),
+                reservationInventoryLotIds.length > 0
+                    ? loadMmInventoryLots({ ids: reservationInventoryLotIds, onlyActive: false }).catch((error) => {
+                        console.error("Error resolving WIP reservation inventory lot labels:", error);
+                        return [];
+                    })
+                    : Promise.resolve([])
+            ]);
+            const mmLotNameById = new Map(
+                reservationMmLots.map((lot) => [mmLotId(lot.lot_id)!, String(lot.lot_name || "").trim()])
+            );
+            const inventoryLotBatchById = new Map(
+                reservationInventoryLots.map((lot) => [mmInventoryLotId(lot.inventory_lot_id)!, String(lot.batch_no || "").trim()])
+            );
+
             // Subassembly lots and mfg set are determined directly from document sources and movements
 
             // Fetch active reservations by other JOs in batch
@@ -721,7 +753,9 @@ export async function handleGET(request: Request) {
                         uom_id: reservationUomId,
                         unit_shortcut: prod?.unit_of_measurement?.unit_shortcut || "units",
                         mm_lot_id: mmLotIdValue,
+                        mm_lot_name: mmLotIdValue ? mmLotNameById.get(mmLotIdValue) || null : null,
                         inventory_lot_id: inventoryLotIdValue,
+                        inventory_lot_batch_no: inventoryLotIdValue ? inventoryLotBatchById.get(inventoryLotIdValue) || null : null,
                         batch_no: reservation.batch_no || null,
                         reservation_status: reservation.reservation_status || null,
                         allocated_quantity: Number(d.allocated_quantity || d.required_quantity || d.quantity_required || 0),

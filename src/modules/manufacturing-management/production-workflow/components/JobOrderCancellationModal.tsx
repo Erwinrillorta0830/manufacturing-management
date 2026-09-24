@@ -222,15 +222,19 @@ export function JobOrderCancellationModal({
                             )}
 
                             <div className="space-y-1.5">
-                                <label className="text-xs font-bold text-foreground">
+                                <label htmlFor="job-order-cancellation-reason" className="text-xs font-bold text-foreground">
                                     {isReturnMode ? "Return Remarks (optional)" : "Cancellation Reason"}
+                                    {!isReturnMode && <span className="text-destructive" aria-hidden="true"> *</span>}
                                 </label>
                                 <Textarea
+                                    id="job-order-cancellation-reason"
                                     value={reason}
                                     onChange={(e) => setReason(e.target.value)}
                                     placeholder={isReturnMode ? "Optional remarks for the return..." : "State why this Job Order is being cancelled..."}
                                     rows={3}
                                     disabled={submitting}
+                                    required={!isReturnMode}
+                                    aria-required={!isReturnMode}
                                 />
                             </div>
 

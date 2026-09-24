@@ -1,4 +1,4 @@
-export const SUPPLIER_ELIGIBLE_PRODUCT_TYPES = [389, 390] as const;
+export const SUPPLIER_ELIGIBLE_PRODUCT_TYPES = [388, 389, 390] as const;
 
 function productTypeId(value: unknown): number | null {
     if (value === null || value === undefined || value === "") return null;

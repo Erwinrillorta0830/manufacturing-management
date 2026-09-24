@@ -16,6 +16,7 @@ import {
     CheckCircle2,
     FolderOpen,
     ImageIcon,
+    Search,
     X
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -65,6 +66,7 @@ export function JobOrderShiftLogModal({
     const [varianceReason, setVarianceReason] = useState("");
     const [approveVariance, setApproveVariance] = useState(false);
     const [shiftMaterials, setShiftMaterials] = useState<ProductionMaterialReservation[]>([]);
+    const [reservationSearch, setReservationSearch] = useState("");
     const [materialsLoadError, setMaterialsLoadError] = useState<string | null>(null);
     const [loadingShiftMaterials, setLoadingShiftMaterials] = useState(false);
     const [submittingShiftLog, setSubmittingShiftLog] = useState(false);
@@ -77,6 +79,19 @@ export function JobOrderShiftLogModal({
     const [evidenceImagePreview, setEvidenceImagePreview] = useState<string | null>(null);
     const cameraInputRef = useRef<HTMLInputElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const filteredShiftMaterials = React.useMemo(() => {
+        const query = reservationSearch.trim().toLowerCase();
+        if (!query) return shiftMaterials;
+
+        return shiftMaterials.filter((material) => [
+            material.product_name,
+            material.reservation_id,
+            material.mm_lot_name,
+            material.inventory_lot_batch_no,
+            material.batch_no
+        ].some((value) => String(value ?? "").toLowerCase().includes(query)));
+    }, [reservationSearch, shiftMaterials]);
 
     const totalPlannedHours = calculatePipelinedLineDurationHours(sortedTasks);
     const shiftHours = Number(selectedJobOrder?.shiftOption || 8);
@@ -232,6 +247,10 @@ export function JobOrderShiftLogModal({
             void loadShiftMaterials();
         }
     }, [open, selectedJobOrder, getAvailableShifts, loadShiftMaterials]);
+
+    useEffect(() => {
+        setReservationSearch("");
+    }, [open, selectedJobOrder?.order_id, selectedJobOrder?.job_order_id]);
 
     const groupedJobOperators = React.useMemo(() => {
         const groups: Record<number, {
@@ -587,9 +606,9 @@ export function JobOrderShiftLogModal({
                     </div>
 
                     <form onSubmit={handleShiftLogSubmit} className="p-4 sm:p-6 flex-1 flex flex-col overflow-hidden min-h-0 text-xs">
-                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 flex-1 overflow-y-auto pr-1 min-h-0">
+                        <div className="grid grid-cols-1 items-start lg:grid-cols-12 gap-4 sm:gap-6 flex-1 overflow-y-auto pr-1 min-h-0">
                             {/* Left Column: Yield, Scrap, Batch Metadata, Operators */}
-                            <div className="lg:col-span-6 space-y-5">
+                            <div className="min-w-0 lg:col-span-6 space-y-5">
                                 <div className="bg-card/50 backdrop-blur-sm border border-border/60 rounded-xl p-4 sm:p-5 space-y-4 shadow-sm">
                                     <div className="flex items-center gap-2 pb-2 border-b border-border/40">
                                         <div className="p-1 bg-primary/10 rounded text-primary">
@@ -848,9 +867,9 @@ export function JobOrderShiftLogModal({
                             </div>
 
                              {/* Right Column: Exact WIP reservation consumption */}
-                            <div className="lg:col-span-6">
-                                <div className="bg-card/50 backdrop-blur-sm border border-border/60 rounded-xl p-4 sm:p-5 space-y-4 h-full flex flex-col shadow-sm">
-                                    <div className="flex items-center justify-between pb-2 border-b border-border/40">
+                            <div className="min-w-0 lg:col-span-6">
+                                <div className="min-w-0 bg-card/50 backdrop-blur-sm border border-border/60 rounded-xl p-4 sm:p-5 space-y-4 shadow-sm">
+                                    <div className="flex flex-col gap-3 pb-2 border-b border-border/40 xl:flex-row xl:items-center xl:justify-between">
                                         <div className="flex items-center gap-2">
                                             <div className="p-1 bg-primary/10 rounded text-primary">
                                                 <Layers className="h-4 w-4" />
@@ -862,9 +881,33 @@ export function JobOrderShiftLogModal({
                                                  <p className="text-[9px] text-muted-foreground mt-0.5">Select the reserved lot, inventory lot, batch, and UOM that were consumed for this session.</p>
                                              </div>
                                          </div>
-                                         <Badge variant="outline" className="text-[9px] font-mono bg-primary/5 text-primary border-primary/20 font-bold">
-                                             WIP Ledger
-                                        </Badge>
+                                         <div className="flex w-full items-center gap-2 xl:w-auto">
+                                             <div className="relative min-w-0 flex-1 xl:w-64 xl:flex-none">
+                                                 <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+                                                 <Input
+                                                     type="text"
+                                                     value={reservationSearch}
+                                                     onChange={(event) => setReservationSearch(event.target.value)}
+                                                     placeholder="Search material, reservation, lot, or batch"
+                                                     aria-label="Search WIP reservations by component, reservation ID, MM lot, or batch number"
+                                                     disabled={loadingShiftMaterials || Boolean(materialsLoadError) || shiftMaterials.length === 0}
+                                                     className="h-8 pl-8 pr-8 text-xs"
+                                                 />
+                                                 {reservationSearch && (
+                                                     <button
+                                                         type="button"
+                                                         onClick={() => setReservationSearch("")}
+                                                         aria-label="Clear WIP reservation search"
+                                                         className="absolute right-2 top-1/2 -translate-y-1/2 rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                                     >
+                                                         <X className="h-3.5 w-3.5" aria-hidden="true" />
+                                                     </button>
+                                                 )}
+                                             </div>
+                                             <Badge variant="outline" className="shrink-0 text-[9px] font-mono bg-primary/5 text-primary border-primary/20 font-bold">
+                                                 WIP Ledger
+                                             </Badge>
+                                         </div>
                                     </div>
 
                                     {loadingShiftMaterials ? (
@@ -887,9 +930,14 @@ export function JobOrderShiftLogModal({
                                         <div className="p-6 bg-background/50 rounded-lg text-muted-foreground text-center italic border border-border/40 flex-1 flex items-center justify-center">
                                              No WIP reservations are available for this Job Order.
                                         </div>
+                                    ) : filteredShiftMaterials.length === 0 ? (
+                                        <div className="p-6 bg-background/50 rounded-lg text-muted-foreground text-center border border-border/40 flex-1 flex flex-col items-center justify-center gap-2" role="status">
+                                            <p>No WIP reservations match “{reservationSearch.trim()}”.</p>
+                                            <Button type="button" variant="outline" size="sm" onClick={() => setReservationSearch("")}>Clear search</Button>
+                                        </div>
                                     ) : (
-                                        <div className="space-y-3 flex-1 overflow-y-auto max-h-[480px] lg:max-h-[560px] pr-1">
-                                            {shiftMaterials.map((m, index) => {
+                                        <div className="min-w-0 space-y-3">
+                                            {filteredShiftMaterials.map((m, index) => {
                                                  const theoretical = materialTheoretical(m);
                                                  const actual = Number(m.actual_qty || 0);
                                                  const variance = actual - theoretical;
@@ -940,9 +988,11 @@ export function JobOrderShiftLogModal({
                                                          </div>
 
                                                          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[9px] text-muted-foreground">
-                                                             <span>MM Lot: <strong className="font-mono text-foreground">{m.mm_lot_id || "—"}</strong></span>
-                                                             <span>Inventory Lot: <strong className="font-mono text-foreground">{m.inventory_lot_id || "—"}</strong></span>
-                                                             <span>Batch No.: <strong className="font-mono text-foreground">{m.batch_no || "No batch assigned"}</strong></span>
+                                                             <span>MM Lot: <strong className="font-mono text-foreground">{m.mm_lot_name || "Lot name unavailable"}</strong></span>
+                                                             <span>Inventory Lot: <strong className="font-mono text-foreground">{m.inventory_lot_batch_no || m.batch_no || "Batch identifier unavailable"}</strong></span>
+                                                             {m.batch_no && m.batch_no !== (m.inventory_lot_batch_no || m.batch_no) && (
+                                                                 <span>Batch No.: <strong className="font-mono text-foreground">{m.batch_no}</strong></span>
+                                                             )}
                                                              <span>UOM: <strong className="font-mono text-foreground">{m.unit_shortcut || `#${m.uom_id || "—"}`}</strong></span>
                                                              <span>Status: <strong className="text-foreground">{m.reservation_status || "Not staged"}</strong></span>
                                                              <span>Remaining WIP: <strong className="font-mono text-foreground">{Number(m.available_stock || 0).toLocaleString()}</strong></span>
