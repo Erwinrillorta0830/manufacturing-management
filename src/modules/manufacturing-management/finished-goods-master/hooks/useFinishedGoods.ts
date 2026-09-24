@@ -1055,28 +1055,30 @@ export function useFinishedGoods(initialTab: string = "details") {
             }
         }
 
-        // Validate routing operation steps have operations selected
-        for (let i = 0; i < editedRoutes.length; i++) {
-            const r = editedRoutes[i];
-            const stepNum = r.sequence_order || i + 1;
-            const opId = Number(r.operation_id || 0);
-            if (!opId || opId <= 0) {
-                toast.error(`Route Step #${stepNum}: Please select or specify an Operation before saving.`);
+        // Validate routing operation steps only if product has a BOM
+        if (validatedDetails.hasBom) {
+            for (let i = 0; i < editedRoutes.length; i++) {
+                const r = editedRoutes[i];
+                const stepNum = r.sequence_order || i + 1;
+                const opId = Number(r.operation_id || 0);
+                if (!opId || opId <= 0) {
+                    toast.error(`Route Step #${stepNum}: Please select or specify an Operation before saving.`);
+                    return;
+                }
+            }
+
+            const invalidBomRow = editedRoutes.flatMap(route => (route.bom_items || []).map((item, index) => ({
+                routeId: route.route_id,
+                rowNumber: index + 1,
+                item,
+                materialType: item.material_type || materialTypeFromProduct(item.product_type, item.has_versions)
+            }))).find(row => !row.materialType || !Number.isFinite(Number(row.item.product_id)) || Number(row.item.product_id) <= 0);
+
+            if (invalidBomRow) {
+                const issue = !invalidBomRow.materialType ? "select a Material Type" : "select a Material";
+                toast.error(`Route ${invalidBomRow.routeId}, BOM row ${invalidBomRow.rowNumber}: ${issue} before saving.`);
                 return;
             }
-        }
-
-        const invalidBomRow = editedRoutes.flatMap(route => (route.bom_items || []).map((item, index) => ({
-            routeId: route.route_id,
-            rowNumber: index + 1,
-            item,
-            materialType: item.material_type || materialTypeFromProduct(item.product_type, item.has_versions)
-        }))).find(row => !row.materialType || !Number.isFinite(Number(row.item.product_id)) || Number(row.item.product_id) <= 0);
-
-        if (invalidBomRow) {
-            const issue = !invalidBomRow.materialType ? "select a Material Type" : "select a Material";
-            toast.error(`Route ${invalidBomRow.routeId}, BOM row ${invalidBomRow.rowNumber}: ${issue} before saving.`);
-            return;
         }
 
         const routesPayload = editedRoutes.map(route => ({
@@ -1087,7 +1089,7 @@ export function useFinishedGoods(initialTab: string = "details") {
             }))
         }));
 
-        if (activeDraft) {
+        if (validatedDetails.hasBom && activeDraft) {
             setSavingBOM(true);
             setSaveStatus("Saving draft revision...");
             try {
@@ -1201,7 +1203,9 @@ export function useFinishedGoods(initialTab: string = "details") {
 
             let saveSucceeded = false;
 
-            const targetDraftId = activeDraft?.draft_id || (selectedVersion?.is_draft ? (selectedVersion.draft_id || selectedVersion.version_id) : null);
+            const targetDraftId = validatedDetails.hasBom
+                ? (activeDraft?.draft_id || (selectedVersion?.is_draft ? (selectedVersion.draft_id || selectedVersion.version_id) : null))
+                : null;
             if (targetDraftId) {
                 const targetOverheads = editedVersionDetails?.overhead_items !== undefined
                     ? editedVersionDetails.overhead_items
@@ -1241,7 +1245,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                     status: (editedDetails as unknown as { status?: string }).status || (selectedProduct as unknown as { status?: string })?.status || "Active"
                 });
                 saveSucceeded = true;
-            } else if (selectedVersionId !== null && selectedVersionId < 0) {
+            } else if (validatedDetails.hasBom && selectedVersionId !== null && selectedVersionId < 0) {
                 // Local UI draft version: submit as Draft to MySQL database
                 const draftPayload = {
                     productId: numericProductId,
@@ -1280,7 +1284,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                         ? activeBOMId
                         : (versions.find(v => v.version_id > 0)?.version_id || null));
 
-                if (!targetVersionId) {
+                if (!validatedDetails.hasBom || !targetVersionId) {
                     await updateProduct(numericProductId, {
                         product_name: validatedDetails.title,
                         product_code: validatedDetails.sku,
@@ -1409,8 +1413,13 @@ export function useFinishedGoods(initialTab: string = "details") {
                     return p;
                 }));
 
-                const vList = await fetchVersions(numericProductId);
-                setVersions(vList);
+                if (validatedDetails.hasBom) {
+                    const vList = await fetchVersions(numericProductId);
+                    setVersions(vList);
+                } else {
+                    setVersions([]);
+                    setSelectedVersionId(null);
+                }
                 setHasUnsavedChanges(false);
                 setEditFieldErrors({});
                 toast.success("Finished good configuration saved successfully!");
