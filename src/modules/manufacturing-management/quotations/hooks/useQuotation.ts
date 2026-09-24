@@ -704,7 +704,7 @@ export function useQuotation() {
                     if (tMatch) pType = String(tMatch.name);
                 }
 
-                const isNonBomProduct = item.product?.has_bom === false || item.product?.has_bom === 0 || (item.product as Record<string, unknown>)?.has_bom === "0";
+                const isNonBomProduct = item.product?.has_bom === false;
                 const defaultVersionName = isNonBomProduct ? "Standard / Non-BOM" : "v1.0";
 
                 return {
