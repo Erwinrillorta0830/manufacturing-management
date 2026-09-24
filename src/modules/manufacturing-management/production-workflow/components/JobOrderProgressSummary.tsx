@@ -43,10 +43,20 @@ interface FinishedGoodsProgressLine {
     remaining: number;
 }
 
+interface FinishedGoodsProgressTotals {
+    targetQuantity: number;
+    producedQuantity: number;
+    remainingQuantity: number;
+}
+
 interface JobOrderProgressResponse {
-    jobOrder?: { jobOrderNo?: string };
+    jobOrder?: { jobOrderId?: number; jobOrderNo?: string; targetQuantity?: number; producedQuantity?: number; remainingQuantity?: number };
     rawMaterials?: { lines?: RawMaterialProgressLine[]; total?: RawMaterialProgressTotal | null };
-    finishedGoods?: FinishedGoodsProgressLine[];
+    finishedGoods?: {
+        salesOrders?: FinishedGoodsProgressLine[];
+        bufferStock?: FinishedGoodsProgressLine[];
+        totals?: FinishedGoodsProgressTotals;
+    };
 }
 
 interface RawMaterialProgressRow {
@@ -83,7 +93,13 @@ function ProgressSkeleton() {
     );
 }
 
-export function JobOrderProgressSummary({ jobOrder }: { jobOrder: JobOrder }) {
+export function JobOrderProgressSummary({
+    jobOrder,
+    onProducedQuantityChange
+}: {
+    jobOrder: JobOrder;
+    onProducedQuantityChange?: (jobOrderId: number, producedQuantity: number) => void;
+}) {
     const jobOrderId = jobOrder.order_id || jobOrder.job_order_id || 0;
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -105,7 +121,15 @@ export function JobOrderProgressSummary({ jobOrder }: { jobOrder: JobOrder }) {
             if (!response.ok) {
                 throw new Error(json?.error || `Failed to load Job Order progress (${response.status})`);
             }
-            setData(json as JobOrderProgressResponse);
+            const progress = json as JobOrderProgressResponse;
+            setData(progress);
+            const producedQuantity = Number(progress.jobOrder?.producedQuantity);
+            if (Number.isFinite(producedQuantity)) {
+                onProducedQuantityChange?.(
+                    Number(progress.jobOrder?.jobOrderId || jobOrderId),
+                    producedQuantity
+                );
+            }
             setError(null);
         } catch (err) {
             setError(err instanceof Error ? err.message : "Failed to load Job Order progress");
@@ -113,7 +137,7 @@ export function JobOrderProgressSummary({ jobOrder }: { jobOrder: JobOrder }) {
         } finally {
             setLoading(false);
         }
-    }, [jobOrderId, activityKey]);
+    }, [jobOrderId, activityKey, onProducedQuantityChange]);
 
     useEffect(() => {
         void load();
@@ -123,7 +147,13 @@ export function JobOrderProgressSummary({ jobOrder }: { jobOrder: JobOrder }) {
 
     const rawMaterialLines = data?.rawMaterials?.lines || [];
     const rawMaterialTotal = data?.rawMaterials?.total || null;
-    const finishedGoods = data?.finishedGoods || [];
+    const salesOrderLines = data?.finishedGoods?.salesOrders || [];
+    const bufferStockLines = data?.finishedGoods?.bufferStock || [];
+    const finishedGoodsTotals = data?.finishedGoods?.totals || {
+        targetQuantity: data?.jobOrder?.targetQuantity || 0,
+        producedQuantity: data?.jobOrder?.producedQuantity || 0,
+        remainingQuantity: data?.jobOrder?.remainingQuantity || 0
+    };
     const jobOrderLabel = data?.jobOrder?.jobOrderNo || jobOrder.job_order_no || jobOrder.jo_id;
     const rawMaterialRows = rawMaterialLines.flatMap((line): RawMaterialProgressRow[] => {
         const lots = line.lots || [];
@@ -172,33 +202,25 @@ export function JobOrderProgressSummary({ jobOrder }: { jobOrder: JobOrder }) {
                         {/* Finished Goods */}
                         <div className="w-full space-y-2">
                             <h4 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Finished Goods</h4>
-                            <div className="w-full overflow-x-auto rounded-lg border bg-background">
-                                <Table className="min-w-[560px]">
-                                    <TableHeader className="bg-muted/40">
-                                        <TableRow>
-                                            <TableHead className="h-8 whitespace-nowrap px-3 text-[10px] font-bold uppercase">Sales Order No.</TableHead>
-                                            <TableHead className="h-8 whitespace-nowrap px-3 text-right text-[10px] font-bold uppercase">Target Quantity</TableHead>
-                                            <TableHead className="h-8 whitespace-nowrap px-3 text-right text-[10px] font-bold uppercase">Produced</TableHead>
-                                            <TableHead className="h-8 whitespace-nowrap px-3 text-right text-[10px] font-bold uppercase">Remaining</TableHead>
-                                        </TableRow>
-                                    </TableHeader>
-                                    <TableBody>
-                                        {finishedGoods.length === 0 ? (
-                                            <TableRow>
-                                                <TableCell colSpan={4} className="px-3 py-4 text-center text-xs text-muted-foreground">
-                                                    No finished-goods target is linked to this Job Order.
-                                                </TableCell>
-                                            </TableRow>
-                                        ) : finishedGoods.map((line, index) => (
-                                            <TableRow key={`${line.orderNo}-${index}`}>
-                                                <TableCell className="px-3 py-2 text-xs font-semibold">{line.orderNo}</TableCell>
-                                                <TableCell className="whitespace-nowrap px-3 py-2 text-right font-mono text-xs font-bold tabular-nums">{formatQuantity(line.targetQuantity)}</TableCell>
-                                                <TableCell className="whitespace-nowrap px-3 py-2 text-right font-mono text-xs text-amber-700 tabular-nums dark:text-amber-400">{formatQuantity(line.produced)}</TableCell>
-                                                <TableCell className="whitespace-nowrap px-3 py-2 text-right font-mono text-xs font-black text-emerald-700 tabular-nums dark:text-emerald-400">{formatQuantity(line.remaining)}</TableCell>
-                                            </TableRow>
-                                        ))}
-                                    </TableBody>
-                                </Table>
+                            <FinishedGoodsTable
+                                heading="Sales Orders"
+                                identifierHeading="Sales Order No."
+                                lines={salesOrderLines}
+                                emptyMessage="No Sales Order allocations are linked to this Job Order."
+                            />
+                            <FinishedGoodsTable
+                                heading="Buffer / Stock Orders"
+                                identifierHeading="Buffer / Stock Allocation"
+                                lines={bufferStockLines}
+                                emptyMessage="No target quantity is unallocated to Sales Orders."
+                            />
+                            <div className="rounded-lg border bg-muted/20 px-4 py-3">
+                                <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Total Quantity Summary</p>
+                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                    <QuantitySummaryMetric label="Total Target" value={finishedGoodsTotals.targetQuantity} unitShortcut={jobOrder.uom_shortcut || "pcs"} />
+                                    <QuantitySummaryMetric label="Total Produced" value={finishedGoodsTotals.producedQuantity} unitShortcut={jobOrder.uom_shortcut || "pcs"} emphasis="produced" />
+                                    <QuantitySummaryMetric label="Total Remaining" value={finishedGoodsTotals.remainingQuantity} unitShortcut={jobOrder.uom_shortcut || "pcs"} emphasis="remaining" />
+                                </div>
                             </div>
                         </div>
 
@@ -210,8 +232,8 @@ export function JobOrderProgressSummary({ jobOrder }: { jobOrder: JobOrder }) {
                                     <TableHeader className="bg-muted/40">
                                         <TableRow>
                                             <TableHead className="h-8 min-w-[180px] whitespace-nowrap px-3 text-[10px] font-bold uppercase">Material</TableHead>
-                                            <TableHead className="h-8 min-w-[150px] whitespace-nowrap px-3 text-[10px] font-bold uppercase">Lot / Batch No.</TableHead>
-                                            <TableHead className="h-8 min-w-[170px] whitespace-nowrap px-3 text-[10px] font-bold uppercase">Storage Location</TableHead>
+                                            <TableHead className="h-8 min-w-[170px] whitespace-nowrap px-3 text-[10px] font-bold uppercase">LOT</TableHead>
+                                            <TableHead className="h-8 min-w-[150px] whitespace-nowrap px-3 text-[10px] font-bold uppercase">BATCH</TableHead>
                                             <TableHead className="h-8 min-w-[140px] whitespace-nowrap px-3 text-[10px] font-bold uppercase">Reservation Status</TableHead>
                                             <TableHead className="h-8 min-w-[80px] whitespace-nowrap px-3 text-[10px] font-bold uppercase">UOM</TableHead>
                                             <TableHead className="h-8 min-w-[110px] whitespace-nowrap px-3 text-right text-[10px] font-bold uppercase">Reserved</TableHead>
@@ -236,8 +258,8 @@ export function JobOrderProgressSummary({ jobOrder }: { jobOrder: JobOrder }) {
                                             return (
                                                 <TableRow key={rowKey}>
                                                     <TableCell className="px-3 py-2 text-xs font-semibold">{line.productName}</TableCell>
-                                                    <TableCell className="whitespace-nowrap px-3 py-2 font-mono text-xs text-muted-foreground">{lotOrBatch}</TableCell>
                                                     <TableCell className="whitespace-nowrap px-3 py-2 text-xs font-semibold text-foreground">{lot?.storageLocation || lot?.lotName || "-"}</TableCell>
+                                                    <TableCell className="whitespace-nowrap px-3 py-2 font-mono text-xs text-muted-foreground">{lotOrBatch}</TableCell>
                                                     <TableCell className="px-3 py-2">
                                                         {lot?.status ? (
                                                             <span className={`inline-flex items-center whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${LOT_STATUS_STYLES[lot.status] || LOT_STATUS_STYLES.SOFT}`}>
@@ -270,5 +292,76 @@ export function JobOrderProgressSummary({ jobOrder }: { jobOrder: JobOrder }) {
                 )}
             </CardContent>
         </Card>
+    );
+}
+
+function FinishedGoodsTable({
+    heading,
+    identifierHeading,
+    lines,
+    emptyMessage
+}: {
+    heading: string;
+    identifierHeading: string;
+    lines: FinishedGoodsProgressLine[];
+    emptyMessage: string;
+}) {
+    return (
+        <div className="w-full space-y-1.5">
+            <h5 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{heading}</h5>
+            <div className="w-full overflow-x-auto rounded-lg border bg-background">
+                <Table className="min-w-[560px]">
+                    <TableHeader className="bg-muted/40">
+                        <TableRow>
+                            <TableHead className="h-8 whitespace-nowrap px-3 text-[10px] font-bold uppercase">{identifierHeading}</TableHead>
+                            <TableHead className="h-8 whitespace-nowrap px-3 text-right text-[10px] font-bold uppercase">Target Quantity</TableHead>
+                            <TableHead className="h-8 whitespace-nowrap px-3 text-right text-[10px] font-bold uppercase">Produced</TableHead>
+                            <TableHead className="h-8 whitespace-nowrap px-3 text-right text-[10px] font-bold uppercase">Remaining</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {lines.length === 0 ? (
+                            <TableRow>
+                                <TableCell colSpan={4} className="px-3 py-4 text-center text-xs text-muted-foreground">
+                                    {emptyMessage}
+                                </TableCell>
+                            </TableRow>
+                        ) : lines.map((line, index) => (
+                            <TableRow key={`${line.orderNo}-${index}`}>
+                                <TableCell className="px-3 py-2 text-xs font-semibold">{line.orderNo}</TableCell>
+                                <TableCell className="whitespace-nowrap px-3 py-2 text-right font-mono text-xs font-bold tabular-nums">{formatQuantity(line.targetQuantity)}</TableCell>
+                                <TableCell className="whitespace-nowrap px-3 py-2 text-right font-mono text-xs text-amber-700 tabular-nums dark:text-amber-400">{formatQuantity(line.produced)}</TableCell>
+                                <TableCell className="whitespace-nowrap px-3 py-2 text-right font-mono text-xs font-black text-emerald-700 tabular-nums dark:text-emerald-400">{formatQuantity(line.remaining)}</TableCell>
+                            </TableRow>
+                        ))}
+                    </TableBody>
+                </Table>
+            </div>
+        </div>
+    );
+}
+
+function QuantitySummaryMetric({
+    label,
+    value,
+    unitShortcut,
+    emphasis
+}: {
+    label: string;
+    value: number;
+    unitShortcut: string;
+    emphasis?: "produced" | "remaining";
+}) {
+    const emphasisClass = emphasis === "produced"
+        ? "text-emerald-700 dark:text-emerald-400"
+        : emphasis === "remaining"
+            ? "text-muted-foreground"
+            : "text-foreground";
+
+    return (
+        <div className="rounded-md border bg-background px-3 py-2">
+            <p className="text-[10px] font-semibold uppercase text-muted-foreground">{label}</p>
+            <p className={`mt-0.5 font-mono text-sm font-black tabular-nums ${emphasisClass}`}>{formatQuantity(value)} {unitShortcut}</p>
+        </div>
     );
 }

@@ -1,5 +1,6 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
+import { AuthenticatedActorError, requireManufacturingActorId } from "../_authenticated-actor";
 import { completeYieldClosing, YieldCompletionError } from "../_yield-closing-service";
 import { YieldMaterialsError } from "../_yield-materials";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
@@ -271,7 +272,8 @@ export async function POST(request: Request) {
                 unitCost,
                 componentsConsumed,
                 materialReturnConfirmation,
-                yieldLedgerId
+                yieldLedgerId,
+                actorUserId: await requireManufacturingActorId()
             });
             return NextResponse.json(result);
         } catch (error) {
@@ -298,8 +300,11 @@ export async function POST(request: Request) {
     } catch (error) {
         console.error("API Error in production finished-goods POST:", error);
         return NextResponse.json(
-            { error: (error as { message?: string }).message || "Failed to create finished goods receipt" },
-            { status: error instanceof MmInventoryMovementError ? error.status : 500 }
+            {
+                error: (error as { message?: string }).message || "Failed to create finished goods receipt",
+                ...(error instanceof AuthenticatedActorError ? { code: error.code } : {})
+            },
+            { status: error instanceof AuthenticatedActorError ? error.status : error instanceof MmInventoryMovementError ? error.status : 500 }
         );
     }
 }

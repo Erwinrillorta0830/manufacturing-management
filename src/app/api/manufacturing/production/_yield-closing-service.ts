@@ -75,6 +75,7 @@ export interface CompleteYieldClosingInput {
     unitCost?: string | number | null;
     componentsConsumed?: unknown;
     materialReturnConfirmation?: unknown;
+    actorUserId: number;
 }
 
 interface ComponentPlan {
@@ -1278,7 +1279,7 @@ async function completeYieldClosingInternal(
             sourceType: "JOB_ORDER_YIELD",
             sourceReference: jobOrder.jobOrderNo,
             remarks: `Finished yield output from Job Order ${jobOrder.jobOrderNo}`,
-            createdBy: 24,
+            createdBy: input.actorUserId,
             onCreate: (body) => journal!.create("mm_inventory_lots", { ...body }, `Create finished-goods batch ${lotNumber}`)
         });
         const inventoryLotId = mmInventoryLotId(inventoryLot.inventory_lot_id) ?? 0;
@@ -1296,7 +1297,7 @@ async function completeYieldClosingInternal(
                 expiry_date: expirationDate,
                 manufacturing_date: manufacturingDate,
                 quantity: quantityProduced,
-                created_by: 24,
+                created_by: input.actorUserId,
                 remarks: `Finished yield output from Job Order ${jobOrder.jobOrderNo}`
             },
             "Create finished-goods inventory movement"
@@ -1422,7 +1423,7 @@ async function completeYieldClosingInternal(
                 job_order_id: jobOrder.jobOrderId,
                 old_status: oldStatus,
                 new_status: JOB_ORDER_STATUS.COMPLETED,
-                changed_by: 24,
+                changed_by: input.actorUserId,
                 changed_at: new Date().toISOString(),
                 remarks: `Yield Closing completed: ${quantityProduced} units.`
             },
@@ -1467,7 +1468,7 @@ async function completeYieldClosingInternal(
             }
             leftoverReturnExecution = await executeJobOrderMaterialReturns(leftoverOrder, leftoverComputed, {
                 reason: `Return leftover raw materials during yield closing for ${leftoverOrder.jobOrderNo}`,
-                actorUserId: 24,
+                actorUserId: input.actorUserId,
                 writeStatus: false
             });
         }
@@ -1603,7 +1604,7 @@ export interface FinalizeHaltedJobOrderInput {
     unitCost?: string | number | null;
     materials?: HaltFinalizeMaterialInput[];
     remarks?: string;
-    actorUserId?: number | null;
+    actorUserId: number;
 }
 
 export interface HaltFinalizePreviewMaterial {
@@ -1861,9 +1862,10 @@ export async function finalizeHaltedJobOrder(input: FinalizeHaltedJobOrderInput)
             throw new YieldCompletionError(400, "INVALID_YIELD_REQUEST", "Expiration date cannot be earlier than manufacturing date.");
         }
         finiteNumber(input.unitCost ?? 0, "Unit cost", { nonNegative: true });
-        const actorUserId = Number.isSafeInteger(Number(input.actorUserId)) && Number(input.actorUserId) > 0
-            ? Number(input.actorUserId)
-            : 24;
+        const actorUserId = Number(input.actorUserId);
+        if (!Number.isSafeInteger(actorUserId) || actorUserId <= 0) {
+            throw new YieldCompletionError(401, "AUTHENTICATION_REQUIRED", "An authenticated user is required to finalize this Job Order.");
+        }
 
         const { jobOrder, materials, computed } = await loadHaltFinalizeState(requestedJoId);
         if (requestedProductId !== jobOrder.productId) {

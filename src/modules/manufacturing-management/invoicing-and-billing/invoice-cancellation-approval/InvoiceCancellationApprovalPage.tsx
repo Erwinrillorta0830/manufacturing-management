@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState, useRef, useEffect } from "react";
+import { motion } from "framer-motion";
 import { useApprovals } from "./hooks/use-approval";
 import { columns as pendingColumns } from "./components/data-table/columns";
 import { approvedColumns } from "./components/data-table/approvedColumn";
@@ -91,17 +92,29 @@ export default function InvoiceCancellationApprovalPage() {
 
   return (
       <div className="flex flex-1 flex-col px-4">
-        <div className="@container/main flex flex-1 flex-col gap-2 py-4">
-          <InvoiceSummaryApprovalCard stats={stats} />
+        <div className="@container/main flex flex-1 flex-col gap-4 py-4">
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.25, ease: "easeOut" }}
+          >
+            <InvoiceSummaryApprovalCard stats={stats} />
+          </motion.div>
 
-          <ApprovalDataTable
-              columns={columns}
-              data={mappedRequests}
-              isLoading={isLoading}
-              onBulkAction={triggerActionConfirmation}
-              currentTab={activeTab}
-              onTabChange={(tab) => isMountedRef.current && setActiveTab(tab)}
-          />
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, delay: 0.15, ease: "easeOut" }}
+          >
+            <ApprovalDataTable
+                columns={columns}
+                data={mappedRequests}
+                isLoading={isLoading}
+                onBulkAction={triggerActionConfirmation}
+                currentTab={activeTab}
+                onTabChange={(tab) => isMountedRef.current && setActiveTab(tab)}
+            />
+          </motion.div>
 
           <ActionConfirmationModal
               open={confirmOpen}

@@ -13,7 +13,7 @@ import { movementMmLotReference, movementStockKey, sumMovementQuantitiesByStock,
 import { loadYieldMaterials, YieldMaterialsError } from "../../production/_yield-materials";
 import { enrichDispositions, readDispositions } from "../../qa/_dispositions";
 import { fetchMmInventoryMovements, MmInventoryMovementError, movementErrorStatus } from "../../services/mm-inventory-movements.service";
-import { loadMmLots, MmLotError, mmLotId, unitId } from "../../services/mm-lots.service";
+import { loadMmInventoryLots, loadMmLots, MmLotError, mmInventoryLotId, mmLotId, unitId } from "../../services/mm-lots.service";
 import { getAvailableInventoryLots } from "../helpers/inventory-helper";
 import { paginate } from "../../_pagination";
 import { JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
@@ -37,6 +37,7 @@ import {
     parseContainerizationProfile
 } from "@/modules/manufacturing-management/planning-engineering/utils/containerization-helper";
 import { aggregateWizardMaterialComponents } from "@/modules/manufacturing-management/planning-engineering/utils/material-summary";
+import { buildFinishedGoodsProgress } from "@/modules/manufacturing-management/production-workflow/finished-goods-progress";
 
 const WIZARD_STEP_TIMEOUT_MS = 20000;
 
@@ -637,6 +638,38 @@ export async function handleGET(request: Request) {
                 }
             }
 
+            const reservationRows = [...reservationsMap.values()].flat();
+            const reservationMmLotIds = [...new Set(
+                reservationRows
+                    .map((reservation: any) => mmLotId(reservation.mm_lot_id))
+                    .filter((lotId): lotId is number => lotId !== null)
+            )];
+            const reservationInventoryLotIds = [...new Set(
+                reservationRows
+                    .map((reservation: any) => mmInventoryLotId(reservation.inventory_lot_id))
+                    .filter((lotId): lotId is number => lotId !== null)
+            )];
+            const [reservationMmLots, reservationInventoryLots] = await Promise.all([
+                reservationMmLotIds.length > 0
+                    ? loadMmLots({ ids: reservationMmLotIds, onlyActive: false }).catch((error) => {
+                        console.error("Error resolving WIP reservation MM lot labels:", error);
+                        return [];
+                    })
+                    : Promise.resolve([]),
+                reservationInventoryLotIds.length > 0
+                    ? loadMmInventoryLots({ ids: reservationInventoryLotIds, onlyActive: false }).catch((error) => {
+                        console.error("Error resolving WIP reservation inventory lot labels:", error);
+                        return [];
+                    })
+                    : Promise.resolve([])
+            ]);
+            const mmLotNameById = new Map(
+                reservationMmLots.map((lot) => [mmLotId(lot.lot_id)!, String(lot.lot_name || "").trim()])
+            );
+            const inventoryLotBatchById = new Map(
+                reservationInventoryLots.map((lot) => [mmInventoryLotId(lot.inventory_lot_id)!, String(lot.batch_no || "").trim()])
+            );
+
             // Subassembly lots and mfg set are determined directly from document sources and movements
 
             // Fetch active reservations by other JOs in batch
@@ -721,7 +754,9 @@ export async function handleGET(request: Request) {
                         uom_id: reservationUomId,
                         unit_shortcut: prod?.unit_of_measurement?.unit_shortcut || "units",
                         mm_lot_id: mmLotIdValue,
+                        mm_lot_name: mmLotIdValue ? mmLotNameById.get(mmLotIdValue) || null : null,
                         inventory_lot_id: inventoryLotIdValue,
+                        inventory_lot_batch_no: inventoryLotIdValue ? inventoryLotBatchById.get(inventoryLotIdValue) || null : null,
                         batch_no: reservation.batch_no || null,
                         reservation_status: reservation.reservation_status || null,
                         allocated_quantity: Number(d.allocated_quantity || d.required_quantity || d.quantity_required || 0),
@@ -1054,8 +1089,8 @@ export async function handleGET(request: Request) {
                 }
                 : null;
 
-            // Finished goods credited to each linked Sales Order, proportional
-            // to this Job Order's allocation and actual produced quantity.
+            // Split the Job Order output between its Sales Order allocations and
+            // the target quantity reserved for buffer/stock.
             const allocationsRes = await fetch(
                 `${DIRECTUS_URL}/items/manufacturing_job_order_allocations?filter[job_order_id][_eq]=${numericJoId}&fields=sales_order_detail_id,allocated_quantity&limit=-1`,
                 { headers, cache: "no-store" }
@@ -1068,7 +1103,7 @@ export async function handleGET(request: Request) {
             const detailIds = [...new Set(allocations.map((allocation: any) => Number(allocation.sales_order_detail_id?.detail_id || allocation.sales_order_detail_id)))];
             if (detailIds.length > 0) {
                 const detailsRes = await fetch(
-                    `${DIRECTUS_URL}/items/sales_order_details?filter[detail_id][_in]=${detailIds.join(",")}&fields=detail_id,order_id,ordered_quantity&limit=-1`,
+                    `${DIRECTUS_URL}/items/sales_order_details?filter[detail_id][_in]=${detailIds.join(",")}&fields=detail_id,order_id&limit=-1`,
                     { headers, cache: "no-store" }
                 );
                 const details: any[] = detailsRes.ok ? ((await detailsRes.json()).data || []) : [];
@@ -1086,37 +1121,28 @@ export async function handleGET(request: Request) {
                 }
             }
 
-            const finishedGoods = allocations.length > 0
-                ? allocations.map((allocation: any) => {
-                    const detailId = Number(allocation.sales_order_detail_id?.detail_id || allocation.sales_order_detail_id);
-                    const detail = detailMap.get(detailId);
-                    const orderId = Number(detail?.order_id?.order_id || detail?.order_id) || null;
-                    const order = orderId ? orderMap.get(orderId) : null;
-                    const ordered = Math.max(0, Number(detail?.ordered_quantity || 0));
-                    const allocated = Math.max(0, Number(allocation.allocated_quantity || 0));
-                    const produced = targetQuantity > 0 ? round6(producedQuantity * (allocated / targetQuantity)) : 0;
+            const finishedGoodsAllocations = allocations.map((allocation: any) => {
+                const detailId = Number(allocation.sales_order_detail_id?.detail_id || allocation.sales_order_detail_id);
+                const detail = detailMap.get(detailId);
+                const orderId = Number(detail?.order_id?.order_id || detail?.order_id) || null;
+                const order = orderId ? orderMap.get(orderId) : null;
 
-                    return {
-                        orderNo: order?.order_no || (orderId ? `SO-${orderId}` : `Detail #${detailId}`),
-                        targetQuantity: ordered,
-                        produced,
-                        remaining: round6(Math.max(0, ordered - produced))
-                    };
-                })
-                : [{
-                    orderNo: "Buffer Stock",
-                    targetQuantity,
-                    produced: round6(producedQuantity),
-                    remaining: round6(Math.max(0, targetQuantity - producedQuantity))
-                }];
+                return {
+                    orderNo: order?.order_no || (orderId ? `SO-${orderId}` : `Detail #${detailId}`),
+                    allocatedQuantity: Number(allocation.allocated_quantity || 0)
+                };
+            });
+            const finishedGoods = buildFinishedGoodsProgress(targetQuantity, producedQuantity, finishedGoodsAllocations);
+            const finishedGoodsTotals = finishedGoods.totals;
 
             return NextResponse.json({
                 jobOrder: {
                     jobOrderId: Number(jobOrder.job_order_id || numericJoId),
                     jobOrderNo: jobOrder.job_order_no || `JO-${numericJoId}`,
                     status: jobOrder.status || null,
-                    targetQuantity,
-                    producedQuantity: round6(producedQuantity)
+                    targetQuantity: finishedGoodsTotals.targetQuantity,
+                    producedQuantity: finishedGoodsTotals.producedQuantity,
+                    remainingQuantity: finishedGoodsTotals.remainingQuantity
                 },
                 rawMaterials: { lines: rawMaterialLines, total: rawMaterialsTotal },
                 finishedGoods

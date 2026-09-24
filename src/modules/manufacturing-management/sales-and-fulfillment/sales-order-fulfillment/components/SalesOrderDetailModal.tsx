@@ -325,6 +325,14 @@ export const SalesOrderDetailModal: React.FC<SalesOrderDetailModalProps> = ({
                                                                                 : "In Stock"}
                                                                         </span>
                                                                     </Badge>
+                                                                ) : line.has_deficit || line.live_onhand_quantity < 0 ? (
+                                                                    <Badge
+                                                                        variant="outline"
+                                                                        className="border-destructive/60 bg-destructive/10 text-destructive text-xs font-semibold py-1 px-2.5 gap-1"
+                                                                    >
+                                                                        <AlertTriangle className="h-3 w-3 text-destructive" />
+                                                                        <span>Deficit ({line.live_onhand_quantity.toLocaleString()})</span>
+                                                                    </Badge>
                                                                 ) : (
                                                                     <Badge
                                                                         variant="outline"
@@ -363,17 +371,25 @@ export const SalesOrderDetailModal: React.FC<SalesOrderDetailModalProps> = ({
                                                                 className="border-t bg-muted/20 px-4 py-3 rounded-b-xl"
                                                             >
                                                                 <div className="space-y-2">
-                                                                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                                                                    <div className="flex items-center justify-between text-xs text-muted-foreground flex-wrap gap-2">
                                                                         <span className="font-semibold uppercase tracking-wider flex items-center gap-1.5 text-[11px]">
                                                                             <Layers className="h-3.5 w-3.5 text-primary" />
                                                                             Connected Job Orders ({line.job_orders.length})
                                                                         </span>
-                                                                        {line.onhand_error && (
-                                                                            <span className="text-amber-600 text-[11px] flex items-center gap-1">
-                                                                                <Info className="h-3 w-3" />
-                                                                                {line.onhand_error}
-                                                                            </span>
-                                                                        )}
+                                                                        <div className="flex items-center gap-2 flex-wrap">
+                                                                            {(line.has_deficit || line.live_onhand_quantity < 0) && (
+                                                                                <span className="text-destructive font-semibold text-[11px] flex items-center gap-1 bg-destructive/10 px-2 py-0.5 rounded border border-destructive/20">
+                                                                                    <AlertTriangle className="h-3 w-3" />
+                                                                                    Stock Deficit: {line.live_onhand_quantity.toLocaleString()} {line.unit_name}
+                                                                                </span>
+                                                                            )}
+                                                                            {line.onhand_error && (
+                                                                                <span className="text-amber-600 text-[11px] flex items-center gap-1">
+                                                                                    <Info className="h-3 w-3" />
+                                                                                    {line.onhand_error}
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
                                                                     </div>
 
                                                                     {line.job_orders.length === 0 ? (
@@ -388,7 +404,9 @@ export const SalesOrderDetailModal: React.FC<SalesOrderDetailModalProps> = ({
                                                                             <div className="flex items-center gap-1.5 self-end sm:self-auto shrink-0 font-medium">
                                                                                 <span className="text-muted-foreground text-[11px] uppercase">On-Hand Qty:</span>
                                                                                 <span className={`font-semibold px-2 py-0.5 rounded border text-xs ${
-                                                                                    !line.is_ready
+                                                                                    line.has_deficit || line.live_onhand_quantity < 0
+                                                                                        ? "border-destructive/40 bg-destructive/10 text-destructive font-mono"
+                                                                                        : !line.is_ready
                                                                                         ? "border-destructive/40 bg-destructive/10 text-destructive"
                                                                                         : "text-foreground bg-muted/60"
                                                                                 }`}>
@@ -433,7 +451,11 @@ export const SalesOrderDetailModal: React.FC<SalesOrderDetailModalProps> = ({
                                                                                             <td className="p-2 text-right font-semibold text-primary">
                                                                                                 {jo.effective_produced_for_order.toLocaleString()}
                                                                                             </td>
-                                                                                            <td className="p-2 text-right font-medium text-foreground">
+                                                                                            <td className={`p-2 text-right font-medium ${
+                                                                                                line.has_deficit || line.live_onhand_quantity < 0
+                                                                                                    ? "text-destructive font-semibold font-mono"
+                                                                                                    : "text-foreground"
+                                                                                            }`}>
                                                                                                 {line.live_onhand_quantity.toLocaleString()}
                                                                                             </td>
                                                                                             <td className="p-2 text-right text-muted-foreground text-[11px]">
@@ -460,11 +482,19 @@ export const SalesOrderDetailModal: React.FC<SalesOrderDetailModalProps> = ({
 
                     {/* Modal Footer */}
                     <div className="p-4 border-t bg-muted/20 shrink-0 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-                        <div className="text-xs text-muted-foreground flex items-center gap-1.5">
+                        <div className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap max-w-full sm:max-w-[65%]">
                             {readiness && (
-                                <span className="font-medium">
-                                    {readiness.ready_items_count} of {readiness.total_items_count} line items satisfied
-                                </span>
+                                <>
+                                    <span className="font-medium whitespace-nowrap">
+                                        {readiness.ready_items_count} of {readiness.total_items_count} line items satisfied
+                                    </span>
+                                    {readiness.blockers && readiness.blockers.length > 0 && (
+                                        <span className="text-destructive font-medium flex items-center gap-1 text-[11px]">
+                                            <AlertTriangle className="h-3 w-3 shrink-0" />
+                                            <span>{readiness.blockers[0]}</span>
+                                        </span>
+                                    )}
+                                </>
                             )}
                         </div>
 

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
     Calendar,
     Search,
@@ -111,24 +112,81 @@ export default function DepreciationFilters({
         <div className="rounded-xl border border-border/80 bg-card p-4 shadow-xs space-y-3.5">
             {/* Row 1: Primary Date Controls & Search */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-12">
-                {/* 1. As-of Date (Cutoff) */}
-                <div className="lg:col-span-3 space-y-1.5">
-                    <Label htmlFor="as-of-date" className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
-                        <Calendar className="h-3.5 w-3.5 text-primary" />
-                        <span>As-of Date (Cutoff)</span>
-                    </Label>
-                    <Input
-                        id="as-of-date"
-                        type="date"
-                        value={filters.asOfDate}
-                        onChange={(e) => onFilterChange("asOfDate", e.target.value)}
-                        onFocus={(e) => e.target.select()}
-                        className="h-9 text-xs font-mono bg-background shadow-2xs"
-                    />
-                </div>
+                <AnimatePresence mode="wait" initial={false}>
+                    {filters.periodPreset === "custom" ? (
+                        <motion.div
+                            key="custom-dates"
+                            initial={{ opacity: 0, x: -6 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: 6 }}
+                            transition={{ duration: 0.18 }}
+                            className="lg:col-span-4 grid grid-cols-1 sm:grid-cols-2 gap-3"
+                        >
+                            {/* 1a. Period Start Date (From) */}
+                            <div className="space-y-1.5">
+                                <Label htmlFor="period-start-date" className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                                    <Calendar className="h-3.5 w-3.5 text-primary" />
+                                    <span>From (Start Date)</span>
+                                </Label>
+                                <Input
+                                    id="period-start-date"
+                                    type="date"
+                                    value={filters.periodStartDate}
+                                    max={filters.asOfDate}
+                                    onChange={(e) => onFilterChange("periodStartDate", e.target.value)}
+                                    onFocus={(e) => e.target.select()}
+                                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                                    className="h-9 text-xs font-mono bg-background shadow-2xs"
+                                />
+                            </div>
+
+                            {/* 1b. As-of Date (To / Cutoff) */}
+                            <div className="space-y-1.5">
+                                <Label htmlFor="as-of-date" className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                                    <Calendar className="h-3.5 w-3.5 text-primary" />
+                                    <span>To (Cutoff Date)</span>
+                                </Label>
+                                <Input
+                                    id="as-of-date"
+                                    type="date"
+                                    value={filters.asOfDate}
+                                    min={filters.periodStartDate}
+                                    onChange={(e) => onFilterChange("asOfDate", e.target.value)}
+                                    onFocus={(e) => e.target.select()}
+                                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                                    className="h-9 text-xs font-mono bg-background shadow-2xs"
+                                />
+                            </div>
+                        </motion.div>
+                    ) : (
+                        /* 1. As-of Date (Cutoff) */
+                        <motion.div
+                            key="single-cutoff"
+                            initial={{ opacity: 0, x: -6 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: 6 }}
+                            transition={{ duration: 0.18 }}
+                            className="lg:col-span-3 space-y-1.5"
+                        >
+                            <Label htmlFor="as-of-date" className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                                <Calendar className="h-3.5 w-3.5 text-primary" />
+                                <span>As-of Date (Cutoff)</span>
+                            </Label>
+                            <Input
+                                id="as-of-date"
+                                type="date"
+                                value={filters.asOfDate}
+                                onChange={(e) => onFilterChange("asOfDate", e.target.value)}
+                                onFocus={(e) => e.target.select()}
+                                onClick={(e) => (e.target as HTMLInputElement).select()}
+                                className="h-9 text-xs font-mono bg-background shadow-2xs"
+                            />
+                        </motion.div>
+                    )}
+                </AnimatePresence>
 
                 {/* 2. Reporting Period Preset */}
-                <div className="lg:col-span-3 space-y-1.5">
+                <div className={cn("space-y-1.5", filters.periodPreset === "custom" ? "lg:col-span-3" : "lg:col-span-3")}>
                     <Label className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
                         <SlidersHorizontal className="h-3.5 w-3.5 text-primary" />
                         <span>Period Preset</span>
@@ -151,7 +209,7 @@ export default function DepreciationFilters({
                 </div>
 
                 {/* 3. Search Assets */}
-                <div className="lg:col-span-6 space-y-1.5">
+                <div className={cn("space-y-1.5", filters.periodPreset === "custom" ? "lg:col-span-5" : "lg:col-span-6")}>
                     <Label htmlFor="search-assets" className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
                         <Search className="h-3.5 w-3.5 text-primary" />
                         <span>Search Assets</span>

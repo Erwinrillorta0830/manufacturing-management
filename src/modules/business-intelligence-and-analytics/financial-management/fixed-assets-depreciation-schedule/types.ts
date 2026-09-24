@@ -1,4 +1,4 @@
-export type AssetCondition = "Good" | "Bad" | "Under Maintenance" | "Discontinued";
+export type AssetCondition = "Good" | "Bad" | "Under Maintenance" | "Discontinued" | "-";
 
 export type AssetType = "Administrative" | "Production";
 
@@ -11,7 +11,8 @@ export type AssetReportingStatus =
     | "Fully Depreciated"
     | "Discontinued"
     | "Under Maintenance"
-    | "Bad";
+    | "Bad"
+    | "-";
 
 export type PeriodPreset =
     | "custom"

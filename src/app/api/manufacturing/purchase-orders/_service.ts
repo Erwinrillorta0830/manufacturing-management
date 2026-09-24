@@ -35,6 +35,7 @@ import {
     resolvePurchaseOrderDiscountType
 } from "./_commercial-resolution";
 import { validatePurchaseOrderCategoryTypes } from "../procurement/_category-type";
+import { hasBomDisabled } from "@/modules/manufacturing-management/procurement/purchase-order-product-eligibility";
 import {
     ProductWeightValidationError,
     resolveProductWeightBreakdown
@@ -59,6 +60,7 @@ type DirectusParentReference = number | string | {
 
 interface DirectusProduct {
     product_id: number | string;
+    has_bom?: boolean | number | string | null;
     parent_id?: DirectusParentReference;
     product_type?: unknown;
     product_category?: DirectusCategoryReference;
@@ -228,7 +230,7 @@ async function validateDraft(order: PurchaseOrderDraft) {
             "Unable to validate the supplier."
         ),
         directusData<DirectusProduct[]>(
-            `/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,product_type,parent_id,parent_id.product_id,parent_id.product_category.category_id,product_category.category_id,weight,product_weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id.*&limit=${productIds.length}`,
+            `/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,has_bom,product_type,parent_id,parent_id.product_id,parent_id.product_category.category_id,product_category.category_id,weight,product_weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id.*&limit=${productIds.length}`,
             "Unable to validate purchase-order products."
         ),
         directusData<Array<{ product_id: number | string | { product_id?: number | string; id?: number | string } }>>(
@@ -291,6 +293,17 @@ async function validateDraft(order: PurchaseOrderDraft) {
         productId: line.productId,
         categoryType: line.categoryType
     })));
+    const ineligibleProductIds = productIds.filter(productId =>
+        categoryTypes.get(productId) === "FINISHED_GOODS"
+        && !hasBomDisabled(productsById.get(productId))
+    );
+    if (ineligibleProductIds.length > 0) {
+        throw new PurchaseOrderDraftError(
+            `Finished goods products ${ineligibleProductIds.join(", ")} cannot be added to a purchase order because has_bom must be 0.`,
+            400,
+            { productIds: ineligibleProductIds, categoryType: "FINISHED_GOODS" }
+        );
+    }
     for (const line of order.lines) {
         const product = productsById.get(line.productId);
         if (!product) continue;

@@ -70,9 +70,11 @@ export interface Product {
     product_shelf_life?: number;
     cost_per_unit?: number;
     unit_of_measurement_count?: number;
+    maintaining_quantity?: number | null;
     product_image?: string;
     customOverhead?: number;
     has_versions?: boolean;
+    has_bom?: boolean;
     versions?: ProductVersion[];
     selectedVersion?: ProductVersion;
     created_at?: string | null;
@@ -336,11 +338,13 @@ export interface BFFCatalogProduct {
     product_section?: number | null;
     product_shelf_life?: number | null;
     unit_of_measurement_count?: number | null;
+    maintaining_quantity?: number | string | null;
     product_image?: string | null;
     product_type?: number;
     status?: string | null;
     isActive?: boolean | number | string | null;
     has_versions?: boolean;
+    has_bom?: boolean | number | null;
     created_at?: string | null;
     created_by?: number | string | null;
     updated_at?: string | null;
@@ -391,6 +395,7 @@ export interface DirectusProduct {
     isActive?: boolean | number | string | null;
     density_factor?: number | null;
     has_versions?: boolean;
+    has_bom?: boolean | number | string | null;
     currency_profile?: DirectusProductCurrencyProfile | null;
     product_type?: number | string | { id?: number | string; name?: string; default_purchase_price_type_id?: unknown } | null;
     product_brand?: number | { brand_id?: number; id?: number } | null;

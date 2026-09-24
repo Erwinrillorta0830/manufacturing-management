@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers, procurementDirectusFetch } from "../_directus";
-import { evaluateShelfLife, INVENTORY_STATUS, PAYMENT_STATUS, paymentStatusAllowsReceivingHandoff } from "../_domain";
+import { evaluateShelfLife, INVENTORY_STATUS, LEGACY_FOR_PICKUP_STATUS_ID, PAYMENT_STATUS, paymentStatusAllowsReceivingHandoff } from "../_domain";
 import { forceReceivedIntakeMessage } from "../../qa-receiving/_force-received";
 import { receivingSubmissionSchema } from "../_schemas";
 import {
@@ -635,12 +635,12 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 throw error;
             }
         }
-        const receivableStatuses: number[] = [INVENTORY_STATUS.FOR_PICKUP, INVENTORY_STATUS.PARTIALLY_RECEIVED];
+        const receivableStatuses: number[] = [INVENTORY_STATUS.QA_RECEIVING, LEGACY_FOR_PICKUP_STATUS_ID, INVENTORY_STATUS.PARTIALLY_RECEIVED];
         if (existingReceipts.length > 0) {
             throw new ReceivingError("This purchase order has a partial previous receiving attempt and requires reconciliation.", 409);
         }
         if (!replacementDispositionId && !receivableStatuses.includes(Number(shipment.inventory_status))) {
-            throw new ReceivingError("The purchase order must be in Receiving (QA) before it can be received.", 409);
+            throw new ReceivingError("The purchase order must be in QA Receiving before it can be received.", 409);
         }
 
         const receivingHistory = summarizeReceivingHistory(allExistingReceipts as Array<Record<string, unknown>>, poLines);

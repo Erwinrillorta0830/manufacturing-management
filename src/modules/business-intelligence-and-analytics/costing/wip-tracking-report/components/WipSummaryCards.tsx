@@ -13,7 +13,7 @@ import {
     PackageSearch 
 } from "lucide-react";
 import { WipSummaryMetrics, WipFilterState } from "../types";
-import { JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
+import { JOB_ORDER_STATUS } from "../job-order-status";
 
 interface WipSummaryCardsProps {
     summary: WipSummaryMetrics | null;

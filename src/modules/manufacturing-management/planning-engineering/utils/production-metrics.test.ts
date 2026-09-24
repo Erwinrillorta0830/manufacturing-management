@@ -185,9 +185,15 @@ const qaScaledRuntime = calculateProductionMetrics({
     targetQuantity: 13972.38,
     timingTargetQuantity: 996,
     baseQuantity: 6986.19,
-    routes: [{ sequence_order: 1, setup_time_hours: 0.5, run_time_hours: 17.2314, step_batch_size: 6986.17 }]
+    routes: [{
+        sequence_order: 1,
+        setup_time_hours: 0.5,
+        run_time_hours: 17.2314,
+        step_batch_size: 7092.56,
+        work_center_capacity_per_hour: 400
+    }]
 });
-assert.equal(formatProductionValue(qaScaledRuntime.lineLeadTimeHours), "35.4629");
+assert.equal(formatProductionValue(qaScaledRuntime.lineLeadTimeHours), "2.4900");
 
 const bottleneckBaseLead = calculateBottleneckLeadTimeHours({
     targetQuantity: 6986.19,
@@ -238,6 +244,58 @@ const qaDocumentBottleneckLead = calculateBottleneckLeadTimeHours({
 });
 assert.equal(normalizeProductionOutputQuantity(6986.19, "PCS"), 6986);
 assert.equal(formatProductionValue(qaDocumentBottleneckLead), "17.7314");
+const bottleneckFullTargetMetrics = calculateProductionMetrics({
+    targetQuantity: normalizeProductionOutputQuantity(6986.19, "PCS"),
+    timingTargetQuantity: 6986.19,
+    baseQuantity: 7092.56,
+    expectedYieldPercentage: 98.5,
+    routes: [{
+        sequence_order: 1,
+        setup_time_hours: 0.5,
+        run_time_hours: 17.2314,
+        step_batch_size: 7092.56,
+        work_center_capacity_per_hour: 400
+    }]
+});
+assert.equal(formatProductionValue(bottleneckFullTargetMetrics.lineLeadTimeHours), "17.7314");
+assert.equal(formatProductionValue(bottleneckFullTargetMetrics.routeMetrics[0].elapsedHours), "17.7314");
+
+const releaseRunRoutes = [
+    { sequence_order: 1, operation_name: "2Nd Mix", setup_time_hours: 0.5, run_time_hours: 2.5, step_batch_size: 3250, work_center_capacity_per_hour: 500 },
+    { sequence_order: 2, operation_name: "Bihon", setup_time_hours: 0.25, run_time_hours: 3, step_batch_size: 3250, work_center_capacity_per_hour: 400 },
+    { sequence_order: 3, operation_name: "Bihon", setup_time_hours: 0.25, run_time_hours: 3.5, step_batch_size: 6986.18, work_center_capacity_per_hour: 400 },
+    { sequence_order: 4, operation_name: "Blanching & Cooling", setup_time_hours: 0.25, run_time_hours: 4, step_batch_size: 6986.18, work_center_capacity_per_hour: 600 },
+    { sequence_order: 5, operation_name: "Bihon", setup_time_hours: 0.15, run_time_hours: 4, step_batch_size: 6986.19, work_center_capacity_per_hour: 400 },
+    { sequence_order: 6, operation_name: "Canton Frying", setup_time_hours: 0.25, run_time_hours: 4.5, step_batch_size: 6986.19, work_center_capacity_per_hour: 500 },
+    { sequence_order: 7, operation_name: "Automated Packing & Cutting", setup_time_hours: 0.2, run_time_hours: 3.5, step_batch_size: 6986.19, work_center_capacity_per_hour: 400 },
+    { sequence_order: 8, operation_name: "Canton Frying", setup_time_hours: 0.25, run_time_hours: 5, step_batch_size: 6986.19, work_center_capacity_per_hour: 500 },
+    { sequence_order: 9, operation_name: "Bihon 10-Point QA Defect Inspection", setup_time_hours: 0.15, run_time_hours: 5.5, step_batch_size: 6986.19, work_center_capacity_per_hour: 1000 },
+    { sequence_order: 10, operation_name: "Automated Packing & Cutting", setup_time_hours: 0.5, run_time_hours: 6, step_batch_size: 6986.19, work_center_capacity_per_hour: 1000 }
+];
+const releaseRunPartialMetrics = calculateProductionMetrics({
+    targetQuantity: 983,
+    timingTargetQuantity: 983,
+    baseQuantity: 6986.19,
+    expectedYieldPercentage: 98.5,
+    routes: releaseRunRoutes
+});
+assert.equal(formatProductionValue(releaseRunPartialMetrics.lineLeadTimeHours), "2.4949");
+assert.deepEqual(
+    releaseRunPartialMetrics.routeMetrics.map((metric) => formatProductionValue(metric.elapsedHours)),
+    ["0.3518", "2.4949", "2.4949", "2.4949", "2.4949", "2.4949", "2.4949", "2.4949", "0.2500", "2.4949"]
+);
+const releaseRunFullMetrics = calculateProductionMetrics({
+    targetQuantity: normalizeProductionOutputQuantity(6986.19, "PCS"),
+    timingTargetQuantity: 6986.19,
+    baseQuantity: 6986.19,
+    expectedYieldPercentage: 98.5,
+    routes: releaseRunRoutes
+});
+assert.equal(formatProductionValue(releaseRunFullMetrics.lineLeadTimeHours), "17.7314");
+assert.deepEqual(
+    releaseRunFullMetrics.routeMetrics.map((metric) => formatProductionValue(metric.elapsedHours)),
+    ["2.5000", "17.7314", "17.7314", "17.7314", "17.7314", "17.7314", "17.7314", "17.7314", "0.2500", "17.7314"]
+);
 
 const bottleneckMetrics = calculateProductionMetrics({
     targetQuantity: 983,
@@ -305,7 +363,7 @@ const releaseSummaryHtml = buildReleaseSummaryHtml({
     plannedDate: "",
     dueDate: "",
     shiftHours: "8",
-    targetDurationHours: 2.4949,
+    targetDurationHours: 2.4575,
     consolidatedOrders: [],
     remarks: "",
     components: [],
@@ -321,7 +379,7 @@ const releaseSummaryHtml = buildReleaseSummaryHtml({
     },
     allChecksPassed: true
 });
-assert.match(releaseSummaryHtml, /2\.4949 hrs/);
+assert.match(releaseSummaryHtml, /2\.4575 hrs/);
 assert.match(releaseSummaryHtml, /₱25\.8200/);
 assert.match(releaseSummaryHtml, /₱26\.2100/);
 assert.equal(resolveProductionShiftHours(9), 9);
@@ -539,6 +597,10 @@ const bagContainerization = calculateContainerizationMetrics(
 assert.equal(bagContainerization.containerUnitLabel, "Bags");
 assert.equal(bagContainerization.sackCount, 400);
 assert.equal(formatProductionValue(bagContainerization.flourGramsTotal / 1000), "10000.0000");
+assert.equal(
+    bagContainerization.sackCount * 25,
+    bagContainerization.flourGramsTotal / 1000
+);
 
 const bagContainerizationWithWastage = calculateContainerizationMetrics(
     "Flour Product",

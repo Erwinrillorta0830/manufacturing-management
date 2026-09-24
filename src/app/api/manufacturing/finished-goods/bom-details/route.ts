@@ -187,6 +187,7 @@ export async function POST(request: Request) {
                     : null,
             cost_per_unit: details.costPerUnit,
             unit_of_measurement_count: validatedDetails.unitOfMeasurementCount,
+            maintaining_quantity: validatedDetails.maintainingQuantity,
             product_class: extractRelationId(details.productClass),
             product_segment: extractRelationId(details.productSegment),
             product_section: extractRelationId(details.productSection),

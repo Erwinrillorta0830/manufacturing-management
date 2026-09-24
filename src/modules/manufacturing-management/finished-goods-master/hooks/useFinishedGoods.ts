@@ -30,6 +30,7 @@ import {
     fetchVersions,
     fetchBOMDetails,
     saveBOMDetails,
+    updateProduct,
     registerProduct,
     registerNewVersion,
     submitFullVersion,
@@ -56,7 +57,7 @@ import {
     submitVersionDraftForApproval,
     reopenVersionDraft
 } from "../services/finished-goods-api";
-import { fetchWorkCenters } from "../../work-stations/services/work-stations-api";
+import { fetchWorkCenters } from "../services/work-stations-api";
 import {
     getProductEditValidationErrors,
     getProductRegistrationValidationErrors,
@@ -75,6 +76,7 @@ export type RegisterFormField =
     | "densityFactor"
     | "expectedYield"
     | "shelfLife"
+    | "maintainingQuantity"
     | "versionName";
 
 export type RegisterFormErrors = Partial<Record<RegisterFormField, string>>;
@@ -166,6 +168,8 @@ export function useFinishedGoods(initialTab: string = "details") {
         segmentId: "",
         sectionId: "",
         shelfLife: "",
+        maintainingQuantity: "0",
+        hasBom: true,
         productImage: "",
         parentId: "",
         supplierIds: [] as string[]
@@ -214,9 +218,9 @@ export function useFinishedGoods(initialTab: string = "details") {
                     fetchBrands(),
                     fetchCategories(),
                     fetchUnits(),
-                    fetch("/api/manufacturing/finished-goods/products?limit=-1&excludeRollup=true"),
-                    fetch("/api/manufacturing/finished-goods/overhead-types"),
-                    fetch("/api/manufacturing/finished-goods/operations"),
+                    fetch("/api/manufacturing/inventory-warehousing/finished-goods-master/products?limit=-1&excludeRollup=true"),
+                    fetch("/api/manufacturing/inventory-warehousing/finished-goods-master/overhead-types"),
+                    fetch("/api/manufacturing/inventory-warehousing/finished-goods-master/operations"),
                     fetch("/api/manufacturing/procurement/suppliers"),
                     fetchClasses().catch(() => []),
                     fetchSegments().catch(() => []),
@@ -290,6 +294,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                 product_shelf_life: p.product_shelf_life ? Number(p.product_shelf_life) : undefined,
                 cost_per_unit: p.cost_per_unit ? Number(p.cost_per_unit) : undefined,
                 unit_of_measurement_count: p.unit_of_measurement_count ? Number(p.unit_of_measurement_count) : undefined,
+                maintaining_quantity: p.maintaining_quantity !== undefined && p.maintaining_quantity !== null ? Number(p.maintaining_quantity) : 0,
                 product_image: p.product_image || undefined,
 
                 has_versions: !!p.has_versions
@@ -398,7 +403,7 @@ export function useFinishedGoods(initialTab: string = "details") {
 
         async function loadSelectedVersionCost() {
             try {
-                const res = await fetch(`/api/manufacturing/finished-goods/bom-cost?productId=${numericId}&versionId=${vId}&forexRate=${debouncedForexRate}`);
+                const res = await fetch(`/api/manufacturing/inventory-warehousing/finished-goods-master/bom-cost?productId=${numericId}&versionId=${vId}&forexRate=${debouncedForexRate}`);
                 if (res.ok) {
                     const costData = await res.json();
                     setVersionCosts(prev => ({
@@ -444,6 +449,7 @@ export function useFinishedGoods(initialTab: string = "details") {
             product_shelf_life: selectedProduct.product_shelf_life,
             cost_per_unit: selectedProduct.cost_per_unit,
             unit_of_measurement_count: selectedProduct.unit_of_measurement_count,
+            maintaining_quantity: selectedProduct.maintaining_quantity ?? 0,
             product_image: selectedProduct.product_image,
             parent_id: selectedProduct.parent_id,
             status: resolveProductMasterStatus(selectedProduct.status, selectedProduct.isActive),
@@ -481,7 +487,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                 const isSelectedADraft = Boolean(selectedVerMeta?.is_draft || (selectedVersionId && selectedVersionId < 0));
                 if (isSelectedADraft) {
                     try {
-                        const dRes = await fetch(`/api/manufacturing/finished-goods/versions/drafts?draftId=${selectedVersionId}`, { cache: "no-store" });
+                        const dRes = await fetch(`/api/manufacturing/inventory-warehousing/finished-goods-master/versions/drafts?draftId=${selectedVersionId}`, { cache: "no-store" });
                         if (dRes.ok) {
                             draftObj = (await dRes.json()).draft;
                         }
@@ -694,10 +700,11 @@ export function useFinishedGoods(initialTab: string = "details") {
                 unit_of_measurement_count: registerForm.uomCount,
                 density_factor: registerForm.densityFactor,
                 product_shelf_life: registerForm.shelfLife,
-
+                maintaining_quantity: registerForm.maintainingQuantity
             },
-            versionName: registerForm.versionName,
-            expectedYield: registerForm.expectedYield
+            versionName: registerForm.hasBom ? registerForm.versionName : undefined,
+            expectedYield: registerForm.hasBom ? registerForm.expectedYield : undefined,
+            hasBom: registerForm.hasBom
         }) as RegisterFormErrors;
 
         if (registrationType === "child" && !registerForm.parentId) {
@@ -735,7 +742,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                     setSaveStatus("Creating new product SKU entry...");
                 } else if (progress < 60) {
                     progress += 3;
-                    setSaveStatus("Registering initial version (v1.0)...");
+                    setSaveStatus(registerForm.hasBom ? "Registering initial version (v1.0)..." : "Setting up inventory master...");
                 } else {
                     progress += 2;
                     setSaveStatus("Linking associated supplier catalog...");
@@ -756,6 +763,7 @@ export function useFinishedGoods(initialTab: string = "details") {
             const shelfLifeVal = registerForm.shelfLife ? Number(registerForm.shelfLife) : undefined;
             const uomCountVal = registerForm.uomCount ? Number(registerForm.uomCount) : 0;
             const costPerUnitVal = registerForm.costPerUnit ? Number(registerForm.costPerUnit) : 0;
+            const maintainingQuantityVal = registerForm.maintainingQuantity ? Number(registerForm.maintainingQuantity) : 0;
 
             const res = await registerProduct(
                 {
@@ -774,15 +782,16 @@ export function useFinishedGoods(initialTab: string = "details") {
                     product_segment: segmentVal,
                     product_section: sectionVal,
                     product_shelf_life: shelfLifeVal,
+                    maintaining_quantity: maintainingQuantityVal,
                     product_image: registerForm.productImage || undefined,
                     parent_id: registerForm.parentId ? Number(registerForm.parentId) : null,
-
                 },
-                `${registerForm.sku.trim()} Rev 1`,
+                registerForm.hasBom ? `${registerForm.sku.trim()} Rev 1` : undefined,
                 registerForm.supplierIds.map(Number),
-                Number(registerForm.expectedYield),
+                registerForm.hasBom ? Number(registerForm.expectedYield) : undefined,
                 1,
-                unitId
+                unitId,
+                registerForm.hasBom
             );
 
             if (res.success && res.productId) {
@@ -813,13 +822,15 @@ export function useFinishedGoods(initialTab: string = "details") {
                     segmentId: "",
                     sectionId: "",
                     shelfLife: "",
+                    maintainingQuantity: "0",
+                    hasBom: true,
                     productImage: "",
                     parentId: "",
                     supplierIds: [] as string[]
                 });
 
                 // Reload products list
-                const resList = await fetch("/api/manufacturing/finished-goods/products?limit=-1");
+                const resList = await fetch("/api/manufacturing/inventory-warehousing/finished-goods-master/products?limit=-1");
                 const dataList = await resList.json();
                 setAllCatalogProducts(dataList);
                 const finishedGoods = dataList.filter((p: BFFCatalogProduct) => Number(p.product_type) === 388);
@@ -851,6 +862,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                         product_shelf_life: p.product_shelf_life ? Number(p.product_shelf_life) : undefined,
                         cost_per_unit: p.cost_per_unit ? Number(p.cost_per_unit) : undefined,
                         unit_of_measurement_count: p.unit_of_measurement_count ? Number(p.unit_of_measurement_count) : undefined,
+                        maintaining_quantity: p.maintaining_quantity !== undefined && p.maintaining_quantity !== null ? Number(p.maintaining_quantity) : 0,
                         product_image: p.product_image || undefined,
 
                         has_versions: !!p.has_versions
@@ -996,7 +1008,10 @@ export function useFinishedGoods(initialTab: string = "details") {
             productShelfLife: shelfLife > 0 ? shelfLife : 365,
             densityFactor: densityFactor > 0 ? densityFactor : 1,
             unit_of_measurement: uomId > 0 ? uomId : (fallbackUomId > 0 ? fallbackUomId : undefined),
-            expected_yield_percentage: expectedYield > 0 && expectedYield <= 100 ? expectedYield : 100
+            expected_yield_percentage: expectedYield > 0 && expectedYield <= 100 ? expectedYield : 100,
+            maintaining_quantity: Number(editedDetails.maintaining_quantity !== undefined ? editedDetails.maintaining_quantity : (selectedProduct?.maintaining_quantity ?? 0)),
+            hasBom: selectedProduct?.has_versions !== false,
+            has_versions: selectedProduct?.has_versions
         };
         const validationErrors = getProductEditValidationErrors(editValidationInput) as EditProductFieldErrors;
         if (Object.keys(validationErrors).length > 0) {
@@ -1040,28 +1055,30 @@ export function useFinishedGoods(initialTab: string = "details") {
             }
         }
 
-        // Validate routing operation steps have operations selected
-        for (let i = 0; i < editedRoutes.length; i++) {
-            const r = editedRoutes[i];
-            const stepNum = r.sequence_order || i + 1;
-            const opId = Number(r.operation_id || 0);
-            if (!opId || opId <= 0) {
-                toast.error(`Route Step #${stepNum}: Please select or specify an Operation before saving.`);
+        // Validate routing operation steps only if product has a BOM
+        if (validatedDetails.hasBom) {
+            for (let i = 0; i < editedRoutes.length; i++) {
+                const r = editedRoutes[i];
+                const stepNum = r.sequence_order || i + 1;
+                const opId = Number(r.operation_id || 0);
+                if (!opId || opId <= 0) {
+                    toast.error(`Route Step #${stepNum}: Please select or specify an Operation before saving.`);
+                    return;
+                }
+            }
+
+            const invalidBomRow = editedRoutes.flatMap(route => (route.bom_items || []).map((item, index) => ({
+                routeId: route.route_id,
+                rowNumber: index + 1,
+                item,
+                materialType: item.material_type || materialTypeFromProduct(item.product_type, item.has_versions)
+            }))).find(row => !row.materialType || !Number.isFinite(Number(row.item.product_id)) || Number(row.item.product_id) <= 0);
+
+            if (invalidBomRow) {
+                const issue = !invalidBomRow.materialType ? "select a Material Type" : "select a Material";
+                toast.error(`Route ${invalidBomRow.routeId}, BOM row ${invalidBomRow.rowNumber}: ${issue} before saving.`);
                 return;
             }
-        }
-
-        const invalidBomRow = editedRoutes.flatMap(route => (route.bom_items || []).map((item, index) => ({
-            routeId: route.route_id,
-            rowNumber: index + 1,
-            item,
-            materialType: item.material_type || materialTypeFromProduct(item.product_type, item.has_versions)
-        }))).find(row => !row.materialType || !Number.isFinite(Number(row.item.product_id)) || Number(row.item.product_id) <= 0);
-
-        if (invalidBomRow) {
-            const issue = !invalidBomRow.materialType ? "select a Material Type" : "select a Material";
-            toast.error(`Route ${invalidBomRow.routeId}, BOM row ${invalidBomRow.rowNumber}: ${issue} before saving.`);
-            return;
         }
 
         const routesPayload = editedRoutes.map(route => ({
@@ -1072,7 +1089,7 @@ export function useFinishedGoods(initialTab: string = "details") {
             }))
         }));
 
-        if (activeDraft) {
+        if (validatedDetails.hasBom && activeDraft) {
             setSavingBOM(true);
             setSaveStatus("Saving draft revision...");
             try {
@@ -1180,12 +1197,15 @@ export function useFinishedGoods(initialTab: string = "details") {
                 productImage: editedDetails.product_image,
                 parent_id: editedDetails.parent_id !== undefined ? (editedDetails.parent_id ? Number(editedDetails.parent_id) : null) : null,
                 unit_of_measurement: validatedDetails.unitOfMeasurement,
+                maintaining_quantity: validatedDetails.maintainingQuantity,
                 status: (editedDetails as unknown as { status?: string }).status || (selectedProduct as unknown as { status?: string })?.status || "Active"
             };
 
             let saveSucceeded = false;
 
-            const targetDraftId = activeDraft?.draft_id || (selectedVersion?.is_draft ? (selectedVersion.draft_id || selectedVersion.version_id) : null);
+            const targetDraftId = validatedDetails.hasBom
+                ? (activeDraft?.draft_id || (selectedVersion?.is_draft ? (selectedVersion.draft_id || selectedVersion.version_id) : null))
+                : null;
             if (targetDraftId) {
                 const targetOverheads = editedVersionDetails?.overhead_items !== undefined
                     ? editedVersionDetails.overhead_items
@@ -1202,8 +1222,30 @@ export function useFinishedGoods(initialTab: string = "details") {
                     laborPositions: editedVersionDetails?.labor_positions || [],
                     overheads: targetOverheads
                 });
+                await updateProduct(numericProductId, {
+                    product_name: validatedDetails.title,
+                    product_code: validatedDetails.sku,
+                    barcode: editedDetails.barcode || "",
+                    price_per_unit: editedDetails.targetSellingPrice || 0,
+                    density_factor: validatedDetails.densityFactor,
+                    product_brand: validatedDetails.productBrand,
+                    product_category: validatedDetails.productCategory,
+                    description: editedDetails.description || "",
+                    short_description: editedDetails.description || null,
+                    cost_per_unit: editedDetails.cost_per_unit ?? 0,
+                    unit_of_measurement_count: validatedDetails.unitOfMeasurementCount,
+                    product_class: editedDetails.product_class || null,
+                    product_segment: editedDetails.product_segment || null,
+                    product_section: editedDetails.product_section || null,
+                    product_shelf_life: validatedDetails.productShelfLife,
+                    product_image: editedDetails.product_image || null,
+                    parent_id: editedDetails.parent_id !== undefined ? (editedDetails.parent_id ? Number(editedDetails.parent_id) : null) : null,
+                    unit_of_measurement: validatedDetails.unitOfMeasurement,
+                    maintaining_quantity: validatedDetails.maintainingQuantity,
+                    status: (editedDetails as unknown as { status?: string }).status || (selectedProduct as unknown as { status?: string })?.status || "Active"
+                });
                 saveSucceeded = true;
-            } else if (selectedVersionId !== null && selectedVersionId < 0) {
+            } else if (validatedDetails.hasBom && selectedVersionId !== null && selectedVersionId < 0) {
                 // Local UI draft version: submit as Draft to MySQL database
                 const draftPayload = {
                     productId: numericProductId,
@@ -1242,27 +1284,52 @@ export function useFinishedGoods(initialTab: string = "details") {
                         ? activeBOMId
                         : (versions.find(v => v.version_id > 0)?.version_id || null));
 
-                if (!targetVersionId) {
-                    throw new Error("No version selected or found for this product. Please select or register a version first.");
+                if (!validatedDetails.hasBom || !targetVersionId) {
+                    await updateProduct(numericProductId, {
+                        product_name: validatedDetails.title,
+                        product_code: validatedDetails.sku,
+                        barcode: editedDetails.barcode || "",
+                        price_per_unit: editedDetails.targetSellingPrice || 0,
+                        density_factor: validatedDetails.densityFactor,
+                        product_brand: validatedDetails.productBrand,
+                        product_category: validatedDetails.productCategory,
+                        description: editedDetails.description || "",
+                        short_description: editedDetails.description || null,
+                        cost_per_unit: editedDetails.cost_per_unit ?? 0,
+                        unit_of_measurement_count: validatedDetails.unitOfMeasurementCount,
+                        product_class: editedDetails.product_class || null,
+                        product_segment: editedDetails.product_segment || null,
+                        product_section: editedDetails.product_section || null,
+                        product_shelf_life: validatedDetails.productShelfLife,
+                        product_image: editedDetails.product_image || null,
+                        parent_id: editedDetails.parent_id !== undefined ? (editedDetails.parent_id ? Number(editedDetails.parent_id) : null) : null,
+                        unit_of_measurement: validatedDetails.unitOfMeasurement,
+                        maintaining_quantity: validatedDetails.maintainingQuantity,
+                        status: (editedDetails as unknown as { status?: string }).status || (selectedProduct as unknown as { status?: string })?.status || "Active"
+                    });
+                    saveSucceeded = true;
+                } else {
+                    const res = await saveBOMDetails(
+                        numericProductId,
+                        targetVersionId,
+                        {
+                            ...detailsPayload,
+                            maintaining_quantity: validatedDetails.maintainingQuantity
+                        },
+                        routesPayload,
+                        editedOverheads
+                    );
+                    saveSucceeded = res.success;
+                    setActiveBOMId(targetVersionId);
+                    const list = await fetchVersions(numericProductId);
+                    const sortedList = (list || []).sort((a: any, b: any) => {
+                        const timeA = a.updated_at ? new Date(a.updated_at).getTime() : (a.created_at ? new Date(a.created_at).getTime() : 0);
+                        const timeB = b.updated_at ? new Date(b.updated_at).getTime() : (b.created_at ? new Date(b.created_at).getTime() : 0);
+                        if (!isNaN(timeA) && !isNaN(timeB) && timeA !== timeB) return timeB - timeA;
+                        return b.version_id - a.version_id;
+                    });
+                    setVersions(sortedList);
                 }
-
-                const res = await saveBOMDetails(
-                    numericProductId,
-                    targetVersionId,
-                    detailsPayload,
-                    routesPayload,
-                    editedOverheads
-                );
-                saveSucceeded = res.success;
-                setActiveBOMId(targetVersionId);
-                const list = await fetchVersions(numericProductId);
-                const sortedList = (list || []).sort((a: any, b: any) => {
-                    const timeA = a.updated_at ? new Date(a.updated_at).getTime() : (a.created_at ? new Date(a.created_at).getTime() : 0);
-                    const timeB = b.updated_at ? new Date(b.updated_at).getTime() : (b.created_at ? new Date(b.created_at).getTime() : 0);
-                    if (!isNaN(timeA) && !isNaN(timeB) && timeA !== timeB) return timeB - timeA;
-                    return b.version_id - a.version_id;
-                });
-                setVersions(sortedList);
             }
 
             if (saveSucceeded) {
@@ -1297,6 +1364,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                             product_shelf_life: editedDetails.product_shelf_life,
                             cost_per_unit: editedDetails.cost_per_unit,
                             unit_of_measurement_count: editedDetails.unit_of_measurement_count,
+                            maintaining_quantity: validatedDetails.maintainingQuantity,
                             product_image: editedDetails.product_image,
                             parent_id: updatedParentId,
                             parentProduct: updatedParentId === null,
@@ -1335,6 +1403,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                             product_shelf_life: editedDetails.product_shelf_life,
                             cost_per_unit: editedDetails.cost_per_unit,
                             unit_of_measurement_count: editedDetails.unit_of_measurement_count,
+                            maintaining_quantity: validatedDetails.maintainingQuantity,
                             product_image: editedDetails.product_image,
                             parent_id: updatedParentId,
 
@@ -1344,8 +1413,13 @@ export function useFinishedGoods(initialTab: string = "details") {
                     return p;
                 }));
 
-                const vList = await fetchVersions(numericProductId);
-                setVersions(vList);
+                if (validatedDetails.hasBom) {
+                    const vList = await fetchVersions(numericProductId);
+                    setVersions(vList);
+                } else {
+                    setVersions([]);
+                    setSelectedVersionId(null);
+                }
                 setHasUnsavedChanges(false);
                 setEditFieldErrors({});
                 toast.success("Finished good configuration saved successfully!");

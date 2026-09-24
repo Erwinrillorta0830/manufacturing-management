@@ -21,6 +21,7 @@ import {
     PACKAGING_MATERIAL_PRODUCT_TYPE,
     RAW_MATERIAL_PRODUCT_TYPE
 } from "../raw-materials/_classification-integrity";
+import { FINISHED_GOODS_PRODUCT_TYPE } from "../_category-type";
 
 /**
  * Helper to get Philippine Standard Time (Asia/Manila) timestamps for database operations.
@@ -68,7 +69,7 @@ const SUPPLIER_FIELDS = "id,supplier_name,supplier_shortcut,contact_person,email
 const SUPPLIER_PAGE_SIZE_DEFAULT = 10;
 const SUPPLIER_PAGE_SIZE_MAX = 100;
 const PRODUCT_FIELDS = "id,supplier_id,discount_type.*,product_id.*,product_id.product_type,product_id.unit_of_measurement.*";
-const SUPPLIER_PRODUCT_TYPE_FILTER = `${RAW_MATERIAL_PRODUCT_TYPE},${PACKAGING_MATERIAL_PRODUCT_TYPE}`;
+const SUPPLIER_PRODUCT_TYPE_FILTER = `${RAW_MATERIAL_PRODUCT_TYPE},${PACKAGING_MATERIAL_PRODUCT_TYPE},${FINISHED_GOODS_PRODUCT_TYPE}`;
 
 export class SupplierCurrencyValidationError extends Error {
     constructor(message: string) {

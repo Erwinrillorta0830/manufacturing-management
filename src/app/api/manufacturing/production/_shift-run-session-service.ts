@@ -18,6 +18,7 @@ import {
     productionYieldImageUrl,
     validateProductionYieldImage
 } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
+import { hasCompletedTimer } from "@/modules/manufacturing-management/production-workflow/operator-time";
 
 const EPSILON = 0.000001;
 
@@ -439,6 +440,42 @@ async function directusRows<T = any>(pathname: string, label: string): Promise<T
     const rows = await directusRequest<unknown>(pathname, label);
     if (!Array.isArray(rows)) throw new DirectusSessionPersistenceError(`${label} returned an invalid collection response.`);
     return rows as T[];
+}
+
+async function assertJobOrderHasCompletedTimer(jobOrderId: number): Promise<void> {
+    const routes = await directusRows<any>(
+        `/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${encodeURIComponent(String(jobOrderId))}&fields=jo_route_id&limit=-1`,
+        `Load routing steps for Job Order ${jobOrderId}`
+    );
+    const routeIds = routes
+        .map((route) => numberId(route.jo_route_id))
+        .filter(Boolean);
+
+    if (routeIds.length === 0) {
+        throw new ProductionSessionError(
+            409,
+            "SHIFT_TIMER_REQUIRED",
+            "Start and stop at least one operator timer before recording the production session."
+        );
+    }
+
+    const params = new URLSearchParams({
+        "filter[jo_route_id][_in]": routeIds.join(","),
+        fields: "started_at,stopped_at",
+        limit: "-1"
+    });
+    const operatorTimers = await directusRows<any>(
+        `/items/manufacturing_job_order_route_operators?${params.toString()}`,
+        `Load operator timers for Job Order ${jobOrderId}`
+    );
+
+    if (!operatorTimers.some((timer) => hasCompletedTimer(timer.started_at, timer.stopped_at))) {
+        throw new ProductionSessionError(
+            409,
+            "SHIFT_TIMER_REQUIRED",
+            "Start and stop at least one operator timer before recording the production session."
+        );
+    }
 }
 
 function directusFileId(value: unknown): string | null {
@@ -1001,11 +1038,12 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
     let imageAttached = false;
     try {
         const { body, image } = await readShiftRunRequest(request);
-        if (image) {
-            const imageError = validateProductionYieldImage(image);
-            if (imageError) {
-                throw new ProductionSessionError(422, "SHIFT_RUN_IMAGE_INVALID", imageError);
-            }
+        if (!image) {
+            throw new ProductionSessionError(400, "SHIFT_RUN_IMAGE_REQUIRED", "A shift evidence image is required.");
+        }
+        const imageError = validateProductionYieldImage(image);
+        if (imageError) {
+            throw new ProductionSessionError(422, "SHIFT_RUN_IMAGE_INVALID", imageError);
         }
         const input = normalizeSessionInput(body);
         const actor = await getSessionActor();
@@ -1064,6 +1102,9 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
         }
         if (status !== JOB_ORDER_STATUS.IN_PRODUCTION && !existingLedger) {
             throw new ProductionSessionError(409, "JOB_ORDER_NOT_IN_PRODUCTION", `Job Order ${input.joId} must be In Production before a session can be recorded.`);
+        }
+        if (input.sessionScope === "JOB_ORDER" && !existingLedger) {
+            await assertJobOrderHasCompletedTimer(input.joId);
         }
 
         const branchId = numberId(jobOrder.branch_id);

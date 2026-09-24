@@ -520,6 +520,7 @@ export function CreateBufferJODialog({
                 baseUomId: readUomId(bomData?.uom_id ?? bomData?.unit_of_measurement ?? bomData?.uom),
                 routes: routings.map((route) => ({
                     sequence_order: Number(route.sequence_order || 0),
+                    operation_name: route.operation_name || route.operation?.operation_name || "",
                     setup_time_hours: Number(route.setup_time_hours || 0),
                     run_time_hours: Number(route.run_time_hours || 0),
                     step_batch_size: route.step_batch_size == null ? undefined : Number(route.step_batch_size),

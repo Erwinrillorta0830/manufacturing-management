@@ -118,7 +118,7 @@ export interface IncomingShipment {
     total_foreign_currency: number | string;
     exchange_rate: number | string;
     total_php_value: number | string;
-    status: "For Approval" | "Requested" | "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Warehouse Receiving" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected" | "Revision";
+    status: "For Approval" | "Requested" | "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "Warehouse Receiving" | "QA Receiving" | "Partially Received" | "Received" | "Rejected" | "Revision";
     inventory_status?: number | null;
     payment_status?: number | null;
     is_posted?: number | boolean | null;
@@ -361,6 +361,7 @@ export interface LandedCostAuditResponse {
 
 export interface RawMaterial {
     product_id: number;
+    has_bom?: boolean | number | string | null;
     parent_id?: number | null;
     parent_name?: string | null;
     product_code?: string;
@@ -518,7 +519,7 @@ export interface DirectusShipment {
     total_foreign_currency: number | string;
     exchange_rate: number | string;
     total_php_value: number | string;
-    status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Warehouse Receiving" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected" | "Revision";
+    status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "Warehouse Receiving" | "QA Receiving" | "Partially Received" | "Received" | "Rejected" | "Revision";
     inventory_status?: number | null;
     payment_status?: number | null;
     revised_at?: string | null;
@@ -612,7 +613,7 @@ export interface ShipmentData {
     exchange_rate: string;
     total_foreign_currency: string;
     total_php_value: string;
-    status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Warehouse Receiving" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected" | "Revision";
+    status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "Warehouse Receiving" | "QA Receiving" | "Partially Received" | "Received" | "Rejected" | "Revision";
     inventory_status?: number | null;
     payment_status?: number | null;
     date_received: string;
@@ -642,6 +643,7 @@ export interface LineItem {
 
 export interface BFFCatalogProduct {
     product_id: number;
+    has_bom?: boolean | number | string | null;
     parent_id?: number | string | { product_id?: number | string; id?: number | string } | null;
     product_code?: string;
     product_name: string;

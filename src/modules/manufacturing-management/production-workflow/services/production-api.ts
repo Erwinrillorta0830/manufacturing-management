@@ -228,9 +228,7 @@ export async function submitShiftRunLog(payload: ShiftRunLogPayload): Promise<an
     const { evidenceImage, ...sessionPayload } = payload;
     const formData = new FormData();
     formData.set("payload", JSON.stringify(sessionPayload));
-    if (evidenceImage) {
-        formData.set("image", evidenceImage, evidenceImage.name);
-    }
+    formData.set("image", evidenceImage, evidenceImage.name);
 
     const res = await fetch("/api/manufacturing/production/shift-run-log", {
         method: "POST",

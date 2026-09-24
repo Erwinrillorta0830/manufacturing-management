@@ -1,6 +1,6 @@
 import { DIRECTUS_URL, headers } from "../_directus";
 import { productUpdateAuditFields } from "@/app/api/manufacturing/product-audit";
-import { dateOnlyInManila, FINANCE_APPROVED_HISTORY_INVENTORY_STATUS_IDS, INVENTORY_STATUS, inventoryStatusToPurchaseOrderStatus, inventoryStatusToShipmentStatus, isPurchaseOrderApprovalStatus, PAYMENT_STATUS, RECEIVING_QUEUE_INVENTORY_STATUS_IDS, shipmentStatusToInventoryStatus, type ShipmentStatusLabel } from "../_domain";
+import { dateOnlyInManila, FINANCE_APPROVED_HISTORY_INVENTORY_STATUS_IDS, INVENTORY_STATUS, LEGACY_DISPATCH_STATUS_ID, LEGACY_FOR_PICKUP_STATUS_ID, inventoryStatusToPurchaseOrderStatus, inventoryStatusToShipmentStatus, isPurchaseOrderApprovalStatus, PAYMENT_STATUS, RECEIVING_QUEUE_INVENTORY_STATUS_IDS, shipmentStatusToInventoryStatus, type ShipmentStatusLabel } from "../_domain";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { getPurchaseOrderCreationTimestamps } from "../_purchase-order-timestamps";
 import { formatPhtDateTime } from "@/app/api/manufacturing/services/core-api.service";
@@ -785,8 +785,8 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
     }
     if (query.supplierId) clauses.push({ supplier_name: { _eq: query.supplierId } });
     if (query.inventoryStatus) {
-        const inventoryStatusIds = query.inventoryStatus === INVENTORY_STATUS.FOR_PICKUP
-            ? [INVENTORY_STATUS.FOR_PICKUP, 12]
+        const inventoryStatusIds = query.inventoryStatus === INVENTORY_STATUS.QA_RECEIVING
+            ? [INVENTORY_STATUS.QA_RECEIVING, LEGACY_FOR_PICKUP_STATUS_ID, LEGACY_DISPATCH_STATUS_ID]
             : [query.inventoryStatus];
         clauses.push({ inventory_status: { _in: inventoryStatusIds } });
     }
@@ -808,7 +808,11 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
             ]
         });
     } else if (query.status && !query.approvalStage) {
-        clauses.push({ inventory_status: { _eq: shipmentStatusToInventoryStatus(query.status) } });
+        const statusId = shipmentStatusToInventoryStatus(query.status);
+        const statusIds = statusId === INVENTORY_STATUS.QA_RECEIVING
+            ? [INVENTORY_STATUS.QA_RECEIVING, LEGACY_FOR_PICKUP_STATUS_ID, LEGACY_DISPATCH_STATUS_ID]
+            : [statusId];
+        clauses.push({ inventory_status: { _in: statusIds } });
     }
     await addApprovalStageFilter(clauses, query);
     if (query.startDate) clauses.push({ date_encoded: { _gte: `${query.startDate}T00:00:00` } });
@@ -1524,7 +1528,7 @@ export async function updateIncomingShipmentStatus(
     leadTimeReceiving?: string | null
 ) {
     try {
-        if (status === "Receiving (QA)" || status === "Received") {
+        if (status === "QA Receiving" || status === "Received") {
             const linesRes = await fetchShipmentLineItems(shipmentId);
             for (const l of linesRes) {
                 const finalLandedUnitCost = Number(l.final_landed_unit_cost || l.base_unit_cost_php || 0);
@@ -1547,7 +1551,7 @@ export async function updateIncomingShipmentStatus(
         const updatePayload: Record<string, unknown> = {
             inventory_status: shipmentStatusToInventoryStatus(status)
         };
-        if (status === "Received" || status === "Receiving (QA)") {
+        if (status === "Received" || status === "QA Receiving") {
             updatePayload.date_received = await getTodayDateString();
             updatePayload.receiver_id = userId || null;
         }

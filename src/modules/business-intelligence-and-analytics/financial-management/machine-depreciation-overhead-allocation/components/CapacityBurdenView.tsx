@@ -137,7 +137,9 @@ export default function CapacityBurdenView({
                                             <div>
                                                 <span className="font-semibold text-foreground" title={asset.item_name}>{asset.item_name}</span>
                                                 <div className="text-[10px] text-muted-foreground mt-0.5">
-                                                    {asset.work_center_name ? (
+                                                    {asset.assigned_work_centers && asset.assigned_work_centers.length > 1 ? (
+                                                        <span>Work Stations: {asset.assigned_work_centers.map((aw) => aw.work_center_name).join(", ")}</span>
+                                                    ) : asset.work_center_name ? (
                                                         <span>Work Station: {asset.work_center_name}</span>
                                                     ) : (
                                                         <span className="text-amber-500 font-medium">Unassigned Station</span>

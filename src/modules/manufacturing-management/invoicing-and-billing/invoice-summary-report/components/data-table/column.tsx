@@ -15,6 +15,7 @@ export const columns: ColumnDef<InvoiceReportRow>[] = [
     header: ({ column }) => (
       <DataTableColumnHeader column={column} label="Date Requested" />
     ),
+    meta: { label: "Date Requested" },
     filterFn: (row, id, value) => {
       const dateStr = row.getValue(id) as string;
       if (!dateStr) return false;
@@ -69,6 +70,7 @@ export const columns: ColumnDef<InvoiceReportRow>[] = [
   {
     accessorKey: "sales_order_no",
     header: "S.O. No.",
+    meta: { label: "Sales Order Id" },
     cell: ({ row }) => (
       <span className="font-medium">{row.original.sales_order_no}</span>
     ),
@@ -84,6 +86,18 @@ export const columns: ColumnDef<InvoiceReportRow>[] = [
       variant: "text",
       icon: User,
     },
+    filterFn: (row, _id, value) => {
+      if (!value) return true;
+      const search = String(value).toLowerCase().trim();
+      const item = row.original;
+      return Boolean(
+        item.customer_name?.toLowerCase().includes(search) ||
+        item.original_invoice?.toLowerCase().includes(search) ||
+        item.sales_order_no?.toLowerCase().includes(search) ||
+        item.defect_reason?.toLowerCase().includes(search) ||
+        item.csr_remarks?.toLowerCase().includes(search)
+      );
+    },
     cell: ({ row }) => (
       <div className="max-w-37.5 truncate font-medium lg:max-w-62.5">
         {row.original.customer_name}
@@ -96,7 +110,7 @@ export const columns: ColumnDef<InvoiceReportRow>[] = [
     header: ({ column }) => (
       <DataTableColumnHeader column={column} label="Amount" />
     ),
-    meta: { label: "Amount" },
+    meta: { label: "Total Amount" },
     cell: ({ row }) => {
       return (
         <span className="font-medium">
@@ -139,8 +153,9 @@ export const columns: ColumnDef<InvoiceReportRow>[] = [
     header: ({ column }) => (
       <DataTableColumnHeader column={column} label="Reason Type" />
     ),
-    meta: { label: "Reason Type" },
+    meta: { label: "Reason Code" },
     enableHiding: true,
+    filterFn: "arrIncludesSome",
     cell: ({ row }) => (
       <Badge variant="secondary">{row.original.defect_reason}</Badge>
     ),

@@ -7,7 +7,6 @@ import {
     ClipboardCheck, 
     Users, 
     CheckCircle2, 
-    Scan, 
     GitBranch, 
     History, 
     Maximize2, 
@@ -32,6 +31,7 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogFooter, Di
 import { JobOrderShiftLogModal } from "./components/JobOrderShiftLogModal";
 import { DailyYieldAuditDialog } from "../manufacturing-job-order-inspection-qa/components/DailyYieldAuditDialog";
 import { useDailyYieldAudit } from "../manufacturing-job-order-inspection-qa/hooks/useDailyYieldAudit";
+import { hasCompletedTimer } from "./operator-time";
 import { StationStartScanner } from "./components/StationStartScanner";
 import { RouteWorkstationAssignmentDialog } from "./components/RouteWorkstationAssignmentDialog";
 import { GenealogyAuditModal } from "./components/GenealogyAuditModal";
@@ -58,6 +58,7 @@ export default function ProductionWorkflowModule() {
         routeOperators,
         loadingJobs,
         loadingOperators,
+        pendingTimerKey,
         searchQuery,
         setSearchQuery,
         inProductionJobOrders,
@@ -109,11 +110,23 @@ export default function ProductionWorkflowModule() {
         handleWorkflowAction
     } = useProductionWorkflow();
 
-    const selectedProductionOutput = selectedJobOrder?.productionOutputQuantity
+    const hasCompletedJobOrderTimer = routeOperators.some((operator) =>
+        !operator.is_placeholder && hasCompletedTimer(operator.started_at, operator.stopped_at)
+    );
+
+    const [progressOutput, setProgressOutput] = useState<{ jobOrderId: number; producedQuantity: number } | null>(null);
+    const selectedJobOrderNumericId = Number(selectedJobOrder?.order_id || selectedJobOrder?.job_order_id || 0);
+    const selectedProductionOutput = (progressOutput?.jobOrderId === selectedJobOrderNumericId
+        ? progressOutput.producedQuantity
+        : null)
+        ?? selectedJobOrder?.productionOutputQuantity
         ?? selectedJobOrder?.producedQty
         ?? selectedJobOrder?.completed_quantity
         ?? 0;
     const selectedJobOrderTarget = resolveJobOrderTargetQuantity(selectedJobOrder);
+    const handleProgressOutputChange = React.useCallback((jobOrderId: number, producedQuantity: number) => {
+        setProgressOutput({ jobOrderId, producedQuantity });
+    }, []);
 
     // UI state
     const [clockedInCount, setClockedInCount] = React.useState(0);
@@ -285,12 +298,6 @@ export default function ProductionWorkflowModule() {
                     <div className="flex flex-wrap gap-2 w-full md:w-auto shrink-0">
                         <StatusLegendPopover />
                         <Button 
-                            onClick={() => openStationScanner(null)}
-                            className="bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold shadow-md shadow-emerald-500/20 h-10 text-xs px-4"
-                        >
-                            <Scan className="mr-2 h-4 w-4" /> Station Start Scanner
-                        </Button>
-                        <Button 
                             variant="outline" 
                             size="default" 
                             onClick={() => {
@@ -383,7 +390,6 @@ export default function ProductionWorkflowModule() {
                     statusOptions={statusFilterOptions}
                     hasActiveFilters={hasActiveFilters}
                     onClearFilters={clearFilters}
-                    onAssignWorkstation={(jo) => openStationScanner(jo)}
                 />
             </div>
 
@@ -420,7 +426,7 @@ export default function ProductionWorkflowModule() {
                                     {selectedJobOrder?.order_no || `JO #${selectedJobOrder?.jo_id}`}
                                 </DialogTitle>
                                 <DialogDescription className="text-muted-foreground text-xs sm:text-sm font-medium truncate sm:whitespace-normal">
-                                    Product: <strong className="text-foreground">{selectedJobOrder?.product_name}</strong> • Target: {formatProductionQuantity(selectedJobOrderTarget)} pcs • Produced: <span className="font-mono font-bold text-emerald-600">{formatProductionQuantity(selectedProductionOutput)} pcs</span> • Workstation: <strong className={selectedJobOrder?.primary_work_center_id ? "text-foreground" : "text-amber-600 dark:text-amber-400"}>{selectedJobOrder?.primary_work_center_name || (selectedJobOrder?.primary_work_center_id ? `WC #${selectedJobOrder.primary_work_center_id}` : "Unassigned")}</strong>
+                                    Product: <strong className="text-foreground">{selectedJobOrder?.product_name}</strong> • Target: {formatProductionQuantity(selectedJobOrderTarget)} {selectedJobOrder?.uom_shortcut || "pcs"} • Produced: <span className="font-mono font-bold text-emerald-600">{formatProductionQuantity(selectedProductionOutput)} {selectedJobOrder?.uom_shortcut || "pcs"}</span> • Workstation: <strong className={selectedJobOrder?.primary_work_center_id ? "text-foreground" : "text-amber-600 dark:text-amber-400"}>{selectedJobOrder?.primary_work_center_name || (selectedJobOrder?.primary_work_center_id ? `WC #${selectedJobOrder.primary_work_center_id}` : "Unassigned")}</strong>
                                 </DialogDescription>
                                 {selectedJobOrderJourney && (
                                     <JobOrderJourneyBar journey={selectedJobOrderJourney} compact className="pt-2" />
@@ -470,7 +476,7 @@ export default function ProductionWorkflowModule() {
                                         onClick={() => openStationScanner(selectedJobOrder)}
                                         className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-10 text-xs px-5 shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/20 transition-all duration-200 flex items-center"
                                     >
-                                        <Building2 className="mr-1.5 h-4 w-4" /> Assign Workstation
+                                        <Building2 className="mr-1.5 h-4 w-4" /> Start Production
                                     </Button>
                                 )}
                                 {isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.IN_PRODUCTION)
@@ -496,6 +502,8 @@ export default function ProductionWorkflowModule() {
                                     <>
                                         <Button
                                             onClick={() => setIsShiftLogOpen(true)}
+                                            disabled={!hasCompletedJobOrderTimer}
+                                            title={!hasCompletedJobOrderTimer ? "Complete at least one operator timer to enable this action." : undefined}
                                             className="bg-primary hover:bg-primary/95 text-white font-bold h-10 text-xs px-5 shadow-md shadow-primary/10 hover:shadow-primary/20 transition-all duration-200 flex items-center"
                                         >
                                             <ClipboardCheck className="mr-1.5 h-4.5 w-4.5" /> End-of-Shift / Step Progress
@@ -580,7 +588,7 @@ export default function ProductionWorkflowModule() {
                                 action={selectedCalloutAction}
                                 blockers={selectedJobOrderJourney?.blockers || []}
                                 title="What's next"
-                                onAction={onBenchNextAction ? () => setIsShiftLogOpen(true) : undefined}
+                                onAction={onBenchNextAction && hasCompletedJobOrderTimer ? () => setIsShiftLogOpen(true) : undefined}
                             />
                         )}
                         {isSelectedJobOrderHeld && !isSelectedJobOrderCancelled && (
@@ -603,7 +611,10 @@ export default function ProductionWorkflowModule() {
                         )}
                         {/* Job Order progress summary above the operation tracker */}
                         {selectedJobOrder && (
-                            <JobOrderProgressSummary jobOrder={selectedJobOrder} />
+                            <JobOrderProgressSummary
+                                jobOrder={selectedJobOrder}
+                                onProducedQuantityChange={handleProgressOutputChange}
+                            />
                         )}
 
                         {selectedJobOrder && (
@@ -617,6 +628,7 @@ export default function ProductionWorkflowModule() {
                                 routeOperators={routeOperators}
                                 users={users}
                                 loadingOperators={loadingOperators}
+                                pendingTimerKey={pendingTimerKey}
                                 handleAddOperator={handleAddOperator}
                                 handleRemoveOperator={handleRemoveOperator}
                                 handleSwapOperator={handleSwapOperator}

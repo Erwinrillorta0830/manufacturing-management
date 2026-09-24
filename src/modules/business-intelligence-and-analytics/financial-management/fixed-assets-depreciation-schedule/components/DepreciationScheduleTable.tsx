@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import {
     ArrowUpDown,
     ArrowUp,
@@ -136,6 +136,8 @@ export default function DepreciationScheduleTable({
                         {status}
                     </Badge>
                 );
+            case "-":
+                return <span className="font-mono text-muted-foreground font-medium">-</span>;
             default:
                 return <Badge variant="secondary">{status}</Badge>;
         }
@@ -248,25 +250,28 @@ export default function DepreciationScheduleTable({
                             ) : paginatedAssets.length === 0 ? (
                                 <tr>
                                     <td colSpan={12} className="px-3.5 py-12 text-center text-muted-foreground">
-                                        <div className="flex flex-col items-center justify-center gap-2">
+                                        <motion.div
+                                            initial={{ opacity: 0, scale: 0.95 }}
+                                            animate={{ opacity: 1, scale: 1 }}
+                                            transition={{ duration: 0.2 }}
+                                            className="flex flex-col items-center justify-center gap-2"
+                                        >
                                             <AlertCircle className="h-8 w-8 text-muted-foreground/60" />
                                             <p className="text-sm font-medium">No assets matching the selected filters.</p>
                                             <p className="text-xs text-muted-foreground">Try adjusting your reporting date cutoff, search query, or status filters.</p>
-                                        </div>
+                                        </motion.div>
                                     </td>
                                 </tr>
                             ) : (
-                                <AnimatePresence initial={false}>
-                                    {paginatedAssets.map((asset, i) => (
-                                        <motion.tr
-                                            key={asset.id}
-                                            initial={{ opacity: 0, y: 8 }}
-                                            animate={{ opacity: 1, y: 0 }}
-                                            exit={{ opacity: 0 }}
-                                            transition={{ duration: 0.15, delay: i * 0.02 }}
-                                            className="hover:bg-muted/40 transition-colors group cursor-pointer"
-                                            onClick={() => onSelectAssetForSchedule(asset)}
-                                        >
+                                paginatedAssets.map((asset, i) => (
+                                    <motion.tr
+                                        key={`${currentPage}-${asset.id}`}
+                                        initial={{ opacity: 0, y: 8 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        transition={{ duration: 0.15, delay: i * 0.02 }}
+                                        className="hover:bg-muted/40 transition-colors group cursor-pointer"
+                                        onClick={() => onSelectAssetForSchedule(asset)}
+                                    >
                                             {/* Item Name */}
                                             <td className="px-3.5 py-2.5">
                                                 <div className="font-semibold text-foreground group-hover:text-primary transition-colors">
@@ -369,8 +374,7 @@ export default function DepreciationScheduleTable({
                                                 </Button>
                                             </td>
                                         </motion.tr>
-                                    ))}
-                                </AnimatePresence>
+                                    ))
                             )}
                         </tbody>
                     </table>

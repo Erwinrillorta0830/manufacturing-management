@@ -14,7 +14,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { WipJobOrder } from "../types";
-import { JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
+import { JOB_ORDER_STATUS } from "../job-order-status";
 
 interface WipTableViewProps {
     jobs: WipJobOrder[];

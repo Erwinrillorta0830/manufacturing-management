@@ -1,5 +1,5 @@
 import React from "react";
-import { CheckCircle2, ShieldCheck, Landmark, Anchor, AlertCircle, RefreshCw, RotateCcw, X, PackageCheck } from "lucide-react";
+import { CheckCircle2, ShieldCheck, Landmark, AlertCircle, RefreshCw, RotateCcw, X, PackageCheck } from "lucide-react";
 import {
     PROCUREMENT_MONEY_DECIMAL_SCALE,
     formatDecimal
@@ -8,6 +8,7 @@ import {
     INVENTORY_STATUS,
     INVENTORY_STATUS_LABELS,
     LEGACY_DISPATCH_STATUS_ID,
+    LEGACY_FOR_PICKUP_STATUS_ID,
     PAYMENT_STATUS,
     PAYMENT_STATUS_LABELS,
     inventoryStatusToPurchaseOrderStatus,
@@ -78,7 +79,7 @@ function statusPill(label: string, className: string, ariaLabel: string) {
 
 export function inventoryStatusLabel(value: unknown): string {
     const status = Number(value);
-    if (status === LEGACY_DISPATCH_STATUS_ID) return INVENTORY_STATUS_LABELS[INVENTORY_STATUS.FOR_PICKUP];
+    if (status === LEGACY_DISPATCH_STATUS_ID || status === LEGACY_FOR_PICKUP_STATUS_ID) return INVENTORY_STATUS_LABELS[INVENTORY_STATUS.QA_RECEIVING];
     return isInventoryStatusId(status) ? INVENTORY_STATUS_LABELS[status] : "Unknown";
 }
 
@@ -89,7 +90,7 @@ export function getInventoryStatusBadge(value: unknown) {
         ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-600"
         : status === INVENTORY_STATUS.APPROVED
             ? "border-teal-500/20 bg-teal-500/10 text-teal-600"
-            : status === INVENTORY_STATUS.FOR_PICKUP || status === LEGACY_DISPATCH_STATUS_ID
+            : status === INVENTORY_STATUS.QA_RECEIVING || status === LEGACY_FOR_PICKUP_STATUS_ID || status === LEGACY_DISPATCH_STATUS_ID
                 ? "border-indigo-500/20 bg-indigo-500/10 text-indigo-600"
                 : status === INVENTORY_STATUS.WAREHOUSE_RECEIVING
                     ? "border-cyan-500/20 bg-cyan-500/10 text-cyan-700"
@@ -152,7 +153,9 @@ export function getStatusBadge(status: string) {
                     <RefreshCw className="h-3 w-3 animate-spin" /> Partially Received
                 </span>
             );
+        case "QA Receiving":
         case "Receiving (QA)":
+        case "For Pickup":
             return (
                 <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-indigo-500/10 text-indigo-600 border border-indigo-500/20 uppercase tracking-wider">
                     <ShieldCheck className="h-3 w-3" /> QA Receiving
@@ -174,12 +177,6 @@ export function getStatusBadge(status: string) {
             return (
                 <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-purple-500/10 text-purple-600 border border-purple-500/20 uppercase tracking-wider">
                     <Landmark className="h-3 w-3" /> Awaiting Payment
-                </span>
-            );
-        case "For Pickup":
-            return (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-500/10 text-amber-600 border border-amber-500/20 uppercase tracking-wider">
-                    <Anchor className="h-3 w-3" /> QA Receiving
                 </span>
             );
         case "Revision":

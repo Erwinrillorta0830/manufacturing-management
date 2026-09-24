@@ -47,6 +47,7 @@ function statusBadge(status: string) {
         "Pending Payment": "border-amber-300 bg-amber-50 text-amber-700",
         Approved: "border-emerald-300 bg-emerald-50 text-emerald-700",
         "Awaiting Payment": "border-orange-300 bg-orange-50 text-orange-700",
+        "QA Receiving": "border-blue-300 bg-blue-50 text-blue-700",
         "Receiving (QA)": "border-blue-300 bg-blue-50 text-blue-700",
         Cancelled: "border-zinc-300 bg-zinc-50 text-zinc-700",
         Rejected: "border-red-300 bg-red-50 text-red-700",

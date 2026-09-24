@@ -39,6 +39,7 @@ interface RouteExecutionTableProps {
     routeOperators: RouteOperatorRecord[];
     users: UserType[];
     loadingOperators: boolean;
+    pendingTimerKey: string | null;
     handleAddOperator: (startTimer: boolean, taskId: number, assigneeId: string) => void;
     handleRemoveOperator: (taskId: number, opUserId: number, changeReason?: string, requestId?: string) => Promise<boolean>;
     handleSwapOperator: (taskId: number, opUserId: number, replacementUserId: number, changeReason?: string, requestId?: string) => Promise<boolean>;
@@ -59,6 +60,7 @@ interface RouteExecutionRowProps {
     routeOperators: RouteOperatorRecord[];
     users: UserType[];
     loadingOperators: boolean;
+    pendingTimerKey: string | null;
     handleAddOperator: RouteExecutionTableProps["handleAddOperator"];
     handleStartTimer: RouteExecutionTableProps["handleStartTimer"];
     handleStopTimer: RouteExecutionTableProps["handleStopTimer"];
@@ -162,6 +164,7 @@ function RouteExecutionRow({
     routeOperators,
     users,
     loadingOperators,
+    pendingTimerKey,
     handleAddOperator,
     handleStartTimer,
     handleStopTimer,
@@ -378,7 +381,7 @@ function RouteExecutionRow({
                     </div>
                 </td>
                 <td className="px-3 py-3 align-top" onClick={(event) => event.stopPropagation()}>
-                    {loadingOperators ? (
+                    {loadingOperators && groupedOperators.length === 0 ? (
                         <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                     ) : groupedOperators.length === 0 ? (
                         <span className="text-[10px] italic text-muted-foreground">Assign personnel first</span>
@@ -386,6 +389,7 @@ function RouteExecutionRow({
                         <div className="min-w-[280px] space-y-2">
                             {groupedOperators.map((operator) => {
                                 const isRunning = Boolean(operator.activeSession);
+                                const isTimerPending = pendingTimerKey === `${task.id}:${operator.userId}`;
                                 const displayedSession = operator.activeSession || operator.latestCompletedSession || operator.latestSession;
                                 const hasRecordedSession = operator.totalHours > 0
                                     || Boolean(operator.latestSession.started_at || operator.latestSession.stopped_at);
@@ -413,7 +417,11 @@ function RouteExecutionRow({
                                             <span>Consumed: <strong className="block font-mono text-foreground">{operator.totalHours.toFixed(2)}h</strong></span>
                                         </div>
                                         <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                                            {isRunning ? (
+                                            {isTimerPending ? (
+                                                <span className="inline-flex h-6 items-center gap-1 px-2 text-[9px] font-bold text-muted-foreground">
+                                                    <Loader2 className="h-2.5 w-2.5 animate-spin" /> Saving…
+                                                </span>
+                                            ) : isRunning ? (
                                                 <Button type="button" size="xs" variant="outline" className="h-6 border-amber-500/30 px-2 text-[9px] font-bold text-amber-700 dark:text-amber-400" onClick={() => handleStopTimer(task.id, operator.userId)}>
                                                     <Square className="mr-1 h-2.5 w-2.5 fill-current" /> Stop
                                                 </Button>
@@ -541,6 +549,7 @@ export function RouteExecutionTable({
     routeOperators,
     users,
     loadingOperators,
+    pendingTimerKey,
     handleAddOperator,
     handleRemoveOperator,
     handleSwapOperator,
@@ -658,6 +667,7 @@ export function RouteExecutionTable({
                                     routeOperators={routeOperators}
                                     users={users}
                                     loadingOperators={loadingOperators}
+                                    pendingTimerKey={pendingTimerKey}
                                     handleAddOperator={handleAddOperator}
                                     handleStartTimer={handleStartTimer}
                                     handleStopTimer={handleStopTimer}
