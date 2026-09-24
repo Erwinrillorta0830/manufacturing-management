@@ -5,7 +5,7 @@ import {
     requirePurchaseOrderModuleAccess
 } from "../../purchase-orders/_auth";
 import { procurementDirectusFetch } from "../../procurement/_directus";
-import { INVENTORY_STATUS, PAYMENT_STATUS } from "../../procurement/_domain";
+import { INVENTORY_STATUS, LEGACY_FOR_PICKUP_STATUS_ID, PAYMENT_STATUS } from "../../procurement/_domain";
 import { handleQaReceivingPost } from "../../procurement/qa-receiving/_receiving-service";
 import {
     RECEIVING_POSTING_ENABLED,
@@ -94,8 +94,8 @@ async function assertReceivingStatusOpen(shipmentId: number, replacementDisposit
     if (forceClosedMessage) throw new CommitError(409, forceClosedMessage);
     if (replacementDispositionId) return purchaseOrderBranchId;
     if (status === INVENTORY_STATUS.RECEIVED) return purchaseOrderBranchId;
-    if (status !== INVENTORY_STATUS.FOR_PICKUP && status !== INVENTORY_STATUS.PARTIALLY_RECEIVED) {
-        throw new CommitError(409, "The purchase order must be in Receiving (QA) before it can be received.");
+    if (status !== INVENTORY_STATUS.QA_RECEIVING && status !== LEGACY_FOR_PICKUP_STATUS_ID && status !== INVENTORY_STATUS.PARTIALLY_RECEIVED) {
+        throw new CommitError(409, "The purchase order must be in QA Receiving before it can be received.");
     }
     return purchaseOrderBranchId;
 }

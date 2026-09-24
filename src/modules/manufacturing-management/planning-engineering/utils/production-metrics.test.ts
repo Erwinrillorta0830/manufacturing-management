@@ -257,7 +257,7 @@ const bottleneckFullTargetMetrics = calculateProductionMetrics({
         work_center_capacity_per_hour: 400
     }]
 });
-assert.equal(formatProductionValue(bottleneckFullTargetMetrics.lineLeadTimeHours), "17.4655");
+assert.equal(formatProductionValue(bottleneckFullTargetMetrics.lineLeadTimeHours), "17.7314");
 assert.equal(formatProductionValue(bottleneckFullTargetMetrics.routeMetrics[0].elapsedHours), "17.7314");
 
 const releaseRunRoutes = [
@@ -279,7 +279,7 @@ const releaseRunPartialMetrics = calculateProductionMetrics({
     expectedYieldPercentage: 98.5,
     routes: releaseRunRoutes
 });
-assert.equal(formatProductionValue(releaseRunPartialMetrics.lineLeadTimeHours), "2.4575");
+assert.equal(formatProductionValue(releaseRunPartialMetrics.lineLeadTimeHours), "2.4949");
 assert.deepEqual(
     releaseRunPartialMetrics.routeMetrics.map((metric) => formatProductionValue(metric.elapsedHours)),
     ["0.3518", "2.4949", "2.4949", "2.4949", "2.4949", "2.4949", "2.4949", "2.4949", "0.2500", "2.4949"]
@@ -291,7 +291,7 @@ const releaseRunFullMetrics = calculateProductionMetrics({
     expectedYieldPercentage: 98.5,
     routes: releaseRunRoutes
 });
-assert.equal(formatProductionValue(releaseRunFullMetrics.lineLeadTimeHours), "17.4655");
+assert.equal(formatProductionValue(releaseRunFullMetrics.lineLeadTimeHours), "17.7314");
 assert.deepEqual(
     releaseRunFullMetrics.routeMetrics.map((metric) => formatProductionValue(metric.elapsedHours)),
     ["2.5000", "17.7314", "17.7314", "17.7314", "17.7314", "17.7314", "17.7314", "17.7314", "0.2500", "17.7314"]
@@ -319,7 +319,7 @@ const bottleneckMetrics = calculateProductionMetrics({
         }
     ]
 });
-assert.equal(formatProductionValue(bottleneckMetrics.lineLeadTimeHours), "2.4575");
+assert.equal(formatProductionValue(bottleneckMetrics.lineLeadTimeHours), "2.4949");
 assert.equal(formatProductionValue(bottleneckMetrics.routeMetrics[0].elapsedHours), "2.4949");
 assert.equal(formatProductionValue(bottleneckMetrics.routeMetrics[1].elapsedHours), "1.2475");
 assert.notEqual(bottleneckMetrics.lineLeadTimeHours, bottleneckMetrics.cumulativeWorkloadHours);
@@ -346,7 +346,7 @@ const releaseModalPartialTargetMetrics = calculateProductionMetrics({
         include_mandates: false
     }]
 });
-assert.equal(formatProductionValue(releaseModalPartialTargetMetrics.lineLeadTimeHours), "2.4575");
+assert.equal(formatProductionValue(releaseModalPartialTargetMetrics.lineLeadTimeHours), "2.4949");
 assert.equal(formatProductionValue(releaseModalPartialTargetMetrics.cogsBreakdown.directLaborCostPerUnit), "1.4657");
 assert.equal(formatProductionValue(releaseModalPartialTargetMetrics.cogsBreakdown.machineOverheadCostPerUnit), "1.0532");
 assert.equal(formatProductionValue(releaseModalPartialTargetMetrics.cogsBreakdown.baseUnitCOGS), "25.8189");
@@ -597,6 +597,10 @@ const bagContainerization = calculateContainerizationMetrics(
 assert.equal(bagContainerization.containerUnitLabel, "Bags");
 assert.equal(bagContainerization.sackCount, 400);
 assert.equal(formatProductionValue(bagContainerization.flourGramsTotal / 1000), "10000.0000");
+assert.equal(
+    bagContainerization.sackCount * 25,
+    bagContainerization.flourGramsTotal / 1000
+);
 
 const bagContainerizationWithWastage = calculateContainerizationMetrics(
     "Flour Product",

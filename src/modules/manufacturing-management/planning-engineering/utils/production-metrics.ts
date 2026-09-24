@@ -140,7 +140,7 @@ export function calculateProductionMetrics(input: ProductionMetricsInput): Produ
         ? Math.max(...routeMetrics.map((metric) => metric.elapsedHours))
         : 0;
     const lineLeadTimeHours = Number.isFinite(bottleneckRouteRate)
-        ? timingTargetQuantity / bottleneckRouteRate
+        ? grossTimingTargetQuantity / bottleneckRouteRate
         : routeMaxLeadTimeHours;
     const cumulativeWorkloadHours = routeMetrics.reduce(
         (total, metric) => total + metric.elapsedHours,

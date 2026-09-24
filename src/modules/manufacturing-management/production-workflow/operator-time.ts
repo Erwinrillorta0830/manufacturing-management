@@ -45,6 +45,17 @@ export function parseProductionTimestamp(value: string | null | undefined): numb
     return parsePhtWallClock(raw);
 }
 
+export function hasCompletedTimer(
+    startedAt: string | null | undefined,
+    stoppedAt: string | null | undefined
+): boolean {
+    const startedTimestamp = parseProductionTimestamp(startedAt);
+    const stoppedTimestamp = parseProductionTimestamp(stoppedAt);
+    return startedTimestamp !== null
+        && stoppedTimestamp !== null
+        && stoppedTimestamp >= startedTimestamp;
+}
+
 export function formatPhtDateTime(value: string | null | undefined): string {
     const timestamp = parseProductionTimestamp(value);
     if (timestamp === null) return "—";
