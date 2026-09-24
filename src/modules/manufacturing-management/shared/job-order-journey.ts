@@ -235,13 +235,13 @@ function buildNextAction(
             return {
                 label: "Open Production Workflow",
                 description: "All materials are on the floor. Start the shift run when production begins.",
-                href: `/mm/production-workflow${joParam}`
+                href: `/mm/shop-floor-execution-terminal${joParam}`
             };
         case "production":
             return {
                 label: "Continue production",
                 description: "Log shift runs and completion progress in the shop-floor terminal.",
-                href: `/mm/production-workflow${joParam}`
+                href: `/mm/shop-floor-execution-terminal${joParam}`
             };
         case "qa":
             return {

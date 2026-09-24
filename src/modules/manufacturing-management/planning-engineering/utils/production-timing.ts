@@ -125,6 +125,39 @@ export function calculateMaterialRequirementPlan(
 }
 
 /**
+ * Release Production Run uses the displayed net output target and the BOM
+ * quantity as the complete per-unit requirement; applying BOM wastage again
+ * would double-count it for this flow.
+ */
+export function calculateReleaseMaterialRequirementPlan(
+    requestedQuantity: number,
+    plannedQuantity: number,
+    quantityPerFinishedUnit: number,
+    wastageFactorPercentage: number,
+    netOutputTargetQuantity?: number | null
+): MaterialRequirementPlan {
+    const netOutputTarget = Number(netOutputTargetQuantity);
+    if (Number.isFinite(netOutputTarget) && netOutputTarget > 0) {
+        const roundedNetOutputTarget = Math.round(netOutputTarget);
+        if (roundedNetOutputTarget > 0) {
+            return calculateMaterialRequirementPlan(
+                roundedNetOutputTarget,
+                roundedNetOutputTarget,
+                quantityPerFinishedUnit,
+                0
+            );
+        }
+    }
+
+    return calculateMaterialRequirementPlan(
+        requestedQuantity,
+        plannedQuantity,
+        quantityPerFinishedUnit,
+        wastageFactorPercentage
+    );
+}
+
+/**
  * Keeps demand quantity and the full-batch production quantity together so
  * previews, containerization, and inventory requirements cannot drift apart.
  */

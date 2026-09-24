@@ -19,6 +19,85 @@ export interface TravelerSheetPrintData {
     sheets: TravelerSheetPrintSheet[];
     branchName: string;
     issuedAt?: string;
+    operatorNames?: OperatorNameMap;
+}
+
+/** Operator directory: operator_id -> full display name. */
+export type OperatorNameMap = Record<number, string>;
+
+function asPositiveInt(value: unknown): number | null {
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+/**
+ * Human-readable operation name. Routing payloads carry it as `name`
+ * while route records use `operation_name`; fall back to the ID label.
+ */
+export function resolveTravelerOperationName(op: JobOrderOperation, fallbackIndex: number): string {
+    const named = op as JobOrderOperation & { name?: unknown };
+    const direct = typeof named.operation_name === "string" ? named.operation_name.trim() : "";
+    if (direct) return direct;
+    const alias = typeof named.name === "string" ? named.name.trim() : "";
+    if (alias) return alias;
+    return `Operation #${op.operation_id || op.id || fallbackIndex + 1}`;
+}
+
+/**
+ * Assigned operator display names for one routing step, in assignment
+ * order. Returns an empty array when nobody is assigned.
+ */
+export function resolveTravelerOperatorNames(
+    op: JobOrderOperation,
+    operatorNames: OperatorNameMap = {},
+): string[] {
+    const lists: unknown[] = [
+        op.assigned_operators,
+        op.operators,
+        (op as JobOrderOperation & { assignments?: unknown }).assignments,
+        (op as JobOrderOperation & { assigned_personnel?: unknown }).assigned_personnel,
+    ];
+    const names: string[] = [];
+    const seen = new Set<string>();
+    const push = (name: string) => {
+        const trimmed = name.trim();
+        if (trimmed && !seen.has(trimmed)) {
+            seen.add(trimmed);
+            names.push(trimmed);
+        }
+    };
+    for (const list of lists) {
+        if (!Array.isArray(list)) continue;
+        for (const item of list) {
+            if (typeof item === "number") {
+                const id = asPositiveInt(item);
+                if (id !== null) push(operatorNames[id] || `Operator #${id}`);
+                continue;
+            }
+            if (item && typeof item === "object") {
+                const record = item as Record<string, unknown>;
+                const direct = ["operator_name", "full_name", "name"]
+                    .map((key) => (typeof record[key] === "string" ? (record[key] as string).trim() : ""))
+                    .find((value) => value.length > 0);
+                if (direct) {
+                    push(direct);
+                    continue;
+                }
+                const id = asPositiveInt(record.operator_id ?? record.user_id ?? record.id);
+                if (id !== null) push(operatorNames[id] || `Operator #${id}`);
+            }
+        }
+    }
+    return names;
+}
+
+/** Operator cell text: comma-separated names, or dashes when unassigned. */
+export function formatTravelerOperators(
+    op: JobOrderOperation,
+    operatorNames: OperatorNameMap = {},
+): string {
+    const names = resolveTravelerOperatorNames(op, operatorNames);
+    return names.length > 0 ? names.join(", ") : "_______";
 }
 
 function escapeHtml(value: unknown): string {
@@ -127,25 +206,23 @@ function materialRows(materials: JobOrderMaterial[]): string {
     }).join("");
 }
 
-function operationRows(operations: JobOrderOperation[]): string {
+function operationRows(operations: JobOrderOperation[], operatorNames: OperatorNameMap = {}): string {
     if (operations.length === 0) {
-        return `<tr><td colspan="12" class="center muted italic">Standard single-step manufacturing execution flow.</td></tr>`;
+        return `<tr><td colspan="11" class="center muted italic">Standard single-step manufacturing execution flow.</td></tr>`;
     }
     return operations.map((op, idx) => {
         const seq = op.sequence_order || (idx + 1) * 10;
-        const opName = op.operation_name || `Operation #${op.operation_id || op.id || idx + 1}`;
+        const opName = resolveTravelerOperationName(op, idx);
         const wcName = op.work_center_name || `Work Center #${op.work_center_id || 1}`;
         const setupHrs = Number(op.planned_setup_hours || 0);
         const runHrs = Number(op.planned_run_hours || 0);
-        const stepCode = `OP-${seq}-${op.operation_id || op.id || idx + 1}`;
         return `<tr>
             <td class="center mono strong shaded">${seq}</td>
-            <td><strong>${escapeHtml(opName)}</strong><div class="mono tiny dim">${escapeHtml(stepCode)}</div></td>
+            <td><strong>${escapeHtml(opName)}</strong></td>
             <td>${escapeHtml(wcName)}</td>
             <td class="right mono">${setupHrs.toFixed(1)}h</td>
             <td class="right mono"><strong>${runHrs.toFixed(1)}h</strong></td>
-            <td class="center">${barcodeSvg(stepCode, 36)}</td>
-            <td class="center mono small dim">_______</td>
+            <td class="center small">${escapeHtml(formatTravelerOperators(op, operatorNames))}</td>
             <td class="center mono small dim">___:___</td>
             <td class="center mono small dim">___:___</td>
             <td class="center mono small dim">_______</td>
@@ -155,7 +232,12 @@ function operationRows(operations: JobOrderOperation[]): string {
     }).join("");
 }
 
-async function sheetHtml(resolved: ResolvedSheet, branchName: string, issuedAt: string): Promise<string> {
+async function sheetHtml(
+    resolved: ResolvedSheet,
+    branchName: string,
+    issuedAt: string,
+    operatorNames: OperatorNameMap = {},
+): Promise<string> {
     const qrUrl = await qrDataUrl(resolved.qrPayload);
     return `<section class="traveler-sheet">
         <div class="banner">
@@ -189,8 +271,8 @@ async function sheetHtml(resolved: ResolvedSheet, branchName: string, issuedAt: 
 
         <h3>2. Routing Operation Sequence &amp; Step Sign-Off <span class="count">${resolved.operations.length} Sequential Steps</span></h3>
         <table>
-            <thead><tr><th>Seq</th><th>Operation Name</th><th>Work Center</th><th>Plan Setup</th><th>Plan Run</th><th>Step Barcode</th><th>Operator</th><th>Start Time</th><th>End Time</th><th>Good Qty</th><th>Scrap</th><th>QA Sign</th></tr></thead>
-            <tbody>${operationRows(resolved.operations)}</tbody>
+            <thead><tr><th>Seq</th><th>Operation Name</th><th>Work Center</th><th>Plan Setup</th><th>Plan Run</th><th>Operator</th><th>Start Time</th><th>End Time</th><th>Good Qty</th><th>Scrap</th><th>QA Sign</th></tr></thead>
+            <tbody>${operationRows(resolved.operations, operatorNames)}</tbody>
         </table>
 
         <div class="two-col">
@@ -236,7 +318,7 @@ export async function buildTravelerSheetHtml(data: TravelerSheetPrintData): Prom
     const resolved = data.sheets.map(resolveSheet);
     const titleJoNo = resolved[0]?.joNo || "JO";
     const sheetsHtml = (await Promise.all(
-        resolved.map((sheet) => sheetHtml(sheet, data.branchName, issuedAt)),
+        resolved.map((sheet) => sheetHtml(sheet, data.branchName, issuedAt, data.operatorNames || {})),
     )).join("");
 
     return `<!DOCTYPE html>
