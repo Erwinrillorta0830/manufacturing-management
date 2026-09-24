@@ -113,10 +113,11 @@ export default function MachineDepreciationOverheadAllocationModule() {
     const filteredAssets = useMemo(() => {
         return assets.filter(asset => {
             // Station linkage filter
-            if (filters.asset_type === "ASSIGNED" && !asset.work_center_id) {
+            const hasAssignedStation = Boolean(asset.work_center_id || (asset.assigned_work_centers && asset.assigned_work_centers.length > 0));
+            if (filters.asset_type === "ASSIGNED" && !hasAssignedStation) {
                 return false;
             }
-            if (filters.asset_type === "UNASSIGNED" && asset.work_center_id) {
+            if (filters.asset_type === "UNASSIGNED" && hasAssignedStation) {
                 return false;
             }
 
@@ -126,8 +127,11 @@ export default function MachineDepreciationOverheadAllocationModule() {
             }
 
             // Work Center Combobox filter
-            if (filters.work_center_id !== "ALL" && String(asset.work_center_id) !== filters.work_center_id) {
-                return false;
+            if (filters.work_center_id !== "ALL") {
+                const matchesWc =
+                    String(asset.work_center_id) === filters.work_center_id ||
+                    (asset.assigned_work_centers && asset.assigned_work_centers.some(aw => String(aw.work_center_id) === filters.work_center_id));
+                if (!matchesWc) return false;
             }
 
             // Keyword Search
@@ -135,7 +139,9 @@ export default function MachineDepreciationOverheadAllocationModule() {
                 const q = filters.search.toLowerCase();
                 const matchesName = asset.item_name.toLowerCase().includes(q);
                 const matchesSerial = (asset.serial || "").toLowerCase().includes(q);
-                const matchesWc = (asset.work_center_name || "").toLowerCase().includes(q);
+                const matchesWc =
+                    (asset.work_center_name || "").toLowerCase().includes(q) ||
+                    (asset.assigned_work_centers && asset.assigned_work_centers.some(aw => aw.work_center_name.toLowerCase().includes(q)));
 
                 if (!matchesName && !matchesSerial && !matchesWc) {
                     return false;
@@ -167,11 +173,23 @@ export default function MachineDepreciationOverheadAllocationModule() {
             )
         );
         setAssets(prev =>
-            prev.map(a =>
-                a.work_center_id === workCenterId
-                    ? { ...a, current_work_center_rate: newRate }
-                    : a
-            )
+            prev.map(a => {
+                const isDirect = a.work_center_id === workCenterId;
+                const isAssigned = isDirect || (a.assigned_work_centers && a.assigned_work_centers.some(aw => aw.work_center_id === workCenterId));
+                if (isAssigned) {
+                    const updatedAssigned = (a.assigned_work_centers || []).map(aw =>
+                        aw.work_center_id === workCenterId
+                            ? { ...aw, overhead_cost_per_hour: newRate }
+                            : aw
+                    );
+                    return {
+                        ...a,
+                        current_work_center_rate: isDirect ? newRate : a.current_work_center_rate,
+                        assigned_work_centers: updatedAssigned
+                    };
+                }
+                return a;
+            })
         );
 
         // Silent refresh of summary metrics

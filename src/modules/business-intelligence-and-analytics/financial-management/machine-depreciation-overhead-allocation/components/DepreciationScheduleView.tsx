@@ -134,7 +134,19 @@ export default function DepreciationScheduleView({
 
                                     {/* Linked Work Center */}
                                     <td className="py-3 px-4">
-                                        {asset.work_center_name ? (
+                                        {asset.assigned_work_centers && asset.assigned_work_centers.length > 1 ? (
+                                            <div className="flex flex-wrap gap-1 max-w-[200px]">
+                                                {asset.assigned_work_centers.map((aw) => (
+                                                    <Badge
+                                                        key={aw.work_center_id}
+                                                        variant="outline"
+                                                        className="text-[10px] font-normal border-primary/20 bg-primary/5 text-primary"
+                                                    >
+                                                        {aw.work_center_name}
+                                                    </Badge>
+                                                ))}
+                                            </div>
+                                        ) : asset.work_center_name ? (
                                             <Badge variant="outline" className="text-[10px] font-normal border-primary/20 bg-primary/5 text-primary">
                                                 {asset.work_center_name}
                                             </Badge>
