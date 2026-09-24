@@ -31,7 +31,7 @@ import {
     getFactoryOverheadBasisLabel
 } from "../utils/cogs-helper";
 import { calculateProductionMetrics } from "../utils/production-metrics";
-import { calculateAggregateRunHours, calculatePerUnitMaterialRequirement, calculateReleaseMaterialRequirementPlan, calculateRequiredBatchCount, DEFAULT_PRODUCTION_SHIFT_HOURS, formatProductionValue, isPieceProductionUom, normalizeProductionOutputQuantity, readUomId, resolveProductionShiftHours } from "../utils/production-timing";
+import { calculateAggregateRunHours, calculateFullBatchTarget, calculatePerUnitMaterialRequirement, calculateReleaseMaterialRequirementPlan, calculateRequiredBatchCount, DEFAULT_PRODUCTION_SHIFT_HOURS, formatProductionValue, isPieceProductionUom, normalizeProductionOutputQuantity, readUomId, resolveProductionShiftHours } from "../utils/production-timing";
 import { buildReleaseSummaryHtml, type ReleaseSummaryComponent, type ReleaseSummaryFinancials, type ReleaseSummaryRoutingStep } from "../utils/release-summary-print";
 
 interface ReleaseJODialogProps {
@@ -59,7 +59,9 @@ interface ReleaseJODialogProps {
         groupConfigurations?: Record<string, { subAssemblyVersions: Record<number, number>; assignments: Record<number, number[]> }>,
         initialize?: boolean,
         materialTargetQuantity?: number,
-        timingTargetQuantity?: number
+        timingTargetQuantity?: number,
+        groupProductionTargets?: Record<string, number>,
+        groupMaterialTargets?: Record<string, number>
     ) => void;
     priority: number;
     setPriority: (val: number) => void;
@@ -101,7 +103,10 @@ export function ReleaseJODialog({
     const [bomData, setBomData] = useState<any | null>(null);
     const [inventories, setInventories] = useState<Record<number, any>>({});
     const [operators, setOperators] = useState<any[]>([]);
-    const [bomBaseQty, setBomBaseQty] = useState(1);
+    const [bomBaseQty, setBomBaseQty] = useState(0);
+    const [groupBaseQuantities, setGroupBaseQuantities] = useState<Record<string, number>>({});
+    const [groupDetailsByKey, setGroupDetailsByKey] = useState<Record<string, any>>({});
+    const [detailsLoadError, setDetailsLoadError] = useState("");
     const [searchQuery, setSearchQuery] = useState("");
     const [subAssemblyBoms, setSubAssemblyBoms] = useState<Record<number, any[]>>({});
     const [subAssemblyRoutings, setSubAssemblyRoutings] = useState<Record<number, { setup_time_hours: number; run_time_hours_per_unit: number; base_quantity: number }>>({});
@@ -127,7 +132,7 @@ export function ReleaseJODialog({
         }, {});
     };
 
-    const normalizedReleaseGroups = releaseGroups.length > 0 ? releaseGroups : [{
+    const normalizedReleaseGroups = useMemo(() => releaseGroups.length > 0 ? releaseGroups : [{
         key: "single",
         productId: Number(selectedLinesProp[0]?.product_id?.product_id || 0),
         productName: selectedLinesProp[0]?.product_id?.product_name || "",
@@ -137,7 +142,7 @@ export function ReleaseJODialog({
         totalRemainingQuantity: targetQuantityProp,
         salesOrderIds: [...new Set(selectedLinesProp.map((line) => line.order_id))],
         salesOrderDetailIds: selectedLinesProp.map((line) => line.detail_id)
-    }];
+    }], [releaseGroups, selectedLinesProp, targetQuantityProp]);
     const isMultiRelease = normalizedReleaseGroups.length > 1;
     const activeReleaseGroup = normalizedReleaseGroups[activeGroupIndex] || normalizedReleaseGroups[0];
     const activeGroupKey = activeReleaseGroup?.key || "single";
@@ -158,10 +163,56 @@ export function ReleaseJODialog({
         || (selectedLines[0] as any)?.unit_of_measurement
         || "units";
     const operationalRequestedTargetQuantity = normalizeProductionOutputQuantity(requestedTargetQuantity, releaseSummaryUom);
-    const rawTargetQuantity = Math.max(requestedTargetQuantity, targetQuantityProp);
-    const targetQuantity = normalizeProductionOutputQuantity(
-        rawTargetQuantity,
-        releaseSummaryUom
+    const requestedProductionQuantity = isMultiRelease
+        ? requestedTargetQuantity
+        : Math.max(requestedTargetQuantity, targetQuantityProp);
+    const activeGroupBaseQuantity = isMultiRelease
+        ? Number(groupBaseQuantities[activeGroupKey] || 0)
+        : bomBaseQty;
+    const rawTargetQuantity = activeGroupBaseQuantity > 0 && requestedProductionQuantity > 0
+        ? calculateFullBatchTarget(requestedProductionQuantity, activeGroupBaseQuantity)
+        : requestedProductionQuantity;
+    const targetQuantity = normalizeProductionOutputQuantity(rawTargetQuantity, releaseSummaryUom);
+    const groupProductionTargets = useMemo(() => Object.fromEntries(normalizedReleaseGroups.map((group) => {
+        const baseQuantity = Number(groupBaseQuantities[group.key] || 0);
+        const effectiveTarget = baseQuantity > 0 && group.totalRemainingQuantity > 0
+            ? calculateFullBatchTarget(group.totalRemainingQuantity, baseQuantity)
+            : 0;
+        return [group.key, effectiveTarget];
+    })), [normalizedReleaseGroups, groupBaseQuantities]);
+    const groupMaterialTargets = useMemo(() => Object.fromEntries(normalizedReleaseGroups.map((group) => {
+        const details = groupDetailsByKey[group.key];
+        const first = group.lines[0];
+        const product = first?.product_id as any;
+        const version = details?.bom;
+        const productionTarget = Number(groupProductionTargets[group.key] || 0);
+        const baseQuantity = Number(groupBaseQuantities[group.key] || 0);
+        const uom = product?.uom_name || product?.uom || first?.unit_of_measurement || "units";
+        const normalizedTarget = normalizeProductionOutputQuantity(productionTarget, uom);
+        if (!first || !version || productionTarget <= 0 || baseQuantity <= 0) return [group.key, 0];
+
+        const metrics = calculateContainerizationMetrics(
+            product?.product_name || product?.product_code || "Product",
+            normalizedTarget,
+            product?.unit_of_measurement_count || product?.pcs_per_bundle || product?.pcs_per_case || product?.uom_count,
+            version.expected_yield_percentage || product?.expected_yield_percentage,
+            version.scrap_rate || version.scrap_percentage || version.wastage_factor_percentage,
+            version.cutting_unit_weight_grams || version.unit_weight_grams || product?.net_weight_grams || product?.piece_weight_grams,
+            version.cases_per_pallet || product?.cases_per_pallet || product?.bundles_per_pallet,
+            version.sacks_per_mix || version.sacks_per_batch,
+            version.batch_weight_per_sack || version.base_batch_weight_grams,
+            details.components || [],
+            baseQuantity,
+            group.totalRemainingQuantity,
+            version.containerization_profile || null
+        );
+        const materialTarget = metrics.hasOutputEstimate && metrics.netPieces > 0
+            ? metrics.netPieces
+            : normalizedTarget;
+        return [group.key, materialTarget];
+    })), [normalizedReleaseGroups, groupDetailsByKey, groupProductionTargets, groupBaseQuantities]);
+    const allGroupTargetsResolved = normalizedReleaseGroups.every((group) =>
+        Number.isFinite(groupProductionTargets[group.key]) && groupProductionTargets[group.key] > 0
     );
     const joNumber = isMultiRelease
         ? `${joNumberProp}-${String(activeGroupIndex + 1).padStart(2, "0")}`
@@ -200,6 +251,10 @@ export function ReleaseJODialog({
             setActiveGroupIndex(0);
             setLoadingSubVersion({});
             setPrintSelection({});
+            setGroupBaseQuantities({});
+            setGroupDetailsByKey({});
+            setDetailsLoadError("");
+            setBomBaseQty(0);
             setHasLoadedDetails(false);
         }
     }, [isConfirmOpen, setAssignmentsProp]);
@@ -225,55 +280,76 @@ export function ReleaseJODialog({
         }
     }, [isConfirmOpen]);
 
-    // Fetch BOM & Routing details on dialog open
+    // Load each selected recipe once so grouped releases can calculate a
+    // target from that product's own demand and batch size.
     useEffect(() => {
         if (isConfirmOpen && selectedLines.length > 0 && !hasLoadedDetails) {
+            let cancelled = false;
             const loadDetails = async () => {
                 setLoadingDetails(true);
+                setDetailsLoadError("");
                 try {
-                    const first = selectedLines[0];
-                    const pId = first.product_id.product_id;
-                    const bId = first.bom_version_id;
                     const branchId = parseValidBranchId(selectedBranchId) || 1;
-                    const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${pId}&bomId=${bId || ""}&branchId=${branchId}&usePhysicalOnHand=true&requestedQuantity=${encodeURIComponent(requestedTargetQuantity)}&plannedQuantity=${encodeURIComponent(targetQuantity)}`;
-                    const res = await fetch(url);
-                    if (res.ok) {
+                    const groupsToLoad = isMultiRelease ? normalizedReleaseGroups : [activeReleaseGroup];
+                    const loadedGroups = await Promise.all(groupsToLoad.map(async (group) => {
+                        if (groupDetailsByKey[group.key]) return [group.key, groupDetailsByKey[group.key]] as const;
+
+                        if (!group.lines[0]) throw new Error(`No Sales Order lines were found for ${group.productName}.`);
+                        const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${group.productId}&bomId=${group.bomVersionId || ""}&branchId=${branchId}&usePhysicalOnHand=true&requestedQuantity=${encodeURIComponent(group.totalRemainingQuantity)}`;
+                        const res = await fetch(url);
+                        if (!res.ok) throw new Error(`Recipe details could not be loaded for ${group.productName}.`);
                         const data = await res.json();
-                        setRoutings(data.routings || []);
-                        setComponents(data.components || []);
-                        setBomData(data.bom || null);
-                        setSubAssemblyBoms(data.subAssemblyBoms || {});
-                        setSubAssemblyRoutings(data.subAssemblyRoutings || {});
-                        setSubAssemblyVersions(data.subAssemblyVersions || {});
-                        setSelectedSubAssemblyVersions(data.selectedSubAssemblyVersions || {});
-                        setInventories(normalizeInventoryMap(data.inventories));
-                        if (data.bom) {
-                            const baseQty = Number(data.bom.base_quantity);
-                            setBomBaseQty(baseQty);
-                            if (!isMultiRelease && baseQty > 0) {
-                                const requestedQuantity = requestedTargetQuantity > 0 ? requestedTargetQuantity : baseQty;
-                                setTargetQuantity(requestedQuantity);
-                            }
-                            // Shift option is the available production capacity per day.
-                            // Recipe net runtime is calculated separately and must not be
-                            // used here because it represents only one recipe batch.
-                            setShiftOption(resolveProductionShiftHours(
-                                data.bom.shift_option,
-                                data.bom.shift_hours,
-                                data.bom.target_shift_hours
-                            ).toFixed(1));
-                        }
-                        setHasLoadedDetails(true);
+                        if (!data?.bom) throw new Error(`No approved recipe was found for ${group.productName}.`);
+                        return [group.key, data] as const;
+                    }));
+                    if (cancelled) return;
+
+                    const resolvedDetails = { ...groupDetailsByKey, ...Object.fromEntries(loadedGroups) };
+                    const resolvedBaseQuantities = Object.fromEntries(Object.entries(resolvedDetails).map(([key, data]) => [
+                        key,
+                        Number(data?.bom?.base_quantity) || 0
+                    ]));
+                    setGroupDetailsByKey(resolvedDetails);
+                    setGroupBaseQuantities(resolvedBaseQuantities);
+
+                    const data = resolvedDetails[activeGroupKey];
+                    if (!data?.bom) throw new Error(`No approved recipe was found for ${activeReleaseGroup.productName}.`);
+                    const baseQty = Number(data.bom.base_quantity);
+                    setBomBaseQty(baseQty);
+                    setRoutings(data.routings || []);
+                    setComponents(data.components || []);
+                    setBomData(data.bom);
+                    setSubAssemblyBoms(data.subAssemblyBoms || {});
+                    setSubAssemblyRoutings(data.subAssemblyRoutings || {});
+                    setSubAssemblyVersions(data.subAssemblyVersions || {});
+                    setSelectedSubAssemblyVersions(data.selectedSubAssemblyVersions || {});
+                    setInventories(normalizeInventoryMap(data.inventories));
+                    if (!isMultiRelease && baseQty > 0) {
+                        const requestedQuantity = Math.max(requestedTargetQuantity, targetQuantityProp);
+                        setTargetQuantity(normalizeProductionOutputQuantity(
+                            calculateFullBatchTarget(requestedQuantity, baseQty),
+                            releaseSummaryUom
+                        ));
                     }
+                    // Shift option is available capacity per day; recipe runtime
+                    // is calculated separately using the effective batch target.
+                    setShiftOption(resolveProductionShiftHours(
+                        data.bom.shift_option,
+                        data.bom.shift_hours,
+                        data.bom.target_shift_hours
+                    ).toFixed(1));
+                    setHasLoadedDetails(true);
                 } catch (err) {
                     console.error("Failed to load wizard details:", err);
+                    if (!cancelled) setDetailsLoadError(err instanceof Error ? err.message : "Recipe details could not be loaded.");
                 } finally {
-                    setLoadingDetails(false);
+                    if (!cancelled) setLoadingDetails(false);
                 }
             };
-            loadDetails();
+            void loadDetails();
+            return () => { cancelled = true; };
         }
-    }, [isConfirmOpen, selectedLines, selectedBranchId, hasLoadedDetails, isMultiRelease, targetQuantityProp, requestedTargetQuantity, targetQuantity, setTargetQuantity]);
+    }, [isConfirmOpen, selectedLines, selectedBranchId, hasLoadedDetails, isMultiRelease, normalizedReleaseGroups, activeReleaseGroup, activeGroupKey, groupDetailsByKey, targetQuantityProp, requestedTargetQuantity, releaseSummaryUom, setTargetQuantity]);
 
     const handleSubAssemblyVersionChange = async (subProdId: number, versionId: number) => {
         const branchId = parseValidBranchId(selectedBranchId);
@@ -309,8 +385,8 @@ export function ReleaseJODialog({
         }
     };
 
-    const requiredBatchCount = bomBaseQty > 0 && targetQuantity > 0
-        ? calculateRequiredBatchCount(targetQuantity, bomBaseQty)
+    const requiredBatchCount = activeGroupBaseQuantity > 0 && targetQuantity > 0
+        ? calculateRequiredBatchCount(targetQuantity, activeGroupBaseQuantity)
         : 0;
 
     const containerMetrics = useMemo(() => {
@@ -330,11 +406,11 @@ export function ReleaseJODialog({
             verObj?.sacks_per_mix || verObj?.sacks_per_batch,
             verObj?.batch_weight_per_sack || verObj?.base_batch_weight_grams,
             components,
-            bomBaseQty,
-            requestedTargetQuantity,
+            activeGroupBaseQuantity,
+            requestedProductionQuantity,
             bomData?.containerization_profile || null
         );
-    }, [selectedLines, targetQuantity, requestedTargetQuantity, components, bomBaseQty, bomData]);
+    }, [selectedLines, targetQuantity, requestedProductionQuantity, components, activeGroupBaseQuantity, bomData]);
 
     const materialTargetQuantity = containerMetrics?.hasOutputEstimate && containerMetrics.netPieces > 0
         ? containerMetrics.netPieces
@@ -804,6 +880,7 @@ export function ReleaseJODialog({
                                 onClick={() => {
                                     setActiveGroupIndex(index);
                                     setHasLoadedDetails(false);
+                                    setBomBaseQty(0);
                                     setRoutings([]);
                                     setComponents([]);
                                     setInventories({});
@@ -898,15 +975,18 @@ export function ReleaseJODialog({
                                             <div className="relative">
                                                 <Input
                                                     type="number"
-                                                    value={loadingDetails ? "" : (targetQuantity || "")}
+                                                    value={loadingDetails ? "" : ((isMultiRelease ? targetQuantity : targetQuantityProp) || "")}
                                                     min={1}
                                                     step={isPieceProductionUom(releaseSummaryUom) ? 1 : "any"}
                                                     onChange={(e) => {
                                                         const next = Number(e.target.value);
                                                         setTargetQuantity(Number.isFinite(next) && next > 0 ? next : 0);
                                                     }}
+                                                    onBlur={() => {
+                                                        if (!isMultiRelease && targetQuantity > 0) setTargetQuantity(targetQuantity);
+                                                    }}
                                                     disabled={isMultiRelease || loadingDetails}
-                                                    placeholder={loadingDetails ? "Calculating batch size..." : "e.g. 1000"}
+                                                    placeholder={loadingDetails ? "Calculating batch size..." : "Enter target quantity"}
                                                     className="h-9 font-semibold bg-card border-input text-foreground font-mono"
                                                 />
                                                 {loadingDetails && (
@@ -918,7 +998,9 @@ export function ReleaseJODialog({
                                         </div>
                                     </div>
                                     <p className="text-[10px] text-muted-foreground">
-                                        {`The target is not increased to a full recipe batch. ${isPieceProductionUom(releaseSummaryUom) ? "Piece-unit targets use whole pieces. " : ""}Recipe batch estimate: ${requiredBatchCount || 0} batch${requiredBatchCount === 1 ? "" : "es"}. SO demand is ${formatProductionValue(requestedTargetQuantity)} units.`}
+                                        {detailsLoadError
+                                            ? detailsLoadError
+                                            : `Effective production target: ${formatProductionValue(targetQuantity)} ${releaseSummaryUom} (${requiredBatchCount || 0} full recipe batch${requiredBatchCount === 1 ? "" : "es"}). SO demand remains ${formatProductionValue(requestedTargetQuantity)} ${releaseSummaryUom}. ${isPieceProductionUom(releaseSummaryUom) ? "Piece targets are shown as whole units." : ""}`}
                                     </p>
 
                                     <div className="grid grid-cols-2 gap-4">
@@ -1744,9 +1826,11 @@ export function ReleaseJODialog({
                                             : undefined,
                                         false,
                                         materialTargetQuantity ?? undefined,
-                                        productionTimingTargetQuantity
+                                        productionTimingTargetQuantity,
+                                        groupProductionTargets,
+                                        groupMaterialTargets
                                     )}
-                                    disabled={releasingJO || !!productionMetricsError}
+                                    disabled={releasingJO || loadingDetails || !hasLoadedDetails || !allGroupTargetsResolved || !!detailsLoadError || !!productionMetricsError}
                                     className="border-primary/30 text-primary hover:bg-primary/5 h-8 font-semibold"
                                 >
                                     {releasingJO ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
@@ -1768,9 +1852,11 @@ export function ReleaseJODialog({
                                             : undefined,
                                         true,
                                         materialTargetQuantity ?? undefined,
-                                        productionTimingTargetQuantity
+                                        productionTimingTargetQuantity,
+                                        groupProductionTargets,
+                                        groupMaterialTargets
                                     )}
-                                    disabled={releasingJO || !!productionMetricsError || !plannedDate || priority < 0}
+                                    disabled={releasingJO || loadingDetails || !hasLoadedDetails || !allGroupTargetsResolved || !!detailsLoadError || !!productionMetricsError || !plannedDate || priority < 0}
                                     className="bg-emerald-600 hover:bg-emerald-500 text-white h-8 font-semibold shadow-lg shadow-emerald-500/20"
                                 >
                                     {releasingJO ? (

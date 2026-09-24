@@ -2,6 +2,10 @@
 import { selectPreferredActiveVersion } from "../finished-goods/versions/versions-helper";
 import { isProductionSchedulingStatus } from "./_status";
 import { isCancelledJobOrderStatus, isTerminalJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
+import {
+    effectiveReplacementCreditQuantity,
+    remainingSalesOrderDemand
+} from "./_replacement-credits";
 
 type Row = Record<string, any>;
 
@@ -64,13 +68,14 @@ export function isDetailUnfulfilled(detail: Row): boolean {
         && served < ordered;
 }
 
-export function detailRemainingQuantity(detail: Row, plannedQuantity = 0): number {
-    const ordered = Number(detail.ordered_quantity || 0);
-    const allocated = Number(detail.allocated_quantity || 0);
-    const served = Number(detail.served_quantity || 0);
-    const planned = Number(plannedQuantity || 0);
-    if (!Number.isFinite(ordered) || !Number.isFinite(allocated) || !Number.isFinite(served) || !Number.isFinite(planned)) return 0;
-    return Math.max(0, ordered - Math.max(allocated, served) - Math.max(0, planned));
+export function detailRemainingQuantity(detail: Row, plannedQuantity = 0, replacementCreditQuantity = 0): number {
+    return remainingSalesOrderDemand(
+        detail.ordered_quantity,
+        detail.allocated_quantity,
+        detail.served_quantity,
+        plannedQuantity,
+        replacementCreditQuantity
+    );
 }
 
 export function isPlanningVisibleDetail(
@@ -150,6 +155,23 @@ async function fetchJobOrderAssociations(read: DirectusReader, details: Row[]): 
     });
     const jobOrders = (await read("manufacturing_job_orders", jobOrderParams)).data;
     return { activeAllocations, jobOrders };
+}
+
+/** Detail lines with any active (or unresolved) JO allocation cannot be replaced. */
+export async function findActiveJobOrderDetailIds(read: DirectusReader, details: Row[]): Promise<Set<number>> {
+    const { activeAllocations, jobOrders } = await fetchJobOrderAssociations(read, details);
+    const jobOrdersById = new Map(jobOrders.map((jobOrder) => [relationId(jobOrder.job_order_id), jobOrder]));
+    const activeDetailIds = new Set<number>();
+
+    for (const allocation of activeAllocations) {
+        const currentDetailId = relationId(allocation.sales_order_detail_id);
+        const currentJobOrderId = relationId(allocation.job_order_id);
+        if (!currentDetailId || !currentJobOrderId) continue;
+        const jobOrder = jobOrdersById.get(currentJobOrderId);
+        // Keep an orphaned allocation unavailable rather than risking duplicate scheduling.
+        if (!jobOrder || !isTerminalJobOrderStatus(jobOrder.status)) activeDetailIds.add(currentDetailId);
+    }
+    return activeDetailIds;
 }
 
 export async function findPlannedQuantities(read: DirectusReader, details: Row[]) {
@@ -343,7 +365,8 @@ export async function enrichSalesOrderReadModel(
     salesOrders: Row[],
     details: Row[],
     plannedQuantities?: Map<number, number>,
-    includeLinkedJobOrders = false
+    includeLinkedJobOrders = false,
+    replacementCreditsByDetail?: Map<number, number>
 ) {
     const customerCodes = [...new Set(salesOrders.map((order) => String(order.customer_code || "")).filter(Boolean))];
     const customerParams = new URLSearchParams({ fields: "id,customer_code,customer_name", limit: "-1" });
@@ -436,8 +459,16 @@ export async function enrichSalesOrderReadModel(
         const parentOrderStatus = String(order?.order_status || detail.parent_order_status || "").trim() || null;
         detail.parent_order_status = parentOrderStatus;
         const plannedQuantity = Math.max(0, Number(resolvedPlannedQuantities.get(detailId) || 0));
-        const remainingQuantity = detailRemainingQuantity(detail, plannedQuantity);
+        const replacementCreditQuantity = effectiveReplacementCreditQuantity(
+            detail.ordered_quantity,
+            detail.allocated_quantity,
+            detail.served_quantity,
+            plannedQuantity,
+            replacementCreditsByDetail?.get(detailId) || 0
+        );
+        const remainingQuantity = detailRemainingQuantity(detail, plannedQuantity, replacementCreditQuantity);
         detail.planned_quantity = plannedQuantity;
+        detail.replacement_credit_quantity = replacementCreditQuantity;
         detail.is_partially_scheduled = plannedQuantity > 0 && remainingQuantity > 0;
         detail.is_scheduled = remainingQuantity <= 0;
         detail.is_read_only = !isProductionSchedulingStatus(parentOrderStatus) || detail.is_scheduled;

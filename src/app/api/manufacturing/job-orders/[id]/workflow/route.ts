@@ -11,7 +11,11 @@ import {
     type JobOrderWorkflowAction
 } from "@/modules/manufacturing-management/job-order-workflow";
 import { JobOrderOperatorAssignmentError } from "../../_operator-assignment-service";
-import { AuthenticatedActorError, requireManufacturingActorId } from "@/app/api/manufacturing/production/_authenticated-actor";
+import {
+    jobOrderWorkflowModulePath,
+    JobOrderModuleAccessError,
+    requireJobOrderModuleAccess
+} from "@/app/api/manufacturing/job-orders/_module-access";
 import {
     deleteJobOrderTerminationImage,
     JobOrderTerminationImageError,
@@ -159,6 +163,7 @@ export async function POST(
             }, { status: 400 });
         }
 
+        const authorizedUser = await requireJobOrderModuleAccess(jobOrderWorkflowModulePath(action));
         const actor = await getWorkflowActor();
         if (!actor?.userId) {
             return NextResponse.json({
@@ -167,6 +172,9 @@ export async function POST(
                 code: "AUTHENTICATION_REQUIRED"
             }, { status: 401 });
         }
+        actor.userId = authorizedUser.userId;
+        actor.canOverride ||= authorizedUser.admin;
+        actor.canTerminate ||= authorizedUser.admin;
         if (action === "terminate-production" && !actor.canTerminate) {
             return NextResponse.json({
                 success: false,
@@ -194,9 +202,7 @@ export async function POST(
             }
         }
 
-        const actorUserId = action === "cancel"
-            ? await requireManufacturingActorId()
-            : actor.userId;
+        const actorUserId = authorizedUser.userId;
 
         if (action === "terminate-production") {
             if (!terminationImage) {
@@ -312,7 +318,7 @@ export async function POST(
                 code: error.code
             }, { status: error.status });
         }
-        if (error instanceof AuthenticatedActorError) {
+        if (error instanceof JobOrderModuleAccessError) {
             return NextResponse.json({
                 success: false,
                 error: error.message,

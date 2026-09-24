@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { authorizeJobOrderModuleAccess, JOB_ORDER_MODULE_PATHS } from "@/app/api/manufacturing/job-orders/_module-access";
 import { DIRECTUS_URL, headers } from "../../directus-api";
 import { getSessionUserId, requireSessionUserId } from "../../lot-transfers/_session";
 import {
@@ -72,6 +73,8 @@ async function hasPostedJobOrderMovement(jobOrderId: number, jobOrderNo: string)
 }
 
 export async function POST(request: Request) {
+    const accessDenied = await authorizeJobOrderModuleAccess(JOB_ORDER_MODULE_PATHS.qualityAssurance);
+    if (accessDenied) return accessDenied;
     try {
         requireSessionUserId(await getSessionUserId(), "assign a Job Order branch");
 

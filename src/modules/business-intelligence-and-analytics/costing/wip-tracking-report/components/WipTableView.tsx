@@ -1,14 +1,12 @@
 "use client";
 
 import React from "react";
-import Link from "next/link";
 import { motion } from "framer-motion";
 import {
     AlertTriangle,
     Layers,
     ChevronLeft,
     ChevronRight,
-    ArrowUpRight,
     Building2
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -291,18 +289,6 @@ export function WipTableView({
                                                         className="h-7 px-2 text-[11px] font-medium border-border/80 hover:bg-muted/60"
                                                     >
                                                         Details
-                                                    </Button>
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="sm"
-                                                        asChild
-                                                        onClick={(e: React.MouseEvent) => e.stopPropagation()}
-                                                        className="h-7 px-2 text-[11px] font-medium text-primary hover:text-primary hover:bg-primary/10 gap-0.5"
-                                                    >
-                                                        <Link href={`/mm/shop-floor-execution-terminal?id=${encodeURIComponent(job.job_order_id)}&jo=${encodeURIComponent(job.job_order_no)}`}>
-                                                            <span>Control</span>
-                                                            <ArrowUpRight className="h-3 w-3" />
-                                                        </Link>
                                                     </Button>
                                                 </div>
                                             </td>

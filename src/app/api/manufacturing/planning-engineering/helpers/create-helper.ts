@@ -14,6 +14,7 @@ import {
     calculateRecipeMaterialCostPerUnit,
     roundManufacturingUnitCost
 } from "@/modules/manufacturing-management/planning-engineering/utils/cogs-helper";
+import { fetchMmInventoryMovements } from "../../services/mm-inventory-movements.service";
 import {
     calculateReleaseMaterialRequirementPlan,
     calculateFullBatchTarget,
@@ -23,8 +24,46 @@ import {
 } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
 import { groupMaterialRequirements } from "@/modules/manufacturing-management/planning-engineering/utils/material-requirement-groups";
 import { normalizeOperatorAssignments, synchronizeJobOrderOperatorAssignments } from "../../job-orders/_operator-assignment-service";
+import {
+    capReplacementCreditsToRemainingDemand,
+    effectiveReplacementCreditQuantity,
+    loadReplacementCreditData,
+    type ReplacementCreditAttribution
+} from "../../sales-order/_replacement-credits";
 
 const QUANTITY_EPSILON = 0.000001;
+
+async function readReplacementCreditCollection(collection: string, params: URLSearchParams) {
+    const response = await fetch(`${DIRECTUS_URL}/items/${collection}?${params.toString()}`, {
+        headers,
+        cache: "no-store"
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to read ${collection} from Manufacturing Directus (${response.status}).`);
+    }
+    const payload = await response.json();
+    if (!Array.isArray(payload?.data)) {
+        throw new Error(`Manufacturing Directus returned an invalid ${collection} response.`);
+    }
+    return { data: payload.data };
+}
+
+async function readFinishedGoodsReceipts(jobOrderIds: number[]) {
+    const receipts: Array<Record<string, unknown>> = [];
+    const concurrency = 8;
+    for (let index = 0; index < jobOrderIds.length; index += concurrency) {
+        const chunk = jobOrderIds.slice(index, index + concurrency);
+        const movementRows = await Promise.all(chunk.map((jobOrderId) =>
+            fetchMmInventoryMovements({
+                transactionTypeId: 2,
+                movementDirection: "IN",
+                referenceId: jobOrderId
+            })
+        ));
+        receipts.push(...movementRows.flat());
+    }
+    return receipts;
+}
 
 async function loadRouteOperationNames(routes: readonly unknown[]): Promise<Map<number, string>> {
     const operationIds = Array.from(new Set(routes
@@ -143,7 +182,8 @@ async function readActiveAllocationQuantity(detailId: number, excludedJobOrderId
 async function assertFreshAllocationCapacity(
     detailId: number,
     requestedQuantity: number,
-    excludedJobOrderId?: number
+    excludedJobOrderId?: number,
+    replacementCreditQuantity = 0
 ) {
     const detailResponse = await fetch(
         `${DIRECTUS_URL}/items/sales_order_details/${detailId}?fields=detail_id,ordered_quantity,allocated_quantity,served_quantity`,
@@ -154,7 +194,7 @@ async function assertFreshAllocationCapacity(
     const ordered = Number(detail?.ordered_quantity || 0);
     const fulfilled = Math.max(Number(detail?.allocated_quantity || 0), Number(detail?.served_quantity || 0));
     const planned = await readActiveAllocationQuantity(detailId, excludedJobOrderId);
-    const available = Math.max(0, ordered - fulfilled - planned);
+    const available = Math.max(0, ordered - fulfilled - planned - Math.max(0, replacementCreditQuantity));
     if (!Number.isFinite(available) || requestedQuantity > available + QUANTITY_EPSILON) {
         throw new SalesOrderAllocationConflictError(`Sales Order detail ${detailId} no longer has enough remaining quantity for this Job Order. Refresh the demand list and try again.`);
     }
@@ -201,6 +241,7 @@ export async function createJobOrder(
 ): Promise<{ job_order_id?: number | null; jo_id?: string | null; status?: string; shortfalls?: Array<{ name: string; required: number; available: number; shortage: number }> }> {
     let createdJobOrderNo: string | null = null;
     const previousParentStatuses = new Map<number, string>();
+    const createdReplacementCreditIds: number[] = [];
     try {
         const todayStr = await getTodayDateString();
         let productsList = schedulingPlan
@@ -209,6 +250,10 @@ export async function createJobOrder(
                 product_name: joData.product_name,
                 quantity: schedulingPlan.totalQuantity,
                 requested_quantity: schedulingPlan.requestedQuantity ?? schedulingPlan.totalQuantity,
+                material_target_quantity: (joData as any).products?.[0]?.material_target_quantity
+                    ?? (joData as any).products?.[0]?.materialTargetQuantity,
+                timing_target_quantity: (joData as any).products?.[0]?.timing_target_quantity
+                    ?? (joData as any).products?.[0]?.timingTargetQuantity,
                 bom: { version_id: schedulingPlan.bomVersionId }
             }]
             : (joData.products || []);
@@ -941,6 +986,12 @@ export async function createJobOrder(
             if (missingDetailIds.length > 0) {
                 throw new Error(`Selected Sales Order details were not found: ${missingDetailIds.join(", ")}`);
             }
+            const replacementCreditData = await loadReplacementCreditData(
+                readReplacementCreditCollection,
+                details,
+                readFinishedGoodsReceipts
+            );
+            const uncreditedDemandByDetail = new Map<number, number>();
 
             const affectedOrderIds = new Set<number>();
             for (const detailId of detailIds) {
@@ -948,7 +999,20 @@ export async function createJobOrder(
                 const orderedQuantity = Number(detail.ordered_quantity || 0);
                 const allocatedQuantity = Number(detail.allocated_quantity || 0);
                 const servedQuantity = Number(detail.served_quantity || 0);
-                const currentRemainingQuantity = Math.max(0, orderedQuantity - Math.max(allocatedQuantity, servedQuantity));
+                const plannedQuantity = await readActiveAllocationQuantity(detailId);
+                const baseRemainingQuantity = Math.max(
+                    0,
+                    orderedQuantity - Math.max(allocatedQuantity, servedQuantity) - plannedQuantity
+                );
+                uncreditedDemandByDetail.set(detailId, baseRemainingQuantity);
+                const replacementCreditQuantity = effectiveReplacementCreditQuantity(
+                    orderedQuantity,
+                    allocatedQuantity,
+                    servedQuantity,
+                    plannedQuantity,
+                    replacementCreditData.byDetail.get(detailId) || 0
+                );
+                const currentRemainingQuantity = Math.max(0, baseRemainingQuantity - replacementCreditQuantity);
                 const plannedLine = plannedLinesById.get(detailId);
                 const allocationQuantity = plannedLine?.allocationQuantity ?? currentRemainingQuantity;
                 if (allocationQuantity <= 0) {
@@ -958,7 +1022,7 @@ export async function createJobOrder(
                     throw new SalesOrderAllocationConflictError(`Sales Order detail ${detailId} no longer has enough remaining quantity for this Job Order. Refresh the demand list and try again.`);
                 }
 
-                await assertFreshAllocationCapacity(detailId, allocationQuantity);
+                await assertFreshAllocationCapacity(detailId, allocationQuantity, undefined, replacementCreditQuantity);
 
                 const allocationResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations`, {
                     method: "POST",
@@ -975,7 +1039,7 @@ export async function createJobOrder(
                 if (!allocationResponse.ok) {
                     throw new Error(`Failed to create Sales Order allocation for detail ${detailId}: ${allocationResponse.status}`);
                 }
-                await assertFreshAllocationCapacity(detailId, allocationQuantity, joIdInt);
+                await assertFreshAllocationCapacity(detailId, allocationQuantity, joIdInt, replacementCreditQuantity);
 
                 const parentOrderId = Number(
                     typeof detail.order_id === "object" ? detail.order_id?.order_id || detail.order_id?.id : detail.order_id
@@ -996,6 +1060,40 @@ export async function createJobOrder(
                 }
             }
 
+            for (const detailId of detailIds) {
+                const sourceAttributions = replacementCreditData.attributions.filter((item) => item.detailId === detailId);
+                if (sourceAttributions.length === 0) continue;
+                const cappedAttributions = capReplacementCreditsToRemainingDemand(
+                    sourceAttributions,
+                    detailId,
+                    uncreditedDemandByDetail.get(detailId) || 0
+                );
+                const cappedByPredecessor = new Map(
+                    cappedAttributions.map((item) => [item.predecessorJobOrderId, item.creditedQuantity])
+                );
+                for (const attribution of sourceAttributions) {
+                    const creditKey = `${joIdInt}:${attribution.predecessorJobOrderId}:${detailId}`;
+                    const response = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_replacement_credits`, {
+                        method: "POST",
+                        headers,
+                        body: JSON.stringify({
+                            replacement_job_order_id: joIdInt,
+                            predecessor_job_order_id: attribution.predecessorJobOrderId,
+                            sales_order_detail_id: detailId,
+                            credited_quantity: cappedByPredecessor.get(attribution.predecessorJobOrderId) || 0,
+                            credit_key: creditKey,
+                            created_at: formatPhtDateTime()
+                        })
+                    });
+                    if (!response.ok) {
+                        throw new Error(`Failed to record predecessor credit for Job Order ${attribution.predecessorJobOrderNo}: ${response.status}`);
+                    }
+                    const payload = await response.json().catch(() => null);
+                    const creditId = Number(payload?.data?.replacement_credit_id ?? payload?.data?.id ?? 0);
+                    if (Number.isSafeInteger(creditId) && creditId > 0) createdReplacementCreditIds.push(creditId);
+                }
+            }
+
             // A regular JO puts its linked parent orders into production only
             // after every requested allocation has been persisted.
             if (shouldInitialize && !options.deferSalesOrderTransition) {
@@ -1008,6 +1106,12 @@ export async function createJobOrder(
         console.error("[Manufacturing Directus API] Failed to create job order:", e);
         if (createdJobOrderNo) {
             try {
+                for (const creditId of createdReplacementCreditIds) {
+                    await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_replacement_credits/${creditId}`, {
+                        method: "DELETE",
+                        headers
+                    }).catch(() => {});
+                }
                 for (const [parentOrderId, previousStatus] of previousParentStatuses) {
                     if (!previousStatus) continue;
                     await fetch(`${DIRECTUS_URL}/items/sales_order/${parentOrderId}`, {

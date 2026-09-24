@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
+import { authorizeJobOrderModuleAccess, JOB_ORDER_MODULE_PATHS } from "@/app/api/manufacturing/job-orders/_module-access";
 import {
     fetchMmInventoryMovements,
     MmInventoryMovementError,
@@ -63,6 +64,8 @@ function errorResponse(error: unknown, status = 500) {
 }
 
 export async function GET(request: Request) {
+    const accessDenied = await authorizeJobOrderModuleAccess(JOB_ORDER_MODULE_PATHS.qualityAssurance);
+    if (accessDenied) return accessDenied;
     try {
         const { searchParams } = new URL(request.url);
         const finalReleaseId = Number(searchParams.get("finalReleaseId") || 0);

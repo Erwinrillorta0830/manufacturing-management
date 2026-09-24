@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { AlertTriangle, ArrowRight, CheckCircle2, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -11,7 +10,7 @@ interface NextStepCalloutProps {
     blockers?: string[];
     title?: string;
     className?: string;
-    /** Handles in-page actions that have no href. */
+    /** Handles local actions within the current module. */
     onAction?: () => void;
 }
 
@@ -63,20 +62,11 @@ export function NextStepCallout({
                 </div>
             </div>
 
-            {action && !isBlocked && (
-                action.href ? (
-                    <Button asChild size="sm" className="h-8 shrink-0 text-xs font-semibold">
-                        <Link href={action.href}>
-                            {action.label}
-                            <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
-                        </Link>
-                    </Button>
-                ) : onAction ? (
-                    <Button size="sm" onClick={onAction} className="h-8 shrink-0 text-xs font-semibold">
-                        {action.label}
-                        <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
-                    </Button>
-                ) : null
+            {action && !isBlocked && onAction && (
+                <Button size="sm" onClick={onAction} className="h-8 shrink-0 text-xs font-semibold">
+                    {action.label}
+                    <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+                </Button>
             )}
         </div>
     );

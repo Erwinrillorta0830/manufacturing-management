@@ -1,6 +1,5 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { updateJobOrder } from "../planning-helper";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { isCancelledJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
@@ -13,22 +12,16 @@ import {
 } from "../../job-orders/_workflow-evidence";
 import { resolveApplicableRouteWorkCenters } from "../../production/station-scan/_applicable-work-centers";
 import {
+    JOB_ORDER_MODULE_PATHS,
+    JobOrderModuleAccessError,
+    requireJobOrderModuleAccess
+} from "@/app/api/manufacturing/job-orders/_module-access";
+import {
     JobOrderOperatorAssignmentError,
     normalizeOperatorAssignments,
     readProjectedOperatorAssignments,
     synchronizeJobOrderOperatorAssignments
 } from "../../job-orders/_operator-assignment-service";
-
-async function patchActorId(): Promise<number> {
-    try {
-        const token = (await cookies()).get("vos_access_token")?.value;
-        const payload = token ? JSON.parse(Buffer.from(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8")) : {};
-        const id = Number(payload?.id || payload?.user_id || payload?.sub);
-        return Number.isSafeInteger(id) && id > 0 ? id : 24;
-    } catch {
-        return 24;
-    }
-}
 
 async function cancelledJobOrderResponse(jobOrderId: number | string): Promise<NextResponse | null> {
     const numericId = Number(jobOrderId);
@@ -270,6 +263,12 @@ export async function handlePATCH(request: Request) {
         } else {
             body = await request.json();
         }
+        const isProductionMutation = body.action === "assign-route-workcenters"
+            || body.action === "breakdown"
+            || body.taskId !== undefined;
+        const moduleUser = await requireJobOrderModuleAccess(
+            isProductionMutation ? JOB_ORDER_MODULE_PATHS.production : JOB_ORDER_MODULE_PATHS.planning
+        );
 
         if (body.action === "assign-route-workcenters") {
             return handleRouteWorkCenterAssignment(body);
@@ -315,7 +314,7 @@ export async function handlePATCH(request: Request) {
 
             const result = await executeJobOrderWorkflow(parsedJobOrderId, {
                 action: "place-on-hold",
-                actorUserId: await patchActorId(),
+                actorUserId: moduleUser.userId,
                 idempotencyKey: String(body.idempotencyKey || `breakdown:${parsedJobOrderId}:${haltedStepId}:${Number(yieldQty || 0)}`).trim(),
                 remarks: `Halted at step ${haltedStepId}. Reported yield: ${parsedReportedYield}. Reason: ${trimmedHaltReason}`,
                 evidenceImageId: uploadedBreakdownEvidenceImageId,
@@ -494,32 +493,6 @@ export async function handlePATCH(request: Request) {
             const actual = Number(qaLog.actual_quantity || 0);
             const deviation = expected - actual;
 
-            // Get logged in user ID from secure access token cookie
-            let encoderId: number | null = null;
-            try {
-                const cookieStore = await cookies();
-                const token = cookieStore.get("vos_access_token")?.value;
-                if (token) {
-                    const parts = token.split(".");
-                    if (parts.length >= 2) {
-                        const base64Url = parts[1];
-                        let base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-                        while (base64.length % 4) base64 += "=";
-                        const jsonPayload = Buffer.from(base64, "base64").toString("utf8");
-                        const payload = JSON.parse(jsonPayload);
-                        const rawId = payload?.id || payload?.user_id || payload?.sub;
-                        if (rawId) {
-                            const parsed = Number(rawId);
-                            if (!isNaN(parsed)) {
-                                encoderId = parsed;
-                            }
-                        }
-                    }
-                }
-            } catch (err) {
-                console.error("Error decoding user token in PATCH:", err);
-            }
-
             // 1. Fetch route step details
             const routeStepRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes/${taskId}?fields=jo_route_id,job_order_id,sequence_order,work_center_id,operation_id,planned_setup_hours,planned_run_hours,actual_setup_hours,actual_run_hours,step_batch_size,run_time_hours_factor`, { headers });
             if (!routeStepRes.ok) throw new Error("Route step not found");
@@ -600,7 +573,7 @@ export async function handlePATCH(request: Request) {
                     value_numeric: actual,
                     value_boolean: isPassed,
                     is_passed: isPassed,
-                    inspected_by: encoderId || 1,
+                    inspected_by: moduleUser.userId,
                     inspected_at: new Date().toISOString(),
                     remarks: qaLog.comments || ""
                 };
@@ -693,6 +666,9 @@ export async function handlePATCH(request: Request) {
             await deleteJobOrderWorkflowEvidence(uploadedBreakdownEvidenceImageId);
         }
         console.error("API Error in planning-engineering PATCH:", e);
+        if (e instanceof JobOrderModuleAccessError) {
+            return NextResponse.json({ error: e.message, code: e.code }, { status: e.status });
+        }
         const message = (e as { message?: string }).message || "Failed to update Job Order";
         const status = e instanceof JobOrderOperatorAssignmentError || e instanceof JobOrderWorkflowEvidenceError
             ? e.status

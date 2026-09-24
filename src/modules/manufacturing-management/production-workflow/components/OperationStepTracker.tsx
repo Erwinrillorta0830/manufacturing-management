@@ -1,6 +1,5 @@
 /* eslint-disable */
 import React from "react";
-import Link from "next/link";
 import {
     Clock,
     Play,
@@ -191,25 +190,7 @@ export function OperationStepTracker({
                                             )}
                                             {task.qa_status === "Passed" ? "QA Passed" : task.qa_status === "QA Hold" ? "QA Hold" : "QA Checklist Required"}
                                         </span>
-                                        {task.qa_status === "Passed" ? (
-                                            <Button asChild size="xs" variant="ghost" className="h-5 text-[10px] px-1.5 text-emerald-700 hover:text-emerald-800">
-                                                <Link
-                                                    href={`/mm/manufacturing-job-order-inspection-qa?jo=${encodeURIComponent(selectedJobOrder.jo_id)}`}
-                                                    onClick={(e) => e.stopPropagation()}
-                                                >
-                                                    View QA
-                                                </Link>
-                                            </Button>
-                                        ) : task.qa_status === "QA Hold" ? (
-                                            <Button asChild size="xs" variant="ghost" className="h-5 text-[10px] px-1.5 text-rose-700 hover:text-rose-800">
-                                                <Link
-                                                    href={`/mm/manufacturing-job-order-inspection-qa?jo=${encodeURIComponent(selectedJobOrder.jo_id)}`}
-                                                    onClick={(e) => e.stopPropagation()}
-                                                >
-                                                    Review QA
-                                                </Link>
-                                            </Button>
-                                        ) : (
+                                        {task.qa_status !== "Passed" && task.qa_status !== "QA Hold" && (
                                             <Button
                                                 type="button"
                                                 size="xs"

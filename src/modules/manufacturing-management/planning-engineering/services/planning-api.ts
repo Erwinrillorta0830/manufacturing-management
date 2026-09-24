@@ -28,16 +28,20 @@ export async function fetchBranches(): Promise<Branch[]> {
         .filter((branch) => Number.isFinite(branch.id) && branch.id > 0 && Boolean(branch.branch_name));
 }
 
-export type PlanningSalesOrderQueue = "for-production" | "in-production";
+export type PlanningSalesOrderQueue = "for-production" | "in-production" | "planning";
 
 export async function fetchSalesOrders(
     queue: PlanningSalesOrderQueue = "for-production"
 ): Promise<{ data: SalesOrder[]; detailsMap: Record<number, SalesOrderDetail[]> }> {
     const soRes = await fetch(`/api/manufacturing/sales-order?queue=${encodeURIComponent(queue)}&limit=200`, { cache: "no-store" });
     if (!soRes.ok) {
-        throw new Error(queue === "in-production"
+        const payload = await soRes.json().catch(() => null);
+        const fallbackMessage = queue === "in-production"
             ? "Failed to fetch Sales Orders in production."
-            : "Failed to fetch For Production Sales Orders.");
+            : queue === "planning"
+                ? "Failed to fetch schedulable Sales Order demand."
+            : "Failed to fetch For Production Sales Orders.";
+        throw new Error(typeof payload?.error === "string" ? payload.error : fallbackMessage);
     }
     const soData = await soRes.json();
     return {
@@ -131,6 +135,8 @@ export interface ReleaseMultipleJob {
     productName: string;
     bomVersionId: number;
     quantity: number;
+    timingTargetQuantity?: number;
+    materialTargetQuantity?: number;
     salesOrderIds: number[];
     salesOrderDetailIds: number[];
     subAssemblyVersionMap?: Record<number, number>;

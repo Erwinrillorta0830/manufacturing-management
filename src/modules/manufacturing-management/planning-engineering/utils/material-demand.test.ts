@@ -3,15 +3,23 @@ import {
     calculateFullBatchTarget,
     calculatePerUnitMaterialRequirement,
     calculateReleaseMaterialRequirementPlan,
+    calculateRequiredBatchCount,
+    normalizeProductionOutputQuantity,
     formatProductionValue
 } from "./production-timing";
 
 const recipeBatchSize = 6986.19;
 const salesOrderQuantity = 12001;
 const netOutputQuantity = 996;
+const oneBatchTarget = calculateFullBatchTarget(1000, recipeBatchSize);
+assert.equal(calculateRequiredBatchCount(1000, recipeBatchSize), 1);
+assert.equal(oneBatchTarget, 6986.19);
+assert.equal(calculateFullBatchTarget(recipeBatchSize, recipeBatchSize), recipeBatchSize);
+assert.equal(normalizeProductionOutputQuantity(oneBatchTarget, "PCS"), 6986);
 const plannedProductionQuantity = calculateFullBatchTarget(salesOrderQuantity, recipeBatchSize);
 
 assert.equal(plannedProductionQuantity, 13972.38);
+assert.equal(calculateRequiredBatchCount(plannedProductionQuantity, recipeBatchSize), 2);
 
 const qaReleasePlan = calculateReleaseMaterialRequirementPlan(
     salesOrderQuantity,

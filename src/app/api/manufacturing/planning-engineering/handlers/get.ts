@@ -38,6 +38,11 @@ import {
 } from "@/modules/manufacturing-management/planning-engineering/utils/containerization-helper";
 import { aggregateWizardMaterialComponents } from "@/modules/manufacturing-management/planning-engineering/utils/material-summary";
 import { buildFinishedGoodsProgress } from "@/modules/manufacturing-management/production-workflow/finished-goods-progress";
+import {
+    authorizeJobOrderModuleAccess,
+    JOB_ORDER_MODULE_PATHS,
+    type JobOrderModulePath
+} from "@/app/api/manufacturing/job-orders/_module-access";
 
 const WIZARD_STEP_TIMEOUT_MS = 20000;
 
@@ -174,6 +179,34 @@ export async function handleGET(request: Request) {
         const productId = searchParams.get("productId");
         const bomId = searchParams.get("bomId");
         const action = searchParams.get("action");
+
+        const readModulePaths: readonly JobOrderModulePath[] | null = action === "users"
+            ? null
+            : action === "qa-job-orders" || action === "qa-logs" || action === "job-order-materials"
+                ? [JOB_ORDER_MODULE_PATHS.qualityAssurance]
+                : action === "job-materials"
+                    ? [JOB_ORDER_MODULE_PATHS.planning, JOB_ORDER_MODULE_PATHS.production]
+                    : action === "job-order-progress" || action === "step-materials"
+                        ? [JOB_ORDER_MODULE_PATHS.production]
+                        : action === "net-requirements"
+                            || action === "version-stock"
+                            || action === "wizard-step-2"
+                            || action === "sub-assembly-version-details"
+                            || action === "lots"
+                            ? [JOB_ORDER_MODULE_PATHS.planning]
+                            : productId || bomId
+                                ? [JOB_ORDER_MODULE_PATHS.planning]
+                                : [
+                                    JOB_ORDER_MODULE_PATHS.planning,
+                                    JOB_ORDER_MODULE_PATHS.production,
+                                    JOB_ORDER_MODULE_PATHS.qualityAssurance,
+                                    JOB_ORDER_MODULE_PATHS.calendarOfSchedule,
+                                    JOB_ORDER_MODULE_PATHS.costVariance
+                                ];
+        if (readModulePaths) {
+            const accessDenied = await authorizeJobOrderModuleAccess(readModulePaths);
+            if (accessDenied) return accessDenied;
+        }
 
 
 
@@ -2014,6 +2047,7 @@ export async function handleGET(request: Request) {
                 routing_tasks: item.routing_tasks || [],
                 routingTasks: item.routing_tasks || [],
                 salesOrders: item.sales_orders || [],
+                replacementCredits: item.replacement_credits || [],
                 shiftOption: String(resolveProductionShiftHours(item.shift_option)),
                 dailyBreakdown: item.daily_breakdown || null,
                 remarks: item.remarks || null,
