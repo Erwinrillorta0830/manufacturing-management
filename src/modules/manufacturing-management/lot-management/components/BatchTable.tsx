@@ -1,6 +1,6 @@
 import React from "react";
 import { motion } from "framer-motion";
-import { Search, Loader2, Layers, ChevronsLeft, ChevronsRight, AlertTriangle, ShieldAlert, History } from "lucide-react";
+import { Search, Loader2, Layers, ChevronsLeft, ChevronsRight, AlertTriangle, ShieldAlert, History, Building2 } from "lucide-react";
 import { Batch, Lot, type BatchStatus } from "../types";
 import { getFefoPriorityMap } from "../utils/fefoEngine";
 import { SearchableLotSelect } from "./SearchableLotSelect";
@@ -146,6 +146,7 @@ export default function BatchTable({
                                 <TableHead>FEFO Priority</TableHead>
                                 <TableHead>Batch Number</TableHead>
                                 <TableHead>Storage Rack (Lot)</TableHead>
+                                <TableHead>Branch</TableHead>
                                 <TableHead>Item / SKU</TableHead>
                                 <TableHead>Quantity</TableHead>
                                 <TableHead>Mfg Date</TableHead>
@@ -208,6 +209,23 @@ export default function BatchTable({
                                         </TableCell>
                                         <TableCell className="font-semibold text-foreground" title={batch.lotName}>
                                             {batch.lotName}
+                                        </TableCell>
+                                        <TableCell>
+                                            {batch.branchName ? (
+                                                <div className="flex items-center gap-1.5">
+                                                    <Building2 className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                                    <div className="flex flex-col min-w-0">
+                                                        <span className="text-xs font-semibold text-foreground truncate" title={batch.branchName}>
+                                                            {batch.branchName}
+                                                        </span>
+                                                        {batch.branchCode && (
+                                                            <span className="font-mono text-[10px] text-muted-foreground">{batch.branchCode}</span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <span className="text-muted-foreground text-xs">-</span>
+                                            )}
                                         </TableCell>
                                         <TableCell>
                                             <div className="flex flex-col min-w-[180px] max-w-[360px]">

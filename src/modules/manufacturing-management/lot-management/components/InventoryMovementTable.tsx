@@ -10,7 +10,8 @@ import {
     Warehouse,
     FilterX,
     AlertTriangle,
-    RefreshCw
+    RefreshCw,
+    Building2
 } from "lucide-react";
 import { InventoryMovement, Lot, ProductItem } from "../types";
 import { SearchableLotSelect } from "./SearchableLotSelect";
@@ -257,7 +258,7 @@ export default function InventoryMovementTable({
                         </p>
                     </div>
                 ) : (
-                    <Table className="min-w-[1350px]">
+                    <Table className="min-w-[1550px]">
                         <TableHeader>
                             <TableRow>
                                 <TableHead className="w-[50px]">No.</TableHead>
@@ -265,6 +266,7 @@ export default function InventoryMovementTable({
                                 <TableHead className="w-[110px]">Direction</TableHead>
                                 <TableHead className="min-w-[160px]">Transaction Type</TableHead>
                                 <TableHead className="min-w-[150px]">Storage Rack (Lot)</TableHead>
+                                <TableHead className="min-w-[140px]">Branch</TableHead>
                                 <TableHead className="min-w-[200px]">Product / SKU</TableHead>
                                 <TableHead className="min-w-[140px]">Batch No</TableHead>
                                 <TableHead className="text-right w-[110px]">Quantity</TableHead>
@@ -328,6 +330,26 @@ export default function InventoryMovementTable({
                                         </TableCell>
                                         <TableCell className="font-semibold text-xs text-foreground">
                                             {resolvedLotName}
+                                        </TableCell>
+                                        <TableCell>
+                                            {(() => {
+                                                const branchName = matchedLot?.branchName || (m.branchId ? `Branch #${m.branchId}` : null);
+                                                const branchCode = matchedLot?.branchCode;
+                                                if (!branchName) return <span className="text-muted-foreground text-xs">-</span>;
+                                                return (
+                                                    <div className="flex items-center gap-1.5">
+                                                        <Building2 className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                                        <div className="flex flex-col min-w-0">
+                                                            <span className="text-xs font-semibold text-foreground truncate" title={branchName}>
+                                                                {branchName}
+                                                            </span>
+                                                            {branchCode && (
+                                                                <span className="font-mono text-[10px] text-muted-foreground">{branchCode}</span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })()}
                                         </TableCell>
                                         <TableCell>
                                             <div className="flex flex-col min-w-[150px] max-w-[220px]">

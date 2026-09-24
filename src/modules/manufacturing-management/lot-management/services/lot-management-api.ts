@@ -108,9 +108,12 @@ export async function fetchUoms(): Promise<UnitOfMeasure[]> {
 
 // ─── Batch API Functions ─────────────────────────────────────────────
 
-export async function fetchBatches(lotId?: number): Promise<Batch[]> {
-    const query = lotId ? `?lotId=${lotId}&_t=${Date.now()}` : `?_t=${Date.now()}`;
-    const res = await fetch(`/api/manufacturing/inventory-warehousing/lot-management/batches${query}`, { cache: "no-store" });
+export async function fetchBatches(lotId?: number, branchId?: number): Promise<Batch[]> {
+    const params = new URLSearchParams();
+    if (lotId) params.append("lotId", String(lotId));
+    if (branchId) params.append("branchId", String(branchId));
+    params.append("_t", String(Date.now()));
+    const res = await fetch(`/api/manufacturing/inventory-warehousing/lot-management/batches?${params.toString()}`, { cache: "no-store" });
     if (!res.ok) {
         throw new Error(await extractErrorMessage(res, "Failed to fetch batches from BFF"));
     }
