@@ -50,6 +50,10 @@ function statusClass(status: string) {
             : "border-amber-200 bg-amber-50 text-amber-700";
 }
 
+function statusLabel(status: string) {
+    return status === "Partially Received" ? "QA Receiving · Partially Received" : status;
+}
+
 function receiptHistoryStatusClass(status: string) {
     return status === "Posted" || status === "Legacy"
         ? "border-emerald-200 bg-emerald-50 text-emerald-700"
@@ -235,7 +239,7 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
                                                 <td className="whitespace-nowrap px-4 py-4"><span className="font-medium">{order.currencyCode}</span>{order.currencyCode !== "PHP" && <span className="block text-xs text-muted-foreground">Base PHP</span>}</td>
                                                 <td className="whitespace-nowrap px-4 py-4 text-right"><span className="font-medium">{primaryTotal(order)}</span>{order.currencyCode !== "PHP" && <span className="block text-xs text-muted-foreground">{formatAmount(order.totalPhpAmount, "PHP")} base</span>}</td>
                                                 <td className="max-w-64 px-4 py-4"><span className="block truncate text-muted-foreground" title={order.remarks || undefined}>{order.remarks || "-"}</span></td>
-                                                <td className="px-4 py-4"><Badge variant="outline" className={statusClass(order.status)}>{order.status}</Badge></td>
+                                                <td className="px-4 py-4"><Badge variant="outline" className={statusClass(order.status)}>{statusLabel(order.status)}</Badge></td>
                                                 <td className="px-4 py-4 text-right"><Button size="sm" variant={order.status === "Received" ? "outline" : "default"} onClick={() => router.push(`/mm/warehouse-receiving/${order.id}`)}>{order.status === "Received" ? "View" : "Open"}</Button></td>
                                             </tr>
                                         ))}
@@ -253,7 +257,7 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
                                         <div className="min-w-0">
                                             <div className="flex flex-wrap items-center gap-2">
                                                 <span className="font-semibold">{order.poNumber}</span>
-                                                <Badge variant="outline" className={statusClass(order.status)}>{order.status}</Badge>
+                                                <Badge variant="outline" className={statusClass(order.status)}>{statusLabel(order.status)}</Badge>
                                             </div>
                                             {order.referenceNumber && <p className="mt-0.5 text-xs text-muted-foreground">Ref: {order.referenceNumber}</p>}
                                             <p className="mt-1 truncate text-sm text-muted-foreground">{order.supplierName} · {order.branch.name} {order.branch.code ? `(${order.branch.code})` : ""}</p>
@@ -290,7 +294,7 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
                         <CardHeader className="border-b">
                             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                 <div>
-                                    <div className="flex flex-wrap items-center gap-2"><CardTitle>{selectedOrder.poNumber}</CardTitle><Badge variant="outline" className={statusClass(selectedOrder.status)}>{selectedOrder.status}</Badge></div>
+                                    <div className="flex flex-wrap items-center gap-2"><CardTitle>{selectedOrder.poNumber}</CardTitle><Badge variant="outline" className={statusClass(selectedOrder.status)}>{statusLabel(selectedOrder.status)}</Badge></div>
                                     {selectedOrder.referenceNumber && <p className="mt-1 text-xs text-muted-foreground">Ref: {selectedOrder.referenceNumber}</p>}
                                     <p className="mt-1 text-sm text-muted-foreground">{selectedOrder.supplierName} · Receiving branch: {selectedOrder.branch.name} {selectedOrder.branch.code ? `(${selectedOrder.branch.code})` : ""}</p>
                                 </div>

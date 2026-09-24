@@ -37,6 +37,7 @@ import {
     parseContainerizationProfile
 } from "@/modules/manufacturing-management/planning-engineering/utils/containerization-helper";
 import { aggregateWizardMaterialComponents } from "@/modules/manufacturing-management/planning-engineering/utils/material-summary";
+import { buildFinishedGoodsProgress } from "@/modules/manufacturing-management/production-workflow/finished-goods-progress";
 
 const WIZARD_STEP_TIMEOUT_MS = 20000;
 
@@ -1088,8 +1089,8 @@ export async function handleGET(request: Request) {
                 }
                 : null;
 
-            // Finished goods credited to each linked Sales Order, proportional
-            // to this Job Order's allocation and actual produced quantity.
+            // Split the Job Order output between its Sales Order allocations and
+            // the target quantity reserved for buffer/stock.
             const allocationsRes = await fetch(
                 `${DIRECTUS_URL}/items/manufacturing_job_order_allocations?filter[job_order_id][_eq]=${numericJoId}&fields=sales_order_detail_id,allocated_quantity&limit=-1`,
                 { headers, cache: "no-store" }
@@ -1102,7 +1103,7 @@ export async function handleGET(request: Request) {
             const detailIds = [...new Set(allocations.map((allocation: any) => Number(allocation.sales_order_detail_id?.detail_id || allocation.sales_order_detail_id)))];
             if (detailIds.length > 0) {
                 const detailsRes = await fetch(
-                    `${DIRECTUS_URL}/items/sales_order_details?filter[detail_id][_in]=${detailIds.join(",")}&fields=detail_id,order_id,ordered_quantity&limit=-1`,
+                    `${DIRECTUS_URL}/items/sales_order_details?filter[detail_id][_in]=${detailIds.join(",")}&fields=detail_id,order_id&limit=-1`,
                     { headers, cache: "no-store" }
                 );
                 const details: any[] = detailsRes.ok ? ((await detailsRes.json()).data || []) : [];
@@ -1120,37 +1121,28 @@ export async function handleGET(request: Request) {
                 }
             }
 
-            const finishedGoods = allocations.length > 0
-                ? allocations.map((allocation: any) => {
-                    const detailId = Number(allocation.sales_order_detail_id?.detail_id || allocation.sales_order_detail_id);
-                    const detail = detailMap.get(detailId);
-                    const orderId = Number(detail?.order_id?.order_id || detail?.order_id) || null;
-                    const order = orderId ? orderMap.get(orderId) : null;
-                    const ordered = Math.max(0, Number(detail?.ordered_quantity || 0));
-                    const allocated = Math.max(0, Number(allocation.allocated_quantity || 0));
-                    const produced = targetQuantity > 0 ? round6(producedQuantity * (allocated / targetQuantity)) : 0;
+            const finishedGoodsAllocations = allocations.map((allocation: any) => {
+                const detailId = Number(allocation.sales_order_detail_id?.detail_id || allocation.sales_order_detail_id);
+                const detail = detailMap.get(detailId);
+                const orderId = Number(detail?.order_id?.order_id || detail?.order_id) || null;
+                const order = orderId ? orderMap.get(orderId) : null;
 
-                    return {
-                        orderNo: order?.order_no || (orderId ? `SO-${orderId}` : `Detail #${detailId}`),
-                        targetQuantity: ordered,
-                        produced,
-                        remaining: round6(Math.max(0, ordered - produced))
-                    };
-                })
-                : [{
-                    orderNo: "Buffer Stock",
-                    targetQuantity,
-                    produced: round6(producedQuantity),
-                    remaining: round6(Math.max(0, targetQuantity - producedQuantity))
-                }];
+                return {
+                    orderNo: order?.order_no || (orderId ? `SO-${orderId}` : `Detail #${detailId}`),
+                    allocatedQuantity: Number(allocation.allocated_quantity || 0)
+                };
+            });
+            const finishedGoods = buildFinishedGoodsProgress(targetQuantity, producedQuantity, finishedGoodsAllocations);
+            const finishedGoodsTotals = finishedGoods.totals;
 
             return NextResponse.json({
                 jobOrder: {
                     jobOrderId: Number(jobOrder.job_order_id || numericJoId),
                     jobOrderNo: jobOrder.job_order_no || `JO-${numericJoId}`,
                     status: jobOrder.status || null,
-                    targetQuantity,
-                    producedQuantity: round6(producedQuantity)
+                    targetQuantity: finishedGoodsTotals.targetQuantity,
+                    producedQuantity: finishedGoodsTotals.producedQuantity,
+                    remainingQuantity: finishedGoodsTotals.remainingQuantity
                 },
                 rawMaterials: { lines: rawMaterialLines, total: rawMaterialsTotal },
                 finishedGoods

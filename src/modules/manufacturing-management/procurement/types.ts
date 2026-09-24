@@ -361,6 +361,7 @@ export interface LandedCostAuditResponse {
 
 export interface RawMaterial {
     product_id: number;
+    has_bom?: boolean | number | string | null;
     parent_id?: number | null;
     parent_name?: string | null;
     product_code?: string;
@@ -642,6 +643,7 @@ export interface LineItem {
 
 export interface BFFCatalogProduct {
     product_id: number;
+    has_bom?: boolean | number | string | null;
     parent_id?: number | string | { product_id?: number | string; id?: number | string } | null;
     product_code?: string;
     product_name: string;

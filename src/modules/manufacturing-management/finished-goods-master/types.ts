@@ -395,7 +395,7 @@ export interface DirectusProduct {
     isActive?: boolean | number | string | null;
     density_factor?: number | null;
     has_versions?: boolean;
-    has_bom?: boolean | number | null;
+    has_bom?: boolean | number | string | null;
     currency_profile?: DirectusProductCurrencyProfile | null;
     product_type?: number | string | { id?: number | string; name?: string; default_purchase_price_type_id?: unknown } | null;
     product_brand?: number | { brand_id?: number; id?: number } | null;
