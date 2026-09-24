@@ -483,6 +483,6 @@ export interface ShiftRunLogPayload {
     materialsConsumed: ShiftRunMaterialConsumption[];
     varianceReason?: string | null;
     approveVariance?: boolean;
-    /** Optional photo captured at the end of the production shift. */
-    evidenceImage?: File | null;
+    /** Required photo captured at the end of the production shift. */
+    evidenceImage: File;
 }

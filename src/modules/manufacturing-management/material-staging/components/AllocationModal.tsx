@@ -16,6 +16,7 @@ import type {
     AllocationPreview,
     AllocationPreviewPayload,
     AllocatedLot,
+    MaterialAllocationPreview,
     MaterialStagingItem,
     StagingCommitPayload,
     StagingJobOrder,
@@ -77,7 +78,7 @@ export function AllocationModal({
         <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
             <DialogContent className="w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] sm:max-w-5xl min-w-0 max-h-[92vh] overflow-x-hidden overflow-y-auto p-0 gap-0">
                 <AllocationForm
-                    key={`${activeItem.jobOrder.job_order_id}-${activeItem.material.jo_material_id}`}
+                    key={`${activeItem.jobOrder.job_order_id}-${(activeItem.material.jo_material_ids || [activeItem.material.jo_material_id]).join("-")}`}
                     activeItem={activeItem}
                     workCenters={workCenters}
                     onCommit={onCommit}
@@ -106,6 +107,10 @@ function AllocationForm({
     isOpen: boolean;
 }) {
     const { jobOrder, material } = activeItem;
+    const sourceMaterialIds = useMemo(
+        () => [...new Set(material.jo_material_ids?.length ? material.jo_material_ids : [material.jo_material_id])],
+        [material.jo_material_ids, material.jo_material_id]
+    );
     const defaultWorkCenter = jobOrder.staging_work_center_id || workCenters.find(center => center.is_active !== false)?.work_center_id || 0;
     const [mode, setMode] = useState<AllocationMode>("auto");
     const [selectedWorkCenterId, setSelectedWorkCenterId] = useState(String(defaultWorkCenter || ""));
@@ -115,7 +120,26 @@ function AllocationForm({
     const [loadingPreview, setLoadingPreview] = useState(false);
     const [formError, setFormError] = useState<string | null>(null);
 
-    const selectedMaterialPreview = preview?.materials.find(item => item.jo_material_id === material.jo_material_id) || null;
+    const selectedMaterialPreviews = preview?.materials.filter(item => sourceMaterialIds.includes(item.jo_material_id)) || [];
+    const selectedMaterialPreview: MaterialAllocationPreview | null = selectedMaterialPreviews.length > 0
+        ? {
+            ...selectedMaterialPreviews[0],
+            required_quantity: selectedMaterialPreviews.reduce((total, item) => total + item.required_quantity, 0),
+            staged_quantity: selectedMaterialPreviews.reduce((total, item) => total + item.staged_quantity, 0),
+            remaining_quantity: selectedMaterialPreviews.reduce((total, item) => total + item.remaining_quantity, 0),
+            shortage_quantity: selectedMaterialPreviews.reduce((total, item) => total + item.shortage_quantity, 0),
+            candidates: [...selectedMaterialPreviews.reduce((candidates, item) => {
+                for (const candidate of item.candidates) {
+                    const key = `${candidate.mm_lot_id}:${candidate.inventory_lot_id}:${candidate.batch_no.trim().toLowerCase()}`;
+                    const current = candidates.get(key);
+                    if (!current || candidate.available_quantity > current.available_quantity) candidates.set(key, candidate);
+                }
+                return candidates;
+            }, new Map<string, AllocationPreview["materials"][number]["candidates"][number]>()).values()],
+            proposed_allocations: selectedMaterialPreviews.flatMap(item => item.proposed_allocations),
+            message: selectedMaterialPreviews.find(item => item.message)?.message
+        }
+        : null;
     const selectedLines = mode === "auto"
         ? selectedMaterialPreview?.proposed_allocations || []
         : manualLines.filter(line => line.quantity > 0);
@@ -129,9 +153,9 @@ function AllocationForm({
         job_order_no: jobOrder.job_order_no,
         work_center_id: Number(selectedWorkCenterId),
         mode,
-        material_ids: [material.jo_material_id],
+        material_ids: sourceMaterialIds,
         ...(mode === "manual" && manualLines.length > 0 ? { lines: manualLines } : {})
-    }), [jobOrder.job_order_id, jobOrder.job_order_no, material.jo_material_id, mode, selectedWorkCenterId, manualLines]);
+    }), [jobOrder.job_order_id, jobOrder.job_order_no, sourceMaterialIds, mode, selectedWorkCenterId, manualLines]);
 
     const loadPreview = async (payload: AllocationPreviewPayload) => {
         if (!payload.work_center_id) {
@@ -161,12 +185,12 @@ function AllocationForm({
             job_order_no: jobOrder.job_order_no,
             work_center_id: Number(selectedWorkCenterId),
             mode: "auto",
-            material_ids: [material.jo_material_id]
+            material_ids: sourceMaterialIds
         });
         // The dialog is keyed by Job Order/material; loading once per opened
         // allocation keeps the first render read-only until the server answers.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isOpen, jobOrder.job_order_id, material.jo_material_id]);
+    }, [isOpen, jobOrder.job_order_id, sourceMaterialIds]);
 
     const handleModeChange = (nextMode: AllocationMode) => {
         setMode(nextMode);
@@ -176,17 +200,36 @@ function AllocationForm({
     };
 
     const handleQuantityChange = (candidate: AllocationPreview["materials"][number]["candidates"][number], value: string) => {
-        const nextQuantity = roundQuantity(Number(value) || 0);
+        const requestedQuantity = roundQuantity(Number(value) || 0);
         setManualLines(previous => {
             const key = lineKey(candidate);
-            const next = previous.filter(line => lineKey(line) !== key);
-            if (nextQuantity > 0) next.push(candidateLine(candidate, material.jo_material_id, nextQuantity));
+            const next = previous.filter(line =>
+                !sourceMaterialIds.includes(line.jo_material_id)
+                || lineKey({ mm_lot_id: line.mm_lot_id, inventory_lot_id: line.inventory_lot_id, batch_no: line.batch_no }) !== key
+            );
+            const alreadyAllocatedToCandidate = next
+                .filter(line => lineKey({ mm_lot_id: line.mm_lot_id, inventory_lot_id: line.inventory_lot_id, batch_no: line.batch_no }) === key)
+                .reduce((total, line) => total + line.quantity, 0);
+            let remaining = Math.min(
+                requestedQuantity,
+                Math.max(0, candidate.available_quantity - alreadyAllocatedToCandidate)
+            );
+            for (const sourcePreview of selectedMaterialPreviews) {
+                if (remaining <= 0) break;
+                const alreadyAllocatedToMaterial = next
+                    .filter(line => line.jo_material_id === sourcePreview.jo_material_id)
+                    .reduce((total, line) => total + line.quantity, 0);
+                const sourceRemaining = Math.max(0, sourcePreview.remaining_quantity - alreadyAllocatedToMaterial);
+                const allocated = Math.min(remaining, sourceRemaining);
+                if (allocated > 0) next.push(candidateLine(candidate, sourcePreview.jo_material_id, allocated));
+                remaining = roundQuantity(remaining - allocated);
+            }
             return next;
         });
     };
 
     const setMax = (candidate: AllocationPreview["materials"][number]["candidates"][number]) => {
-        handleQuantityChange(candidate, String(candidate.available_quantity));
+        handleQuantityChange(candidate, String(Math.min(candidate.available_quantity, remainingQuantity)));
     };
 
     const handleSubmit = async (event: React.FormEvent) => {
@@ -221,7 +264,7 @@ function AllocationForm({
                 job_order_no: jobOrder.job_order_no,
                 work_center_id: selectedWorkCenter.work_center_id,
                 mode,
-                material_ids: [material.jo_material_id],
+                material_ids: sourceMaterialIds,
                 lines: latestPreview.proposed_allocations,
                 source_bin: "MAIN-STORE",
                 operation_id: createMaterialStagingOperationId(),
@@ -309,7 +352,9 @@ function AllocationForm({
                                     </thead>
                                     <tbody>
                                         {selectedMaterialPreview.candidates.map(candidate => {
-                                            const selected = selectedLines.find(line => lineKey(line) === lineKey(candidate));
+                                            const selectedQuantityForCandidate = selectedLines
+                                                .filter(line => lineKey(line) === lineKey(candidate))
+                                                .reduce((total, line) => total + line.quantity, 0);
                                             return (
                                                 <tr key={candidate.allocation_line_id} className="border-t border-border/70">
                                                     <td className="p-3 font-medium">{candidate.lot_name}<div className="font-mono text-[10px] text-muted-foreground">MM Lot #{candidate.mm_lot_id} · Inv Lot #{candidate.inventory_lot_id}</div></td>
@@ -320,10 +365,10 @@ function AllocationForm({
                                                     <td className="p-3 text-right font-mono font-semibold text-emerald-600">{candidate.available_quantity.toLocaleString()}</td>
                                                     <td className="p-3">
                                                         {mode === "auto" ? (
-                                                            <div className="text-right font-mono font-semibold">{selected?.quantity?.toLocaleString() || "0"}</div>
+                                                            <div className="text-right font-mono font-semibold">{selectedQuantityForCandidate.toLocaleString()}</div>
                                                         ) : (
                                                             <div className="flex items-center justify-end gap-1.5">
-                                                                <Input type="number" min="0" step="0.000001" value={selected?.quantity || ""} onChange={event => handleQuantityChange(candidate, event.target.value)} className="h-8 w-28 text-right text-xs" />
+                                                                <Input type="number" min="0" step="0.000001" value={selectedQuantityForCandidate || ""} onChange={event => handleQuantityChange(candidate, event.target.value)} className="h-8 w-28 text-right text-xs" />
                                                                 <Button type="button" variant="outline" size="sm" onClick={() => setMax(candidate)} className="h-8 px-2 text-[10px]">Max</Button>
                                                             </div>
                                                         )}

@@ -21,9 +21,38 @@ import {
     roundProductionValue,
     resolveProductionShiftHours
 } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
+import { groupMaterialRequirements } from "@/modules/manufacturing-management/planning-engineering/utils/material-requirement-groups";
 import { normalizeOperatorAssignments, synchronizeJobOrderOperatorAssignments } from "../../job-orders/_operator-assignment-service";
 
 const QUANTITY_EPSILON = 0.000001;
+
+async function loadRouteOperationNames(routes: readonly unknown[]): Promise<Map<number, string>> {
+    const operationIds = Array.from(new Set(routes
+        .map((value) => {
+            const route = value as Record<string, unknown>;
+            const operation = route.operation_id;
+            return Number(operation && typeof operation === "object"
+                ? (operation as Record<string, unknown>).id ?? (operation as Record<string, unknown>).operation_id
+                : operation);
+        })
+        .filter((id) => Number.isSafeInteger(id) && id > 0)));
+    if (operationIds.length === 0) return new Map();
+
+    try {
+        const response = await fetch(
+            `${DIRECTUS_URL}/items/manufacturing_operations?filter[id][_in]=${operationIds.join(",")}&fields=id,operation_name&limit=-1`,
+            { headers, cache: "no-store" }
+        );
+        if (!response.ok) return new Map();
+        const operations = (await response.json()).data || [];
+        return new Map(operations.map((operation: Record<string, unknown>) => [
+            Number(operation.id),
+            String(operation.operation_name || "")
+        ]));
+    } catch {
+        return new Map();
+    }
+}
 
 export class SalesOrderAllocationConflictError extends Error {
     constructor(message: string) {
@@ -304,6 +333,7 @@ export async function createJobOrder(
         // persist the worksheet only; they must not be rejected or annotated
         // from a point-in-time availability check.
         const shortfalls: Array<{ name: string; required: number; available: number; shortage: number }> = [];
+        const preflightMaterialRequirements: Array<{ product_id: number; uom_id: unknown; required_quantity: number }> = [];
         const inventoryAvailabilityOptions = shouldInitialize
             && (options.physicalOnHandInitialization || options.usePhysicalOnHand)
             ? { includeReservations: false }
@@ -369,40 +399,48 @@ export async function createJobOrder(
                         Number(bItem.wastage_factor_percentage || 0),
                         materialTargetQuantity
                     ).plannedRequired;
-
-                    // Verify if it has an active version (making it a sub-assembly)
-                    const compActiveVer = await getActiveVersionForProduct(compProductId);
-                    const isSubAssembly = compActiveVer && compActiveVer.version;
-
-                    if (shouldInitialize && !isSubAssembly) {
-                        if (!joData.branch_id) {
-                            throw new Error("Cannot verify stock: Job Order is missing branch_id");
-                        }
-                        const branchId = Number(joData.branch_id);
-                        const availableLots = await getAvailableInventoryLots(compProductId, branchId, inventoryAvailabilityOptions);
-                        const netAvailable = availableLots.reduce((total, lot) => total + lot.available, 0);
-
-                        const shortage = Math.max(0, quantityRequired - netAvailable);
-                        if (shortage > 0.000001) {
-                            let prodName = `Product #${compProductId}`;
-                            try {
-                                const prodRes = await fetch(`${DIRECTUS_URL}/items/products/${compProductId}?fields=product_name`, { headers });
-                                if (prodRes.ok) {
-                                    prodName = (await prodRes.json()).data?.product_name || prodName;
-                                }
-                            } catch (err) {
-                                console.error("Failed to fetch product name for shortfall error:", err);
-                            }
-                            shortfalls.push({
-                                name: prodName,
-                                required: quantityRequired,
-                                available: netAvailable,
-                                shortage
-                            });
-                        }
-                    }
+                    preflightMaterialRequirements.push({
+                        product_id: compProductId,
+                        uom_id: (bItem as any).uom_id ?? (bItem as any).unit_of_measurement,
+                        required_quantity: quantityRequired
+                    });
                 }
             }
+        }
+
+        const groupedPreflightRequirements = groupMaterialRequirements(preflightMaterialRequirements, {
+            productId: (item) => item.product_id,
+            uomId: (item) => item.uom_id,
+            quantity: (item) => item.required_quantity
+        });
+        for (const requirement of groupedPreflightRequirements) {
+            const compProductId = requirement.productId;
+            const compActiveVer = await getActiveVersionForProduct(compProductId);
+            if (!shouldInitialize || compActiveVer?.version) continue;
+            if (!joData.branch_id) throw new Error("Cannot verify stock: Job Order is missing branch_id");
+
+            const availableLots = await getAvailableInventoryLots(
+                compProductId,
+                Number(joData.branch_id),
+                inventoryAvailabilityOptions
+            );
+            const netAvailable = availableLots.reduce((total, lot) => total + lot.available, 0);
+            const shortage = Math.max(0, requirement.requiredQuantity - netAvailable);
+            if (shortage <= 0.000001) continue;
+
+            let prodName = `Product #${compProductId}`;
+            try {
+                const prodRes = await fetch(`${DIRECTUS_URL}/items/products/${compProductId}?fields=product_name`, { headers });
+                if (prodRes.ok) prodName = (await prodRes.json()).data?.product_name || prodName;
+            } catch (err) {
+                console.error("Failed to fetch product name for shortfall error:", err);
+            }
+            shortfalls.push({
+                name: prodName,
+                required: requirement.requiredQuantity,
+                available: netAvailable,
+                shortage
+            });
         }
 
         const totalMergedQuantity = finalProductsList.reduce((sum, p) => sum + Number(p.quantity || 0), 0);
@@ -506,10 +544,14 @@ export async function createJobOrder(
 
         // 4. Insert merged product(s) and explode BOM/routings
         let totalEstimatedHours = 0;
+        let materialReservationSequence = 0;
+        const initializationLotsByProduct = new Map<number, Awaited<ReturnType<typeof getAvailableInventoryLots>>>();
+        const allocatedStockByLot = new Map<string, number>();
         for (const p of finalProductsList) {
             const { version, routes } = versionId 
                 ? await getBOMDetailsForVersion(p.product_id, versionId)
                 : await getActiveVersionForProduct(p.product_id);
+            const routeOperationNames = await loadRouteOperationNames(routes || []);
 
             let productionQty = Number(p.quantity);
             let timingTargetQuantity = Number((p as any).timing_target_quantity ?? productionQty);
@@ -554,6 +596,7 @@ export async function createJobOrder(
                     baseUomId: readUomId(version?.uom_id),
                     routes: routes.map((route) => ({
                         sequence_order: Number(route.sequence_order || 0),
+                        operation_name: String((route as any).operation_name || routeOperationNames.get(Number((route as any).operation_id)) || ""),
                         setup_time_hours: Number(route.setup_time_hours || 0),
                         run_time_hours: Number(route.run_time_hours || 0),
                         step_batch_size: route.step_batch_size == null ? undefined : Number(route.step_batch_size),
@@ -673,201 +716,154 @@ export async function createJobOrder(
                         throw new Error(`Failed to create Job Order route: ${routeRes.status} - ${errorText}`);
                     }
 
-                    // Extract BOM items (materials)
-                    if (r.bom_items && r.bom_items.length > 0) {
-                        for (const bItem of r.bom_items) {
-                            const compProductId = Number(bItem.product_id);
-                            const baseQuantity = Number(version?.base_quantity);
-                            if (!Number.isFinite(baseQuantity) || baseQuantity <= 0) {
-                                throw new Error(`Recipe base quantity is required for Product '${p.product_name}'.`);
-                            }
-                            const quantityRequired = calculateReleaseMaterialRequirementPlan(
-                                productionQty,
-                                productionQty,
-                                Number(bItem.quantity_required || 0),
-                                Number(bItem.wastage_factor_percentage || 0),
-                                materialTargetQuantity
-                            ).plannedRequired;
+                }
+            }
+        }
 
-                             // Check if component is a sub-assembly
-                             const activeVer = await getActiveVersionForProduct(compProductId);
-                             const isSubAssembly = activeVer && activeVer.version;
-
-                             let allocatedQty = 0;
-                             const allocations: {
-                                 purchase_order_product_id: number;
-                                 mm_lot_id?: number;
-                                 inventory_lot_id?: number;
-                                 batch_no?: string;
-                                 expiry_date?: string | null;
-                                 allocated: number;
-                             }[] = [];
-
-                            if (shouldInitialize) {
-                                 if (!joData.branch_id) {
-                                     throw new Error("Cannot allocate raw materials: Job Order is missing branch_id");
-                                 }
-                                 const branchId = Number(joData.branch_id);
-                                 const availableLots = await getAvailableInventoryLots(compProductId, branchId, inventoryAvailabilityOptions);
-
-                                 for (const lot of availableLots) {
-                                     if (allocatedQty >= quantityRequired) break;
-
-                                     const needed = quantityRequired - allocatedQty;
-                                     const taken = Math.min(lot.available, needed);
-
-                                     if (taken > 0) {
-                                         allocatedQty += taken;
-                                          allocations.push({
-                                              purchase_order_product_id: lot.purchaseOrderReceivingId || 0,
-                                              mm_lot_id: lot.mmLotId || undefined,
-                                              inventory_lot_id: lot.inventoryLotId || undefined,
-                                              batch_no: lot.batchNo,
-                                             expiry_date: lot.expiryDate || null,
-                                             allocated: taken
-                                         });
-                                     }
-                                 }
-                             }
-
-                            let uomId = Number((bItem as any).uom_id || 0);
-                            if (!uomId) {
-                                try {
-                                    const pRes = await fetch(`${DIRECTUS_URL}/items/products/${compProductId}?fields=unit_of_measurement`, { headers });
-                                    if (pRes.ok) {
-                                        const pData = (await pRes.json()).data;
-                                        const uomVal = pData?.unit_of_measurement;
-                                        uomId = uomVal ? Number(uomVal.id || uomVal) : 1;
-                                    }
-                                } catch (e) {
-                                    console.error("Error looking up UOM ID for component:", e);
-                                    uomId = 1;
-                                }
-                            }
-
-                            // Log Material Requirement (Single Row)
-                            const matPayload = {
-                                job_order_id: joIdInt,
-                                product_id: compProductId,
-                                uom_id: uomId || 1,
-                                allocated_quantity: quantityRequired,
-                                reserved_quantity: allocatedQty,
-                                actual_consumed_quantity: 0,
-                                scrap_quantity: 0
-                            };
-                            
-                            const matRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials`, {
-                                method: "POST",
-                                headers,
-                                body: JSON.stringify(matPayload)
-                            });
-                            
-                            if (!matRes.ok) {
-                                throw new Error(`Failed to create Job Order material worksheet row: ${matRes.status} - ${await matRes.text()}`);
-                            }
-
-                            const createdMat = (await matRes.json()).data;
-                            const jomId = Number(createdMat?.jo_material_id || createdMat?.id || 0);
-                            if (!jomId) {
-                                throw new Error("Job Order material worksheet row was created without an identifier.");
-                            }
-
-                            // The reservation record is the authoritative source
-                            // for the material's exact lot and batch. The legacy
-                            // job-order allocation collection is reserved for
-                            // Sales Order linkage and is written once per selected
-                            // Sales Order detail below.
-                            for (const alloc of allocations) {
-                                const reservationPayload: Record<string, unknown> = {
-                                    product_id: compProductId,
-                                    branch_id: numericBranchId,
-                                    mm_lot_id: alloc.mm_lot_id || null,
-                                    inventory_lot_id: alloc.inventory_lot_id || null,
-                                    batch_no: alloc.batch_no || null,
-                                    expiry_date: alloc.expiry_date || null,
-                                    jo_material_id: jomId,
-                                    reserved_quantity: alloc.allocated,
-                                    actual_used_quantity: 0,
-                                    reservation_status: "SOFT",
-                                    uom_id: uomId || null,
-                                    source_event_key: `jo:${joIdInt}:reserve:${jomId}:${alloc.purchase_order_product_id || 0}:${alloc.mm_lot_id || 0}:${alloc.batch_no || ""}`,
-                                    created_by: joData.created_by ? Number(joData.created_by) : null
-                                };
-                                if (alloc.purchase_order_product_id > 0) {
-                                    reservationPayload.purchase_order_receiving_id = alloc.purchase_order_product_id;
-                                }
-                                const reservationRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations`, {
-                                    method: "POST",
-                                    headers,
-                                    body: JSON.stringify(reservationPayload)
-                                });
-                                if (!reservationRes.ok) {
-                                    throw new Error(`Failed to create Job Order material reservation: ${reservationRes.status} - ${await reservationRes.text()}`);
-                                }
-                            }
-
-                            const shortfall = quantityRequired - allocatedQty;
-
-                            // Auto-spawn child Job Orders for manufactured sub-assemblies with shortages
-                            if (shouldInitialize && shortfall > 0) {
-                                try {
-                                    const subVerMap = (joData as any).subAssemblyVersionMap || (joData as any).sub_assembly_version_map || {};
-                                    const selectedVerId = subVerMap[compProductId] || subVerMap[String(compProductId)];
-                                    const activeVer = selectedVerId 
-                                        ? await getBOMDetailsForVersion(compProductId, Number(selectedVerId))
-                                        : await getActiveVersionForProduct(compProductId);
-
-                                    if (activeVer && activeVer.version) {
-                                        const subRoutes = activeVer.routes || [];
-                                         const subBaseQty = Number(activeVer.version.base_quantity);
-                                         const subMetrics = calculateProductionMetrics({
-                                             targetQuantity: shortfall,
-                                             baseQuantity: subBaseQty,
-                                             routes: subRoutes.map((route: any) => ({
-                                                 sequence_order: Number(route.sequence_order || 0),
-                                                 setup_time_hours: Number(route.setup_time_hours || 0),
-                                                 run_time_hours: Number(route.run_time_hours || 0),
-                                                 step_batch_size: route.step_batch_size == null ? undefined : Number(route.step_batch_size),
-                                                 work_center_overhead_cost_per_hour: Number(
-                                                     route.work_center?.overhead_cost_per_hour
-                                                         ?? route.overhead_cost_per_hour
-                                                         ?? 0
-                                                 ),
-                                                 work_center_capacity_per_hour: Number(route.work_center?.capacity_per_hour || 0)
-                                             }))
-                                         });
-                                         const subHours = subMetrics.lineLeadTimeHours;
-                                        const childJoNo = `${joNoStr}-SUB${compProductId}`;
-                                        const checkJoRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?filter[job_order_no][_eq]=${childJoNo}&limit=1`, { headers });
-                                        const alreadyExists = checkJoRes.ok ? ((await checkJoRes.json()).data || []).length > 0 : false;
-
-                                        if (!alreadyExists) {
-                                            console.log(`[Sub-Assembly Spawner] Auto-spawning child Job Order ${childJoNo} for product ID ${compProductId} (Qty: ${shortfall}, Version ID: ${activeVer.version.version_id}) with estimated hours: ${subHours.toFixed(1)}`);
-                                            const childJoPayload = {
-                                                jo_id: childJoNo,
-                                                product_id: compProductId,
-                                                quantity: shortfall,
-                                                due_date: joData.due_date || null,
-                                                status: JOB_ORDER_STATUS.DRAFT,
-                                                branch_id: joData.branch_id,
-                                                created_by: joData.created_by,
-                                                parent_job_order_id: joIdInt,
-                                                shift_option: String(resolveProductionShiftHours(joData.shift_option)),
-                                                remarks: `Auto-spawned sub-assembly run for parent Job Order ${joNoStr}`,
-                                                bom: {
-                                                    version_id: activeVer.version.version_id
-                                                },
-                                                subAssemblyVersionMap: subVerMap
-                                            };
-                                            await createJobOrder(childJoPayload, []);
-                                        }
-                                    }
-                                } catch (subErr) {
-                                    console.error(`[Sub-Assembly Spawner] Failed to spawn child JO for component ${compProductId}:`, subErr);
-                                }
-                            }
-                        }
+        for (const requirement of groupedPreflightRequirements) {
+            const componentProductId = requirement.productId;
+            const requiredQuantity = requirement.requiredQuantity;
+            let uomId = readUomId(requirement.uomId);
+            if (!uomId) {
+                try {
+                    const productResponse = await fetch(
+                        `${DIRECTUS_URL}/items/products/${componentProductId}?fields=unit_of_measurement`,
+                        { headers }
+                    );
+                    if (productResponse.ok) {
+                        const product = (await productResponse.json()).data;
+                        uomId = readUomId(product?.unit_of_measurement) || 1;
                     }
+                } catch (error) {
+                    console.error("Error looking up UOM ID for component:", error);
+                    uomId = 1;
+                }
+            }
+
+            let reservedQuantity = 0;
+            const allocations: Array<{
+                purchase_order_product_id: number;
+                mm_lot_id?: number;
+                inventory_lot_id?: number;
+                batch_no?: string;
+                expiry_date?: string | null;
+                allocated: number;
+            }> = [];
+            if (shouldInitialize) {
+                if (!joData.branch_id) throw new Error("Cannot allocate raw materials: Job Order is missing branch_id");
+                const branchId = Number(joData.branch_id);
+                let availableLots = initializationLotsByProduct.get(componentProductId);
+                if (!availableLots) {
+                    availableLots = await getAvailableInventoryLots(componentProductId, branchId, inventoryAvailabilityOptions);
+                    initializationLotsByProduct.set(componentProductId, availableLots);
+                }
+
+                for (const lot of availableLots) {
+                    if (reservedQuantity >= requiredQuantity) break;
+                    const lotKey = `${componentProductId}:${lot.inventoryLotId || 0}:${lot.mmLotId || 0}:${String(lot.batchNo || "").trim().toLowerCase()}`;
+                    const previouslyAllocated = allocatedStockByLot.get(lotKey) || 0;
+                    const availableQuantity = Math.max(0, lot.available - previouslyAllocated);
+                    const allocated = Math.min(availableQuantity, requiredQuantity - reservedQuantity);
+                    if (allocated <= 0) continue;
+
+                    reservedQuantity += allocated;
+                    allocatedStockByLot.set(lotKey, previouslyAllocated + allocated);
+                    allocations.push({
+                        purchase_order_product_id: lot.purchaseOrderReceivingId || 0,
+                        mm_lot_id: lot.mmLotId || undefined,
+                        inventory_lot_id: lot.inventoryLotId || undefined,
+                        batch_no: lot.batchNo,
+                        expiry_date: lot.expiryDate || null,
+                        allocated
+                    });
+                }
+            }
+
+            const materialResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                    job_order_id: joIdInt,
+                    product_id: componentProductId,
+                    uom_id: uomId || 1,
+                    allocated_quantity: requiredQuantity,
+                    reserved_quantity: reservedQuantity,
+                    actual_consumed_quantity: 0,
+                    scrap_quantity: 0
+                })
+            });
+            if (!materialResponse.ok) {
+                throw new Error(`Failed to create Job Order material worksheet row: ${materialResponse.status} - ${await materialResponse.text()}`);
+            }
+
+            const createdMaterial = (await materialResponse.json()).data;
+            const joMaterialId = Number(createdMaterial?.jo_material_id || createdMaterial?.id || 0);
+            if (!joMaterialId) throw new Error("Job Order material worksheet row was created without an identifier.");
+
+            for (const allocation of allocations) {
+                materialReservationSequence += 1;
+                const reservationPayload: Record<string, unknown> = {
+                    product_id: componentProductId,
+                    branch_id: numericBranchId,
+                    mm_lot_id: allocation.mm_lot_id || null,
+                    inventory_lot_id: allocation.inventory_lot_id || null,
+                    batch_no: allocation.batch_no || null,
+                    expiry_date: allocation.expiry_date || null,
+                    jo_material_id: joMaterialId,
+                    reserved_quantity: allocation.allocated,
+                    actual_used_quantity: 0,
+                    reservation_status: "SOFT",
+                    uom_id: uomId || null,
+                    source_event_key: `jo:${joIdInt}:reserve:${joMaterialId}:${materialReservationSequence}:${allocation.purchase_order_product_id || 0}:${allocation.mm_lot_id || 0}:${allocation.batch_no || ""}`,
+                    created_by: joData.created_by ? Number(joData.created_by) : null
+                };
+                if (allocation.purchase_order_product_id > 0) {
+                    reservationPayload.purchase_order_receiving_id = allocation.purchase_order_product_id;
+                }
+                const reservationResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations`, {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify(reservationPayload)
+                });
+                if (!reservationResponse.ok) {
+                    throw new Error(`Failed to create Job Order material reservation: ${reservationResponse.status} - ${await reservationResponse.text()}`);
+                }
+            }
+
+            const shortfall = requiredQuantity - reservedQuantity;
+            if (shouldInitialize && shortfall > QUANTITY_EPSILON) {
+                try {
+                    const subAssemblyVersionMap = (joData as any).subAssemblyVersionMap || (joData as any).sub_assembly_version_map || {};
+                    const selectedVersionId = subAssemblyVersionMap[componentProductId] || subAssemblyVersionMap[String(componentProductId)];
+                    const activeVersion = selectedVersionId
+                        ? await getBOMDetailsForVersion(componentProductId, Number(selectedVersionId))
+                        : await getActiveVersionForProduct(componentProductId);
+                    if (!activeVersion?.version) continue;
+
+                    const childJobOrderNo = `${joNoStr}-SUB${componentProductId}`;
+                    const childCheckResponse = await fetch(
+                        `${DIRECTUS_URL}/items/manufacturing_job_orders?filter[job_order_no][_eq]=${childJobOrderNo}&limit=1`,
+                        { headers }
+                    );
+                    const childExists = childCheckResponse.ok && ((await childCheckResponse.json()).data || []).length > 0;
+                    if (childExists) continue;
+
+                    await createJobOrder({
+                        jo_id: childJobOrderNo,
+                        product_id: componentProductId,
+                        quantity: shortfall,
+                        due_date: joData.due_date || null,
+                        status: JOB_ORDER_STATUS.DRAFT,
+                        branch_id: joData.branch_id,
+                        created_by: joData.created_by,
+                        parent_job_order_id: joIdInt,
+                        shift_option: String(resolveProductionShiftHours(joData.shift_option)),
+                        remarks: `Auto-spawned sub-assembly run for parent Job Order ${joNoStr}`,
+                        bom: { version_id: activeVersion.version.version_id },
+                        subAssemblyVersionMap: subAssemblyVersionMap
+                    }, []);
+                } catch (error) {
+                    console.error(`[Sub-Assembly Spawner] Failed to spawn child Job Order for component ${componentProductId}:`, error);
                 }
             }
         }

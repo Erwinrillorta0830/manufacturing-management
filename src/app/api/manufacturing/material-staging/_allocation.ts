@@ -412,6 +412,7 @@ async function loadAllocationContext(payload: AllocationPreviewPayload): Promise
     if (requestedMaterialIds.some(id => !materialIds.includes(id))) {
         throw new MaterialStagingAllocationError("The allocation request contains a material that does not belong to this Job Order.", 400, "MATERIAL_NOT_IN_JOB_ORDER");
     }
+    const selectedMaterialIds = new Set(requestedMaterialIds);
 
     const productIds = [...new Set(materialRows.map(row => relationId(row.product_id, ["product_id", "id"])).filter(id => id > 0))];
     const products = productIds.length > 0
@@ -564,7 +565,7 @@ async function loadAllocationContext(payload: AllocationPreviewPayload): Promise
                 ?? 0
             );
             const reservedElsewhere = reservationContexts
-                .filter(reservation => reservation.materialId !== material.id
+                .filter(reservation => !selectedMaterialIds.has(reservation.materialId)
                     && reservation.productId === material.productId
                     && reservation.branchId === branchId
                     && reservation.mmLotId === inventoryMmLotId
@@ -618,6 +619,10 @@ function candidateToLine(candidate: AllocationCandidate, materialId: number, all
         available_quantity: candidate.available_quantity,
         override_negative: false
     };
+}
+
+function candidateStockKey(material: MaterialContext, candidate: AllocationCandidate): string {
+    return `${material.productId}:${material.productUnitId}:${candidate.inventory_lot_id}:${normalizeBatchNo(candidate.batch_no)}`;
 }
 
 function buildAutoLines(material: MaterialContext, candidates: AllocationCandidate[]): AllocationLine[] {
@@ -690,8 +695,15 @@ export async function prepareAllocationPreview(payload: AllocationPreviewPayload
         );
     }
     const proposedAllocations: AllocationLine[] = [];
+    const proposedQuantityByStock = new Map<string, number>();
     const materialPreviews = selectedMaterials.map(material => {
-        const candidates = context.candidatesByMaterial.get(material.id) || [];
+        const candidates = (context.candidatesByMaterial.get(material.id) || []).map(candidate => ({
+            ...candidate,
+            available_quantity: roundQuantity(Math.max(
+                0,
+                candidate.available_quantity - (proposedQuantityByStock.get(candidateStockKey(material, candidate)) || 0)
+            ))
+        }));
         const requestedLines = payload.mode === "manual"
             ? requestedManualLines.filter(line => line.jo_material_id === material.id)
             : [];
@@ -699,6 +711,16 @@ export async function prepareAllocationPreview(payload: AllocationPreviewPayload
             ? buildAutoLines(material, candidates)
             : validateManualLines(material, candidates, requestedLines, overrideRequested);
         proposedAllocations.push(...proposed);
+        for (const line of proposed) {
+            const candidate = candidates.find(item =>
+                item.inventory_lot_id === line.inventory_lot_id
+                && item.mm_lot_id === line.mm_lot_id
+                && normalizeBatchNo(item.batch_no) === normalizeBatchNo(line.batch_no)
+            );
+            if (!candidate) continue;
+            const stockKey = candidateStockKey(material, candidate);
+            proposedQuantityByStock.set(stockKey, (proposedQuantityByStock.get(stockKey) || 0) + line.quantity);
+        }
         const remainingQuantity = roundQuantity(material.requiredQuantity - material.stagedQuantity);
         const proposedQuantity = roundQuantity(proposed.reduce((total, line) => total + line.quantity, 0));
         if (payload.mode === "manual" && proposedQuantity > remainingQuantity + QUANTITY_EPSILON) {

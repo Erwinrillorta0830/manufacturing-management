@@ -27,6 +27,7 @@ export interface WorkCenter {
 
 export interface AllocatedLot {
     allocation_id?: number;
+    jo_material_id?: number;
     mm_lot_id?: number;
     inventory_lot_id?: number;
     lot_id: number;
@@ -188,6 +189,7 @@ export interface BatchStageResult {
 
 export interface MaterialStagingItem {
     jo_material_id: number;
+    jo_material_ids?: number[];
     job_order_id: number;
     product_id: number;
     product_name: string;
