@@ -19,7 +19,7 @@ import { SalesOrderAllocationConflictError } from "../helpers/create-helper";
 import type { SalesOrderSchedulingPlan } from "../helpers/create-helper";
 import { executeJobOrderWorkflow, JobOrderWorkflowError } from "../../job-orders/_workflow-service";
 import { resolveProductUnitId } from "../../services/mm-lots.service";
-import { calculateFullBatchTarget, calculateRequiredBatchCount } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
+import { calculateFullBatchTarget, calculateRequiredBatchCount, resolveProductionShiftHours } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
 
 const RELEASE_DRAFT_FETCH_TIMEOUT_MS = 15000;
 const QUANTITY_EPSILON = 0.000001;
@@ -437,7 +437,7 @@ function buildSchedulingDbPayload(
         uom_id: jo.uom_id || jo.uomId || null,
         priority: Number(jo.priority ?? 0),
         start_date: jo.start_date || jo.plannedDate || jo.due_date || null,
-        shift_option: jo.shiftOption || "8",
+        shift_option: String(resolveProductionShiftHours(jo.shiftOption)),
         daily_breakdown: jo.dailyBreakdown || null,
         remarks: jo.remarks || null,
         created_at: createdAt,
@@ -551,7 +551,7 @@ async function handleReleaseMultiple(body: Record<string, any>): Promise<Respons
             status: JOB_ORDER_STATUS.DRAFT,
             is_batched: detailIds.length > 1,
             branch_id: branchId,
-            shiftOption: String(shared.shiftOption || "8"),
+            shiftOption: String(resolveProductionShiftHours(shared.shiftOption)),
             remarks: String(shared.remarks || ""),
             bom: { version_id: bomVersionId },
             subAssemblyVersionMap: job?.subAssemblyVersionMap || {},
@@ -1571,7 +1571,7 @@ export async function handlePOST(request: Request) {
             uom_id: jo.uom_id || jo.uomId || null,
             priority: Number(jo.priority ?? 0),
             start_date: jo.start_date || jo.plannedDate || jo.due_date || null,
-            shift_option: jo.shiftOption || "8",
+            shift_option: String(resolveProductionShiftHours(jo.shiftOption)),
             daily_breakdown: jo.dailyBreakdown || null,
             remarks: jo.remarks || null,
             created_at: formatPhtDateTime(),
@@ -1588,6 +1588,7 @@ export async function handlePOST(request: Request) {
                     quantity: schedulingPlan.totalQuantity,
                     requested_quantity: schedulingPlan.requestedQuantity ?? jo.requested_quantity ?? jo.requestedQuantity ?? jo.quantity,
                     material_target_quantity: jo.products?.[0]?.material_target_quantity ?? jo.products?.[0]?.materialTargetQuantity,
+                    timing_target_quantity: jo.products?.[0]?.timing_target_quantity ?? jo.products?.[0]?.timingTargetQuantity,
                     bom: { version_id: schedulingPlan.bomVersionId },
                     components: jo.components || null,
                     routings: jo.routings || null,
@@ -1599,6 +1600,7 @@ export async function handlePOST(request: Request) {
                     quantity: p.quantity,
                     requested_quantity: p.requested_quantity ?? p.requestedQuantity,
                     material_target_quantity: p.material_target_quantity ?? p.materialTargetQuantity,
+                    timing_target_quantity: p.timing_target_quantity ?? p.timingTargetQuantity,
                     bom: p.bom || null,
                     components: p.components || null,
                     routings: p.routings || null,

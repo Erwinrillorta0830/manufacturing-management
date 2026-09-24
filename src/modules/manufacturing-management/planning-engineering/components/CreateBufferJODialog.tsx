@@ -15,7 +15,7 @@ import { toast } from "sonner";
 import { SubmittingLoadingOverlay } from "./SubmittingLoadingOverlay";
 import { calculateContainerizationMetrics } from "../utils/containerization-helper";
 import { calculateProductionMetrics } from "../utils/production-metrics";
-import { calculateAggregateRunHours, calculateMaterialRequirementPlan, calculatePerUnitMaterialRequirement, calculateFullBatchTarget, readUomId } from "../utils/production-timing";
+import { calculateAggregateRunHours, calculateMaterialRequirementPlan, calculatePerUnitMaterialRequirement, calculateFullBatchTarget, DEFAULT_PRODUCTION_SHIFT_HOURS, readUomId, resolveProductionShiftHours } from "../utils/production-timing";
 import { Step1BasicDetails } from "./buffer-jo/Step1BasicDetails";
 import { Step2BOMReview } from "./buffer-jo/Step2BOMReview";
 import { Step3Scheduling } from "./buffer-jo/Step3Scheduling";
@@ -61,7 +61,7 @@ export function CreateBufferJODialog({
     const [plannedDate, setPlannedDate] = useState("");
     const [dueDate, setDueDate] = useState("");
     const [priority, setPriority] = useState<number>(0);
-    const [shiftOption, setShiftOption] = useState("8.0");
+    const [shiftOption, setShiftOption] = useState(DEFAULT_PRODUCTION_SHIFT_HOURS.toFixed(1));
     const [remarks, setRemarks] = useState("");
 
     // Details loaded from version selection (BOM & Routings)
@@ -327,13 +327,11 @@ export function CreateBufferJODialog({
                 // Shift option is the available production capacity per day.
                 // Recipe net runtime is calculated separately and must not be
                 // used here because it represents only one recipe batch.
-                const configuredShiftHours = verObj.shift_option ?? verObj.target_shift_hours;
-                const parsedShiftHours = Number(configuredShiftHours);
-                setShiftOption(
-                    Number.isFinite(parsedShiftHours) && parsedShiftHours > 0 && parsedShiftHours <= 24
-                        ? parsedShiftHours.toFixed(1)
-                        : "8.0"
-                );
+                setShiftOption(resolveProductionShiftHours(
+                    verObj.shift_option,
+                    verObj.shift_hours,
+                    verObj.target_shift_hours
+                ).toFixed(1));
             }
         } else {
             setBomBaseQty(1);
@@ -527,7 +525,8 @@ export function CreateBufferJODialog({
                     step_batch_size: route.step_batch_size == null ? undefined : Number(route.step_batch_size),
                     work_center_overhead_cost_per_hour: Number(
                         route.work_center?.overhead_cost_per_hour ?? route.overhead_cost_per_hour ?? 0
-                    )
+                    ),
+                    work_center_capacity_per_hour: Number(route.work_center?.capacity_per_hour || 0)
                 })),
                 bomItems: components.map((component) => ({
                     quantity_required: Number(component.quantity_required || 0),
@@ -580,7 +579,7 @@ export function CreateBufferJODialog({
         }
     });
 
-    const totalEstimatedHours = boxEstimatedHours + subAssemblyEstimatedHours;
+    const totalEstimatedHours = boxEstimatedHours;
 
     // Dynamic UOM labels
     const parentUomLabel = (selectedProdObj?.unit_of_measurement?.unit_name || selectedProdObj?.uom_name || selectedProdObj?.uom_shortcut || "Box").toUpperCase();
@@ -756,7 +755,7 @@ export function CreateBufferJODialog({
                             </div>
                             <div>
                                 <div class="jo-summary-label">Estimated Days</div>
-                                <div class="jo-summary-value">${(totalEstimatedHours / (Number(shiftOption) || 8)).toFixed(1)} Days</div>
+                                <div class="jo-summary-value">${(totalEstimatedHours / resolveProductionShiftHours(shiftOption)).toFixed(1)} Days</div>
                             </div>
                         </div>
                     </div>

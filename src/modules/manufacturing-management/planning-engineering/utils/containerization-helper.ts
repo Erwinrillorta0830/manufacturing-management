@@ -290,9 +290,11 @@ export function calculateContainerizationMetrics(
 
     const totalBaseWeightGrams = hasFlourWeightEstimate ? flourGramsTotal : 0;
     const hasOutputEstimate = totalBaseWeightGrams > 0 && cuttingUnitWeightGrams > 0;
-    const grossPieces = hasOutputEstimate ? (totalBaseWeightGrams / cuttingUnitWeightGrams) * yieldFactor : 0;
-    const wastePieces = grossPieces * scrapRate;
-    const netPieces = Math.max(0, grossPieces - wastePieces);
+    const grossPieces = hasOutputEstimate ? totalBaseWeightGrams / cuttingUnitWeightGrams : 0;
+    // Expected yield already accounts for output loss; do not deduct the
+    // separately configured scrap rate again from the same physical estimate.
+    const netPieces = Math.max(0, grossPieces * yieldFactor);
+    const wastePieces = Math.max(0, grossPieces - netPieces);
 
     // Case / Bundle Conversions
     const totalCasesBundlesExact = hasOutputEstimate ? netPieces / pcsPerCaseBundle : 0;

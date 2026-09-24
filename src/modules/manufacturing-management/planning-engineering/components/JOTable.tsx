@@ -8,7 +8,7 @@ import { resolveJobOrderJourney } from "../../shared/job-order-journey";
 import { JobOrderJourneyBar } from "../../shared/components/JobOrderJourneyBar";
 import { JobOrderStatusBadge } from "../../shared/components/JobOrderStatusBadge";
 import { isCancelledJobOrderStatus, isTerminatedJobOrder } from "../../job-order-status";
-import { calculateCumulativeRouteWorkloadHours, calculatePipelinedLineDurationHours } from "../utils/production-timing";
+import { calculateCumulativeRouteWorkloadHours, calculatePipelinedLineDurationHours, resolveProductionShiftHours } from "../utils/production-timing";
 
 export interface FamilyGroup {
     familyId: string;
@@ -92,7 +92,7 @@ export function JOTable({
                     {familyGroups.map((fg) => {
                         const computeJoMetrics = (jo: any) => {
                             const tasks = jo.routing_tasks || [];
-                            const shiftHrs = Number(jo.shiftOption || jo.shift_option || 8) || 8;
+                            const shiftHrs = resolveProductionShiftHours(jo.shiftOption, jo.shift_option);
                             if (tasks.length === 0) {
                                 return { leadTimeHours: 0, leadTimeDays: 0, cumulativeHours: 0, shiftHrs };
                             }

@@ -6,6 +6,7 @@ import { isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "../
 import { Branch, SalesOrder, SalesOrderDetail, NetRequirementItem } from "../types";
 import { fetchBranches, fetchSalesOrders, fetchNetRequirementsRaw, releaseJobOrder, releaseMultipleJobOrders, directAllocate } from "../services/planning-api";
 import { buildSalesOrderDemandGroups, buildSalesOrderReleaseGroups, isSchedulableSalesOrderLine, remainingQuantity } from "../utils/demand-groups";
+import { DEFAULT_PRODUCTION_SHIFT_HOURS } from "../utils/production-timing";
 
 function salesOrderDateValue(value: string | undefined): number {
     const timestamp = Date.parse(value || "");
@@ -83,7 +84,7 @@ export function usePlanningEngineering() {
     const [targetQuantity, setTargetQuantity] = useState<number>(0);
     const [plannedDate, setPlannedDate] = useState<string>(new Date().toISOString().split("T")[0]);
     const [dueDate, setDueDate] = useState<string>("");
-    const [shiftOption, setShiftOption] = useState<string>("8");
+    const [shiftOption, setShiftOption] = useState<string>(String(DEFAULT_PRODUCTION_SHIFT_HOURS));
     const [priority, setPriority] = useState<number>(0);
     const [remarks, setRemarks] = useState<string>("");
     const [joNumber, setJoNumber] = useState<string>("");
@@ -656,7 +657,7 @@ export function usePlanningEngineering() {
         setJoNumber(code);
         setPlannedDate(new Date().toISOString().split("T")[0]);
         setDueDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);
-        setShiftOption("8");
+        setShiftOption(String(DEFAULT_PRODUCTION_SHIFT_HOURS));
         setPriority(0);
         setRemarks(`Production run for: ${selectedLines.map(l => l.order_no).join(", ")}`);
         setIsConfirmOpen(true);
@@ -667,7 +668,8 @@ export function usePlanningEngineering() {
         selectedSubAssemblyVersions?: Record<number, number>,
         groupConfigurations?: Record<string, { subAssemblyVersions: Record<number, number>; assignments: Record<number, number[]> }>,
         initialize = false,
-        materialTargetQuantity?: number
+        materialTargetQuantity?: number,
+        timingTargetQuantity?: number
     ) => {
         const branchId = parseValidBranchId(selectedBranchId);
         if (branchId === null) {
@@ -748,6 +750,7 @@ export function usePlanningEngineering() {
                             quantity: targetQuantity,
                             requested_quantity: targetQuantity,
                             material_target_quantity: materialTargetQuantity,
+                            timing_target_quantity: timingTargetQuantity ?? materialTargetQuantity ?? targetQuantity,
                             bom: { version_id: firstLine.bom_version_id }
                         }]
                     },

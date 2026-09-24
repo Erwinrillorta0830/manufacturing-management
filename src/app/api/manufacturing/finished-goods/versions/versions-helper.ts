@@ -216,6 +216,45 @@ export async function getBOMDetailsForVersion(
         const routesJson = await resRoutes.json();
         let routes: RouteStep[] = routesJson.data || [];
 
+        const readWorkCenterId = (value: unknown): number => {
+            if (value && typeof value === "object") {
+                const relation = value as Record<string, unknown>;
+                return Number(relation.work_center_id ?? relation.id ?? 0);
+            }
+            return Number(value || 0);
+        };
+        const routeWorkCenterIds = Array.from(new Set(routes
+            .map((route) => readWorkCenterId(route.work_center_id))
+            .filter((id) => Number.isSafeInteger(id) && id > 0)));
+        if (routeWorkCenterIds.length > 0) {
+            const workCentersFilter = encodeURIComponent(JSON.stringify({ work_center_id: { _in: routeWorkCenterIds } }));
+            const workCentersRes = await fetch(
+                `${DIRECTUS_URL}/items/manufacturing_work_centers?filter=${workCentersFilter}&fields=work_center_id,work_center_name,overhead_cost_per_hour,capacity_per_hour&limit=-1`,
+                { headers, cache: "no-store" }
+            ).catch(() => null);
+            if (workCentersRes?.ok) {
+                const workCenters = (await workCentersRes.json()).data || [];
+                const workCentersById = new Map<number, Record<string, unknown>>(
+                    workCenters.map((workCenter: Record<string, unknown>) => [Number(workCenter.work_center_id), workCenter])
+                );
+                routes = routes.map((route) => {
+                    const workCenterId = readWorkCenterId(route.work_center_id);
+                    const workCenter = workCentersById.get(workCenterId);
+                    return workCenter ? {
+                        ...route,
+                        work_center: {
+                            work_center_id: workCenterId,
+                            work_center_name: String(workCenter.work_center_name || ""),
+                            overhead_cost_per_hour: Number(workCenter.overhead_cost_per_hour || 0),
+                            capacity_per_hour: workCenter.capacity_per_hour != null
+                                ? Number(workCenter.capacity_per_hour)
+                                : null
+                        }
+                    } : route;
+                });
+            }
+        }
+
         const getRouteId = (val: unknown): number => {
             if (!val) return 0;
             if (typeof val === "object") return Number((val as Record<string, unknown>).route_id || (val as Record<string, unknown>).id || 0);
