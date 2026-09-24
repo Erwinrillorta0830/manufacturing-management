@@ -103,6 +103,9 @@ export function evaluateAssetStatus(
     acquisitionCost: number
 ): AssetReportingStatus {
     const condNorm = condition ? condition.trim().toLowerCase() : "";
+    if (!condNorm || condNorm === "-") {
+        return "-";
+    }
     if (condNorm.includes("discontinued") || condNorm.includes("scrapped")) {
         return "Discontinued";
     }
@@ -115,7 +118,10 @@ export function evaluateAssetStatus(
     if (nbv <= salvageValue + 0.01 && acquisitionCost > 0) {
         return "Fully Depreciated";
     }
-    return "Active";
+    if (condNorm === "good") {
+        return "Active";
+    }
+    return "-";
 }
 
 export interface CalculatedDepreciationMetrics {

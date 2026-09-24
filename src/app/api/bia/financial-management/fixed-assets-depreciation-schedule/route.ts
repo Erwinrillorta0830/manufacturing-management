@@ -5,7 +5,8 @@ import {
     DepreciationScheduleSummary,
     DepartmentOption,
     PeriodPreset,
-    AssetReportingStatus
+    AssetReportingStatus,
+    AssetCondition
 } from "@/modules/business-intelligence-and-analytics/financial-management/fixed-assets-depreciation-schedule/types";
 import {
     computeStraightLineMetrics,
@@ -194,7 +195,7 @@ export async function GET(req: NextRequest) {
                     ? "Units of Production"
                     : "Straight Line";
 
-            const condition = raw.condition || "Good";
+            const condition: AssetCondition = raw.condition ? (String(raw.condition).trim() as AssetCondition) : "-";
             const assetOrigin = raw.asset_origin === "Existing" ? "Existing" : "New";
 
             const deptId = raw.department?.department_id || raw.department || null;
