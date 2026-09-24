@@ -187,7 +187,7 @@ export function ReleaseJODialog({
         const version = details?.bom;
         const productionTarget = Number(groupProductionTargets[group.key] || 0);
         const baseQuantity = Number(groupBaseQuantities[group.key] || 0);
-        const uom = product?.uom_name || product?.uom || first?.unit_of_measurement || "units";
+        const uom = product?.uom_name || product?.uom || (first as any)?.unit_of_measurement || "units";
         const normalizedTarget = normalizeProductionOutputQuantity(productionTarget, uom);
         if (!first || !version || productionTarget <= 0 || baseQuantity <= 0) return [group.key, 0];
 
@@ -300,6 +300,10 @@ export function ReleaseJODialog({
                         if (!res.ok) throw new Error(`Recipe details could not be loaded for ${group.productName}.`);
                         const data = await res.json();
                         if (!data?.bom) throw new Error(`No approved recipe was found for ${group.productName}.`);
+                        const baseQuantity = Number(data.bom.base_quantity);
+                        if (!Number.isFinite(baseQuantity) || baseQuantity <= 0) {
+                            throw new Error(`Recipe batch size is missing for ${group.productName}.`);
+                        }
                         return [group.key, data] as const;
                     }));
                     if (cancelled) return;
@@ -975,7 +979,7 @@ export function ReleaseJODialog({
                                             <div className="relative">
                                                 <Input
                                                     type="number"
-                                                    value={loadingDetails ? "" : ((isMultiRelease ? targetQuantity : targetQuantityProp) || "")}
+                                                    value={loadingDetails || !hasLoadedDetails ? "" : ((isMultiRelease ? targetQuantity : targetQuantityProp) || "")}
                                                     min={1}
                                                     step={isPieceProductionUom(releaseSummaryUom) ? 1 : "any"}
                                                     onChange={(e) => {
@@ -985,8 +989,8 @@ export function ReleaseJODialog({
                                                     onBlur={() => {
                                                         if (!isMultiRelease && targetQuantity > 0) setTargetQuantity(targetQuantity);
                                                     }}
-                                                    disabled={isMultiRelease || loadingDetails}
-                                                    placeholder={loadingDetails ? "Calculating batch size..." : "Enter target quantity"}
+                                                    disabled={isMultiRelease || loadingDetails || !hasLoadedDetails}
+                                                    placeholder={loadingDetails || !hasLoadedDetails ? "Calculating batch size..." : "Enter target quantity"}
                                                     className="h-9 font-semibold bg-card border-input text-foreground font-mono"
                                                 />
                                                 {loadingDetails && (
@@ -1000,7 +1004,9 @@ export function ReleaseJODialog({
                                     <p className="text-[10px] text-muted-foreground">
                                         {detailsLoadError
                                             ? detailsLoadError
-                                            : `Effective production target: ${formatProductionValue(targetQuantity)} ${releaseSummaryUom} (${requiredBatchCount || 0} full recipe batch${requiredBatchCount === 1 ? "" : "es"}). SO demand remains ${formatProductionValue(requestedTargetQuantity)} ${releaseSummaryUom}. ${isPieceProductionUom(releaseSummaryUom) ? "Piece targets are shown as whole units." : ""}`}
+                                            : !hasLoadedDetails
+                                                ? "Loading the recipe batch target and production details."
+                                                : `Effective production target: ${formatProductionValue(targetQuantity)} ${releaseSummaryUom} (${requiredBatchCount || 0} full recipe batch${requiredBatchCount === 1 ? "" : "es"}). SO demand remains ${formatProductionValue(requestedTargetQuantity)} ${releaseSummaryUom}. ${isPieceProductionUom(releaseSummaryUom) ? "Piece targets are shown as whole units." : ""}`}
                                     </p>
 
                                     <div className="grid grid-cols-2 gap-4">
@@ -1794,7 +1800,7 @@ export function ReleaseJODialog({
                             <Button
                                 size="sm"
                                 onClick={() => setCurrentStep((prev) => prev + 1)}
-                                 disabled={loadingDetails || !joNumber || targetQuantity <= 0 || (currentStep === 2 && !!productionMetricsError)}
+                                disabled={loadingDetails || !hasLoadedDetails || !allGroupTargetsResolved || !joNumber || targetQuantity <= 0 || (currentStep === 2 && !!productionMetricsError)}
                                 className="bg-primary hover:bg-primary/90 text-white h-8 font-semibold shadow-lg shadow-primary/20"
                             >
                                 {currentStep === 3 ? "Next: Review" : "Next"} <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
