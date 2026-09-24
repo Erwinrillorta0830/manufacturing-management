@@ -1138,12 +1138,12 @@ export default function PlanningEngineeringModule() {
                                 <span className="text-border">→</span>
                                 <span>
                                     <strong className="text-foreground">3.</strong>{" "}
-                                    <span className="text-primary underline underline-offset-2">Stage materials</span>
+                                    <span>Stage materials</span>
                                 </span>
                                 <span className="text-border">→</span>
                                 <span>
                                     <strong className="text-foreground">4.</strong>{" "}
-                                    <span className="text-primary underline underline-offset-2">Produce</span>
+                                    <span>Produce</span>
                                 </span>
                             </div>
                         </div>

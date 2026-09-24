@@ -213,6 +213,7 @@ const liveRecipeMaterialCost = calculateRecipeMaterialCostPerUnit([
     { quantity_required: 0.0086, cost_per_unit: 45 },
     { quantity_required: 1.02, wastage_factor_percentage: 2, cost_per_unit: 1.5 }
 ]);
+assert.equal(formatProductionValue(liveRecipeMaterialCost), "18.4520");
 assert.equal(formatManufacturingMoney(liveRecipeMaterialCost), "18.45");
 assert.equal(roundManufacturingMoney(liveRecipeMaterialCost), 18.45);
 assert.equal(formatManufacturingMoney(calculateMaterialSpend(liveRecipeMaterialCost, 12001)), "221418.45");
@@ -234,8 +235,8 @@ const configuredOverhead = calculateProductionMetrics({
         sequence_order: 1,
         setup_time_hours: 0,
         run_time_hours: 1,
-        step_batch_size: 12001,
-        work_center_overhead_cost_per_hour: 12639.4532
+        step_batch_size: 3250,
+        work_center_overhead_cost_per_hour: 1.0532 * 6986.19
     }],
     bomItems: [{ quantity_required: 1, cost_per_unit: 18.45 }],
     materialCostPerUnit: 18.45,
@@ -255,6 +256,35 @@ assert.equal(formatProductionValue(configuredOverhead.cogsBreakdown.directLaborC
 assert.equal(formatProductionValue(configuredOverhead.cogsBreakdown.baseUnitCOGS), "25.8189");
 assert.equal(formatProductionValue(configuredOverhead.cogsBreakdown.adjustedUnitCOGS), "26.2120");
 
+const configuredOverheadAtFullBatch = calculateProductionMetrics({
+    targetQuantity: 13972.38,
+    baseQuantity: 6986.19,
+    routes: [{
+        sequence_order: 1,
+        setup_time_hours: 0,
+        run_time_hours: 1,
+        step_batch_size: 3250,
+        work_center_overhead_cost_per_hour: 1.0532 * 6986.19
+    }],
+    bomItems: [{ quantity_required: 1, cost_per_unit: 18.45 }],
+    materialCostPerUnit: 18.45,
+    expectedYieldPercentage: 98.5,
+    overheadItems: [{ cost_per_unit: 4.85, is_active: true } as never],
+    laborPositions: [{
+        daily_rate: 1.46565 * 6986.19,
+        manpower_count: 1,
+        include_mandates: false
+    }]
+});
+assert.equal(
+    formatProductionValue(configuredOverheadAtFullBatch.cogsBreakdown.machineOverheadCostPerUnit),
+    formatProductionValue(configuredOverhead.cogsBreakdown.machineOverheadCostPerUnit)
+);
+assert.equal(
+    formatProductionValue(configuredOverheadAtFullBatch.cogsBreakdown.baseUnitCOGS),
+    formatProductionValue(configuredOverhead.cogsBreakdown.baseUnitCOGS)
+);
+
 const runtimeOverheadFallback = calculateProductionMetrics({
     targetQuantity: 12001,
     baseQuantity: 6986.19,
@@ -269,7 +299,7 @@ const runtimeOverheadFallback = calculateProductionMetrics({
 assert.equal(runtimeOverheadFallback.cogsBreakdown.factoryOverheadBasis, "WORK_CENTER_RUNTIME");
 assert.equal(
     formatProductionValue(runtimeOverheadFallback.cogsBreakdown.factoryOverheadCostPerUnit),
-    formatProductionValue((17.4814 * 2) / 12001)
+    formatProductionValue(17.4814 / 6986.19)
 );
 
 const containerizationProfile = parseContainerizationProfile(
@@ -328,6 +358,30 @@ const bagContainerization = calculateContainerizationMetrics(
 assert.equal(bagContainerization.containerUnitLabel, "Bags");
 assert.equal(bagContainerization.sackCount, 400);
 assert.equal(formatProductionValue(bagContainerization.flourGramsTotal / 1000), "10000.0000");
+
+const bagContainerizationWithWastage = calculateContainerizationMetrics(
+    "Flour Product",
+    2000,
+    1,
+    100,
+    0,
+    500,
+    50,
+    undefined,
+    undefined,
+    [{
+        product_name: "Special Grade Wheat Flour",
+        quantity_required: 0.2,
+        wastage_factor_percentage: 1.5,
+        unit_of_measurement: "Bag",
+        kilograms_per_inventory_unit: 25
+    }],
+    1000,
+    1500
+);
+assert.equal(formatProductionValue(bagContainerizationWithWastage.requestedSackCount), "304.5000");
+assert.equal(formatProductionValue(bagContainerizationWithWastage.sackCount), "406.0000");
+assert.equal(formatProductionValue(bagContainerizationWithWastage.flourGramsTotal / 1000), "10150.0000");
 
 const bagWithoutWeight = calculateContainerizationMetrics(
     "Flour Product",

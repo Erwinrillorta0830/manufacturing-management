@@ -299,7 +299,7 @@ export function useMaterialStaging() {
     }, [loadData]);
 
     const handleProceedToProduction = useCallback((jobOrderNo: string) => {
-        router.push(`/mm/production-workflow?jo=${encodeURIComponent(jobOrderNo)}`);
+        router.push(`/mm/shop-floor-execution-terminal?jo=${encodeURIComponent(jobOrderNo)}`);
     }, [router]);
 
     return {

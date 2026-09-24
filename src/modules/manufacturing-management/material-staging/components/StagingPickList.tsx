@@ -173,7 +173,7 @@ export function StagingPickList({
                             ? {
                                 label: "Open Production Workflow",
                                 description: "All materials are on the floor. Start the shop-floor shift run when production begins.",
-                                href: `/mm/production-workflow?jo=${encodeURIComponent(jobOrder.job_order_no)}`
+                                href: `/mm/shop-floor-execution-terminal?jo=${encodeURIComponent(jobOrder.job_order_no)}`
                             }
                             : {
                                 label: "Stage available materials",

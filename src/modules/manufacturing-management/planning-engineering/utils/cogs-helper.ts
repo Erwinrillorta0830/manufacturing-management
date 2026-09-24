@@ -1,7 +1,10 @@
 import type { VersionOverheadItem, VersionPosition } from "../../finished-goods-master/types";
-import { calculateDirectLaborCost } from "../../finished-goods-master/costing";
+import {
+    calculateDirectLaborCost,
+    calculateMaterialCost,
+    calculateRouteBreakdown
+} from "../../finished-goods-master/costing";
 import { DecimalValue } from "../../decimal";
-import { calculateEffectiveBatchMultiplier } from "./production-timing";
 
 export const MANUFACTURING_MONEY_DECIMAL_SCALE = 2;
 export const MANUFACTURING_UNIT_COST_DECIMAL_SCALE = 4;
@@ -108,17 +111,16 @@ export function calculateMaterialSpend(
 }
 
 /**
- * BOM cost entries used by the planning wizard are already normalized to the
- * finished-unit material cost. Do not divide this result by the recipe batch
- * size a second time.
+ * BOM quantities used by the planning wizard are per finished unit. Match the
+ * finished-goods master material-cost rule for wastage without dividing by
+ * recipe batch size.
  */
 export function calculateRecipeMaterialCostPerUnit(bomItems: RouteBOMCosting[]): number {
-    return bomItems.reduce((sum, item) => {
-        const quantity = Number(item.quantity_required || 0);
-        const wastage = 1 + (Number(item.wastage_factor_percentage || 0) / 100);
-        const unitCost = Number(item.cost_per_unit || 0);
-        return sum + (quantity * wastage * unitCost);
-    }, 0);
+    return bomItems.reduce((sum, item) => sum + calculateMaterialCost({
+        quantity: Number(item.quantity_required || 0),
+        unitCost: Number(item.cost_per_unit || 0),
+        wastagePercent: Number(item.wastage_factor_percentage || 0)
+    }), 0);
 }
 
 export function calculateUnitCOGSBreakdown(
@@ -130,17 +132,12 @@ export function calculateUnitCOGSBreakdown(
     targetSellingPrice?: number,
     laborPositions: LaborPositionCosting[] = [],
     overheadItems: VersionOverheadItem[] = [],
-    materialCostPerUnit?: number | null,
-    targetQuantity?: number | null
+    materialCostPerUnit?: number | null
 ): UnitCOGSBreakdown {
     const baseQty = Number(baseQuantity);
     if (!Number.isFinite(baseQty) || baseQty <= 0) {
         throw new Error("Recipe base quantity must be greater than zero.");
     }
-    const costingTargetQuantity = Number(targetQuantity);
-    const normalizedTargetQuantity = Number.isFinite(costingTargetQuantity) && costingTargetQuantity > 0
-        ? costingTargetQuantity
-        : baseQty;
     const yieldPercent = (expectedYieldPercentage && expectedYieldPercentage > 0 && expectedYieldPercentage <= 100)
         ? expectedYieldPercentage
         : 100;
@@ -173,19 +170,16 @@ export function calculateUnitCOGSBreakdown(
 
     // 3. Factory overhead is additive: route runtime overhead and configured
     // version/custom overhead are distinct cost components.
-    const totalMachineOverhead = routeSteps.reduce((sum, step) => {
-        const hourlyRate = Math.max(0, Number(step.work_center_overhead_cost_per_hour || 0));
-        const stepBatchSize = Number(step.step_batch_size);
-        if (!Number.isFinite(stepBatchSize) || stepBatchSize <= 0) {
-            throw new Error(`Routing step ${Number(step.sequence_order || 0) || ""} batch size must be greater than zero.`);
-        }
-        const setupHours = Math.max(0, Number(step.setup_time_hours || 0));
-        const runHours = Math.max(0, Number(step.run_time_hours || 0));
-        const machineHours = setupHours
-            + (calculateEffectiveBatchMultiplier(normalizedTargetQuantity, stepBatchSize) * runHours);
-        return sum + (hourlyRate * machineHours);
+    const machineOverheadCostPerUnit = routeSteps.reduce((sum, step) => {
+        const routeCost = calculateRouteBreakdown({
+            machineHourlyRate: Number(step.work_center_overhead_cost_per_hour || 0),
+            stepBatchSize: step.step_batch_size,
+            setupTimeHours: Number(step.setup_time_hours || 0),
+            runTimeHours: Number(step.run_time_hours || 0),
+            baseQuantity: baseQty
+        });
+        return sum + routeCost.machineOverheadCost;
     }, 0);
-    const machineOverheadCostPerUnit = totalMachineOverhead / normalizedTargetQuantity;
     const activeOverheadItems = overheadItems.filter((item) => item.is_active !== false);
     const configuredFixedOverhead = activeOverheadItems.reduce(
         (sum, item) => sum + Math.max(0, Number(item.cost_per_unit || 0)),

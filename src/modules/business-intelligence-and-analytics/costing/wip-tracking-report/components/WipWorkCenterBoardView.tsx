@@ -222,7 +222,7 @@ export function WipWorkCenterBoardView({
                                                         onClick={(e) => e.stopPropagation()}
                                                         className="h-6 px-1.5 text-[10px] text-muted-foreground hover:text-foreground"
                                                     >
-                                                        <Link href={`/mm/production-workflow?id=${encodeURIComponent(job.job_order_id)}&jo=${encodeURIComponent(job.job_order_no)}`}>
+                                                        <Link href={`/mm/shop-floor-execution-terminal?id=${encodeURIComponent(job.job_order_id)}&jo=${encodeURIComponent(job.job_order_no)}`}>
                                                             <ArrowUpRight className="h-3 w-3" />
                                                         </Link>
                                                     </Button>
