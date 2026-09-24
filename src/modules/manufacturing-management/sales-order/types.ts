@@ -32,6 +32,7 @@ export interface SalesOrderDetail {
         uom_count: number;
         brand: string;
         category: string;
+        has_bom?: boolean;
     };
     unit_price: number;
     ordered_quantity: number;
