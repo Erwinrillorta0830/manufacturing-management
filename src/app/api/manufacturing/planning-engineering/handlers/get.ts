@@ -1535,7 +1535,7 @@ export async function handleGET(request: Request) {
             if (allProductIds.length > 0) {
                 const productFilter = `filter[product_id][_in]=${allProductIds.join(",")}&limit=-1`;
                 let prodRes = await fetch(
-                    `${DIRECTUS_URL}/items/products?${productFilter}&fields=product_id,product_name,product_code,cost_per_unit,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type,net_weight,weight,weight_unit_id.*`,
+                    `${DIRECTUS_URL}/items/products?${productFilter}&fields=product_id,product_name,product_code,cost_per_unit,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type,net_weight,product_weight,weight,weight_unit_id.*`,
                     { headers }
                 );
                 if (!prodRes.ok) {
@@ -1743,7 +1743,7 @@ export async function handleGET(request: Request) {
             if (childProductIds.length > 0) {
                 const productFilter = `filter[product_id][_in]=${childProductIds.join(",")}&limit=-1`;
                 let prodRes = await fetch(
-                    `${DIRECTUS_URL}/items/products?${productFilter}&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type,net_weight,weight,weight_unit_id.*`,
+                    `${DIRECTUS_URL}/items/products?${productFilter}&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type,net_weight,product_weight,weight,weight_unit_id.*`,
                     { headers }
                 );
                 if (!prodRes.ok) {
@@ -1863,7 +1863,7 @@ export async function handleGET(request: Request) {
             const productsMap = new Map<number, any>();
             if (componentProductIds.length > 0) {
                 const productFilter = `filter[product_id][_in]=${componentProductIds.join(",")}&limit=-1`;
-                let prodRes = await fetch(`${DIRECTUS_URL}/items/products?${productFilter}&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type,net_weight,weight,weight_unit_id.*`, { headers });
+                let prodRes = await fetch(`${DIRECTUS_URL}/items/products?${productFilter}&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type,net_weight,product_weight,weight,weight_unit_id.*`, { headers });
                 if (!prodRes.ok) {
                     prodRes = await fetch(`${DIRECTUS_URL}/items/products?${productFilter}&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut,product_category.category_name,product_type`, { headers });
                 }

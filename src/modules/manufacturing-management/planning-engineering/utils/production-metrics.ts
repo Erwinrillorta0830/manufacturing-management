@@ -65,15 +65,14 @@ export function calculateProductionMetrics(input: ProductionMetricsInput): Produ
     );
     const baseQuantity = requirePositiveProductionNumber(input.baseQuantity, "Recipe base quantity");
     assertCompatibleUoms(input.targetUomId, input.baseUomId);
+    const configuredYieldPercentage = Number(input.expectedYieldPercentage);
+    const yieldFactor = Number.isFinite(configuredYieldPercentage) && configuredYieldPercentage > 0
+        ? Math.min(configuredYieldPercentage, 100) / 100
+        : 1;
+    const grossTimingTargetQuantity = timingTargetQuantity / yieldFactor;
     const sortedRoutes = [...(input.routes || [])].sort(
         (left, right) => Number(left.sequence_order || 0) - Number(right.sequence_order || 0)
     );
-
-    const yieldPercentage = Number(input.expectedYieldPercentage);
-    const yieldFactor = Number.isFinite(yieldPercentage) && yieldPercentage > 0
-        ? Math.min(yieldPercentage, 100) / 100
-        : 1;
-    const grossTimingTargetQuantity = timingTargetQuantity / yieldFactor;
 
     const routeMetrics = sortedRoutes.map((route) => {
         const sequenceOrder = Number(route.sequence_order || 0);
@@ -113,8 +112,8 @@ export function calculateProductionMetrics(input: ProductionMetricsInput): Produ
         ? Math.max(...routeMetrics.map((metric) => metric.elapsedHours))
         : 0;
     const lineLeadTimeHours = calculateBottleneckLeadTimeHours({
-        targetNetQuantity: timingTargetQuantity,
-        baseNetQuantity: baseQuantity,
+        targetQuantity,
+        baseGrossQuantity: baseQuantity,
         expectedYieldPercentage: input.expectedYieldPercentage,
         routes: sortedRoutes.map((route) => ({
             stepBatchSize: route.step_batch_size,

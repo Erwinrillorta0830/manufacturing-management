@@ -182,7 +182,14 @@ export default function ShipmentInspectionForm({
         && selectedShipment.status !== "Received"
         && Number(selectedShipment.inventory_status) !== INVENTORY_STATUS.RECEIVED
     );
-    const canForceReceive = Boolean(onForceReceived) && canForceReceivePurchaseOrder({
+    // Force receive only makes sense while physical quantity is still open.
+    // Physically complete orders (including over-received ones) close via the
+    // normal Received evaluation instead.
+    const hasPhysicalRemaining = React.useMemo(() => lineItems.some(line => Math.max(
+        0,
+        Number(line.remaining_quantity ?? (Number(line.quantity_ordered || 0) - Number(line.previously_received_quantity || 0)))
+    ) > 0), [lineItems]);
+    const canForceReceive = Boolean(onForceReceived) && hasPhysicalRemaining && canForceReceivePurchaseOrder({
         inventoryStatus: selectedShipment.inventory_status ?? (selectedShipment.status === "Partially Received" ? INVENTORY_STATUS.PARTIALLY_RECEIVED : null),
         isForceReceived: forceClosed,
         isReplacement: Boolean(isReplacement)

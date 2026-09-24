@@ -147,15 +147,13 @@ export function calculateReleaseMaterialRequirementPlan(
 ): MaterialRequirementPlan {
     const netOutputTarget = Number(netOutputTargetQuantity);
     if (Number.isFinite(netOutputTarget) && netOutputTarget > 0) {
-        const roundedNetOutputTarget = Math.round(netOutputTarget);
-        if (roundedNetOutputTarget > 0) {
-            return calculateMaterialRequirementPlan(
-                roundedNetOutputTarget,
-                roundedNetOutputTarget,
-                quantityPerFinishedUnit,
-                0
-            );
-        }
+        const normalizedNetOutputTarget = roundProductionValue(netOutputTarget);
+        return calculateMaterialRequirementPlan(
+            normalizedNetOutputTarget,
+            normalizedNetOutputTarget,
+            quantityPerFinishedUnit,
+            0
+        );
     }
 
     return calculateMaterialRequirementPlan(
@@ -266,26 +264,25 @@ export function calculateGrossRouteRate(route: BottleneckLeadTimeRoute): number 
 }
 
 /**
- * Estimates elapsed production time from the slowest route-step throughput.
- * Recipe base quantity is net output, while route batch sizes/rated capacities
- * describe gross throughput, so the yield factor is applied once to convert
- * the requested net output to its required gross throughput.
+ * Scales the saved recipe's standard batch runtime to the quantity planned for
+ * this Job Order. Recipe base quantity is gross batch output; expected yield
+ * converts that standard batch into its net output before scaling.
  */
 export function calculateBottleneckLeadTimeHours(input: {
-    targetNetQuantity: number;
-    baseNetQuantity: number;
+    targetQuantity?: number;
+    targetNetQuantity?: number;
+    baseGrossQuantity?: number;
     expectedYieldPercentage?: number | null;
     routes: readonly BottleneckLeadTimeRoute[];
     fallbackLeadTimeHours?: number;
 }): number {
-    const target = Number(input.targetNetQuantity);
-    const base = Number(input.baseNetQuantity);
+    const target = Number(input.targetQuantity ?? input.targetNetQuantity);
     const fallback = Math.max(0, Number(input.fallbackLeadTimeHours) || 0);
-    if (!Number.isFinite(target) || target <= 0 || !Number.isFinite(base) || base <= 0) return fallback;
+    if (!Number.isFinite(target) || target <= 0) return fallback;
 
-    const yieldPercentage = Number(input.expectedYieldPercentage);
-    const yieldFactor = Number.isFinite(yieldPercentage) && yieldPercentage > 0
-        ? Math.min(yieldPercentage, 100) / 100
+    const configuredYieldPercentage = Number(input.expectedYieldPercentage);
+    const yieldFactor = Number.isFinite(configuredYieldPercentage) && configuredYieldPercentage > 0
+        ? Math.min(configuredYieldPercentage, 100) / 100
         : 1;
     const grossRates = input.routes
         .map(calculateGrossRouteRate)
@@ -293,8 +290,18 @@ export function calculateBottleneckLeadTimeHours(input: {
 
     if (grossRates.length === 0) return fallback;
     const bottleneckGrossRate = Math.min(...grossRates);
-    const baseBottleneckRuntimeHours = base / (yieldFactor * bottleneckGrossRate);
-    return baseBottleneckRuntimeHours * (target / base);
+    const configuredBaseGrossQuantity = Number(input.baseGrossQuantity);
+    const baseGrossQuantity = Number.isFinite(configuredBaseGrossQuantity) && configuredBaseGrossQuantity > 0
+        ? configuredBaseGrossQuantity
+        : null;
+    const masterBatchRuntimeHours = baseGrossQuantity !== null
+        ? baseGrossQuantity / bottleneckGrossRate
+        : target / yieldFactor / bottleneckGrossRate;
+    const baseNetOutputQuantity = baseGrossQuantity === null
+        ? target
+        : baseGrossQuantity * yieldFactor;
+    const plannedBatchMultiplier = target / baseNetOutputQuantity;
+    return masterBatchRuntimeHours * plannedBatchMultiplier;
 }
 
 export function calculateAggregateRunHours(
@@ -368,6 +375,16 @@ export function assertCompatibleUoms(targetUomId?: unknown, baseUomId?: unknown)
 
 export function roundProductionValue(value: number): number {
     return Number(DecimalValue.from(Number.isFinite(value) ? value : 0).toFixed(PRODUCTION_DECIMAL_SCALE));
+}
+
+export function isPieceProductionUom(uom: unknown): boolean {
+    return /^(PC|PCS|PIECE|PIECES)$/i.test(String(uom ?? "").trim());
+}
+
+export function normalizeProductionOutputQuantity(quantity: number, uom: unknown): number {
+    const parsed = Number(quantity);
+    if (!Number.isFinite(parsed) || !isPieceProductionUom(uom)) return parsed;
+    return Number(DecimalValue.from(parsed).round(0).toFixed(0));
 }
 
 export function formatProductionValue(value: number | null | undefined): string {

@@ -90,6 +90,10 @@ export function roundManufacturingUnitCost(value: number | string | null | undef
     );
 }
 
+export function formatManufacturingUnitCostForDisplay(value: number | string | null | undefined): string {
+    return DecimalValue.from(roundManufacturingMoney(value)).toFixed(MANUFACTURING_UNIT_COST_DECIMAL_SCALE);
+}
+
 export function calculateMaterialSpend(
     materialCostPerUnit: number | string | null | undefined,
     quantity: number | string | null | undefined

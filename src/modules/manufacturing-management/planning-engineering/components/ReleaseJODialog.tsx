@@ -27,10 +27,11 @@ import { calculateContainerizationMetrics, formatHoursToHMS, formatInventoryQuan
 import {
     calculateMaterialSpend,
     formatManufacturingMoney,
+    formatManufacturingUnitCostForDisplay,
     getFactoryOverheadBasisLabel
 } from "../utils/cogs-helper";
 import { calculateProductionMetrics } from "../utils/production-metrics";
-import { calculateAggregateRunHours, calculatePerUnitMaterialRequirement, calculateFullBatchTarget, calculateReleaseMaterialRequirementPlan, calculateRequiredBatchCount, DEFAULT_PRODUCTION_SHIFT_HOURS, formatProductionValue, readUomId, resolveProductionShiftHours } from "../utils/production-timing";
+import { calculateAggregateRunHours, calculatePerUnitMaterialRequirement, calculateReleaseMaterialRequirementPlan, calculateRequiredBatchCount, DEFAULT_PRODUCTION_SHIFT_HOURS, formatProductionValue, isPieceProductionUom, normalizeProductionOutputQuantity, readUomId, resolveProductionShiftHours } from "../utils/production-timing";
 import { buildReleaseSummaryHtml, type ReleaseSummaryComponent, type ReleaseSummaryFinancials, type ReleaseSummaryRoutingStep } from "../utils/release-summary-print";
 
 interface ReleaseJODialogProps {
@@ -141,10 +142,27 @@ export function ReleaseJODialog({
     const activeReleaseGroup = normalizedReleaseGroups[activeGroupIndex] || normalizedReleaseGroups[0];
     const activeGroupKey = activeReleaseGroup?.key || "single";
     const selectedLines = activeReleaseGroup?.lines || selectedLinesProp;
-    const requestedTargetQuantity = isMultiRelease ? activeReleaseGroup.totalRemainingQuantity : targetQuantityProp;
-    const targetQuantity = bomBaseQty > 0 && requestedTargetQuantity > 0
-        ? calculateFullBatchTarget(requestedTargetQuantity, bomBaseQty)
-        : requestedTargetQuantity;
+    const maxAvailableQuantity = useMemo(() => selectedLines.reduce((sum, line) => {
+        const resolved = Number(line.remaining_quantity);
+        if (Number.isFinite(resolved)) return sum + Math.max(0, resolved);
+        const ordered = Number(line.ordered_quantity || 0);
+        const fulfilled = Math.max(Number(line.allocated_quantity || 0), Number(line.served_quantity || 0));
+        const planned = Number(line.planned_quantity || 0);
+        return sum + Math.max(0, ordered - fulfilled - planned);
+    }, 0), [selectedLines]);
+    const requestedTargetQuantity = isMultiRelease
+        ? activeReleaseGroup.totalRemainingQuantity
+        : maxAvailableQuantity > 0 ? maxAvailableQuantity : targetQuantityProp;
+    const releaseSummaryUom = (selectedLines[0]?.product_id as any)?.uom_name
+        || (selectedLines[0]?.product_id as any)?.uom
+        || (selectedLines[0] as any)?.unit_of_measurement
+        || "units";
+    const operationalRequestedTargetQuantity = normalizeProductionOutputQuantity(requestedTargetQuantity, releaseSummaryUom);
+    const rawTargetQuantity = Math.max(requestedTargetQuantity, targetQuantityProp);
+    const targetQuantity = normalizeProductionOutputQuantity(
+        rawTargetQuantity,
+        releaseSummaryUom
+    );
     const joNumber = isMultiRelease
         ? `${joNumberProp}-${String(activeGroupIndex + 1).padStart(2, "0")}`
         : joNumberProp;
@@ -163,15 +181,6 @@ export function ReleaseJODialog({
         }
     };
     const selectedBranch = branches.find((b) => b.id === selectedBranchId);
-    const maxAvailableQuantity = useMemo(() => selectedLines.reduce((sum, line) => {
-        const resolved = Number(line.remaining_quantity);
-        if (Number.isFinite(resolved)) return sum + Math.max(0, resolved);
-        const ordered = Number(line.ordered_quantity || 0);
-        const fulfilled = Math.max(Number(line.allocated_quantity || 0), Number(line.served_quantity || 0));
-        const planned = Number(line.planned_quantity || 0);
-        return sum + Math.max(0, ordered - fulfilled - planned);
-    }, 0), [selectedLines]);
-
     // Reset step on open/close
     useEffect(() => {
         if (!isConfirmOpen) {
@@ -242,8 +251,8 @@ export function ReleaseJODialog({
                             const baseQty = Number(data.bom.base_quantity);
                             setBomBaseQty(baseQty);
                             if (!isMultiRelease && baseQty > 0) {
-                                const requestedQuantity = targetQuantityProp > 0 ? targetQuantityProp : baseQty;
-                                setTargetQuantity(calculateFullBatchTarget(requestedQuantity, baseQty));
+                                const requestedQuantity = requestedTargetQuantity > 0 ? requestedTargetQuantity : baseQty;
+                                setTargetQuantity(requestedQuantity);
                             }
                             // Shift option is the available production capacity per day.
                             // Recipe net runtime is calculated separately and must not be
@@ -327,12 +336,8 @@ export function ReleaseJODialog({
         );
     }, [selectedLines, targetQuantity, requestedTargetQuantity, components, bomBaseQty, bomData]);
 
-    const materialTargetQuantity = containerMetrics?.hasOutputEstimate
-        && Number.isFinite(containerMetrics.netPieces)
-        && containerMetrics.netPieces > 0
-        ? Math.round(containerMetrics.netPieces)
-        : null;
-    const productionTimingTargetQuantity = materialTargetQuantity ?? requestedTargetQuantity;
+    const materialTargetQuantity = targetQuantity > 0 ? targetQuantity : null;
+    const productionTimingTargetQuantity = rawTargetQuantity;
 
     const productionMetricsResult = useMemo(() => {
         if (!hasLoadedDetails || routings.length === 0 || targetQuantity <= 0) {
@@ -483,18 +488,6 @@ export function ReleaseJODialog({
         };
     }, [cogsBreakdown, requestedTargetQuantity, targetQuantity]);
 
-    const hasShortfalls = components.some((comp) => {
-        const compProductId = comp.component_product_id?.product_id;
-        const needed = getMaterialRequirementPlan(
-            Number(comp.quantity_required || 0),
-            Number(comp.wastage_factor_percentage || 0)
-        ).plannedRequired;
-        const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
-        return Math.max(0, needed - available) > 0;
-    });
-
-    const releaseSummaryUom = (selectedLines[0]?.product_id as any)?.uom_name || (selectedLines[0]?.product_id as any)?.uom || "units";
-
     const releaseSummaryComponents = useMemo<ReleaseSummaryComponent[]>(() => components.map((comp) => {
         const compProductId = Number(comp.component_product_id?.product_id || 0);
         const materialPlan = getMaterialRequirementPlan(
@@ -553,7 +546,8 @@ export function ReleaseJODialog({
         .filter((orderNo) => orderNo.length > 0))], [selectedLines]);
 
     const releaseSummaryShortfallCount = releaseSummaryComponents.filter((component) => !component.sufficient).length;
-    const releaseSummaryReady = hasLoadedDetails && !hasShortfalls && !productionMetricsError;
+    const hasShortfalls = releaseSummaryShortfallCount > 0;
+    const releaseSummaryReady = hasLoadedDetails && releaseSummaryShortfallCount === 0 && !productionMetricsError;
 
     const handlePrintSummary = () => {
         const printWin = window.open("", "_blank");
@@ -902,14 +896,10 @@ export function ReleaseJODialog({
                                                     type="number"
                                                     value={loadingDetails ? "" : (targetQuantity || "")}
                                                     min={1}
-                                                    step="any"
+                                                    step={isPieceProductionUom(releaseSummaryUom) ? 1 : "any"}
                                                     onChange={(e) => {
                                                         const next = Number(e.target.value);
-                                                        setTargetQuantity(
-                                                            Number.isFinite(next) && next > 0 && bomBaseQty > 0
-                                                                ? calculateFullBatchTarget(next, bomBaseQty)
-                                                                : 0
-                                                        );
+                                                        setTargetQuantity(Number.isFinite(next) && next > 0 ? next : 0);
                                                     }}
                                                     disabled={isMultiRelease || loadingDetails}
                                                     placeholder={loadingDetails ? "Calculating batch size..." : "e.g. 1000"}
@@ -924,9 +914,7 @@ export function ReleaseJODialog({
                                         </div>
                                     </div>
                                     <p className="text-[10px] text-muted-foreground">
-                                        {isMultiRelease
-                                            ? `The target is rounded up to ${requiredBatchCount || "the required number of"} complete recipe batch${requiredBatchCount === 1 ? "" : "es"}.`
-                                            : `The target is rounded up to ${requiredBatchCount || "the required number of"} complete recipe batch${requiredBatchCount === 1 ? "" : "es"} using the ${bomBaseQty.toLocaleString()} batch size. SO demand is ${maxAvailableQuantity.toLocaleString()} units.`}
+                                        {`The target is not increased to a full recipe batch. ${isPieceProductionUom(releaseSummaryUom) ? "Piece-unit targets use whole pieces. " : ""}Recipe batch estimate: ${requiredBatchCount || 0} batch${requiredBatchCount === 1 ? "" : "es"}. SO demand is ${formatProductionValue(requestedTargetQuantity)} units.`}
                                     </p>
 
                                     <div className="grid grid-cols-2 gap-4">
@@ -1131,12 +1119,12 @@ export function ReleaseJODialog({
                                                             💰 Unit COGS & Labor Breakdown
                                                         </Badge>
                                                         <span className="text-[11px] font-semibold text-muted-foreground">
-                                                             Base COGS: <strong className="text-foreground">₱{formatProductionValue(cogsBreakdown.baseUnitCOGS)}</strong> / unit
+                                                             Base COGS: <strong className="text-foreground">₱{formatManufacturingUnitCostForDisplay(cogsBreakdown.baseUnitCOGS)}</strong> / unit
                                                         </span>
                                                     </div>
                                                     <div className="text-right">
                                                         <span className="text-xs font-black text-sky-600 dark:text-sky-400">
-                                                             ₱{formatProductionValue(cogsBreakdown.adjustedUnitCOGS)} / unit
+                                                        ₱{formatManufacturingUnitCostForDisplay(cogsBreakdown.adjustedUnitCOGS)} / unit
                                                         </span>
                                                         <span className="text-[9px] text-muted-foreground block font-medium">
                                                             (Adjusted for {cogsBreakdown.expectedYieldPercentage}% Yield)
@@ -1209,16 +1197,17 @@ export function ReleaseJODialog({
                                                             </tr>
                                                         </thead>
                                                         <tbody>
-                                                            {components.map((comp, index) => {
+                                                            {releaseSummaryComponents.map((summaryComponent, index) => {
+                                                                const comp = components[index];
                                                                 const compProductId = comp.component_product_id?.product_id;
                                                                 const materialPlan = getMaterialRequirementPlan(
                                                                     Number(comp.quantity_required || 0),
                                                                     Number(comp.wastage_factor_percentage || 0)
                                                                 );
-                                                                const needed = materialPlan.plannedRequired;
-                                                                const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
+                                                                const needed = summaryComponent.needed;
+                                                                const available = summaryComponent.available;
                                                                 const shortfall = Math.max(0, needed - available);
-                                                                const isSufficient = shortfall === 0;
+                                                                const isSufficient = summaryComponent.sufficient;
                                                                 const uom = comp.unit_of_measurement || "pcs";
                                                                 const kilogramsPerUnit = comp.component_product_id?.kilograms_per_inventory_unit;
                                                                 const neededDisplay = formatInventoryQuantity(needed, uom, kilogramsPerUnit);
@@ -1672,11 +1661,11 @@ export function ReleaseJODialog({
                                                     </div>
                                                     <div className="flex justify-between border-t border-border/60 pt-1">
                                                         <span className="font-bold text-foreground">Est. Unit COGS (Base)</span>
-                                                        <span className="font-mono font-bold text-foreground">₱{formatProductionValue(releaseSummaryFinancials.baseCogs)}</span>
+                                                        <span className="font-mono font-bold text-foreground">₱{formatManufacturingUnitCostForDisplay(releaseSummaryFinancials.baseCogs)}</span>
                                                     </div>
                                                     <div className="flex justify-between">
                                                         <span className="font-bold text-sky-700 dark:text-sky-400">Est. Unit COGS (Yield-Adjusted)</span>
-                                                        <span className="font-mono font-black text-sky-700 dark:text-sky-400">₱{formatProductionValue(releaseSummaryFinancials.adjustedCogs)}</span>
+                                                        <span className="font-mono font-black text-sky-700 dark:text-sky-400">₱{formatManufacturingUnitCostForDisplay(releaseSummaryFinancials.adjustedCogs)}</span>
                                                     </div>
                                                 </>
                                             ) : (

@@ -6,7 +6,7 @@ import { isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "../
 import { Branch, SalesOrder, SalesOrderDetail, NetRequirementItem } from "../types";
 import { fetchBranches, fetchSalesOrders, fetchNetRequirementsRaw, releaseJobOrder, releaseMultipleJobOrders, directAllocate } from "../services/planning-api";
 import { buildSalesOrderDemandGroups, buildSalesOrderReleaseGroups, isSchedulableSalesOrderLine, remainingQuantity } from "../utils/demand-groups";
-import { DEFAULT_PRODUCTION_SHIFT_HOURS } from "../utils/production-timing";
+import { DEFAULT_PRODUCTION_SHIFT_HOURS, normalizeProductionOutputQuantity } from "../utils/production-timing";
 
 function salesOrderDateValue(value: string | undefined): number {
     const timestamp = Date.parse(value || "");
@@ -679,12 +679,17 @@ export function usePlanningEngineering() {
         if (selectedLines.length === 0) return;
 
         const maxAvailableQuantity = selectedLines.reduce((sum, line) => sum + remainingQuantity(line), 0);
-        if (releaseGroups.length === 1 && (!Number.isFinite(targetQuantity) || targetQuantity <= 0)) {
+        const outputUom = (selectedLines[0]?.product_id as any)?.uom_name
+            || selectedLines[0]?.product_id?.uom
+            || (selectedLines[0] as any)?.unit_of_measurement;
+        const requiredOutputQuantity = normalizeProductionOutputQuantity(maxAvailableQuantity, outputUom);
+        const operationalTargetQuantity = normalizeProductionOutputQuantity(targetQuantity, outputUom);
+        if (releaseGroups.length === 1 && (!Number.isFinite(operationalTargetQuantity) || operationalTargetQuantity <= 0)) {
             toast.error("Enter a valid Job Order target quantity.");
             return;
         }
-        if (releaseGroups.length === 1 && targetQuantity < maxAvailableQuantity - 0.000001) {
-            toast.error(`The requested Job Order quantity (${targetQuantity}) is less than the required Sales Order quantity (${maxAvailableQuantity}). Job Order quantity cannot be less than Sales Order quantity.`);
+        if (releaseGroups.length === 1 && operationalTargetQuantity < requiredOutputQuantity - 0.000001) {
+            toast.error(`The requested Job Order quantity (${operationalTargetQuantity}) is less than the required Sales Order quantity (${requiredOutputQuantity}). Job Order quantity cannot be less than Sales Order quantity.`);
             return;
         }
 
@@ -704,7 +709,12 @@ export function usePlanningEngineering() {
                             productId: group.productId,
                             productName: group.productName,
                             bomVersionId: group.bomVersionId,
-                            quantity: group.totalRemainingQuantity,
+                            quantity: normalizeProductionOutputQuantity(
+                                group.totalRemainingQuantity,
+                                (group.lines[0]?.product_id as any)?.uom_name
+                                    || group.lines[0]?.product_id?.uom
+                                    || (group.lines[0] as any)?.unit_of_measurement
+                            ),
                             salesOrderIds: group.salesOrderIds,
                             salesOrderDetailIds: group.salesOrderDetailIds,
                             subAssemblyVersionMap: configuration?.subAssemblyVersions || {},
@@ -730,8 +740,8 @@ export function usePlanningEngineering() {
                         jo_id: joNumber,
                         product_id: targetProductId,
                         product_name: targetProductName,
-                        quantity: targetQuantity,
-                        requested_quantity: targetQuantity,
+                        quantity: operationalTargetQuantity,
+                        requested_quantity: operationalTargetQuantity,
                         due_date: dueDate,
                         start_date: plannedDate,
                         uom_id: Number((firstLine.product_id as any)?.uom_id || 0) || null,
@@ -747,8 +757,8 @@ export function usePlanningEngineering() {
                         products: [{
                             product_id: targetProductId,
                             product_name: targetProductName,
-                            quantity: targetQuantity,
-                            requested_quantity: targetQuantity,
+                            quantity: operationalTargetQuantity,
+                            requested_quantity: operationalTargetQuantity,
                             material_target_quantity: materialTargetQuantity,
                             timing_target_quantity: timingTargetQuantity ?? materialTargetQuantity ?? targetQuantity,
                             bom: { version_id: firstLine.bom_version_id }
