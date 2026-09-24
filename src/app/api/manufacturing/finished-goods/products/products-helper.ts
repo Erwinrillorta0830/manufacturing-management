@@ -6,7 +6,7 @@ import {
     CostRollupResult,
     CostNode
 } from "@/modules/manufacturing-management/finished-goods-master/types";
-import { calculateCostBreakdown, calculateMaterialCost, calculateMarginSummary, calculateOverheadSummary, calculateRouteBreakdown } from "@/modules/manufacturing-management/finished-goods-master/costing";
+import { calculateCostBreakdown, calculateMaterialCost, calculateMaterialsCostPerUnit, calculateMarginSummary, calculateOverheadSummary, calculateRouteBreakdown } from "@/modules/manufacturing-management/finished-goods-master/costing";
 import { getActiveVersionForProduct, getBOMDetailsForVersion } from "../versions/versions-helper";
 
 /**
@@ -260,7 +260,7 @@ export async function calculateRollupCost(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const unitsMap = new Map<number, string>(unitsList.map((u: any) => [u.unit_id, u.unit_shortcut]));
 
-    let materialsBatchSubtotal = 0;
+    const materialsPerUnit: Array<{ quantity: number; unitCost: number; wastagePercent?: number | null }> = [];
     let machineOverheadCost = 0;
     let machineHoursSubtotal = 0;
     let totalMachineCostSubtotal = 0;
@@ -268,7 +268,19 @@ export async function calculateRollupCost(
 
     // Process each route step
     for (const r of routes) {
-        const workCenter = r.work_center_id ? workCentersMap.get(r.work_center_id) : null;
+        const nestedWorkCenter = (r as unknown as {
+            work_center?: { work_center_id?: number; overhead_cost_per_hour?: number | null } | null;
+        }).work_center;
+        const workCenterRelation = r.work_center_id as unknown;
+        const workCenterId = workCenterRelation && typeof workCenterRelation === "object"
+            ? Number((workCenterRelation as Record<string, unknown>).work_center_id
+                ?? (workCenterRelation as Record<string, unknown>).id
+                ?? nestedWorkCenter?.work_center_id
+                ?? 0)
+            : Number(workCenterRelation ?? nestedWorkCenter?.work_center_id ?? 0);
+        const workCenter = nestedWorkCenter?.overhead_cost_per_hour != null
+            ? nestedWorkCenter
+            : workCentersMap.get(workCenterId) ?? nestedWorkCenter ?? null;
         const opName = r.operation_id ? (operationsMap.get(r.operation_id) || `Operation #${r.operation_id}`) : `Operation Step`;
 
         const routeBreakdown = calculateRouteBreakdown({
@@ -310,7 +322,11 @@ export async function calculateRollupCost(
                     wastagePercent: bomItem.wastage_factor_percentage
                 });
 
-                materialsBatchSubtotal += lineCost;
+                materialsPerUnit.push({
+                    quantity: bomItem.quantity_required,
+                    unitCost: compUnitCost,
+                    wastagePercent: bomItem.wastage_factor_percentage
+                });
 
                 const ingName = compProduct ? compProduct.product_name : `Unresolved Material (ID #${bomItem.product_id} - Archived or Missing)`;
                 const uomName = bomItem.unit_of_measurement
@@ -352,7 +368,7 @@ export async function calculateRollupCost(
     }
 
     const baseQuantity = Number(version?.base_quantity) > 0 ? Number(version?.base_quantity) : 1;
-    const materialsSubtotal = materialsBatchSubtotal / baseQuantity;
+    const materialsSubtotal = calculateMaterialsCostPerUnit(materialsPerUnit);
 
     const breakdown = calculateCostBreakdown({
         materialsCost: materialsSubtotal,
