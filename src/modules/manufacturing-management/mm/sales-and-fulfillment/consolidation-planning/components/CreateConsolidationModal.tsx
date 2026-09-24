@@ -2125,7 +2125,7 @@ export default function CreateConsolidationModal({
                                                                                                 {availableBatches.filter((b) => {
                                                                                                     const key = getManualKey(p.productId, b.inventoryLotId, b.lotId, b.batchNo);
                                                                                                     const currentQty = Number(manualAllocations[key] || 0);
-                                                                                                    return b.availableQuantity > 0 || currentQty > 0;
+                                                                                                    return b.availableQuantity >= 0 || currentQty > 0;
                                                                                                 }).length > 0 ? (
                                                                                                     <div className="max-h-[260px] overflow-y-auto rounded-2xl border border-border/50 bg-card shadow-sm">
                                                                                                         <table className="w-full text-left text-xs border-collapse">
@@ -2143,7 +2143,7 @@ export default function CreateConsolidationModal({
                                                                                                                 {availableBatches.filter((b) => {
                                                                                                                     const key = getManualKey(p.productId, b.inventoryLotId, b.lotId, b.batchNo);
                                                                                                                     const currentQty = Number(manualAllocations[key] || 0);
-                                                                                                                    return b.availableQuantity > 0 || currentQty > 0;
+                                                                                                                    return b.availableQuantity >= 0 || currentQty > 0;
                                                                                                                 }).map((b, bIdx) => {
                                                                                                                     const key = getManualKey(
                                                                                                                         p.productId,
@@ -2279,7 +2279,7 @@ export default function CreateConsolidationModal({
                                                                                                                                             const currentAlloc = getProductManualAllocation(p.productId);
                                                                                                                                             const otherBatchesAlloc = currentAlloc - currentQty;
                                                                                                                                             const remainingDemand = Math.max(0, p.totalQuantity - otherBatchesAlloc);
-                                                                                                                                            const fillAmount = Math.min(b.availableQuantity, remainingDemand);
+                                                                                                                                            const fillAmount = remainingDemand;
                                                                                                                                             handleManualQtyChange(
                                                                                                                                                 p.productId,
                                                                                                                                                 b.inventoryLotId,
