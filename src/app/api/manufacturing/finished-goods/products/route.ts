@@ -70,7 +70,6 @@ interface DirectusProduct {
     updated_at?: string | null;
     updated_by?: number | string | null;
     price_control?: { priceTypeId: number; priceTypeName: string } | null;
-    has_bom?: boolean | number | null;
 }
 
 const DEFAULT_PRODUCT_TYPE_NAMES = new Map<number, string>([
