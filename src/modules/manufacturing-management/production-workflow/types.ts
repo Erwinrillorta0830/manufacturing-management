@@ -86,6 +86,8 @@ export interface JobOrder {
     status: CanonicalJobOrderStatus | string;
     branch_id: number;
     uom_id?: number | null;
+    uom_shortcut?: string | null;
+    uom_name?: string | null;
     priority?: number;
     start_date?: string | null;
     primary_work_center_id?: number | null;

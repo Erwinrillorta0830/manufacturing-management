@@ -24,6 +24,18 @@ import {
     normalizeOperatorAssignmentMap
 } from "../operator-assignment-display";
 
+const SHOP_FLOOR_QUEUE_STATUSES = [
+    JOB_ORDER_STATUS.PICKED,
+    JOB_ORDER_STATUS.IN_PRODUCTION,
+    JOB_ORDER_STATUS.ON_HOLD,
+    JOB_ORDER_STATUS.QA_HOLD
+] as const;
+
+const SHOP_FLOOR_QUEUE_STATUS_OPTIONS = SHOP_FLOOR_QUEUE_STATUSES.map((status) => ({
+    value: status,
+    label: displayJobOrderStatus(status)
+}));
+
 function createOperatorRequestId(action: string, taskId: number, userId: number): string {
     const suffix = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
         ? crypto.randomUUID()
@@ -102,9 +114,9 @@ export function useProductionWorkflow() {
         return jobOrders.filter((jo) => isJobOrderStatus(jo.status, JOB_ORDER_STATUS.IN_PRODUCTION));
     }, [jobOrders]);
 
-    // Terminal scope: staged (Picked) and In Production Job Orders.
+    // Shop-floor queue scope: staged, active, and held Job Orders.
     const terminalJobOrders = useMemo(() => {
-        return jobOrders.filter((jo) => isJobOrderStatus(jo.status, JOB_ORDER_STATUS.PICKED, JOB_ORDER_STATUS.IN_PRODUCTION));
+        return jobOrders.filter((jo) => isJobOrderStatus(jo.status, ...SHOP_FLOOR_QUEUE_STATUSES));
     }, [jobOrders]);
 
     const salesOrderLinksOf = useCallback((jo: JobOrder): SalesOrderLink[] => {
@@ -138,16 +150,7 @@ export function useProductionWorkflow() {
             .sort((left, right) => left.label.localeCompare(right.label));
     }, [terminalJobOrders, salesOrderLinksOf]);
 
-    const statusFilterOptions = useMemo(() => {
-        const presentStatuses = new Set<string>();
-        for (const jo of terminalJobOrders) {
-            const canonical = normalizeJobOrderStatus(jo.status);
-            if (canonical) presentStatuses.add(canonical);
-        }
-        return [JOB_ORDER_STATUS.PICKED, JOB_ORDER_STATUS.IN_PRODUCTION]
-            .filter((status) => presentStatuses.has(status))
-            .map((status) => ({ value: status, label: displayJobOrderStatus(status) }));
-    }, [terminalJobOrders]);
+    const statusFilterOptions = SHOP_FLOOR_QUEUE_STATUS_OPTIONS;
 
     // Get current Job Order object. The details modal follows the queue scope.
     const selectedJobOrder = useMemo(() => {
@@ -211,7 +214,7 @@ const selectedTask = useMemo(() => {
             setSelectedJobOrderId(match.jo_id);
             setSelectedTaskId(null);
         } else {
-            toast.info("Only staged or In Production Job Orders can be opened in this terminal.");
+            toast.info("Only Picked, In Production, On Hold, or QA Hold Job Orders can be opened in this terminal.");
         }
         setPendingDeepLinkTarget(null);
     }, [pendingDeepLinkTarget, loadingJobs, terminalJobOrders]);
@@ -231,7 +234,7 @@ const selectedTask = useMemo(() => {
 
             const nextId = selectIdAfterFetch || selectedJobOrderIdRef.current || "";
             const nextJobOrder = activeJobs.find((jo) => jo.jo_id === nextId);
-            if (nextJobOrder && isJobOrderStatus(nextJobOrder.status, JOB_ORDER_STATUS.PICKED, JOB_ORDER_STATUS.IN_PRODUCTION)) {
+            if (nextJobOrder && isJobOrderStatus(nextJobOrder.status, ...SHOP_FLOOR_QUEUE_STATUSES)) {
                 setSelectedJobOrderId(nextJobOrder.jo_id);
             } else {
                 setSelectedJobOrderId("");
