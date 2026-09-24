@@ -1121,9 +1121,14 @@ export async function fetchShipmentLineItems(
                 forceClosed,
                 Math.max(0, Number(pop.ordered_quantity || 0) - previouslyReceivedQuantity)
             );
-            const remainingAcceptedQuantity = remainingReceivingQuantity(
-                forceClosed,
-                Math.max(0, Number(pop.ordered_quantity || 0) - previouslyAcceptedQuantity)
+            // Accepted-remaining can never exceed physical remaining: once a line
+            // is physically accounted for, closure no longer waits on good stock.
+            const remainingAcceptedQuantity = Math.min(
+                remainingReceivingQuantity(
+                    forceClosed,
+                    Math.max(0, Number(pop.ordered_quantity || 0) - previouslyAcceptedQuantity)
+                ),
+                remainingQuantity
             );
             const lineId = Number(pop.purchase_order_product_id);
             const activeWarehouseRowsForLine = receivingData.filter(row =>

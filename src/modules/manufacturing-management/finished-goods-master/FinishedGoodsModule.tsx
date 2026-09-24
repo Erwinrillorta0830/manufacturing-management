@@ -550,8 +550,8 @@ export default function FinishedGoodsModule() {
         const directLaborCost = totalLaborCost / baseQuantity;
 
         const bottleneckLeadTimeHours = calculateBottleneckLeadTimeHours({
-            targetNetQuantity: baseQuantity,
-            baseNetQuantity: baseQuantity,
+            targetNetQuantity: baseQuantity * (expectedYieldPercentage > 0 ? expectedYieldPercentage : 100) / 100,
+            baseGrossQuantity: baseQuantity,
             expectedYieldPercentage,
             routes: editedRoutes.map((route) => ({
                 stepBatchSize: route.step_batch_size,

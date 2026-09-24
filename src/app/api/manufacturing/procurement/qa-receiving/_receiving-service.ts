@@ -1256,9 +1256,9 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 }
                 if (!replacementDispositionId) {
                     const previous = previouslyReceivedByLine.get(line.item.line_id) || { received: 0, rejected: 0, accepted: 0 };
-                    const cumulativeAccepted = previous.accepted + line.accepted;
+                    const cumulativeReceived = previous.received + line.received;
                     lineChanges.push({ id: line.item.line_id, received: line.poLine.received });
-                    const lineUpdateRes = await mutate("purchase_order_products", line.item.line_id, "PATCH", { received: cumulativeAccepted >= Number(line.poLine.ordered_quantity || 0) - RECEIVING_STATUS_EPSILON ? 1 : 0 });
+                    const lineUpdateRes = await mutate("purchase_order_products", line.item.line_id, "PATCH", { received: cumulativeReceived >= Number(line.poLine.ordered_quantity || 0) - RECEIVING_STATUS_EPSILON ? 1 : 0 });
                     if (!lineUpdateRes.ok) throw new Error(`Failed to mark line ${line.item.line_id} as received.`);
                 }
             }

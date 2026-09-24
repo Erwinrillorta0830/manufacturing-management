@@ -19,7 +19,7 @@ import { SalesOrderAllocationConflictError } from "../helpers/create-helper";
 import type { SalesOrderSchedulingPlan } from "../helpers/create-helper";
 import { executeJobOrderWorkflow, JobOrderWorkflowError } from "../../job-orders/_workflow-service";
 import { resolveProductUnitId } from "../../services/mm-lots.service";
-import { calculateFullBatchTarget, calculateRequiredBatchCount, resolveProductionShiftHours } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
+import { calculateRequiredBatchCount, resolveProductionShiftHours } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
 
 const RELEASE_DRAFT_FETCH_TIMEOUT_MS = 15000;
 const QUANTITY_EPSILON = 0.000001;
@@ -257,7 +257,6 @@ async function validateSalesOrderScheduling(
         throw new PlanningConflictError("The selected recipe must define a valid positive batch size before a Job Order can be released.");
     }
     const batchCount = calculateRequiredBatchCount(requestedQuantity, recipeBaseQuantity);
-    const fullBatchQuantity = calculateFullBatchTarget(requestedQuantity, recipeBaseQuantity);
 
     const allocations: any[] = await fetchSchedulingAllocations(detailIds);
     const allocatedJobOrderIds = [...new Set(
@@ -364,7 +363,7 @@ async function validateSalesOrderScheduling(
             bomVersionId: effectiveBomVersionId,
             requestedQuantity,
             batchCount,
-            totalQuantity: fullBatchQuantity,
+            totalQuantity: requestedQuantity,
             lines: schedulingLines
         } satisfies SalesOrderSchedulingPlan
     };

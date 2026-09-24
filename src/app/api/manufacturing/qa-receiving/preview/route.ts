@@ -553,9 +553,14 @@ export async function POST(request: Request) {
             const remainingQuantity = replacementContext?.targetLineId === line.lineId
                 ? replacementContext.disposition.remainingQuantity
                 : Math.max(0, orderedQuantity - previous.received);
+            // Accepted-remaining can never exceed physical remaining: closure
+            // no longer waits on good stock once a line is physically complete.
             const remainingAcceptedQuantity = replacementContext?.targetLineId === line.lineId
                 ? replacementContext.disposition.remainingQuantity
-                : Math.max(0, orderedQuantity - previous.accepted);
+                : Math.min(
+                    Math.max(0, orderedQuantity - previous.accepted),
+                    Math.max(0, orderedQuantity - previous.received)
+                );
             if (!Number.isFinite(orderedQuantity) || orderedQuantity <= 0) {
                 throw new ReceivingPreviewError(`Line ${line.lineId} has an invalid ordered quantity.`);
             }
