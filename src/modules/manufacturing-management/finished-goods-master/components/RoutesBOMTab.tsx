@@ -82,7 +82,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
     const [productionPositions, setProductionPositions] = React.useState<any[]>([]);
 
     React.useEffect(() => {
-        fetch("/api/manufacturing/finished-goods/positions")
+        fetch("/api/manufacturing/inventory-warehousing/finished-goods-master/positions")
             .then((res) => (res.ok ? res.json() : []))
             .then((data) => {
                 if (Array.isArray(data)) setProductionPositions(data);
@@ -172,7 +172,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
 
     const handleCreateOperationType = async (name: string, routeId: number) => {
         try {
-            const res = await fetch("/api/manufacturing/finished-goods/operations", {
+            const res = await fetch("/api/manufacturing/inventory-warehousing/finished-goods-master/operations", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ name })
@@ -183,7 +183,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                     const newOp = data.operation;
                     handleUpdateRoute(routeId, "operation_id", newOp.id);
 
-                    const refreshRes = await fetch("/api/manufacturing/finished-goods/operations");
+                    const refreshRes = await fetch("/api/manufacturing/inventory-warehousing/finished-goods-master/operations");
                     if (refreshRes.ok && setOperationTypes) {
                         setOperationTypes(await refreshRes.json());
                     }

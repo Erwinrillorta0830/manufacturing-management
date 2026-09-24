@@ -278,9 +278,9 @@ export async function POST(request: Request) {
         const todayStr = await getTodayDateString();
         const createdAt = formatPhtDateTime();
         const body = await request.json();
-        const { productDetails, versionName, supplierIds, expectedYield } = body || {};
+        const { productDetails, versionName, supplierIds, expectedYield, hasBom } = body || {};
 
-        const validatedDetails = validateProductRegistration({ productDetails, versionName, expectedYield });
+        const validatedDetails = validateProductRegistration({ productDetails, versionName, expectedYield, hasBom });
 
         const identity = await resolveProductIdentity({
             productName: validatedDetails.productName,
@@ -320,6 +320,7 @@ export async function POST(request: Request) {
             product_brand: validatedDetails.productBrand,
             product_category: validatedDetails.productCategory,
             product_shelf_life: validatedDetails.productShelfLife,
+            maintaining_quantity: validatedDetails.maintainingQuantity,
 
             description: identity.descriptionKey,
             short_description: typeof short_description === "string" ? short_description.trim() || null : description?.trim() || null,
@@ -353,35 +354,36 @@ export async function POST(request: Request) {
         const prodJson = await prodRes.json();
         const productId = prodJson.data?.product_id;
 
-        // 2. Create Product Version (Draft status by default)
-        const initialVersionName = validatedDetails.versionName || (validatedDetails.productCode ? `${validatedDetails.productCode} Rev 1` : "Rev 1");
-        const versionPayload = {
-            product_id: productId,
-            version_name: initialVersionName,
-            base_quantity: 1.0,
-            uom_id: validatedDetails.unitOfMeasurement,
-            expected_yield_percentage: validatedDetails.expectedYield,
-            status: "Draft",
-            is_primary: 0,
-            valid_from: todayStr,
-            created_by: userId ? Number(userId) : null,
-            updated_by: userId ? Number(userId) : null
-        };
+        // 2. Create Product Version (only if hasBom is enabled)
+        let createdVersion = null;
+        if (validatedDetails.hasBom) {
+            const initialVersionName = validatedDetails.versionName || (validatedDetails.productCode ? `${validatedDetails.productCode} Rev 1` : "Rev 1");
+            const versionPayload = {
+                product_id: productId,
+                version_name: initialVersionName,
+                base_quantity: 1.0,
+                uom_id: validatedDetails.unitOfMeasurement,
+                expected_yield_percentage: validatedDetails.expectedYield ?? 100,
+                status: "Draft",
+                is_primary: 0,
+                valid_from: todayStr,
+                created_by: userId ? Number(userId) : null,
+                updated_by: userId ? Number(userId) : null
+            };
 
-
-
-        const verRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version`, {
-            method: "POST",
-            headers,
-            body: JSON.stringify(versionPayload)
-        });
-        if (!verRes.ok) {
-            // Rollback product
-            await fetch(`${DIRECTUS_URL}/items/products/${productId}`, { method: "DELETE", headers }).catch(() => { });
-            throw new Error(`Directus failed to create product version: ${verRes.status}`);
+            const verRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify(versionPayload)
+            });
+            if (!verRes.ok) {
+                // Rollback product
+                await fetch(`${DIRECTUS_URL}/items/products/${productId}`, { method: "DELETE", headers }).catch(() => { });
+                throw new Error(`Directus failed to create product version: ${verRes.status}`);
+            }
+            const verJson = await verRes.json();
+            createdVersion = verJson.data;
         }
-        const verJson = await verRes.json();
-        const createdVersion = verJson.data;
 
         // 3. Link selected suppliers in product_per_supplier junction table
         if (supplierIds && Array.isArray(supplierIds) && supplierIds.length > 0) {

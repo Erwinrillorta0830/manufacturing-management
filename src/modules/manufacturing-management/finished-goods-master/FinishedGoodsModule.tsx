@@ -416,7 +416,8 @@ export default function FinishedGoodsModule() {
             unit_of_measurement_count: "unitOfMeasurementCount",
             densityFactor: "densityFactor",
             expectedYieldPercent: "expected_yield_percentage",
-            product_shelf_life: "productShelfLife"
+            product_shelf_life: "productShelfLife",
+            maintaining_quantity: "maintainingQuantity"
         };
         const errorKey = errorKeys[field];
         if (errorKey) {
@@ -732,6 +733,8 @@ export default function FinishedGoodsModule() {
             densityFactor: "1.0",
             expectedYield: "100",
             versionName: "v1.0",
+            maintainingQuantity: "0",
+            hasBom: true,
             brandId: "",
             categoryId: "",
             description: "",
@@ -814,6 +817,8 @@ export default function FinishedGoodsModule() {
                 densityFactor: targetParent.densityFactor !== undefined ? String(targetParent.densityFactor) : "1.0",
                 expectedYield: "100",
                 versionName: initialVersion,
+                maintainingQuantity: targetParent.maintaining_quantity !== undefined && targetParent.maintaining_quantity !== null ? String(targetParent.maintaining_quantity) : "0",
+                hasBom: targetParent.has_versions !== false,
                 brandId: parentBrandId ? String(parentBrandId) : "",
                 categoryId: parentCatId ? String(parentCatId) : "",
                 description: targetParent.description || "",
@@ -836,6 +841,8 @@ export default function FinishedGoodsModule() {
                 densityFactor: "1.0",
                 expectedYield: "100",
                 versionName: "v1.0",
+                maintainingQuantity: "0",
+                hasBom: true,
                 brandId: "",
                 categoryId: "",
                 description: "",
@@ -918,6 +925,29 @@ export default function FinishedGoodsModule() {
         });
     };
 
+    const isNoBomProduct = Boolean(
+        selectedProduct && (
+            editedDetails.has_bom !== undefined
+                ? !editedDetails.has_bom
+                : (selectedProduct.has_bom !== undefined
+                    ? !selectedProduct.has_bom
+                    : selectedProduct.has_versions === false)
+        )
+    );
+
+    const visibleTabs = useMemo(() => {
+        if (isNoBomProduct) {
+            return tabs.filter(t => t.id === "details");
+        }
+        return tabs;
+    }, [isNoBomProduct]);
+
+    useEffect(() => {
+        if (isNoBomProduct && activeTab !== "details") {
+            setActiveTab("details");
+        }
+    }, [isNoBomProduct, activeTab, setActiveTab]);
+
     return (
         <motion.div
             initial={{ opacity: 0, y: -10 }}
@@ -929,6 +959,7 @@ export default function FinishedGoodsModule() {
             <FinishedGoodsHeader
                 isSidebarCollapsed={isSidebarCollapsed}
                 setIsSidebarCollapsed={setIsSidebarCollapsed}
+                hasNoBom={isNoBomProduct}
                 loadingBOM={loadingBOM}
                 loadingProducts={loadingProducts}
                 savingBOM={savingBOM}
@@ -949,7 +980,7 @@ export default function FinishedGoodsModule() {
             />
 
             <div className="flex flex-1 min-h-0 overflow-hidden border rounded-b-xl">
-                {!isSidebarCollapsed && (
+                {!isSidebarCollapsed && !isNoBomProduct && (
                     <div className="w-80 shrink-0 border-r flex flex-col bg-muted/20 animate-in slide-in-from-left duration-200">
                         {/* Version Sidebar Header */}
                         <div className="p-3 border-b bg-card/60 flex items-center justify-between gap-2">
@@ -1151,7 +1182,7 @@ export default function FinishedGoodsModule() {
                 <div className="flex-1 overflow-hidden flex flex-col bg-background">
                     {/* Module Tab Navigation Bar */}
                     <div className="flex border-b border-border/60 gap-1 bg-muted/20 px-6 pt-2 shrink-0 overflow-x-auto items-center">
-                        {tabs.map((tab) => {
+                        {visibleTabs.map((tab) => {
                             const Icon = tab.icon;
                             const isActive = activeTab === tab.id;
                             const isProductDetails = tab.id === "details";
@@ -1168,7 +1199,7 @@ export default function FinishedGoodsModule() {
                                         <Icon className={`h-4 w-4 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
                                         <span>{tab.label}</span>
                                     </button>
-                                    {isProductDetails && (
+                                    {isProductDetails && visibleTabs.length > 1 && (
                                         <div className="h-5 w-px bg-border/80 mx-2 self-center shrink-0" title="Product Master / Version Boundary" />
                                     )}
                                 </React.Fragment>
