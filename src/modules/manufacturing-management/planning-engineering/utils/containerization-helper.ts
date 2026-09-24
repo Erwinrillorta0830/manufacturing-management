@@ -1,4 +1,7 @@
-import { calculateProductionQuantityPlan } from "./production-timing";
+import {
+    calculateMaterialRequirementPlan,
+    calculateProductionQuantityPlan
+} from "./production-timing";
 
 export interface ContainerizationMetrics {
     productName: string;
@@ -234,6 +237,12 @@ export function calculateContainerizationMetrics(
 
         if (flourComp) {
             const qtyReqPerUnit = Number(flourComp.quantity_required || 0);
+            const materialPlan = calculateMaterialRequirementPlan(
+                requestedTarget,
+                effectiveTargetQuantity,
+                qtyReqPerUnit,
+                Number(flourComp.wastage_factor_percentage || 0)
+            );
             const uomStr = normalizedUnitLabel(flourComp.unit_of_measurement || flourComp.uom_shortcut);
             const perInventoryUnitKg = Number(flourComp.kilograms_per_inventory_unit);
             const isBagOrSack = uomStr.includes("sack") || uomStr.includes("bag");
@@ -246,14 +255,14 @@ export function calculateContainerizationMetrics(
                         : null;
 
             if (isBagOrSack) {
-                requestedSackCount = qtyReqPerUnit * requestedTarget;
-                sackCount = qtyReqPerUnit * effectiveTargetQuantity;
+                requestedSackCount = materialPlan.demandRequired;
+                sackCount = materialPlan.plannedRequired;
                 containerUnitLabel = uomStr.includes("bag") ? "Bags" : "Sacks";
                 hasSackEstimate = true;
             }
             if (directKgPerUnit !== null) {
-                requestedFlourGrams = qtyReqPerUnit * requestedTarget * directKgPerUnit * 1000;
-                flourGramsTotal = qtyReqPerUnit * effectiveTargetQuantity * directKgPerUnit * 1000;
+                requestedFlourGrams = materialPlan.demandRequired * directKgPerUnit * 1000;
+                flourGramsTotal = materialPlan.plannedRequired * directKgPerUnit * 1000;
                 hasFlourWeightEstimate = true;
             }
             if (!hasSackEstimate && hasFlourWeightEstimate && baseBatchWeightPerSack > 0) {
@@ -281,9 +290,11 @@ export function calculateContainerizationMetrics(
 
     const totalBaseWeightGrams = hasFlourWeightEstimate ? flourGramsTotal : 0;
     const hasOutputEstimate = totalBaseWeightGrams > 0 && cuttingUnitWeightGrams > 0;
-    const grossPieces = hasOutputEstimate ? (totalBaseWeightGrams / cuttingUnitWeightGrams) * yieldFactor : 0;
-    const wastePieces = grossPieces * scrapRate;
-    const netPieces = Math.max(0, grossPieces - wastePieces);
+    const grossPieces = hasOutputEstimate ? totalBaseWeightGrams / cuttingUnitWeightGrams : 0;
+    // Expected yield already accounts for output loss; do not deduct the
+    // separately configured scrap rate again from the same physical estimate.
+    const netPieces = Math.max(0, grossPieces * yieldFactor);
+    const wastePieces = Math.max(0, grossPieces - netPieces);
 
     // Case / Bundle Conversions
     const totalCasesBundlesExact = hasOutputEstimate ? netPieces / pcsPerCaseBundle : 0;

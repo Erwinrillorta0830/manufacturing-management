@@ -7,6 +7,8 @@ import {
 } from "./cogs-helper";
 import {
     assertCompatibleUoms,
+    calculateBottleneckLeadTimeHours,
+    calculateGrossRouteRate,
     requirePositiveProductionNumber,
     PRODUCTION_TIMING_POLICY
 } from "./production-timing";
@@ -24,8 +26,8 @@ export interface ProductionRouteMetric {
 export interface ProductionMetricsInput {
     targetQuantity: number;
     /**
-     * Requested output used only for route timing. The target quantity may be
-     * rounded up to a full recipe batch for costing and material planning.
+     * Net output used for route timing. The target quantity may be rounded up
+     * to a full recipe batch for costing and production planning.
      */
     timingTargetQuantity?: number;
     baseQuantity: number;
@@ -63,6 +65,11 @@ export function calculateProductionMetrics(input: ProductionMetricsInput): Produ
     );
     const baseQuantity = requirePositiveProductionNumber(input.baseQuantity, "Recipe base quantity");
     assertCompatibleUoms(input.targetUomId, input.baseUomId);
+    const configuredYieldPercentage = Number(input.expectedYieldPercentage);
+    const yieldFactor = Number.isFinite(configuredYieldPercentage) && configuredYieldPercentage > 0
+        ? Math.min(configuredYieldPercentage, 100) / 100
+        : 1;
+    const grossTimingTargetQuantity = timingTargetQuantity / yieldFactor;
     const sortedRoutes = [...(input.routes || [])].sort(
         (left, right) => Number(left.sequence_order || 0) - Number(right.sequence_order || 0)
     );
@@ -75,9 +82,20 @@ export function calculateProductionMetrics(input: ProductionMetricsInput): Produ
         );
         const setupTimeHours = Math.max(0, Number(route.setup_time_hours || 0));
         const runTimeHours = Math.max(0, Number(route.run_time_hours || 0));
-        const timingBatchRatio = timingTargetQuantity / stepBatchSize;
-        const plannedSetupHours = setupTimeHours;
-        const plannedRunHours = timingBatchRatio * runTimeHours;
+        const timingBatchRatio = grossTimingTargetQuantity / stepBatchSize;
+        const routeRate = calculateGrossRouteRate({
+            stepBatchSize,
+            setupTimeHours,
+            runTimeHours,
+            workCenterCapacityPerHour: route.work_center_capacity_per_hour
+        });
+        const totalStepHours = setupTimeHours + runTimeHours;
+        const plannedElapsedHours = routeRate > 0
+            ? grossTimingTargetQuantity / routeRate
+            : timingBatchRatio * totalStepHours;
+        const elapsedScale = totalStepHours > 0 ? plannedElapsedHours / totalStepHours : 0;
+        const plannedSetupHours = setupTimeHours * elapsedScale;
+        const plannedRunHours = runTimeHours * elapsedScale;
 
         return {
             sequenceOrder,
@@ -90,9 +108,21 @@ export function calculateProductionMetrics(input: ProductionMetricsInput): Produ
         };
     });
 
-    const lineLeadTimeHours = routeMetrics.length > 0
+    const routeMaxLeadTimeHours = routeMetrics.length > 0
         ? Math.max(...routeMetrics.map((metric) => metric.elapsedHours))
         : 0;
+    const lineLeadTimeHours = calculateBottleneckLeadTimeHours({
+        targetQuantity,
+        baseGrossQuantity: baseQuantity,
+        expectedYieldPercentage: input.expectedYieldPercentage,
+        routes: sortedRoutes.map((route) => ({
+            stepBatchSize: route.step_batch_size,
+            setupTimeHours: route.setup_time_hours,
+            runTimeHours: route.run_time_hours,
+            workCenterCapacityPerHour: route.work_center_capacity_per_hour
+        })),
+        fallbackLeadTimeHours: routeMaxLeadTimeHours
+    });
     const cumulativeWorkloadHours = routeMetrics.reduce(
         (total, metric) => total + metric.elapsedHours,
         0
@@ -119,8 +149,7 @@ export function calculateProductionMetrics(input: ProductionMetricsInput): Produ
             input.targetSellingPrice,
             input.laborPositions || [],
             input.overheadItems || [],
-            input.materialCostPerUnit,
-            targetQuantity
+            input.materialCostPerUnit
         )
     };
 }

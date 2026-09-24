@@ -33,7 +33,7 @@ import { StatusLegendPopover } from "../shared/components/StatusLegendPopover";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { isCancelledJobOrderStatus, isJobOrderStatus, isTerminatedJobOrder, JOB_ORDER_STATUS, normalizeJobOrderStatus, displayJobOrderStatus } from "../job-order-status";
-import { calculateCumulativeRouteWorkloadHours, calculatePipelinedLineDurationHours } from "./utils/production-timing";
+import { calculateCumulativeRouteWorkloadHours, calculatePipelinedLineDurationHours, resolveProductionShiftHours } from "./utils/production-timing";
 import JsBarcode from "jsbarcode";
 import QRCode from "qrcode";
 import {
@@ -743,7 +743,7 @@ export default function PlanningEngineeringModule() {
                 <div class="info-box">
                     <strong>Primary Product:</strong> ${activeFamilyJo.product_name} &bull;
                     <strong>Target Run Qty:</strong> ${activeFamilyJo.quantity?.toLocaleString()} pcs &bull;
-                    <strong>Shift Duration:</strong> ${activeFamilyJo.shiftOption || 8} hrs
+                    <strong>Shift Duration:</strong> ${resolveProductionShiftHours(activeFamilyJo.shiftOption)} hrs
                 </div>
 
                 <table>
@@ -889,7 +889,7 @@ export default function PlanningEngineeringModule() {
                                 <td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">Primary Work Center</td>
                                 <td style="padding: 8px; border: 1px solid #e5e7eb;">${escapeWorksheetHtml(jo.primary_work_center_name || "")}</td>
                                 <td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">Est. Duration</td>
-                                <td style="padding: 8px; border: 1px solid #e5e7eb;">${lineDuration.toFixed(1)} hrs (Shift: ${jo.shiftOption || 8} hrs)</td>
+                                <td style="padding: 8px; border: 1px solid #e5e7eb;">${lineDuration.toFixed(1)} hrs (Shift: ${resolveProductionShiftHours(jo.shiftOption)} hrs)</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1138,12 +1138,12 @@ export default function PlanningEngineeringModule() {
                                 <span className="text-border">→</span>
                                 <span>
                                     <strong className="text-foreground">3.</strong>{" "}
-                                    <span className="text-primary underline underline-offset-2">Stage materials</span>
+                                    <span>Stage materials</span>
                                 </span>
                                 <span className="text-border">→</span>
                                 <span>
                                     <strong className="text-foreground">4.</strong>{" "}
-                                    <span className="text-primary underline underline-offset-2">Produce</span>
+                                    <span>Produce</span>
                                 </span>
                             </div>
                         </div>
@@ -1647,13 +1647,13 @@ export default function PlanningEngineeringModule() {
 
                                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs bg-muted/30 p-3 rounded-xl border border-border/50">
                                         <div><span className="text-muted-foreground font-medium">Planning Remarks:</span> <span className="font-bold ml-1 text-foreground">{selectedUnreleasedJo?.remarks || "None"}</span></div>
-                                        <div><span className="text-muted-foreground font-medium">Shift Option:</span> <span className="font-bold ml-1 text-foreground">{selectedUnreleasedJo?.shiftOption || "8"} hours</span></div>
+                                        <div><span className="text-muted-foreground font-medium">Shift Option:</span> <span className="font-bold ml-1 text-foreground">{resolveProductionShiftHours(selectedUnreleasedJo?.shiftOption, selectedUnreleasedJo?.shift_option)} hours</span></div>
                                         <div>
                                             <span className="text-muted-foreground font-medium">Parent Run Lead Time:</span>
                                             <span className="font-bold ml-1 text-primary">
                                                 {(() => {
                                                     const tasks = selectedUnreleasedJo?.routing_tasks || [];
-                                                    const shiftHrs = Number(selectedUnreleasedJo?.shiftOption || selectedUnreleasedJo?.shift_option || 8) || 8;
+                                                    const shiftHrs = resolveProductionShiftHours(selectedUnreleasedJo?.shiftOption, selectedUnreleasedJo?.shift_option);
                                                     const leadTime = calculatePipelinedLineDurationHours(tasks);
                                                     const totalWorkload = calculateCumulativeRouteWorkloadHours(tasks);
                                                     return `${(leadTime / shiftHrs).toFixed(1)} days (${leadTime.toFixed(1)} line hrs • ${totalWorkload.toFixed(1)} mach-hrs)`;
@@ -1801,13 +1801,13 @@ export default function PlanningEngineeringModule() {
 
                                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs bg-sky-500/5 p-3 rounded-xl border border-sky-500/10">
                                                 <div><span className="text-muted-foreground font-medium">Planning Remarks:</span> <span className="font-bold ml-1 text-foreground">{childJo.remarks || "Auto-spawned"}</span></div>
-                                                <div><span className="text-muted-foreground font-medium">Shift Option:</span> <span className="font-bold ml-1 text-foreground">{childJo.shiftOption || "8"} hours</span></div>
+                                                <div><span className="text-muted-foreground font-medium">Shift Option:</span> <span className="font-bold ml-1 text-foreground">{resolveProductionShiftHours(childJo.shiftOption, childJo.shift_option)} hours</span></div>
                                                 <div>
                                                     <span className="text-muted-foreground font-medium">Sub-Assembly Lead Time:</span>
                                                     <span className="font-bold ml-1 text-sky-700 dark:text-sky-300">
                                                         {(() => {
                                                             const tasks = childJo.routing_tasks || [];
-                                                            const shiftHrs = Number(childJo.shiftOption || childJo.shift_option || 8) || 8;
+                                                            const shiftHrs = resolveProductionShiftHours(childJo.shiftOption, childJo.shift_option);
                                                             const leadTime = calculatePipelinedLineDurationHours(tasks);
                                                             const totalWorkload = calculateCumulativeRouteWorkloadHours(tasks);
                                                             return `${(leadTime / shiftHrs).toFixed(1)} days (${leadTime.toFixed(1)} line hrs • ${totalWorkload.toFixed(1)} mach-hrs)`;
@@ -1899,7 +1899,7 @@ export default function PlanningEngineeringModule() {
                                 <div className="bg-card border rounded-xl p-4 space-y-2 text-sm">
                                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                                         <div><span className="text-muted-foreground">Planning Remarks:</span> <span className="font-medium ml-1">{activeFamilyJo?.remarks || "None"}</span></div>
-                                        <div><span className="text-muted-foreground">Shift Option:</span> <span className="font-medium ml-1">{activeFamilyJo?.shiftOption || "8"} hours</span></div>
+                                        <div><span className="text-muted-foreground">Shift Option:</span> <span className="font-medium ml-1">{resolveProductionShiftHours(activeFamilyJo?.shiftOption, activeFamilyJo?.shift_option)} hours</span></div>
                                         <div>
                                             <span className="text-muted-foreground">Estimated Duration:</span>
                                             <span className="font-medium ml-1">
@@ -1907,7 +1907,7 @@ export default function PlanningEngineeringModule() {
                                                     const tasks = activeFamilyJo?.routing_tasks || [];
                                                     const total = calculatePipelinedLineDurationHours(tasks);
                                                     if (total === 0) return "Not estimated";
-                                                    const shiftHours = Number(activeFamilyJo?.shiftOption || 8) || 8;
+                                                    const shiftHours = resolveProductionShiftHours(activeFamilyJo?.shiftOption, activeFamilyJo?.shift_option);
                                                     const days = (total / shiftHours).toFixed(1);
                                                     return `${total.toFixed(1)} hrs (~${days} Days)`;
                                                 })()}

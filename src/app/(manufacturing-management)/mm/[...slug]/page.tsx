@@ -20,6 +20,7 @@ export const dynamic = "force-dynamic";
 
 const COOKIE_NAME = "vos_access_token";
 const RETIRED_RFID_PATH = "supplier-management/purchase-order/purchase-order-receiving-rfid";
+const RETIRED_PRODUCTION_WORKFLOW_PATH = "production-workflow";
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
     try {
@@ -78,6 +79,10 @@ export default async function CatchAllHRMPage(props: { params: Promise<{ slug: s
     const pathString = slug.join("/");
 
     if (pathString === RETIRED_RFID_PATH || pathString.startsWith(`${RETIRED_RFID_PATH}/`)) {
+        notFound();
+    }
+
+    if (pathString === RETIRED_PRODUCTION_WORKFLOW_PATH || pathString.startsWith(`${RETIRED_PRODUCTION_WORKFLOW_PATH}/`)) {
         notFound();
     }
     

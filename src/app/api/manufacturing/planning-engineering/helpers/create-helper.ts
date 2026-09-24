@@ -15,10 +15,11 @@ import {
     roundManufacturingUnitCost
 } from "@/modules/manufacturing-management/planning-engineering/utils/cogs-helper";
 import {
-    calculatePerUnitMaterialRequirement,
+    calculateReleaseMaterialRequirementPlan,
     calculateFullBatchTarget,
     readUomId,
-    roundProductionValue
+    roundProductionValue,
+    resolveProductionShiftHours
 } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
 import { normalizeOperatorAssignments, synchronizeJobOrderOperatorAssignments } from "../../job-orders/_operator-assignment-service";
 
@@ -230,14 +231,24 @@ export async function createJobOrder(
                     product_name: p.product_name || `Product #${pId}`,
                     quantity: 0,
                     timing_target_quantity: 0,
+                    material_target_quantity: 0,
                     uom_id: (p as any).uom_id ?? (p as any).uomId ?? (joData as any).uom_id ?? null,
                     bom: versionId ? { version_id: versionId } : null
                 };
             }
             mergedProducts[key].quantity += Number(p.quantity || 0);
             mergedProducts[key].timing_target_quantity += Number(
-                (p as any).requested_quantity ?? (p as any).requestedQuantity ?? p.quantity ?? 0
+                (p as any).timing_target_quantity
+                    ?? (p as any).timingTargetQuantity
+                    ?? (p as any).requested_quantity
+                    ?? (p as any).requestedQuantity
+                    ?? p.quantity
+                    ?? 0
             );
+            const materialTargetQuantity = Number((p as any).material_target_quantity ?? (p as any).materialTargetQuantity);
+            if (Number.isFinite(materialTargetQuantity) && materialTargetQuantity > 0) {
+                mergedProducts[key].material_target_quantity += materialTargetQuantity;
+            }
         }
         const finalProductsList = Object.values(mergedProducts);
         const firstProd = finalProductsList[0];
@@ -325,15 +336,18 @@ export async function createJobOrder(
             
             let productionQty = Number(p.quantity);
             let timingTargetQuantity = Number((p as any).timing_target_quantity ?? productionQty);
+            let materialTargetQuantity = Number((p as any).material_target_quantity);
+            if (!Number.isFinite(materialTargetQuantity) || materialTargetQuantity <= 0) {
+                materialTargetQuantity = Number.NaN;
+            }
             if (version && version.product_id && Number(version.product_id) !== Number(pId)) {
                 const pCount = await getUomCountForProduct(pId);
                 if (pCount > 0) {
                     productionQty = Math.ceil(productionQty / pCount);
                     timingTargetQuantity = Math.ceil(timingTargetQuantity / pCount);
+                    if (Number.isFinite(materialTargetQuantity)) materialTargetQuantity /= pCount;
                 }
             }
-
-            (p as any).timing_target_quantity = timingTargetQuantity;
 
             const recipeBaseQuantity = Number(version?.base_quantity);
             if (Number.isFinite(recipeBaseQuantity) && recipeBaseQuantity > 0) {
@@ -348,11 +362,13 @@ export async function createJobOrder(
                     if (!Number.isFinite(baseQuantity) || baseQuantity <= 0) {
                         throw new Error(`Recipe base quantity is required for Product '${p.product_name}'.`);
                     }
-                    const quantityRequired = calculatePerUnitMaterialRequirement(
+                    const quantityRequired = calculateReleaseMaterialRequirementPlan(
+                        productionQty,
                         productionQty,
                         Number(bItem.quantity_required || 0),
-                        Number(bItem.wastage_factor_percentage || 0)
-                    );
+                        Number(bItem.wastage_factor_percentage || 0),
+                        materialTargetQuantity
+                    ).plannedRequired;
 
                     // Verify if it has an active version (making it a sub-assembly)
                     const compActiveVer = await getActiveVersionForProduct(compProductId);
@@ -443,7 +459,7 @@ export async function createJobOrder(
             assigned_personnel: normalizeOperatorAssignments(
                 (joData as any).assigned_personnel ?? (joData as any).assignments
             ),
-            shift_option: joData.shift_option || "8",
+            shift_option: String(resolveProductionShiftHours(joData.shift_option)),
             sub_assembly_version_map: (joData as any).sub_assembly_version_map 
                 ? (typeof (joData as any).sub_assembly_version_map === "object" ? JSON.stringify((joData as any).sub_assembly_version_map) : (joData as any).sub_assembly_version_map) 
                 : ((joData as any).subAssemblyVersionMap ? JSON.stringify((joData as any).subAssemblyVersionMap) : null),
@@ -451,7 +467,7 @@ export async function createJobOrder(
             created_by: joData.created_by ? Number(joData.created_by) : null,
             created_at: formatPhtDateTime(),
             modified_at: null,
-            remarks: (joData.remarks || `Consolidated production run. Shift: ${joData.shift_option || "8"}`) + forcedDraftRemarks
+            remarks: (joData.remarks || `Consolidated production run. Shift: ${resolveProductionShiftHours(joData.shift_option)}`) + forcedDraftRemarks
         };
 
         const headerRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders`, {
@@ -497,6 +513,10 @@ export async function createJobOrder(
 
             let productionQty = Number(p.quantity);
             let timingTargetQuantity = Number((p as any).timing_target_quantity ?? productionQty);
+            let materialTargetQuantity = Number((p as any).material_target_quantity);
+            if (!Number.isFinite(materialTargetQuantity) || materialTargetQuantity <= 0) {
+                materialTargetQuantity = Number.NaN;
+            }
             let productionUomId = readUomId((p as any).uom_id ?? (p as any).uomId ?? (joData as any).uom_id ?? (joData as any).uomId);
             if (version && version.product_id && Number(version.product_id) !== Number(p.product_id)) {
                 try {
@@ -504,6 +524,9 @@ export async function createJobOrder(
                     const targetUomCount = await getUomCountForProduct(Number(version.product_id));
                     productionQty = productionQty * (originalUomCount / targetUomCount);
                     timingTargetQuantity = timingTargetQuantity * (originalUomCount / targetUomCount);
+                    if (Number.isFinite(materialTargetQuantity)) {
+                        materialTargetQuantity = materialTargetQuantity * (originalUomCount / targetUomCount);
+                    }
                     productionUomId = readUomId(version.uom_id) || productionUomId;
                 } catch (e) {
                     console.error("Error scaling quantity for job order product variant:", e);
@@ -538,7 +561,8 @@ export async function createJobOrder(
                             (route as any).work_center?.overhead_cost_per_hour
                                 ?? (route as any).overhead_cost_per_hour
                                 ?? 0
-                        )
+                        ),
+                        work_center_capacity_per_hour: Number((route as any).work_center?.capacity_per_hour || 0)
                     })),
                     bomItems: costingComponents.map((component) => ({
                         quantity_required: Number(component.quantity_required || 0),
@@ -657,11 +681,13 @@ export async function createJobOrder(
                             if (!Number.isFinite(baseQuantity) || baseQuantity <= 0) {
                                 throw new Error(`Recipe base quantity is required for Product '${p.product_name}'.`);
                             }
-                            const quantityRequired = calculatePerUnitMaterialRequirement(
+                            const quantityRequired = calculateReleaseMaterialRequirementPlan(
+                                productionQty,
                                 productionQty,
                                 Number(bItem.quantity_required || 0),
-                                Number(bItem.wastage_factor_percentage || 0)
-                            );
+                                Number(bItem.wastage_factor_percentage || 0),
+                                materialTargetQuantity
+                            ).plannedRequired;
 
                              // Check if component is a sub-assembly
                              const activeVer = await getActiveVersionForProduct(compProductId);
@@ -806,12 +832,11 @@ export async function createJobOrder(
                                                      route.work_center?.overhead_cost_per_hour
                                                          ?? route.overhead_cost_per_hour
                                                          ?? 0
-                                                 )
+                                                 ),
+                                                 work_center_capacity_per_hour: Number(route.work_center?.capacity_per_hour || 0)
                                              }))
                                          });
                                          const subHours = subMetrics.lineLeadTimeHours;
-                                        totalEstimatedHours += subHours;
-
                                         const childJoNo = `${joNoStr}-SUB${compProductId}`;
                                         const checkJoRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?filter[job_order_no][_eq]=${childJoNo}&limit=1`, { headers });
                                         const alreadyExists = checkJoRes.ok ? ((await checkJoRes.json()).data || []).length > 0 : false;
@@ -827,7 +852,7 @@ export async function createJobOrder(
                                                 branch_id: joData.branch_id,
                                                 created_by: joData.created_by,
                                                 parent_job_order_id: joIdInt,
-                                                shift_option: joData.shift_option || "8",
+                                                shift_option: String(resolveProductionShiftHours(joData.shift_option)),
                                                 remarks: `Auto-spawned sub-assembly run for parent Job Order ${joNoStr}`,
                                                 bom: {
                                                     version_id: activeVer.version.version_id
@@ -857,7 +882,7 @@ export async function createJobOrder(
         );
 
         // Calculate and generate daily breakdown runs based on total planned hours and shift option
-        const shiftHours = Number(joData.shift_option || "8") || 8;
+        const shiftHours = resolveProductionShiftHours(joData.shift_option);
         const numDays = Math.ceil(totalEstimatedHours / shiftHours) || 1;
         const baseQtyPerDay = Math.floor(totalMergedQuantity / numDays);
         const remainder = totalMergedQuantity % numDays;

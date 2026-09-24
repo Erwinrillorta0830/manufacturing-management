@@ -345,8 +345,18 @@ export function useQAReceiving({
     const [startDate, setStartDate] = useState("");
     const [endDate, setEndDate] = useState("");
 
+    // Most recent QA receipt activity first: qa_received_at is stamped on every
+    // receipt post, so a newly posted receipt lifts its PO to the top of the
+    // queue. Falls back to force-close time, then PO creation order.
+    function shipmentActivityTime(shipment: Shipment): number {
+        const candidate = shipment.qaReceivedAt || shipment.forceReceivedAt || shipment.created_at;
+        const parsed = candidate ? Date.parse(String(candidate)) : NaN;
+        return Number.isFinite(parsed) ? parsed : 0;
+    }
+
     const filteredShipments = useMemo(() => {
-        return shipments.filter(s => {
+        return shipments
+        .filter(s => {
             // Warehouse-received orders enter QA; legacy For Pickup orders remain supported.
             if (!isReceivingQueueShipmentStatus(s.inventory_status ?? s.status) && s.status !== "Received") return false;
 
@@ -377,7 +387,11 @@ export function useQAReceiving({
             }
 
             return true;
-        });
+        })
+        // Most recent QA receipt activity first: a newly posted receipt bumps
+        // qa_received_at, lifting the PO to the top. Fall back to force-close
+        // time, then PO creation order for POs with no receipt activity yet.
+        .sort((left, right) => shipmentActivityTime(right) - shipmentActivityTime(left));
     }, [shipments, searchPO, searchStatus, startDate, endDate, showReceived]);
 
     const loadShipments = useCallback(async (filters: { search?: string; status?: string; startDate?: string; endDate?: string; includeReceived?: boolean } = {}) => {

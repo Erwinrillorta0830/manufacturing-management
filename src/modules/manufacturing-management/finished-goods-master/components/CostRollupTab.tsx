@@ -219,7 +219,7 @@ export const CostRollupTab: React.FC<CostRollupTabProps> = ({
                             <span className="font-medium">₱{formatCurrency(standardBreakdown.machineOverheadCost)}</span>
                         </div>
                         <div className="flex justify-between gap-2">
-                            <span className="text-muted-foreground font-semibold text-sky-600 dark:text-sky-400">Continuous Line Shift Duration (Inline)</span>
+                            <span className="text-muted-foreground font-semibold text-sky-600 dark:text-sky-400">Bottleneck Lead Time (Base Net Batch)</span>
                             <span className="font-bold font-mono text-sky-600 dark:text-sky-400">
                                 {(() => {
                                     const hrs = standardBreakdown.lineElapsedHours || 0;
