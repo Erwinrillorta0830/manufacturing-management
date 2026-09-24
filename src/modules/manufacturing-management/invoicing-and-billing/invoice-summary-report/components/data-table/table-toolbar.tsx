@@ -22,21 +22,33 @@ export function DataTableToolbar<TData>({
   return (
     <div className="flex items-center justify-between">
       <div className="flex flex-1 items-center space-x-2">
-        {/* TEXT SEARCH: For Customer Name */}
+        {/* TEXT SEARCH: For Customer / Multi-field */}
         {table.getColumn("customer_name") && (
-          <Input
-            placeholder="Filter customers..."
-            value={
-              (table.getColumn("customer_name")?.getFilterValue() as string) ??
-              ""
-            }
-            onChange={(event) =>
-              table
-                .getColumn("customer_name")
-                ?.setFilterValue(event.target.value)
-            }
-            className="h-8 w-37.5 lg:w-62.5"
-          />
+          <div className="relative w-full sm:w-64">
+            <Input
+              placeholder="Search customer, invoice, S.O..."
+              value={
+                (table.getColumn("customer_name")?.getFilterValue() as string) ??
+                ""
+              }
+              onChange={(event) =>
+                table
+                  .getColumn("customer_name")
+                  ?.setFilterValue(event.target.value)
+              }
+              className="h-8 w-full pr-7 text-xs"
+            />
+            {Boolean(table.getColumn("customer_name")?.getFilterValue()) && (
+              <button
+                type="button"
+                onClick={() => table.getColumn("customer_name")?.setFilterValue("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs"
+                title="Clear search"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
         )}
 
         {/* FACETED FILTER: For Status */}

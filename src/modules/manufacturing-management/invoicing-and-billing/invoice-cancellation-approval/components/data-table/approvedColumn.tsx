@@ -20,12 +20,25 @@ export const approvedColumns: ColumnDef<InvoiceRow>[] = [
       <DataTableColumnHeader column={column} label="Customer" />
     ),
     meta: { label: "Customer" },
+    cell: ({ row }) => (
+      <div className="flex flex-col">
+        <span className="font-medium text-xs text-foreground">
+          {row.original.customer_name || "-"}
+        </span>
+        {row.original.customer_code && (
+          <span className="text-[10px] text-muted-foreground font-mono">
+            {row.original.customer_code}
+          </span>
+        )}
+      </div>
+    ),
   },
   {
     accessorKey: "total_amount",
     header: ({ column }) => (
       <DataTableColumnHeader column={column} label="Amount" />
     ),
+    meta: { label: "Total Amount" },
     cell: ({ row }) => {
       const amount = row.original.total_amount;
       return new Intl.NumberFormat("en-PH", {
@@ -39,6 +52,7 @@ export const approvedColumns: ColumnDef<InvoiceRow>[] = [
     header: ({ column }) => (
       <DataTableColumnHeader column={column} label="S.O No." />
     ),
+    meta: { label: "Sales Order Id" },
     cell: ({ row }) => (
       <span className="text-xs text-muted-foreground">
         {row.original.sales_order_id}
@@ -50,6 +64,7 @@ export const approvedColumns: ColumnDef<InvoiceRow>[] = [
     header: ({ column }) => (
       <DataTableColumnHeader column={column} label="Reason Type" />
     ),
+    meta: { label: "Reason Code" },
     cell: ({ row }) => (
       <Badge variant="outline" className="font-normal text-muted-foreground">
         {row.original.reason_code}
@@ -61,6 +76,7 @@ export const approvedColumns: ColumnDef<InvoiceRow>[] = [
     header: ({ column }) => (
       <DataTableColumnHeader column={column} label="Remarks" />
     ),
+    meta: { label: "Remarks" },
     cell: ({ row }) => (
       <span className="text-xs italic text-muted-foreground line-clamp-1 max-w-37.5">
         {row.original.remarks || "No remarks"}
@@ -70,6 +86,7 @@ export const approvedColumns: ColumnDef<InvoiceRow>[] = [
   {
     accessorKey: "status",
     header: "Status",
+    meta: { label: "Status" },
     cell: () => {
       return (
         <Badge variant="secondary" className="px-1.5">
@@ -84,6 +101,7 @@ export const approvedColumns: ColumnDef<InvoiceRow>[] = [
     header: ({ column }) => (
       <DataTableColumnHeader column={column} label="Date Approved" />
     ),
+    meta: { label: "Date Approved" },
     cell: ({ row }) => {
       const date = row.original.date_approved;
       if (!date)

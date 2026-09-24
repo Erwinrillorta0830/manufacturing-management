@@ -109,10 +109,14 @@ export async function fetchLiveProductOnhand(
             return { onhandQuantity: 0, totalIn: 0, totalOut: 0, error: null };
         }
 
-        const item = list[0];
-        const onhand = Number(item.onhandQuantity ?? item.onhand ?? 0);
-        const totalIn = Number(item.totalQuantityIn ?? item.totalIn ?? 0);
-        const totalOut = Number(item.totalQuantityOut ?? item.totalOut ?? 0);
+        let onhand = 0;
+        let totalIn = 0;
+        let totalOut = 0;
+        for (const item of list) {
+            onhand += Number(item.onhandQuantity ?? item.onhand ?? 0);
+            totalIn += Number(item.totalQuantityIn ?? item.totalIn ?? 0);
+            totalOut += Number(item.totalQuantityOut ?? item.totalOut ?? 0);
+        }
 
         return {
             onhandQuantity: isNaN(onhand) ? 0 : onhand,

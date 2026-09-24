@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { motion } from "framer-motion";
 import {
     Dialog,
     DialogContent,
@@ -143,9 +144,19 @@ export default function AssetAmortizationModal({
                     </div>
                 </DialogHeader>
 
-                <div className="space-y-4 pt-2">
+                <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.25, ease: "easeOut" }}
+                    className="space-y-4 pt-2"
+                >
                     {/* Header Details Card */}
-                    <div className="rounded-xl border border-border/80 bg-muted/30 p-4">
+                    <motion.div
+                        initial={{ opacity: 0, y: -6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.25 }}
+                        className="rounded-xl border border-border/80 bg-muted/30 p-4"
+                    >
                         <div className="flex flex-wrap items-center justify-between gap-2">
                             <div>
                                 <h3 className="text-base font-semibold text-foreground">{asset.item_name}</h3>
@@ -230,10 +241,15 @@ export default function AssetAmortizationModal({
                                 </p>
                             </div>
                         </div>
-                    </div>
+                    </motion.div>
 
                     {/* Calculation Audit Trail Card */}
-                    <div className="rounded-xl border border-primary/20 bg-primary/5 p-3.5 text-xs space-y-1.5">
+                    <motion.div
+                        initial={{ opacity: 0, y: -6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.25, delay: 0.05 }}
+                        className="rounded-xl border border-primary/20 bg-primary/5 p-3.5 text-xs space-y-1.5"
+                    >
                         <div className="flex items-center gap-1.5 font-semibold text-primary">
           
                             <span>Authoritative Calculation Formula</span>
@@ -249,10 +265,15 @@ export default function AssetAmortizationModal({
                                 ))}
                             </ul>
                         )}
-                    </div>
+                    </motion.div>
 
                     {/* Amortization Table */}
-                    <div className="rounded-xl border border-border overflow-hidden">
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ duration: 0.25, delay: 0.08 }}
+                        className="rounded-xl border border-border overflow-hidden"
+                    >
                         <div className="overflow-x-auto">
                             <table className="w-full text-left text-xs border-collapse">
                                 <thead className="bg-muted/60 text-muted-foreground border-b border-border">
@@ -266,52 +287,70 @@ export default function AssetAmortizationModal({
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-border/60">
-                                    {paginatedSchedule.map((row) => (
-                                        <tr
-                                            key={row.period_index}
-                                            className={`transition-colors ${
-                                                row.is_cutoff_period
-                                                    ? "bg-primary/10 font-medium"
-                                                    : "hover:bg-muted/30"
-                                            }`}
+                                    {paginatedSchedule.length === 0 ? (
+                                        <motion.tr
+                                            key="empty-schedule"
+                                            initial={{ opacity: 0, y: 6 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            transition={{ duration: 0.2 }}
                                         >
-                                            <td className="px-3.5 py-2.5 flex items-center gap-2">
-                                                <span>{row.period_label}</span>
-                                                {row.is_cutoff_period && (
-                                                    <Badge variant="default" className="text-[10px] h-4 px-1 leading-none">
-                                                        Cutoff
-                                                    </Badge>
-                                                )}
+                                            <td colSpan={6} className="px-3.5 py-8 text-center text-muted-foreground">
+                                                No amortization periods calculated for this asset.
                                             </td>
-                                            <td className="px-3.5 py-2.5 text-right font-mono">
-                                                {formatCurrency(row.opening_nbv)}
-                                            </td>
-                                            <td className="px-3.5 py-2.5 text-right font-mono text-rose-600 dark:text-rose-400">
-                                                {formatCurrency(row.depreciation_expense)}
-                                            </td>
-                                            <td className="px-3.5 py-2.5 text-right font-mono">
-                                                {formatCurrency(row.ending_accumulated_depreciation)}
-                                            </td>
-                                            <td className="px-3.5 py-2.5 text-right font-mono text-emerald-600 dark:text-emerald-400 font-semibold">
-                                                {formatCurrency(row.ending_nbv)}
-                                            </td>
-                                            <td className="px-3.5 py-2.5 text-right font-mono">
-                                                <div className="flex items-center justify-end gap-2">
-                                                    <span>{formatPercent(row.percent_depreciated)}</span>
-                                                    <div className="h-1.5 w-12 rounded-full bg-muted overflow-hidden">
-                                                        <div
-                                                            className="h-full bg-primary transition-all"
-                                                            style={{ width: `${Math.min(100, row.percent_depreciated)}%` }}
-                                                        />
+                                        </motion.tr>
+                                    ) : (
+                                        paginatedSchedule.map((row, i) => (
+                                            <motion.tr
+                                                key={`${currentPage}-${row.period_index}`}
+                                                initial={{ opacity: 0, y: 6 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                transition={{ duration: 0.16, delay: i * 0.02, ease: "easeOut" }}
+                                                className={`transition-colors ${
+                                                    row.is_cutoff_period
+                                                        ? "bg-primary/10 font-medium"
+                                                        : "hover:bg-muted/30"
+                                                }`}
+                                            >
+                                                <td className="px-3.5 py-2.5 flex items-center gap-2">
+                                                    <span>{row.period_label}</span>
+                                                    {row.is_cutoff_period && (
+                                                        <Badge variant="default" className="text-[10px] h-4 px-1 leading-none">
+                                                            Cutoff
+                                                        </Badge>
+                                                    )}
+                                                </td>
+                                                <td className="px-3.5 py-2.5 text-right font-mono">
+                                                    {formatCurrency(row.opening_nbv)}
+                                                </td>
+                                                <td className="px-3.5 py-2.5 text-right font-mono text-rose-600 dark:text-rose-400">
+                                                    {formatCurrency(row.depreciation_expense)}
+                                                </td>
+                                                <td className="px-3.5 py-2.5 text-right font-mono">
+                                                    {formatCurrency(row.ending_accumulated_depreciation)}
+                                                </td>
+                                                <td className="px-3.5 py-2.5 text-right font-mono text-emerald-600 dark:text-emerald-400 font-semibold">
+                                                    {formatCurrency(row.ending_nbv)}
+                                                </td>
+                                                <td className="px-3.5 py-2.5 text-right font-mono">
+                                                    <div className="flex items-center justify-end gap-2">
+                                                        <span>{formatPercent(row.percent_depreciated)}</span>
+                                                        <div className="h-1.5 w-12 rounded-full bg-muted overflow-hidden">
+                                                            <motion.div
+                                                                className="h-full bg-primary"
+                                                                initial={{ width: 0 }}
+                                                                animate={{ width: `${Math.min(100, row.percent_depreciated)}%` }}
+                                                                transition={{ duration: 0.35, delay: i * 0.02 + 0.08 }}
+                                                            />
+                                                        </div>
                                                     </div>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    ))}
+                                                </td>
+                                            </motion.tr>
+                                        ))
+                                    )}
                                 </tbody>
                             </table>
                         </div>
-                    </div>
+                    </motion.div>
 
                     {/* Pagination and Rows-per-page Selector */}
                     <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground pt-1 px-1">
@@ -372,7 +411,7 @@ export default function AssetAmortizationModal({
                             </div>
                         </div>
                     </div>
-                </div>
+                </motion.div>
             </DialogContent>
         </Dialog>
     );

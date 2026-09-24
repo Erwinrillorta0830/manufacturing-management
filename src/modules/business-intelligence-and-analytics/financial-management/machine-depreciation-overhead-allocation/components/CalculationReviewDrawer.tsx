@@ -1,6 +1,6 @@
 "use client";
 
-import  { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
     X,
@@ -8,22 +8,33 @@ import {
     Zap,
     Wrench,
     Calculator,
- 
     AlertCircle,
     Info,
     ArrowUpRight,
     ArrowDownRight,
- 
     Layers,
- 
+    ChevronsUpDown,
+    Check
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
- 
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger
+} from "@/components/ui/popover";
+import {
+    Command,
+    CommandEmpty,
+    CommandGroup,
+    CommandInput,
+    CommandItem,
+    CommandList
+} from "@/components/ui/command";
 import {
     Dialog,
     DialogContent,
@@ -32,6 +43,7 @@ import {
     DialogHeader,
     DialogTitle
 } from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
 import {
     ProductionAssetMaster,
     WorkCenterOption,
@@ -85,6 +97,10 @@ export default function CalculationReviewDrawer({
     const [isConfirmOpen, setIsConfirmOpen] = useState(false);
     const [isApplying, setIsApplying] = useState(false);
 
+    // Selected Target Work Center (Combobox selection)
+    const [selectedWorkCenterId, setSelectedWorkCenterId] = useState<number | null>(null);
+    const [isWcOpen, setIsWcOpen] = useState<boolean>(false);
+
     // Load initial asset parameters whenever selected asset changes
     useEffect(() => {
         if (!asset) return;
@@ -96,8 +112,20 @@ export default function CalculationReviewDrawer({
         setResidualValue(asset.residual_value || 0);
         setUsefulLife(asset.life_span && asset.life_span > 0 ? asset.life_span : 10);
 
+        // Pre-select work center: check asset.work_center_id, then assigned_work_centers, then matched asset_id in workCenters
+        const initialWcId =
+            asset.work_center_id ||
+            (asset.assigned_work_centers && asset.assigned_work_centers.length > 0 ? asset.assigned_work_centers[0].work_center_id : null) ||
+            workCenters.find(w => w.asset_id === asset.asset_id)?.work_center_id ||
+            null;
+
+        setSelectedWorkCenterId(initialWcId);
+        setIsWcOpen(false);
+
+        const initialWc = workCenters.find(w => w.work_center_id === initialWcId);
         const uom = asset.production_unit_shortcut || asset.production_unit || "PCS";
-        const initialCapacity = asset.work_center_capacity_per_hour || 100;
+        const initialCapacity = initialWc?.capacity_per_hour || asset.work_center_capacity_per_hour || 100;
+
         setUopLifetimeUnits(asset.maximum_unit_produced_capacity || 1000000);
         setUopUnitOfMeasure(uom);
         setStandardUnitsPerHour(initialCapacity);
@@ -113,12 +141,36 @@ export default function CalculationReviewDrawer({
         setMaintInput("0.00");
         setOtherInput("0.00");
         setNotes("");
-    }, [asset]);
+    }, [asset, workCenters]);
+
+    // Work stations assigned to this machine vs other active stations
+    const assignedWorkCenters = useMemo(() => {
+        if (!asset) return [];
+        return workCenters.filter(w =>
+            w.asset_id === asset.asset_id ||
+            (asset.assigned_work_centers && asset.assigned_work_centers.some(aw => aw.work_center_id === w.work_center_id))
+        );
+    }, [asset, workCenters]);
+
+    const otherWorkCenters = useMemo(() => {
+        const assignedIds = new Set(assignedWorkCenters.map(w => w.work_center_id));
+        return workCenters.filter(w => !assignedIds.has(w.work_center_id) && w.is_active);
+    }, [assignedWorkCenters, workCenters]);
+
+    // Currently selected target work center from Combobox
+    const matchedWc = workCenters.find(w => w.work_center_id === selectedWorkCenterId);
+
+    const handleSelectWorkCenter = (wcId: number) => {
+        setSelectedWorkCenterId(wcId);
+        setIsWcOpen(false);
+        const wc = workCenters.find(w => w.work_center_id === wcId);
+        if (wc?.capacity_per_hour && wc.capacity_per_hour > 0) {
+            setStandardUnitsPerHour(wc.capacity_per_hour);
+            setThroughputInput(String(wc.capacity_per_hour));
+        }
+    };
 
     if (!asset) return null;
-
-    // Matched work center from Manufacturing Master Data
-    const matchedWc = workCenters.find(w => w.work_center_id === asset.work_center_id);
 
     // Compute Scheduled & Productive Hours
     const shifts = parseFloat(shiftsInput) || 0;
@@ -159,7 +211,7 @@ export default function CalculationReviewDrawer({
 
     const handleApplyRate = async () => {
         if (!matchedWc) {
-            toast.error("Cannot apply rate: Machine is not linked to any Work Station in Manufacturing.");
+            toast.error("Please select a target Work Station to apply the calculated overhead rate.");
             return;
         }
 
@@ -176,6 +228,7 @@ export default function CalculationReviewDrawer({
                 body: JSON.stringify({
                     work_center_id: matchedWc.work_center_id,
                     asset_id: asset.asset_id,
+                    assign_asset: true,
                     new_overhead_cost_per_hour: totalBurdenPerHour,
                     expected_current_rate: matchedWc.overhead_cost_per_hour,
                     notes: notes || "Applied via BIA Machine Depreciation & Overhead Allocation"
@@ -292,27 +345,114 @@ export default function CalculationReviewDrawer({
                                                 : `${uopLifetimeUnits.toLocaleString()} ${uopUnitOfMeasure}`}
                                         </p>
                                     </div>
-                                    <div className="col-span-2 sm:col-span-4 space-y-1 pt-1 border-t">
-                                        <span className="text-[10px] text-muted-foreground">
-                                            Assigned Work Center (Manufacturing Work Station)
-                                        </span>
-                                        {matchedWc ? (
-                                            <div className="flex items-center justify-between p-2 rounded-lg border bg-card/60">
-                                                <div>
-                                                    <span className="font-semibold text-foreground text-xs">{matchedWc.work_center_name}</span>
-                                                </div>
-                                                <Badge variant="outline" className="text-[10px] text-primary border-primary/20">
-                                                    Current Rate: ₱{matchedWc.overhead_cost_per_hour.toFixed(2)}/hr
+                                    <div className="col-span-2 sm:col-span-4 space-y-1.5 pt-2 border-t">
+                                        <div className="flex items-center justify-between">
+                                            <Label className="text-[11px] font-medium text-muted-foreground flex items-center gap-1.5">
+                                                <Layers className="h-3.5 w-3.5 text-primary" />
+                                                Target Work Station (Allocation Destination)
+                                            </Label>
+                                            {assignedWorkCenters.length > 1 && (
+                                                <Badge variant="outline" className="text-[9px] bg-primary/5 text-primary border-primary/20">
+                                                    Shared across {assignedWorkCenters.length} stations
                                                 </Badge>
-                                            </div>
-                                        ) : (
-                                            <div className="p-2.5 rounded-lg border border-dashed border-amber-500/30 bg-amber-500/5 text-amber-600 dark:text-amber-400 text-[11px] flex items-center justify-between">
-                                                <span>Not assigned to any Work Station in Manufacturing Master Data</span>
-                                                <Badge variant="outline" className="text-[9px] border-amber-500/30 text-amber-500">
-                                                    Unassigned
-                                                </Badge>
-                                            </div>
-                                        )}
+                                            )}
+                                        </div>
+
+                                        <Popover open={isWcOpen} onOpenChange={setIsWcOpen}>
+                                            <PopoverTrigger asChild>
+                                                <Button
+                                                    variant="outline"
+                                                    role="combobox"
+                                                    aria-expanded={isWcOpen}
+                                                    className={cn(
+                                                        "w-full justify-between h-auto py-2 px-3 text-xs font-normal border transition-colors",
+                                                        matchedWc ? "bg-card hover:bg-muted/40" : "border-dashed border-amber-500/40 bg-amber-500/5 text-amber-600 dark:text-amber-400"
+                                                    )}
+                                                >
+                                                    {matchedWc ? (
+                                                        <div className="flex items-center justify-between w-full pr-2 text-left">
+                                                            <div className="truncate pr-2">
+                                                                <span className="font-semibold text-foreground">{matchedWc.work_center_name}</span>
+                                                                {matchedWc.capacity_per_hour ? (
+                                                                    <span className="text-[10px] text-muted-foreground ml-2">
+                                                                        ({matchedWc.capacity_per_hour} units/hr)
+                                                                    </span>
+                                                                ) : null}
+                                                            </div>
+                                                            <Badge variant="outline" className="text-[10px] text-primary border-primary/20 shrink-0 font-mono">
+                                                                Current: ₱{matchedWc.overhead_cost_per_hour.toFixed(2)}/hr
+                                                            </Badge>
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-muted-foreground italic flex items-center gap-1.5">
+                                                            <AlertCircle className="h-3.5 w-3.5 text-amber-500" />
+                                                            Select a work station to assign and allocate overhead...
+                                                        </span>
+                                                    )}
+                                                    <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+                                                </Button>
+                                            </PopoverTrigger>
+                                            <PopoverContent className="w-[420px] p-0" align="start">
+                                                <Command>
+                                                    <CommandInput placeholder="Search work station name..." className="h-8 text-xs" />
+                                                    <CommandList className="max-h-60">
+                                                        <CommandEmpty className="py-2 px-3 text-xs text-muted-foreground">
+                                                            No matching work stations found.
+                                                        </CommandEmpty>
+                                                        {assignedWorkCenters.length > 0 && (
+                                                            <CommandGroup heading="Assigned to this Machine">
+                                                                {assignedWorkCenters.map((wc) => (
+                                                                    <CommandItem
+                                                                        key={wc.work_center_id}
+                                                                        value={`assigned-${wc.work_center_name}-${wc.work_center_id}`}
+                                                                        onSelect={() => handleSelectWorkCenter(wc.work_center_id)}
+                                                                        className="text-xs flex items-center justify-between cursor-pointer py-1.5"
+                                                                    >
+                                                                        <div className="flex items-center gap-2 truncate">
+                                                                            <Check
+                                                                                className={cn(
+                                                                                    "h-3.5 w-3.5 text-primary shrink-0",
+                                                                                    selectedWorkCenterId === wc.work_center_id ? "opacity-100" : "opacity-0"
+                                                                                )}
+                                                                            />
+                                                                            <span className="font-medium text-foreground truncate">{wc.work_center_name}</span>
+                                                                        </div>
+                                                                        <Badge variant="outline" className="text-[9px] font-mono shrink-0 ml-2">
+                                                                            ₱{wc.overhead_cost_per_hour.toFixed(2)}/hr
+                                                                        </Badge>
+                                                                    </CommandItem>
+                                                                ))}
+                                                            </CommandGroup>
+                                                        )}
+                                                        {otherWorkCenters.length > 0 && (
+                                                            <CommandGroup heading={assignedWorkCenters.length > 0 ? "Other Active Work Stations" : "All Active Work Stations"}>
+                                                                {otherWorkCenters.map((wc) => (
+                                                                    <CommandItem
+                                                                        key={wc.work_center_id}
+                                                                        value={`other-${wc.work_center_name}-${wc.work_center_id}`}
+                                                                        onSelect={() => handleSelectWorkCenter(wc.work_center_id)}
+                                                                        className="text-xs flex items-center justify-between cursor-pointer py-1.5"
+                                                                    >
+                                                                        <div className="flex items-center gap-2 truncate">
+                                                                            <Check
+                                                                                className={cn(
+                                                                                    "h-3.5 w-3.5 text-primary shrink-0",
+                                                                                    selectedWorkCenterId === wc.work_center_id ? "opacity-100" : "opacity-0"
+                                                                                )}
+                                                                            />
+                                                                            <span className="text-foreground truncate">{wc.work_center_name}</span>
+                                                                        </div>
+                                                                        <Badge variant="outline" className="text-[9px] font-mono shrink-0 ml-2 text-muted-foreground">
+                                                                            ₱{wc.overhead_cost_per_hour.toFixed(2)}/hr
+                                                                        </Badge>
+                                                                    </CommandItem>
+                                                                ))}
+                                                            </CommandGroup>
+                                                        )}
+                                                    </CommandList>
+                                                </Command>
+                                            </PopoverContent>
+                                        </Popover>
                                     </div>
                                 </div>
                             </div>
@@ -649,7 +789,7 @@ export default function CalculationReviewDrawer({
                                 className="h-9 text-xs gap-1.5 px-4 bg-primary text-primary-foreground hover:bg-primary/90"
                             >
                                 <Layers className="h-3.5 w-3.5" />
-                                <span>Apply Rate to Work Center</span>
+                                <span>Apply Rate to {matchedWc ? matchedWc.work_center_name : "Work Station"}</span>
                             </Button>
                         </div>
                     </motion.div>

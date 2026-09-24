@@ -12,7 +12,7 @@ import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { cookies } from "next/headers";
 
 // ✅ Wire the finished goods module
-import FinishedGoodsModule from "@/modules/manufacturing-management/finished-goods-master/FinishedGoodsModule";
+import FinishedGoodsModule from "@/modules/manufacturing-management/inventory-warehousing/finished-goods-master/FinishedGoodsModule";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

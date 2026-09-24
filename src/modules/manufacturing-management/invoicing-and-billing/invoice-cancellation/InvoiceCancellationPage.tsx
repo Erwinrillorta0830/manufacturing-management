@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import { InvoiceSummaryCards } from "./components/cards/InvoiceSummaryCards";
 import { InvoiceDataTable } from "./components/data-table";
 import { RequestCancellationModal } from "./components/request-modal";
@@ -35,23 +36,34 @@ export default function InvoiceCancellationPage() {
   }, [invoices, allRequests]);
 
   return (
-      <div className="flex flex-1 flex-col px-4 ">
-        <div className="@container/main flex flex-1 flex-col gap-2">
-          <div className="flex flex-col gap-4 py-4">
+      <div className="flex flex-1 flex-col px-4">
+        <div className="@container/main flex flex-1 flex-col gap-4 py-4">
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.25, ease: "easeOut" }}
+          >
             <InvoiceSummaryCards stats={stats} />
-            <InvoiceDataTable data={invoices} onRequest={handleRequestClick} />
+          </motion.div>
 
-            {/* Action Modal */}
-            <RequestCancellationModal
-                isOpen={isModalOpen}
-                onClose={() => setIsModalOpen(false)}
-                invoice={selectedInvoice}
-                onSuccess={() => {
-                  // Refresh both the eligible list and the pending stats
-                  refresh();
-                }}
-            />
-          </div>
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, delay: 0.15, ease: "easeOut" }}
+          >
+            <InvoiceDataTable data={invoices} onRequest={handleRequestClick} />
+          </motion.div>
+
+          {/* Action Modal */}
+          <RequestCancellationModal
+              isOpen={isModalOpen}
+              onClose={() => setIsModalOpen(false)}
+              invoice={selectedInvoice}
+              onSuccess={() => {
+                // Refresh both the eligible list and the pending stats
+                refresh();
+              }}
+          />
         </div>
       </div>
   );

@@ -31,6 +31,7 @@ export interface ProductionAssetMaster {
     work_center_name?: string | null;
     current_work_center_rate?: number; // manufacturing_work_centers.overhead_cost_per_hour
     work_center_capacity_per_hour?: number | null;
+    assigned_work_centers?: WorkCenterOption[];
 }
 
 export interface WorkCenterOption {
