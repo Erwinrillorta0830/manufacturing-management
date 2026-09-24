@@ -76,9 +76,15 @@ export function calculateProductionMetrics(input: ProductionMetricsInput): Produ
         stepBatchSize: route.step_batch_size,
         setupTimeHours: route.setup_time_hours,
         runTimeHours: route.run_time_hours,
-        workCenterCapacityPerHour: route.work_center_capacity_per_hour
+        workCenterCapacityPerHour: route.work_center_capacity_per_hour,
+        qaTemplateId: route.qaTemplateId
     }));
-    const bottleneckRouteRate = routeRates
+    const pacedRouteRates = sortedRoutes.flatMap((route, index) => {
+        const qaTemplateId = Number(route.qaTemplateId);
+        const isQaRoute = Number.isFinite(qaTemplateId) && qaTemplateId > 0;
+        return !isQaRoute && routeRates[index] > 0 ? [routeRates[index]] : [];
+    });
+    const bottleneckRouteRate = (pacedRouteRates.length > 0 ? pacedRouteRates : routeRates)
         .filter((rate) => rate > 0)
         .reduce((lowestRate, rate) => Math.min(lowestRate, rate), Number.POSITIVE_INFINITY);
     const bottleneckPacedHours = Number.isFinite(bottleneckRouteRate)

@@ -12,5 +12,9 @@ assert.deepEqual(formatInventoryQuantity(2.1626, "Bag", kilogramsPerBag), {
     quantity: "2.1626 Bag",
     kilograms: "33.1959 kg"
 });
+assert.deepEqual(formatInventoryQuantity(2.1626, "Bag", null), {
+    quantity: "2.1626 Bag",
+    kilograms: null
+});
 
 console.log("containerization-helper tests passed");

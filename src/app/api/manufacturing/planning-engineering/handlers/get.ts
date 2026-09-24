@@ -1440,9 +1440,20 @@ export async function handleGET(request: Request) {
                     ? calculateFullBatchTarget(requestedPreviewQuantity, recipeBaseQuantity)
                     : null;
 
+            const readRelationId = (value: unknown, relationKey: string): number => {
+                if (value && typeof value === "object") {
+                    const relation = value as Record<string, unknown>;
+                    return Number(relation[relationKey] ?? relation.id ?? 0) || 0;
+                }
+                return Number(value) || 0;
+            };
+            const getRouteWorkCenterId = (route: any): number =>
+                readRelationId(route.work_center_id, "work_center_id")
+                || readRelationId(route.work_center, "work_center_id");
+
             // Resolve the work centers used by the selected recipe so costing can apply machine rates.
             const workCenterIds = Array.from(new Set(
-                routes.map((route: any) => Number(route.work_center_id)).filter((id: number) => id > 0)
+                routes.map((route: any) => getRouteWorkCenterId(route)).filter((id: number) => id > 0)
             ));
             const workCentersById = new Map<number, any>();
             if (workCenterIds.length > 0) {
@@ -1461,7 +1472,8 @@ export async function handleGET(request: Request) {
 
             // Map routings
             const routings = routes.map(r => {
-                const workCenter = workCentersById.get(Number(r.work_center_id)) || null;
+                const workCenterId = getRouteWorkCenterId(r);
+                const workCenter = workCentersById.get(workCenterId) || r.work_center || null;
                 return {
                     routing_id: r.route_id,
                     bom_id: version.version_id,
@@ -1471,8 +1483,8 @@ export async function handleGET(request: Request) {
                     duration_hours: Number(r.setup_time_hours || 0) + Number(r.run_time_hours || 0),
                     step_batch_size: r.step_batch_size,
                     operation_id: r.operation_id,
-                    work_center_id: r.work_center_id,
-                    qa_template_id: r.qa_template_id,
+                    work_center_id: workCenterId || null,
+                    qa_template_id: readRelationId(r.qa_template_id, "qa_template_id") || null,
                     operation_name: operationsMap.get(Number(r.operation_id)) || `Operation #${r.operation_id}`,
                     overhead_cost_per_hour: Number(workCenter?.overhead_cost_per_hour || 0),
                     work_center_name: workCenter?.work_center_name || null,

@@ -336,7 +336,9 @@ export function ReleaseJODialog({
         );
     }, [selectedLines, targetQuantity, requestedTargetQuantity, components, bomBaseQty, bomData]);
 
-    const materialTargetQuantity = targetQuantity > 0 ? targetQuantity : null;
+    const materialTargetQuantity = containerMetrics?.hasOutputEstimate && containerMetrics.netPieces > 0
+        ? containerMetrics.netPieces
+        : targetQuantity > 0 ? targetQuantity : null;
     const productionTimingTargetQuantity = rawTargetQuantity;
 
     const productionMetricsResult = useMemo(() => {
@@ -360,6 +362,7 @@ export function ReleaseJODialog({
                 routes: routings.map((route) => ({
                     sequence_order: Number(route.sequence_order || 0),
                     operation_name: route.operation_name || route.operation?.operation_name || "",
+                    qaTemplateId: Number(route.qa_template_id || 0) || null,
                     setup_time_hours: Number(route.setup_time_hours || 0),
                     run_time_hours: Number(route.run_time_hours || 0),
                     step_batch_size: route.step_batch_size == null ? undefined : Number(route.step_batch_size),
