@@ -11,6 +11,7 @@ import {
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../services/mm-inventory-movements.service";
 import { loadMmLots, mmLotId } from "../services/mm-lots.service";
 import { isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
+import { groupMaterialRequirements } from "@/modules/manufacturing-management/planning-engineering/utils/material-requirement-groups";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,7 +21,7 @@ interface DirectusMaterial {
     id?: number;
     job_order_id?: number | { job_order_id?: number };
     product_id?: number | { product_id?: number; product_name?: string; product_code?: string; unit_of_measurement?: { unit_shortcut?: string } };
-    uom_id?: number;
+    uom_id?: number | { unit_id?: number; id?: number; unit_shortcut?: string; unit_name?: string };
     allocated_quantity?: number;
     reserved_quantity?: number;
     actual_consumed_quantity?: number;
@@ -129,7 +130,7 @@ export async function GET(request: Request) {
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?limit=-1&sort=-job_order_id`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials?limit=-1`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?limit=-1`, { headers, cache: "no-store" }).catch(() => null),
-            fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut`, { headers, cache: "no-store" }),
+            fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,product_code,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&sort=work_center_id&fields=work_center_id,work_center_name,is_active`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/branches?filter[isActive][_eq]=1&limit=-1&sort=branch_name&fields=id,branch_name,branch_code`, { headers, cache: "no-store" }).catch(() => null),
             fetchMmInventoryMovements({
@@ -165,13 +166,28 @@ export async function GET(request: Request) {
         const rawYields = yieldsRes && yieldsRes.ok ? (await yieldsRes.json()).data || [] : [];
 
         // Maps for quick lookup
-        const productMap = new Map<number, { product_id: number; product_name: string; product_code: string; uom: string }>();
-        rawProducts.forEach((p: { product_id: number; product_name: string; product_code: string; unit_of_measurement?: { unit_shortcut?: string } }) => {
+        const productMap = new Map<number, {
+            product_id: number;
+            product_name: string;
+            product_code: string;
+            uom: string;
+            unit_of_measurement?: unknown;
+            uom_id?: unknown;
+        }>();
+        rawProducts.forEach((p: {
+            product_id: number;
+            product_name: string;
+            product_code: string;
+            unit_of_measurement?: { unit_shortcut?: string; unit_id?: number; id?: number } | number;
+            uom_id?: unknown;
+        }) => {
             productMap.set(Number(p.product_id), {
                 product_id: Number(p.product_id),
                 product_name: p.product_name || `Product #${p.product_id}`,
                 product_code: p.product_code || `ITEM-${p.product_id}`,
-                uom: p.unit_of_measurement?.unit_shortcut || "units"
+                uom: typeof p.unit_of_measurement === "object" ? p.unit_of_measurement?.unit_shortcut || "units" : "units",
+                unit_of_measurement: p.unit_of_measurement,
+                uom_id: p.uom_id
             });
         });
 
@@ -505,21 +521,40 @@ export async function GET(request: Request) {
 
             // Filter materials belonging to this JO
             const joMaterials = rawMaterials.filter((m) => getJoId(m.job_order_id) === joId);
+            const groupedJoMaterials = groupMaterialRequirements(joMaterials, {
+                productId: (material) => numericRelationId(material.product_id, ["product_id", "id"]),
+                uomId: (material) => {
+                    const productId = numericRelationId(material.product_id, ["product_id", "id"]);
+                    const product = productMap.get(productId);
+                    return material.uom_id ?? product?.unit_of_measurement ?? product?.uom_id;
+                },
+                quantity: (material) => material.allocated_quantity
+            });
             const joAllocs = allAllocationsByJo.get(joId) || [];
 
             let totalMaterialsCount = 0;
             let stagedMaterialsCount = 0;
             let hasAnyShortage = false;
 
-            const mappedMaterials = joMaterials.map((mat) => {
-                const mProductId = numericRelationId(mat.product_id, ["product_id", "id"]);
+            const mappedMaterials = groupedJoMaterials.map((materialGroup) => {
+                const mat = materialGroup.first;
+                const sourceMaterials = materialGroup.sourceItems;
+                const sourceMaterialIds = sourceMaterials
+                    .map((source) => Number(source.jo_material_id || source.id || 0))
+                    .filter((id) => id > 0);
+                const sourceMaterialIdSet = new Set(sourceMaterialIds);
+                const sourceRequiredById = new Map(sourceMaterials.map((source) => [
+                    Number(source.jo_material_id || source.id || 0),
+                    Number(source.allocated_quantity || 0)
+                ]));
+                const mProductId = materialGroup.productId;
                 const matProdInfo = productMap.get(mProductId);
-                const requiredQty = Number(mat.allocated_quantity || 0);
-                const matId = Number(mat.jo_material_id || mat.id || 0);
+                const requiredQty = materialGroup.requiredQuantity;
+                const matId = sourceMaterialIds[0] || Number(mat.jo_material_id || mat.id || 0);
 
                 // Find allocations for this specific material
                 const relatedAllocs = joAllocs.filter((a) => {
-                    if (a.jo_material_id && matId) return Number(a.jo_material_id) === matId;
+                    if (a.jo_material_id) return sourceMaterialIdSet.has(Number(a.jo_material_id));
                     return Number(a.product_id) === mProductId;
                 });
 
@@ -538,16 +573,23 @@ export async function GET(request: Request) {
                     const onHandLotQty = inventoryLotId > 0
                         ? Math.max(0, exactInventoryStock ?? 0)
                         : getLotStock(branchId, mProductId, lotId, lotNo);
-                    const allocQty = Number(al.allocated_quantity || al.reserved_quantity || requiredQty);
+                    const allocationMaterialId = Number(al.jo_material_id || matId);
+                    const allocQty = Number(
+                        al.allocated_quantity
+                        || al.reserved_quantity
+                        || sourceRequiredById.get(allocationMaterialId)
+                        || requiredQty
+                    );
                     const stagedQty = Number(al.staged_quantity || 0);
                     const effectiveStagedQty = stagedQty > 0 ? stagedQty : 0;
                     const resStatus = effectiveStagedQty >= allocQty && allocQty > 0 ? "HARD" : "SOFT";
                     const isStaged = effectiveStagedQty > 0;
                     const allocationStagingBin = al.staging_bin?.trim();
-                    const movementStagingBin = stagedDestinationByMaterialBatch.get(`${matId}:${normalizeBatchNo(lotNo)}`);
+                    const movementStagingBin = stagedDestinationByMaterialBatch.get(`${allocationMaterialId}:${normalizeBatchNo(lotNo)}`);
 
                     return {
                         allocation_id: al.allocation_id || al.id,
+                        jo_material_id: allocationMaterialId,
                         mm_lot_id: lotId,
                         inventory_lot_id: inventoryLotId,
                         lot_id: lotId,
@@ -590,6 +632,7 @@ export async function GET(request: Request) {
 
                 return {
                     jo_material_id: matId,
+                    jo_material_ids: sourceMaterialIds,
                     job_order_id: joId,
                     product_id: mProductId,
                     product_name: matProdInfo?.product_name || `Component #${mProductId}`,

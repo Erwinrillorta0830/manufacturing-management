@@ -1,6 +1,6 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
+import { AuthenticatedActorError, requireManufacturingActorId } from "@/app/api/manufacturing/production/_authenticated-actor";
 import { DIRECTUS_URL, headers, getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { createJobOrder } from "@/app/api/manufacturing/planning-engineering/planning-helper";
 import { twoPointQAInspectionRequestSchema } from "./_two-point-contract";
@@ -34,27 +34,6 @@ import {
     JobOrderCancellationExecution
 } from "@/app/api/manufacturing/production/_material-return";
 import { materialReturnFingerprint, verifyMaterialReturnToken } from "./material-returns/_token";
-
-async function getUserIdFromSession(): Promise<number | null> {
-    try {
-        const cookieStore = await cookies();
-        const token = cookieStore.get("vos_access_token")?.value;
-        if (token) {
-            const parts = token.split(".");
-            if (parts.length >= 2) {
-                let base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-                while (base64.length % 4) base64 += "=";
-                const payload = JSON.parse(Buffer.from(base64, "base64").toString("utf8"));
-                const rawId = payload?.id || payload?.user_id || payload?.sub;
-                const id = Number(rawId);
-                if (Number.isSafeInteger(id) && id > 0) return id;
-            }
-        }
-    } catch (error) {
-        console.warn("Unable to resolve the QA inspector from the session:", error);
-    }
-    return null;
-}
 
 class QAPersistenceError extends Error {
     constructor(message: string, readonly statusCode = 502) {
@@ -518,7 +497,6 @@ export async function POST(request: Request) {
                 expiry_date,
                 unit_cost,
                 remarks,
-                user_id,
                 materialReturnConfirmation
             } = parsed.data;
 
@@ -561,7 +539,7 @@ export async function POST(request: Request) {
                 }, { status: 422 });
             }
             const branchId = persistedBranchId;
-            const userId = user_id ?? await getUserIdFromSession();
+            const userId = await requireManufacturingActorId();
 
             if (job_order_no && parentJoNo !== job_order_no) {
                 return NextResponse.json({ error: "job_order_id and job_order_no identify different Job Orders." }, { status: 409 });
@@ -881,7 +859,7 @@ export async function POST(request: Request) {
                         sourceType: "JOB_ORDER_YIELD",
                         sourceReference: parentJoNo,
                         remarks: `QA passed finished goods from Job Order ${parentJoNo}`,
-                        createdBy: userId || 24,
+                        createdBy: userId,
                         onCreate: async (writePayload: MmInventoryLotWritePayload): Promise<MmInventoryLotRecord> => {
                             const createdBatch = await directusMutation(
                                 "/items/mm_inventory_lots",
@@ -1093,7 +1071,7 @@ export async function POST(request: Request) {
 
         // Action: Resolve a supervisor disposition override
         if (action === "disposition") {
-            const { dispositionId, decision, supervisorComments, userId } = body;
+            const { dispositionId, decision, supervisorComments } = body;
             if (!dispositionId || !decision) {
                 return NextResponse.json({ error: "Missing dispositionId or decision" }, { status: 400 });
             }
@@ -1112,10 +1090,10 @@ export async function POST(request: Request) {
                 return NextResponse.json({ error: `Job Order not found: ${dispositionJobOrderNo}` }, { status: 404 });
             }
             const joIdInt = joInfo.id;
+            const actorUserId = await requireManufacturingActorId();
 
             if (decision === "Scrap") {
                 const cancellationReason = `QA Scrap Batch disposition: ${String(supervisorComments || "").trim() || "No supervisor comments provided."}`;
-                const actorUserId = Number.isSafeInteger(Number(userId)) && Number(userId) > 0 ? Number(userId) : null;
 
                 let execution;
                 try {
@@ -1204,7 +1182,7 @@ export async function POST(request: Request) {
                     decision,
                     supervisor_comments: supervisorComments || "",
                     resolved_at: new Date().toISOString(),
-                    resolved_by: Number.isSafeInteger(Number(userId)) && Number(userId) > 0 ? Number(userId) : null
+                    resolved_by: actorUserId
                 });
             } catch (error) {
                 const rollbackFailures: string[] = [];
@@ -1241,8 +1219,11 @@ export async function POST(request: Request) {
     } catch (e) {
         console.error("API Error in QA POST:", e);
         return NextResponse.json(
-            { error: (e as Error).message || "Failed to save QA action" },
-            { status: e instanceof DispositionPersistenceError ? e.statusCode : 500 }
+            {
+                error: (e as Error).message || "Failed to save QA action",
+                ...(e instanceof AuthenticatedActorError ? { code: e.code } : {})
+            },
+            { status: e instanceof AuthenticatedActorError ? e.status : e instanceof DispositionPersistenceError ? e.statusCode : 500 }
         );
     }
 }

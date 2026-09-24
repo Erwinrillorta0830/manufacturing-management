@@ -46,18 +46,22 @@ export function evaluateReceivingStatus(
         0
     );
 
-    if (allLinesAccepted) {
+    // A purchase order counts as Received once every line is physically
+    // accounted for (received >= ordered), even when part of the delivery
+    // was rejected. Accepted-cover is still reported via allLinesAccepted
+    // but no longer gates closure.
+    if (allLinesPhysicallyAccounted && totalAcceptedQuantity <= RECEIVING_STATUS_EPSILON) {
         return {
-            status: "Received",
+            status: "Rejected",
             allLinesAccepted,
             allLinesPhysicallyAccounted,
             totalAcceptedQuantity
         };
     }
 
-    if (allLinesPhysicallyAccounted && totalAcceptedQuantity <= RECEIVING_STATUS_EPSILON) {
+    if (allLinesPhysicallyAccounted) {
         return {
-            status: "Rejected",
+            status: "Received",
             allLinesAccepted,
             allLinesPhysicallyAccounted,
             totalAcceptedQuantity

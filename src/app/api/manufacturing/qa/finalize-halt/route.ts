@@ -2,7 +2,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
+import { AuthenticatedActorError, requireManufacturingActorId } from "@/app/api/manufacturing/production/_authenticated-actor";
 import {
     finalizeHaltedJobOrder,
     previewHaltFinalize,
@@ -11,29 +11,10 @@ import {
 import { JobOrderCancellationError } from "@/app/api/manufacturing/production/_material-return";
 import { signMaterialReturnToken, verifyMaterialReturnToken } from "../material-returns/_token";
 
-async function resolveActorUserId(bodyActorId: unknown): Promise<number | null> {
-    const bodyId = Number(bodyActorId);
-    if (Number.isSafeInteger(bodyId) && bodyId > 0) return bodyId;
-    try {
-        const cookieStore = await cookies();
-        const token = cookieStore.get("vos_access_token")?.value;
-        if (token) {
-            const parts = token.split(".");
-            if (parts.length >= 2) {
-                let base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-                while (base64.length % 4) base64 += "=";
-                const payload = JSON.parse(Buffer.from(base64, "base64").toString("utf8"));
-                const id = Number(payload?.id || payload?.user_id || payload?.sub);
-                if (Number.isSafeInteger(id) && id > 0) return id;
-            }
-        }
-    } catch (error) {
-        console.warn("Unable to resolve the finalize actor from the session:", error);
-    }
-    return null;
-}
-
 function errorResponse(error: unknown) {
+    if (error instanceof AuthenticatedActorError) {
+        return NextResponse.json({ success: false, error: error.message, code: error.code }, { status: error.status });
+    }
     if (error instanceof YieldCompletionError) {
         return NextResponse.json(
             {
@@ -99,7 +80,7 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: tokenError, code: "MATERIAL_RETURN_PREVIEW_STALE" }, { status: 409 });
         }
 
-        const actorUserId = await resolveActorUserId(payload.actorUserId ?? payload.userId);
+        const actorUserId = await requireManufacturingActorId();
         const result = await finalizeHaltedJobOrder({
             joId: preview.jobOrder.jobOrderId,
             productId: payload.productId as string | number,

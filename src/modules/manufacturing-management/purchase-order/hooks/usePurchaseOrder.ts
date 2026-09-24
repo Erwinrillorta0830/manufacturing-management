@@ -11,7 +11,7 @@ import type {
 } from "../types";
 import {
     fetchLinkedProducts,
-    fetchRawMaterialCatalog,
+    fetchPurchaseOrderProductCatalog,
     fetchSuppliers
 } from "../../procurement/services/procurement-api";
 import {
@@ -175,7 +175,7 @@ export function usePurchaseOrder({ mode = "queue", shipmentId, onCreated }: UseP
         if (rawMaterialsLoaded.current) return;
         if (rawMaterialsLoad.current) return rawMaterialsLoad.current;
 
-        const request = fetchRawMaterialCatalog()
+        const request = fetchPurchaseOrderProductCatalog()
             .then(materials => {
                 setRawMaterials(materials);
                 rawMaterialsLoaded.current = true;

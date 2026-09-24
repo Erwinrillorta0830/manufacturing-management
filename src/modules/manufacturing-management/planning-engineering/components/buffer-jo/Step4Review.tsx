@@ -3,7 +3,7 @@ import React from "react";
 import { CheckCircle2, ShieldAlert, Clock, Users, Package, MapPin, Calendar, FileText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Branch } from "../../types";
-import { calculateMaterialRequirementPlan, formatProductionValue } from "../../utils/production-timing";
+import { calculateMaterialRequirementPlan, formatProductionValue, resolveProductionShiftHours } from "../../utils/production-timing";
 
 export interface Step4ReviewProps {
     selectedBranch?: Branch;
@@ -60,7 +60,7 @@ export function Step4Review({
         if (needed > available) shortfallCount++;
     });
 
-    const estimatedDays = Number(shiftOption) > 0 ? (totalEstimatedHours / Number(shiftOption)).toFixed(1) : "0";
+    const estimatedDays = (totalEstimatedHours / resolveProductionShiftHours(shiftOption)).toFixed(1);
 
     return (
         <div className="space-y-4 text-xs">

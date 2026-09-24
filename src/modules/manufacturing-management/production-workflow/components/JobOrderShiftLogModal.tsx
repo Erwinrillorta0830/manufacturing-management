@@ -16,7 +16,7 @@ import {
     CheckCircle2,
     FolderOpen,
     ImageIcon,
-    Video,
+    Search,
     X
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -66,6 +66,7 @@ export function JobOrderShiftLogModal({
     const [varianceReason, setVarianceReason] = useState("");
     const [approveVariance, setApproveVariance] = useState(false);
     const [shiftMaterials, setShiftMaterials] = useState<ProductionMaterialReservation[]>([]);
+    const [reservationSearch, setReservationSearch] = useState("");
     const [materialsLoadError, setMaterialsLoadError] = useState<string | null>(null);
     const [loadingShiftMaterials, setLoadingShiftMaterials] = useState(false);
     const [submittingShiftLog, setSubmittingShiftLog] = useState(false);
@@ -78,14 +79,19 @@ export function JobOrderShiftLogModal({
     const [evidenceImagePreview, setEvidenceImagePreview] = useState<string | null>(null);
     const cameraInputRef = useRef<HTMLInputElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const webcamVideoRef = useRef<HTMLVideoElement>(null);
-    const webcamStreamRef = useRef<MediaStream | null>(null);
-    const webcamRequestRef = useRef(0);
-    const [webcamStream, setWebcamStream] = useState<MediaStream | null>(null);
-    const [isWebcamOpen, setIsWebcamOpen] = useState(false);
-    const [isWebcamStarting, setIsWebcamStarting] = useState(false);
-    const [isWebcamReady, setIsWebcamReady] = useState(false);
-    const [webcamError, setWebcamError] = useState<string | null>(null);
+
+    const filteredShiftMaterials = React.useMemo(() => {
+        const query = reservationSearch.trim().toLowerCase();
+        if (!query) return shiftMaterials;
+
+        return shiftMaterials.filter((material) => [
+            material.product_name,
+            material.reservation_id,
+            material.mm_lot_name,
+            material.inventory_lot_batch_no,
+            material.batch_no
+        ].some((value) => String(value ?? "").toLowerCase().includes(query)));
+    }, [reservationSearch, shiftMaterials]);
 
     const totalPlannedHours = calculatePipelinedLineDurationHours(sortedTasks);
     const shiftHours = Number(selectedJobOrder?.shiftOption || 8);
@@ -126,108 +132,6 @@ export function JobOrderShiftLogModal({
         const file = event.target.files?.[0] || null;
         event.target.value = "";
         setEvidenceImageFromFile(file);
-    };
-
-    const stopWebcam = useCallback(() => {
-        webcamRequestRef.current += 1;
-        webcamStreamRef.current?.getTracks().forEach((track) => track.stop());
-        webcamStreamRef.current = null;
-        setWebcamStream(null);
-        if (webcamVideoRef.current) webcamVideoRef.current.srcObject = null;
-        setIsWebcamOpen(false);
-        setIsWebcamStarting(false);
-        setIsWebcamReady(false);
-        setWebcamError(null);
-    }, []);
-
-    useEffect(() => {
-        if (!open && (isWebcamOpen || webcamStreamRef.current)) stopWebcam();
-    }, [open, isWebcamOpen, stopWebcam]);
-
-    useEffect(() => {
-        return () => {
-            webcamRequestRef.current += 1;
-            webcamStreamRef.current?.getTracks().forEach((track) => track.stop());
-            webcamStreamRef.current = null;
-        };
-    }, []);
-
-    useEffect(() => {
-        if (!isWebcamOpen || !webcamStream || !webcamVideoRef.current) return;
-
-        const video = webcamVideoRef.current;
-        const handleMetadata = () => setIsWebcamReady(video.videoWidth > 0 && video.videoHeight > 0);
-        video.srcObject = webcamStream;
-        video.addEventListener("loadedmetadata", handleMetadata);
-        void video.play().catch(() => setWebcamError("The webcam preview could not be started."));
-
-        return () => {
-            video.removeEventListener("loadedmetadata", handleMetadata);
-        };
-    }, [isWebcamOpen, webcamStream]);
-
-    const openWebcam = async () => {
-        setWebcamError(null);
-        setIsWebcamReady(false);
-
-        if (!navigator.mediaDevices?.getUserMedia) {
-            setWebcamError("Webcam access is not supported by this browser. Use Take Photo or Choose File instead.");
-            setIsWebcamOpen(true);
-            return;
-        }
-
-        const requestId = ++webcamRequestRef.current;
-        setIsWebcamStarting(true);
-        setIsWebcamOpen(true);
-
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: "user" },
-                audio: false
-            });
-
-            if (requestId !== webcamRequestRef.current || !open) {
-                stream.getTracks().forEach((track) => track.stop());
-                return;
-            }
-
-            webcamStreamRef.current = stream;
-            setWebcamStream(stream);
-        } catch {
-            if (requestId === webcamRequestRef.current) {
-                setWebcamError("Unable to access the webcam. Allow camera permission in your browser, then try again.");
-            }
-        } finally {
-            if (requestId === webcamRequestRef.current) setIsWebcamStarting(false);
-        }
-    };
-
-    const captureWebcamPhoto = () => {
-        const video = webcamVideoRef.current;
-        if (!video || !video.videoWidth || !video.videoHeight) {
-            setWebcamError("The webcam is not ready yet. Wait for the preview, then try again.");
-            return;
-        }
-
-        const canvas = document.createElement("canvas");
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        const context = canvas.getContext("2d");
-        if (!context) {
-            setWebcamError("The browser could not capture the webcam frame.");
-            return;
-        }
-
-        context.drawImage(video, 0, 0, canvas.width, canvas.height);
-        canvas.toBlob((blob) => {
-            if (!blob) {
-                setWebcamError("The browser could not create an image from the webcam frame.");
-                return;
-            }
-
-            setEvidenceImageFromFile(new File([blob], `shift-evidence-${Date.now()}.jpg`, { type: "image/jpeg" }));
-            stopWebcam();
-        }, "image/jpeg", 0.92);
     };
 
     const removeEvidenceImage = () => {
@@ -344,6 +248,10 @@ export function JobOrderShiftLogModal({
         }
     }, [open, selectedJobOrder, getAvailableShifts, loadShiftMaterials]);
 
+    useEffect(() => {
+        setReservationSearch("");
+    }, [open, selectedJobOrder?.order_id, selectedJobOrder?.job_order_id]);
+
     const groupedJobOperators = React.useMemo(() => {
         const groups: Record<number, {
             user_id: number;
@@ -415,6 +323,11 @@ export function JobOrderShiftLogModal({
 
     const handleShiftLogSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (!evidenceImage || evidenceImageError) {
+            toast.error("A valid shift evidence image is required.");
+            return;
+        }
+
         const newYield = Number(shiftYieldQty) || 0;
         const newRejected = Number(rejectedQty) || 0;
         const newScrap = Number(scrapQty) || 0;
@@ -662,6 +575,8 @@ export function JobOrderShiftLogModal({
         || hasIncompleteMaterialLine
         || hasMissingMaterialConsumption
         || missingVarianceApproval
+        || !evidenceImage
+        || Boolean(evidenceImageError)
         || !hasOutput
         || !sessionKey
         || !productionDate
@@ -691,9 +606,9 @@ export function JobOrderShiftLogModal({
                     </div>
 
                     <form onSubmit={handleShiftLogSubmit} className="p-4 sm:p-6 flex-1 flex flex-col overflow-hidden min-h-0 text-xs">
-                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 flex-1 overflow-y-auto pr-1 min-h-0">
+                        <div className="grid grid-cols-1 items-start lg:grid-cols-12 gap-4 sm:gap-6 flex-1 overflow-y-auto pr-1 min-h-0">
                             {/* Left Column: Yield, Scrap, Batch Metadata, Operators */}
-                            <div className="lg:col-span-6 space-y-5">
+                            <div className="min-w-0 lg:col-span-6 space-y-5">
                                 <div className="bg-card/50 backdrop-blur-sm border border-border/60 rounded-xl p-4 sm:p-5 space-y-4 shadow-sm">
                                     <div className="flex items-center gap-2 pb-2 border-b border-border/40">
                                         <div className="p-1 bg-primary/10 rounded text-primary">
@@ -866,17 +781,17 @@ export function JobOrderShiftLogModal({
                                             <div className="flex items-center gap-1.5">
                                                 <ImageIcon className="h-4 w-4 text-sky-600 dark:text-sky-400" />
                                                 <h5 className="font-bold text-sky-800 dark:text-sky-300 uppercase tracking-wider text-[10px]">
-                                                    Shift Evidence Image
+                                                    Shift Evidence Image <span className="text-destructive">*</span>
                                                 </h5>
                                             </div>
                                             <Badge variant="outline" className="text-[9px] text-sky-700 dark:text-sky-300 border-sky-500/20">
-                                                Optional
+                                                Required
                                             </Badge>
                                         </div>
                                         <p className="text-[10px] text-muted-foreground">
-                                            Attach one PNG, JPG, or WEBP photo captured at the end of the shift. Maximum file size: 5 MB.
+                                            Capture a photo or choose an existing PNG, JPG, or WEBP image. Maximum file size: 5 MB.
                                         </p>
-                                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                                             <Button
                                                 type="button"
                                                 variant="outline"
@@ -885,16 +800,6 @@ export function JobOrderShiftLogModal({
                                                 aria-label="Take a shift evidence photo"
                                             >
                                                 <Camera className="mr-2 h-4 w-4" /> Take Photo
-                                            </Button>
-                                            <Button
-                                                type="button"
-                                                variant="outline"
-                                                onClick={openWebcam}
-                                                disabled={isWebcamStarting}
-                                                className="h-10 w-full rounded-lg border-sky-500/30 text-xs font-semibold"
-                                                aria-label="Use the computer webcam for shift evidence"
-                                            >
-                                                <Video className="mr-2 h-4 w-4" /> {isWebcamStarting ? "Opening Webcam..." : "Use Webcam"}
                                             </Button>
                                             <Button
                                                 type="button"
@@ -935,42 +840,13 @@ export function JobOrderShiftLogModal({
                                                 </Button>
                                             )}
                                         </div>
-                                        {isWebcamOpen && (
-                                            <div className="space-y-2 rounded-lg border border-sky-500/20 bg-background/70 p-2" aria-live="polite">
-                                                {webcamError ? (
-                                                    <p className="text-[10px] font-semibold text-destructive" role="alert">{webcamError}</p>
-                                                ) : (
-                                                    <video
-                                                        ref={webcamVideoRef}
-                                                        autoPlay
-                                                        muted
-                                                        playsInline
-                                                        className="aspect-video w-full rounded-md bg-black object-cover"
-                                                        aria-label="Live computer webcam preview"
-                                                    />
-                                                )}
-                                                <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-                                                    <Button
-                                                        type="button"
-                                                        onClick={captureWebcamPhoto}
-                                                        disabled={!isWebcamReady || Boolean(webcamError)}
-                                                        className="h-10 text-xs font-semibold"
-                                                    >
-                                                        <Camera className="mr-2 h-4 w-4" /> Capture Photo
-                                                    </Button>
-                                                    <Button
-                                                        type="button"
-                                                        variant="outline"
-                                                        onClick={stopWebcam}
-                                                        className="h-10 text-xs font-semibold"
-                                                    >
-                                                        Close Webcam
-                                                    </Button>
-                                                </div>
-                                            </div>
-                                        )}
                                         {evidenceImageError && (
                                             <p className="text-[10px] font-semibold text-destructive" role="alert">{evidenceImageError}</p>
+                                        )}
+                                        {!evidenceImage && !evidenceImageError && (
+                                            <p className="text-[10px] text-muted-foreground" role="status">
+                                                A shift evidence image is required before recording this session.
+                                            </p>
                                         )}
                                         {evidenceImage && evidenceImagePreview && (
                                             <div className="flex items-center gap-3 rounded-lg border border-sky-500/20 bg-background/70 p-2">
@@ -991,9 +867,9 @@ export function JobOrderShiftLogModal({
                             </div>
 
                              {/* Right Column: Exact WIP reservation consumption */}
-                            <div className="lg:col-span-6">
-                                <div className="bg-card/50 backdrop-blur-sm border border-border/60 rounded-xl p-4 sm:p-5 space-y-4 h-full flex flex-col shadow-sm">
-                                    <div className="flex items-center justify-between pb-2 border-b border-border/40">
+                            <div className="min-w-0 lg:col-span-6">
+                                <div className="min-w-0 bg-card/50 backdrop-blur-sm border border-border/60 rounded-xl p-4 sm:p-5 space-y-4 shadow-sm">
+                                    <div className="flex flex-col gap-3 pb-2 border-b border-border/40 xl:flex-row xl:items-center xl:justify-between">
                                         <div className="flex items-center gap-2">
                                             <div className="p-1 bg-primary/10 rounded text-primary">
                                                 <Layers className="h-4 w-4" />
@@ -1005,9 +881,33 @@ export function JobOrderShiftLogModal({
                                                  <p className="text-[9px] text-muted-foreground mt-0.5">Select the reserved lot, inventory lot, batch, and UOM that were consumed for this session.</p>
                                              </div>
                                          </div>
-                                         <Badge variant="outline" className="text-[9px] font-mono bg-primary/5 text-primary border-primary/20 font-bold">
-                                             WIP Ledger
-                                        </Badge>
+                                         <div className="flex w-full items-center gap-2 xl:w-auto">
+                                             <div className="relative min-w-0 flex-1 xl:w-64 xl:flex-none">
+                                                 <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+                                                 <Input
+                                                     type="text"
+                                                     value={reservationSearch}
+                                                     onChange={(event) => setReservationSearch(event.target.value)}
+                                                     placeholder="Search material, reservation, lot, or batch"
+                                                     aria-label="Search WIP reservations by component, reservation ID, MM lot, or batch number"
+                                                     disabled={loadingShiftMaterials || Boolean(materialsLoadError) || shiftMaterials.length === 0}
+                                                     className="h-8 pl-8 pr-8 text-xs"
+                                                 />
+                                                 {reservationSearch && (
+                                                     <button
+                                                         type="button"
+                                                         onClick={() => setReservationSearch("")}
+                                                         aria-label="Clear WIP reservation search"
+                                                         className="absolute right-2 top-1/2 -translate-y-1/2 rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                                     >
+                                                         <X className="h-3.5 w-3.5" aria-hidden="true" />
+                                                     </button>
+                                                 )}
+                                             </div>
+                                             <Badge variant="outline" className="shrink-0 text-[9px] font-mono bg-primary/5 text-primary border-primary/20 font-bold">
+                                                 WIP Ledger
+                                             </Badge>
+                                         </div>
                                     </div>
 
                                     {loadingShiftMaterials ? (
@@ -1030,9 +930,14 @@ export function JobOrderShiftLogModal({
                                         <div className="p-6 bg-background/50 rounded-lg text-muted-foreground text-center italic border border-border/40 flex-1 flex items-center justify-center">
                                              No WIP reservations are available for this Job Order.
                                         </div>
+                                    ) : filteredShiftMaterials.length === 0 ? (
+                                        <div className="p-6 bg-background/50 rounded-lg text-muted-foreground text-center border border-border/40 flex-1 flex flex-col items-center justify-center gap-2" role="status">
+                                            <p>No WIP reservations match “{reservationSearch.trim()}”.</p>
+                                            <Button type="button" variant="outline" size="sm" onClick={() => setReservationSearch("")}>Clear search</Button>
+                                        </div>
                                     ) : (
-                                        <div className="space-y-3 flex-1 overflow-y-auto max-h-[480px] lg:max-h-[560px] pr-1">
-                                            {shiftMaterials.map((m, index) => {
+                                        <div className="min-w-0 space-y-3">
+                                            {filteredShiftMaterials.map((m, index) => {
                                                  const theoretical = materialTheoretical(m);
                                                  const actual = Number(m.actual_qty || 0);
                                                  const variance = actual - theoretical;
@@ -1083,9 +988,11 @@ export function JobOrderShiftLogModal({
                                                          </div>
 
                                                          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[9px] text-muted-foreground">
-                                                             <span>MM Lot: <strong className="font-mono text-foreground">{m.mm_lot_id || "—"}</strong></span>
-                                                             <span>Inventory Lot: <strong className="font-mono text-foreground">{m.inventory_lot_id || "—"}</strong></span>
-                                                             <span>Batch No.: <strong className="font-mono text-foreground">{m.batch_no || "No batch assigned"}</strong></span>
+                                                             <span>MM Lot: <strong className="font-mono text-foreground">{m.mm_lot_name || "Lot name unavailable"}</strong></span>
+                                                             <span>Inventory Lot: <strong className="font-mono text-foreground">{m.inventory_lot_batch_no || m.batch_no || "Batch identifier unavailable"}</strong></span>
+                                                             {m.batch_no && m.batch_no !== (m.inventory_lot_batch_no || m.batch_no) && (
+                                                                 <span>Batch No.: <strong className="font-mono text-foreground">{m.batch_no}</strong></span>
+                                                             )}
                                                              <span>UOM: <strong className="font-mono text-foreground">{m.unit_shortcut || `#${m.uom_id || "—"}`}</strong></span>
                                                              <span>Status: <strong className="text-foreground">{m.reservation_status || "Not staged"}</strong></span>
                                                              <span>Remaining WIP: <strong className="font-mono text-foreground">{Number(m.available_stock || 0).toLocaleString()}</strong></span>
@@ -1127,10 +1034,13 @@ export function JobOrderShiftLogModal({
                                                             </div>
 
                                                             <div className="flex items-center gap-2">
-                                                                <div className="flex items-center gap-1">
-                                                                    <span className="text-muted-foreground">Actual Out:</span>
-                                                                    <div className="relative flex items-center">
+                                                                <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                                                                    <label htmlFor={`actual-material-used-${m.jo_material_id}-${index}`} className="text-muted-foreground">
+                                                                        Actual Material Used:
+                                                                    </label>
+                                                                    <div className="flex items-center gap-1.5">
                                                                         <Input
+                                                                             id={`actual-material-used-${m.jo_material_id}-${index}`}
                                                                              type="number"
                                                                              min="0"
                                                                              step="0.000001"
@@ -1160,9 +1070,11 @@ export function JobOrderShiftLogModal({
                                                                                  );
                                                                              }}
                                                                              disabled={!m.reservation_id}
-                                                                             className="h-8 w-28 text-right bg-background pr-6 pl-2 py-1.5 rounded-lg font-bold font-mono text-xs disabled:opacity-50"
+                                                                             className="h-8 w-36 text-right bg-background px-2 py-1.5 rounded-lg font-bold font-mono text-xs disabled:opacity-50"
                                                                          />
-                                                                        <span className="absolute right-2 text-[9px] text-muted-foreground font-semibold pointer-events-none">{m.unit_shortcut}</span>
+                                                                        <span className="shrink-0 rounded-md border border-border bg-muted/60 px-1.5 py-1 text-[9px] font-semibold text-muted-foreground">
+                                                                            {m.unit_shortcut}
+                                                                        </span>
                                                                     </div>
                                                                 </div>
                                                             </div>

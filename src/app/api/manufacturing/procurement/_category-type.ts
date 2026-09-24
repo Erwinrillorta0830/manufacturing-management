@@ -7,7 +7,7 @@ import {
 export const FINISHED_GOODS_PRODUCT_TYPE = 388;
 export const PURCHASE_ORDER_CATEGORY_TYPES = ["RAW_MATERIAL", "PACKAGING", "FINISHED_GOODS"] as const;
 export type PurchaseOrderCategoryType = typeof PURCHASE_ORDER_CATEGORY_TYPES[number];
-export const SUPPLIER_ELIGIBLE_CATEGORY_TYPES = ["RAW_MATERIAL", "PACKAGING"] as const;
+export const SUPPLIER_ELIGIBLE_CATEGORY_TYPES = ["RAW_MATERIAL", "PACKAGING", "FINISHED_GOODS"] as const;
 export type SupplierEligibleCategoryType = typeof SUPPLIER_ELIGIBLE_CATEGORY_TYPES[number];
 
 type ProductClassificationRow = {
@@ -60,7 +60,9 @@ export function purchaseOrderCategoryTypeFromProductType(value: unknown): Purcha
 export function isSupplierEligibleCategoryType(
     value: PurchaseOrderCategoryType | null | undefined
 ): value is SupplierEligibleCategoryType {
-    return value === "RAW_MATERIAL" || value === "PACKAGING";
+    return value !== null
+        && value !== undefined
+        && SUPPLIER_ELIGIBLE_CATEGORY_TYPES.includes(value as SupplierEligibleCategoryType);
 }
 
 function productTypeDescription(value: unknown): string {
@@ -196,7 +198,7 @@ export async function validatePurchaseOrderCategoryTypes(
 
 /**
  * Supplier catalog links must point to products explicitly classified as
- * Raw Material or Packaging. Unlike purchase-order category validation, this
+ * Raw Material, Packaging, or Finished Goods. Unlike purchase-order category validation, this
  * intentionally does not fall back to a parent's classification.
  */
 export async function validateSupplierProductIds(
@@ -226,7 +228,7 @@ export async function validateSupplierProductIds(
         throw new ProductCategoryTypeValidationError(
             400,
             "SUPPLIER_PRODUCT_NOT_ELIGIBLE",
-            "Only Raw Materials and Packaging Items can be linked to suppliers or added to supplier purchase orders.",
+            "Only Raw Materials, Packaging Items, and Finished Goods can be linked to suppliers or added to supplier purchase orders.",
             { invalidProductIds, allowedCategoryTypes: SUPPLIER_ELIGIBLE_CATEGORY_TYPES }
         );
     }

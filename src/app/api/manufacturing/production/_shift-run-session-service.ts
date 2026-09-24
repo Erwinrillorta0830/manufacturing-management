@@ -1001,11 +1001,12 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
     let imageAttached = false;
     try {
         const { body, image } = await readShiftRunRequest(request);
-        if (image) {
-            const imageError = validateProductionYieldImage(image);
-            if (imageError) {
-                throw new ProductionSessionError(422, "SHIFT_RUN_IMAGE_INVALID", imageError);
-            }
+        if (!image) {
+            throw new ProductionSessionError(400, "SHIFT_RUN_IMAGE_REQUIRED", "A shift evidence image is required.");
+        }
+        const imageError = validateProductionYieldImage(image);
+        if (imageError) {
+            throw new ProductionSessionError(422, "SHIFT_RUN_IMAGE_INVALID", imageError);
         }
         const input = normalizeSessionInput(body);
         const actor = await getSessionActor();

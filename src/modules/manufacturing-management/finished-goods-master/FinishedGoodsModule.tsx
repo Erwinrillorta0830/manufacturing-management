@@ -37,6 +37,7 @@ import { fetchHistoricalYield, applyHistoricalYield } from "./services/historica
 import { useFinishedGoods } from "./hooks/useFinishedGoods";
 import { Product, ProductVersion, BOMItem, RoutingStep } from "./types";
 import { calculateCostBreakdown, calculateMarginSummary, calculateOverheadSummary, calculateRouteBreakdown } from "./costing";
+import { calculateBottleneckLeadTimeHours } from "../planning-engineering/utils/production-timing";
 import { getSuggestedNextVersionName } from "./utils/version-lifecycle";
 import {
     SidebarVersionListSkeleton,
@@ -549,6 +550,21 @@ export default function FinishedGoodsModule() {
         }, 0);
         const directLaborCost = totalLaborCost / baseQuantity;
 
+        const bottleneckLeadTimeHours = calculateBottleneckLeadTimeHours({
+            targetNetQuantity: baseQuantity * (expectedYieldPercentage > 0 ? expectedYieldPercentage : 100) / 100,
+            baseGrossQuantity: baseQuantity,
+            expectedYieldPercentage,
+            routes: editedRoutes.map((route) => ({
+                stepBatchSize: route.step_batch_size,
+                setupTimeHours: route.setup_time_hours,
+                runTimeHours: route.run_time_hours,
+                workCenterCapacityPerHour: workCenters.find(
+                    (workCenter) => workCenter.work_center_id === route.work_center_id
+                )?.capacity_per_hour
+            })),
+            fallbackLeadTimeHours: lineElapsedHours
+        });
+
         return calculateCostBreakdown({
             materialsCost,
             directLaborCost,
@@ -557,7 +573,7 @@ export default function FinishedGoodsModule() {
             expectedYieldPercentage,
             baseQuantity,
             machineHours,
-            lineElapsedHours,
+            lineElapsedHours: bottleneckLeadTimeHours,
             totalMachineCost,
             laborPositions
         });

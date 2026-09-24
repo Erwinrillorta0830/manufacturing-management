@@ -13,7 +13,7 @@ import { movementMmLotReference, movementStockKey, sumMovementQuantitiesByStock,
 import { loadYieldMaterials, YieldMaterialsError } from "../../production/_yield-materials";
 import { enrichDispositions, readDispositions } from "../../qa/_dispositions";
 import { fetchMmInventoryMovements, MmInventoryMovementError, movementErrorStatus } from "../../services/mm-inventory-movements.service";
-import { loadMmLots, MmLotError, mmLotId, unitId } from "../../services/mm-lots.service";
+import { loadMmInventoryLots, loadMmLots, MmLotError, mmInventoryLotId, mmLotId, unitId } from "../../services/mm-lots.service";
 import { getAvailableInventoryLots } from "../helpers/inventory-helper";
 import { paginate } from "../../_pagination";
 import { JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
@@ -25,7 +25,8 @@ import {
     calculatePerUnitMaterialRequirement,
     readUomId,
     roundProductionValue,
-    requirePositiveProductionNumber
+    requirePositiveProductionNumber,
+    resolveProductionShiftHours
 } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
 import {
     calculateRecipeMaterialCostPerUnit,
@@ -636,6 +637,38 @@ export async function handleGET(request: Request) {
                 }
             }
 
+            const reservationRows = [...reservationsMap.values()].flat();
+            const reservationMmLotIds = [...new Set(
+                reservationRows
+                    .map((reservation: any) => mmLotId(reservation.mm_lot_id))
+                    .filter((lotId): lotId is number => lotId !== null)
+            )];
+            const reservationInventoryLotIds = [...new Set(
+                reservationRows
+                    .map((reservation: any) => mmInventoryLotId(reservation.inventory_lot_id))
+                    .filter((lotId): lotId is number => lotId !== null)
+            )];
+            const [reservationMmLots, reservationInventoryLots] = await Promise.all([
+                reservationMmLotIds.length > 0
+                    ? loadMmLots({ ids: reservationMmLotIds, onlyActive: false }).catch((error) => {
+                        console.error("Error resolving WIP reservation MM lot labels:", error);
+                        return [];
+                    })
+                    : Promise.resolve([]),
+                reservationInventoryLotIds.length > 0
+                    ? loadMmInventoryLots({ ids: reservationInventoryLotIds, onlyActive: false }).catch((error) => {
+                        console.error("Error resolving WIP reservation inventory lot labels:", error);
+                        return [];
+                    })
+                    : Promise.resolve([])
+            ]);
+            const mmLotNameById = new Map(
+                reservationMmLots.map((lot) => [mmLotId(lot.lot_id)!, String(lot.lot_name || "").trim()])
+            );
+            const inventoryLotBatchById = new Map(
+                reservationInventoryLots.map((lot) => [mmInventoryLotId(lot.inventory_lot_id)!, String(lot.batch_no || "").trim()])
+            );
+
             // Subassembly lots and mfg set are determined directly from document sources and movements
 
             // Fetch active reservations by other JOs in batch
@@ -720,7 +753,9 @@ export async function handleGET(request: Request) {
                         uom_id: reservationUomId,
                         unit_shortcut: prod?.unit_of_measurement?.unit_shortcut || "units",
                         mm_lot_id: mmLotIdValue,
+                        mm_lot_name: mmLotIdValue ? mmLotNameById.get(mmLotIdValue) || null : null,
                         inventory_lot_id: inventoryLotIdValue,
+                        inventory_lot_batch_no: inventoryLotIdValue ? inventoryLotBatchById.get(inventoryLotIdValue) || null : null,
                         batch_no: reservation.batch_no || null,
                         reservation_status: reservation.reservation_status || null,
                         allocated_quantity: Number(d.allocated_quantity || d.required_quantity || d.quantity_required || 0),
@@ -1534,7 +1569,7 @@ export async function handleGET(request: Request) {
             if (allProductIds.length > 0) {
                 const productFilter = `filter[product_id][_in]=${allProductIds.join(",")}&limit=-1`;
                 let prodRes = await fetch(
-                    `${DIRECTUS_URL}/items/products?${productFilter}&fields=product_id,product_name,product_code,cost_per_unit,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type,net_weight,weight,weight_unit_id.*`,
+                    `${DIRECTUS_URL}/items/products?${productFilter}&fields=product_id,product_name,product_code,cost_per_unit,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type,net_weight,product_weight,weight,weight_unit_id.*`,
                     { headers }
                 );
                 if (!prodRes.ok) {
@@ -1742,7 +1777,7 @@ export async function handleGET(request: Request) {
             if (childProductIds.length > 0) {
                 const productFilter = `filter[product_id][_in]=${childProductIds.join(",")}&limit=-1`;
                 let prodRes = await fetch(
-                    `${DIRECTUS_URL}/items/products?${productFilter}&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type,net_weight,weight,weight_unit_id.*`,
+                    `${DIRECTUS_URL}/items/products?${productFilter}&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type,net_weight,product_weight,weight,weight_unit_id.*`,
                     { headers }
                 );
                 if (!prodRes.ok) {
@@ -1862,7 +1897,7 @@ export async function handleGET(request: Request) {
             const productsMap = new Map<number, any>();
             if (componentProductIds.length > 0) {
                 const productFilter = `filter[product_id][_in]=${componentProductIds.join(",")}&limit=-1`;
-                let prodRes = await fetch(`${DIRECTUS_URL}/items/products?${productFilter}&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type,net_weight,weight,weight_unit_id.*`, { headers });
+                let prodRes = await fetch(`${DIRECTUS_URL}/items/products?${productFilter}&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type,net_weight,product_weight,weight,weight_unit_id.*`, { headers });
                 if (!prodRes.ok) {
                     prodRes = await fetch(`${DIRECTUS_URL}/items/products?${productFilter}&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut,product_category.category_name,product_type`, { headers });
                 }
@@ -1975,7 +2010,7 @@ export async function handleGET(request: Request) {
                 routing_tasks: item.routing_tasks || [],
                 routingTasks: item.routing_tasks || [],
                 salesOrders: item.sales_orders || [],
-                shiftOption: item.shift_option || "8",
+                shiftOption: String(resolveProductionShiftHours(item.shift_option)),
                 dailyBreakdown: item.daily_breakdown || null,
                 remarks: item.remarks || null,
                 createdAt: item.created_at || null,

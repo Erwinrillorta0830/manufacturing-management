@@ -2,9 +2,11 @@ import React from "react";
 import { Anchor, ArrowLeft, X, AlertCircle, Plus, Trash2, Loader2, Table, Sparkles, Pencil, Check } from "lucide-react";
 import {
     ManifestLineFormItem,
+    PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS,
     ShipmentFormState,
     SUPPLIER_PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS,
-    FxRateStatus
+    FxRateStatus,
+    PurchaseOrderMaterialType
 } from "./types";
 import { IncomingShipment, PurchaseOrderPaymentMode, RawMaterial } from "../../types";
 import { RawProductSelector } from "./RawProductSelector";
@@ -23,6 +25,7 @@ import {
     tryNormalizePurchaseOrderUnitPrice
 } from "../../price-precision";
 import type { PurchaseOrderMissingPriceDetail } from "../../../purchase-order/types";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export interface UOMOption {
     product_id: number;
@@ -52,7 +55,7 @@ export interface ShipmentFormModalProps {
     dynamicBranches: Array<{ id: number; branchName: string; branchCode: string }>;
     linesForm: ManifestLineFormItem[];
     setLinesForm: React.Dispatch<React.SetStateAction<ManifestLineFormItem[]>>;
-    handleAddLineForm: () => void;
+    handleAddLineForm: (materialType?: PurchaseOrderMaterialType | "") => void;
     handleRemoveLineForm: (idx: number) => void;
     handleLineFormChange: (idx: number, fieldOrObject: string | Record<string, unknown>, value?: unknown) => void;
     getLineErrors: (line: ManifestLineFormItem) => string[];
@@ -99,6 +102,8 @@ type ActiveRowEdit = {
     index: number;
     original: ManifestLineFormItem | null;
 };
+
+type PurchaseOrderCategoryTab = "all" | PurchaseOrderMaterialType;
 
 function cloneLine(line: ManifestLineFormItem): ManifestLineFormItem {
     return {
@@ -167,6 +172,7 @@ export function ShipmentFormModal({
 }: ShipmentFormModalProps) {
     const [activeRowEdit, setActiveRowEdit] = React.useState<ActiveRowEdit | null>(null);
     const [rowEditError, setRowEditError] = React.useState<string | null>(null);
+    const [activeCategoryTab, setActiveCategoryTab] = React.useState<PurchaseOrderCategoryTab>("all");
     const isPage = presentation === "page";
     const missingPriceDetails = priceTypeResolution?.missingPriceDetails ?? [];
     const missingPriceLabels = [...new Set(missingPriceDetails.map(detail => detail.unitLabel || `UOM #${detail.unitId ?? "?"}`))];
@@ -180,11 +186,19 @@ export function ShipmentFormModal({
         return options;
     }, [shipmentForm.delivery_terms]);
 
+    React.useEffect(() => {
+        setActiveCategoryTab("all");
+    }, [editingShipmentId, isModalOpen]);
+
+    const visibleLineEntries = linesForm
+        .map((line, index) => ({ line, index }))
+        .filter(({ line }) => !canonicalDrafting || activeCategoryTab === "all" || line.material_type === activeCategoryTab);
+
     const handleAddRow = React.useCallback(() => {
         if (!shipmentForm.supplier_id || (!canonicalDrafting && activeRowEdit !== null)) return;
 
         const nextIndex = linesForm.length;
-        handleAddLineForm();
+        handleAddLineForm(canonicalDrafting && activeCategoryTab !== "all" ? activeCategoryTab : undefined);
         if (!canonicalDrafting) {
             setActiveRowEdit({ index: nextIndex, original: null });
         }
@@ -194,7 +208,7 @@ export function ShipmentFormModal({
             const nextInput = document.getElementById(`search-input-${nextIndex}`);
             if (nextInput) nextInput.focus();
         }, 50);
-    }, [activeRowEdit, canonicalDrafting, handleAddLineForm, linesForm.length, shipmentForm.supplier_id]);
+    }, [activeCategoryTab, activeRowEdit, canonicalDrafting, handleAddLineForm, linesForm.length, shipmentForm.supplier_id]);
 
     const handleStartRowEdit = React.useCallback((index: number) => {
         if (activeRowEdit !== null || !linesForm[index]) return;
@@ -649,6 +663,24 @@ export function ShipmentFormModal({
                                 </div>
                             ) : (
                                 <div className="border rounded-xl shadow-sm bg-card min-w-0 min-h-[220px] overflow-hidden">
+                                    {canonicalDrafting && (
+                                        <div className="border-b px-3 py-2">
+                                            <Tabs
+                                                value={activeCategoryTab}
+                                                onValueChange={value => setActiveCategoryTab(value as PurchaseOrderCategoryTab)}
+                                                className="w-full"
+                                            >
+                                                <TabsList aria-label="Purchase order product category" className="grid h-auto w-full grid-cols-4">
+                                                    <TabsTrigger value="all" className="text-xs">All</TabsTrigger>
+                                                    {PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS.map(option => (
+                                                        <TabsTrigger key={option.value} value={option.value} className="text-xs">
+                                                            {option.label}
+                                                        </TabsTrigger>
+                                                    ))}
+                                                </TabsList>
+                                            </Tabs>
+                                        </div>
+                                    )}
                                     <table className="block w-full min-w-0 text-left text-xs border-collapse font-sans xl:table xl:table-fixed">
                                         {/* Table Column Headers */}
                                         <thead className="hidden bg-muted/60 border-b select-none text-[10px] font-extrabold text-muted-foreground uppercase tracking-wider xl:table-header-group">
@@ -669,7 +701,14 @@ export function ShipmentFormModal({
 
                                         {/* Table Row Cells */}
                                         <tbody className="block space-y-2 xl:table-row-group xl:space-y-0 xl:divide-y xl:divide-border/60">
-                                            {linesForm.map((line, idx) => {
+                                            {visibleLineEntries.length === 0 && (
+                                                <tr className="block xl:table-row">
+                                                    <td colSpan={11} className="block p-6 text-center text-xs text-muted-foreground xl:table-cell">
+                                                        No {PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS.find(option => option.value === activeCategoryTab)?.label.toLowerCase() ?? "purchase order"} lines yet. Add a row to begin.
+                                                    </td>
+                                                </tr>
+                                            )}
+                                            {visibleLineEntries.map(({ line, index: idx }) => {
                                                 const lineErrors = getLineErrors(line);
                                                 const discountMode = line.discount_mode || "Percentage";
                                                 const isHistoricalFixedDiscount = discountMode === "Fixed Amount";
@@ -712,6 +751,9 @@ export function ShipmentFormModal({
                                                                 value={materialType}
                                                                 onChange={event => {
                                                                     const nextType = event.target.value as ManifestLineFormItem["material_type"];
+                                                                    if (canonicalDrafting && activeCategoryTab !== "all") {
+                                                                        setActiveCategoryTab(nextType || "all");
+                                                                    }
                                                                     handleLineFormChange(idx, {
                                                                         material_type: nextType,
                                                                         product_id: "",
@@ -732,7 +774,7 @@ export function ShipmentFormModal({
                                                                 className="w-full min-w-0 rounded-md border bg-background px-1.5 py-1 text-[10px] font-semibold outline-none focus:ring-1 focus:ring-primary"
                                                             >
                                                                 <option value="">Select Type...</option>
-                                                                {SUPPLIER_PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS.map(option => (
+                                                                {(canonicalDrafting ? PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS : SUPPLIER_PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS).map(option => (
                                                                     <option key={option.value} value={option.value}>
                                                                         {option.label}
                                                                     </option>

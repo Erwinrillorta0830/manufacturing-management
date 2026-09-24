@@ -16,6 +16,7 @@ export interface RouteStepCosting {
     run_time_hours?: number;
     step_batch_size?: number;
     work_center_overhead_cost_per_hour?: number;
+    work_center_capacity_per_hour?: number;
 }
 
 export interface RouteBOMCosting {
@@ -87,6 +88,10 @@ export function roundManufacturingUnitCost(value: number | string | null | undef
             .round(MANUFACTURING_UNIT_COST_DECIMAL_SCALE)
             .toFixed(MANUFACTURING_UNIT_COST_DECIMAL_SCALE)
     );
+}
+
+export function formatManufacturingUnitCostForDisplay(value: number | string | null | undefined): string {
+    return DecimalValue.from(roundManufacturingMoney(value)).toFixed(MANUFACTURING_UNIT_COST_DECIMAL_SCALE);
 }
 
 export function calculateMaterialSpend(

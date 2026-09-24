@@ -936,7 +936,7 @@ export async function executeJobOrderWorkflow(
         const cancellation = await cancelJobOrderAndReturnMaterials({
             joId: jobOrderId,
             reason: text(command.remarks),
-            actorUserId: command.actorUserId,
+            actorUserId: Number(command.actorUserId),
             eventKey: idempotencyKey
         });
         return {

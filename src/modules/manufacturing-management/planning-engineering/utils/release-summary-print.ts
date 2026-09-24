@@ -1,4 +1,5 @@
 import { formatProductionValue } from "./production-timing";
+import { formatManufacturingUnitCostForDisplay } from "./cogs-helper";
 
 export interface ReleaseSummaryComponent {
     name: string;
@@ -67,6 +68,10 @@ function formatMoney(value: number): string {
     return `₱${formatProductionValue(value)}`;
 }
 
+function formatUnitCost(value: number): string {
+    return `₱${formatManufacturingUnitCostForDisplay(value)}`;
+}
+
 function escapeHtml(value: string): string {
     return value
         .replace(/&/g, "&amp;")
@@ -129,11 +134,11 @@ export function buildReleaseSummaryHtml(data: ReleaseSummaryPrintData): string {
                             </tr>
                             <tr>
                                 <td style="padding: 5px 8px; font-weight: bold;">Est. Unit COGS (Base)</td>
-                                <td style="padding: 5px 8px; text-align: right; font-weight: bold;">${formatMoney(data.financials.baseCogs)}</td>
+                                <td style="padding: 5px 8px; text-align: right; font-weight: bold;">${formatUnitCost(data.financials.baseCogs)}</td>
                             </tr>
                             <tr>
                                 <td style="padding: 5px 8px; font-weight: bold; color: #0369a1;">Est. Unit COGS (Yield-Adjusted)</td>
-                                <td style="padding: 5px 8px; text-align: right; font-weight: bold; color: #0369a1;">${formatMoney(data.financials.adjustedCogs)}</td>
+                                <td style="padding: 5px 8px; text-align: right; font-weight: bold; color: #0369a1;">${formatUnitCost(data.financials.adjustedCogs)}</td>
                             </tr>`
         : `<tr><td colspan="2" style="padding: 8px; text-align: center; color: #64748b;">Costing data unavailable.</td></tr>`;
 

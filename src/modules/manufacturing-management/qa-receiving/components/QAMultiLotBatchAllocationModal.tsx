@@ -46,6 +46,7 @@ import {
   fetchLotsByBranch,
   fetchInventoryLots,
   fetchBatchOnhand,
+  buildLotStoredProductSummaryMap,
   resolveProductClassification,
   isBadStockLot,
   MMBatchOnhand,
@@ -53,6 +54,7 @@ import {
 import { SearchableSelect } from '../../shared/components/SearchableSelect';
 import { BatchCombobox } from '../../shared/components/BatchCombobox';
 import type { StorageLot as QAStorageLot } from '../types';
+import { findQALotContentConflicts } from '../utils/lot-content-compatibility';
 
 // Helper to safely extract lot ID from varied models (Directus object, Spring Boot DTO, etc.)
 export const getLotId = (item: unknown): number => {
@@ -75,8 +77,6 @@ export const getProductId = (item: unknown): number => {
   }
   return Number(rec.product_id || rec.productId || 0);
 };
-
-export type ProductClassification = 'RM' | 'PKG' | 'FG' | 'OTHER';
 
 export interface LotBatchSelectionResult {
   lot_id: number;
@@ -448,13 +448,13 @@ export function QAMultiLotBatchAllocationModal({
         };
       }
 
-      // If the lot already stores ANY product with the same classification or the exact productId -> COMPATIBLE!
-      const hasMatchingType =
-        summary.stored_products.some(
-          (p) => p.classification === currentClassification.code || (productId && p.product_id === productId)
-        ) || summary.primary_classification === currentClassification.code;
+      const conflicts = findQALotContentConflicts(
+        summary,
+        currentClassification.code,
+        productId
+      );
 
-      if (hasMatchingType) {
+      if (conflicts.length === 0) {
         return {
           isCompatible: true,
           isEmpty: false,
@@ -465,20 +465,7 @@ export function QAMultiLotBatchAllocationModal({
         };
       }
 
-      const onlyOther = summary.stored_products.every((p) => p.classification === 'OTHER');
-      if (onlyOther) {
-        return {
-          isCompatible: true,
-          isEmpty: false,
-          reason: `Compatible with General Stock`,
-          storedClassification: 'OTHER',
-          storedLabel: 'General Stock',
-          storedSummary: summary,
-        };
-      }
-
-      const conflictingNames = summary.stored_products
-        .filter((p) => p.classification !== currentClassification.code && p.classification !== 'OTHER')
+      const conflictingNames = conflicts
         .map((p) => p.product_name || p.product_code || `Product #${p.product_id}`)
         .slice(0, 3)
         .join(', ');
@@ -660,235 +647,57 @@ export function QAMultiLotBatchAllocationModal({
         setLotBatchCountMap(bCountMap);
         setLotStockQtyMap(sQtyMap);
 
-        // Pre-build metadata lookup map from Directus inventory lots
-        const productMetaMap = new Map<number, { name?: string; code?: string; type?: unknown; cat?: unknown }>();
-        (branchInvLotsData || []).forEach((ib) => {
-          const pId = getProductId(ib);
-          if (pId > 0) {
-            const existing = productMetaMap.get(pId) || {};
-            const prodObj = typeof ib.product_id === 'object' && ib.product_id !== null ? (ib.product_id as Record<string, unknown>) : null;
-            if (!existing.type && (ib.product_type || prodObj?.product_type)) {
-              existing.type = ib.product_type || prodObj?.product_type;
-            }
-            const rawCat = ib.category_name || (ib as unknown as { product_category?: unknown }).product_category || prodObj?.product_category;
-            if (!existing.cat && rawCat) {
-              existing.cat = typeof rawCat === 'object' && rawCat !== null ? ((rawCat as { category_name?: string }).category_name || (rawCat as { name?: string }).name) : rawCat;
-            }
-            if (!existing.name && (ib.product_name || prodObj?.product_name)) {
-              existing.name = ib.product_name || (prodObj?.product_name as string);
-            }
-            if (!existing.code && (ib.product_code || prodObj?.product_code)) {
-              existing.code = ib.product_code || (prodObj?.product_code as string);
-            }
-            productMetaMap.set(pId, existing);
+        const activeDraftAllocations: Array<{
+          lot_id: number;
+          product_id: number;
+          product_name?: string;
+          product_code?: string;
+          product_type?: unknown;
+          category_name?: unknown;
+          allocated_quantity: number;
+        }> = [];
+        (existingFormAllocations || []).forEach((sibling) => {
+          const pId = Number(sibling.product_id || 0);
+          if (pId <= 0) return;
+
+          const addDraftAllocation = (lotId: number, quantity: number) => {
+            if (lotId <= 0 || quantity <= 0) return;
+            activeDraftAllocations.push({
+              lot_id: lotId,
+              product_id: pId,
+              product_name: sibling.product_name || undefined,
+              product_code: sibling.product_code || undefined,
+              product_type: sibling.product_type,
+              category_name: sibling.category_name || sibling.product_category,
+              allocated_quantity: quantity,
+            });
+          };
+
+          if (sibling.lot_allocations && sibling.lot_allocations.length > 0) {
+            sibling.lot_allocations.forEach((group) => {
+              const batches = group.batches || [];
+              const quantity =
+                batches.reduce((sum, batch) => sum + Number(batch?.quantity || 0), 0) ||
+                Number(group.allocated_quantity || 0);
+              addDraftAllocation(Number(group.lot_id), quantity);
+            });
+          } else if (sibling.lot_id) {
+            addDraftAllocation(Number(sibling.lot_id), Number(sibling.quantity || 0));
           }
         });
 
-        // Build Lot Stored Products Map for Product Type Validation
-        const storedMap = new Map<number, LotStoredProductSummary>();
-        (lotsData || []).forEach((lot) => {
-          const lId = Number(lot.lot_id);
-          const onhandForLot = (branchOnhandData || []).filter(
-            (bo) => getLotId(bo) === lId
-          );
-          const invLotsForLot = (branchInvLotsData || []).filter((ib) => getLotId(ib) === lId);
-
-          const productQtyMap = new Map<
-            number,
-            {
-              qty: number;
-              warehouseQty: number;
-              draftQty: number;
-              name?: string | null;
-              code?: string | null;
-              type?: unknown;
-              cat?: string | null;
-            }
-          >();
-
-          onhandForLot.forEach((bo) => {
-            const pId = getProductId(bo);
-            const addQty = Number(bo.onhandQuantity || 0);
-            if (pId > 0 && Math.abs(addQty) > 0) {
-              const meta = productMetaMap.get(pId);
-              const existing = productQtyMap.get(pId) || {
-                qty: 0,
-                warehouseQty: 0,
-                draftQty: 0,
-                name: bo.productName || meta?.name,
-                code: bo.productCode || meta?.code,
-                type: bo.productTypeId || bo.productTypeName || meta?.type,
-                cat: meta?.cat ? (typeof meta.cat === 'object' ? (meta.cat as { category_name?: string }).category_name : String(meta.cat)) : null,
-              };
-              existing.qty += addQty;
-              existing.warehouseQty += addQty;
-              if (!existing.name && (bo.productName || meta?.name)) existing.name = bo.productName || meta?.name;
-              if (!existing.code && (bo.productCode || meta?.code)) existing.code = bo.productCode || meta?.code;
-              if (!existing.type && (bo.productTypeId || bo.productTypeName || meta?.type)) {
-                existing.type = bo.productTypeId || bo.productTypeName || meta?.type;
-              }
-              productQtyMap.set(pId, existing);
-            }
-          });
-
-          invLotsForLot.forEach((ib) => {
-            const pId = getProductId(ib);
-            const prodObj = typeof ib.product_id === 'object' && ib.product_id !== null ? (ib.product_id as Record<string, unknown>) : null;
-            const ibQty = Number(ib.available_quantity || 0);
-            if (pId > 0) {
-              const meta = productMetaMap.get(pId);
-              const existing = productQtyMap.get(pId) || {
-                qty: 0,
-                warehouseQty: 0,
-                draftQty: 0,
-                name: ib.product_name || (prodObj?.product_name as string) || meta?.name,
-                code: ib.product_code || (prodObj?.product_code as string) || meta?.code,
-                type: ib.product_type || prodObj?.product_type || meta?.type,
-                cat: ib.category_name || (typeof prodObj?.product_category === 'object' ? (prodObj.product_category as { category_name?: string })?.category_name : String(prodObj?.product_category || '')) || (meta?.cat ? String(meta.cat) : null),
-              };
-              existing.qty += ibQty;
-              existing.warehouseQty += ibQty;
-              if (!existing.name && (ib.product_name || prodObj?.product_name)) existing.name = ib.product_name || (prodObj?.product_name as string);
-              if (!existing.code && (ib.product_code || prodObj?.product_code)) existing.code = ib.product_code || (prodObj?.product_code as string);
-              if (!existing.type && (ib.product_type || prodObj?.product_type)) existing.type = ib.product_type || prodObj?.product_type;
-              productQtyMap.set(pId, existing);
-            }
-          });
-
-          // Include sibling items allocated to this lot in the current form session
-          if (existingFormAllocations && existingFormAllocations.length > 0) {
-            existingFormAllocations.forEach((sibling) => {
-              const pId = Number(sibling.product_id || 0);
-              if (pId <= 0) return;
-
-              let allocatedToThisLot = 0;
-              if (sibling.lot_allocations && sibling.lot_allocations.length > 0) {
-                sibling.lot_allocations.forEach((grp) => {
-                  if (Number(grp.lot_id) === lId) {
-                    const batches = grp.batches || [];
-                    allocatedToThisLot +=
-                      batches.reduce((sum: number, b) => sum + Number(b?.quantity || 0), 0) ||
-                      Number(grp.allocated_quantity || 0);
-                  }
-                });
-              } else if (Number(sibling.lot_id) === lId) {
-                allocatedToThisLot += Number(sibling.quantity || 0);
-              }
-
-              if (allocatedToThisLot > 0) {
-                const sCat =
-                  sibling.category_name ||
-                  (typeof sibling.product_category === 'object'
-                    ? (sibling.product_category as { category_name?: string })?.category_name
-                    : String(sibling.product_category || ''));
-
-                const existing = productQtyMap.get(pId) || {
-                  qty: 0,
-                  warehouseQty: 0,
-                  draftQty: 0,
-                  name: sibling.product_name,
-                  code: sibling.product_code,
-                  type: sibling.product_type,
-                  cat: sCat,
-                };
-                existing.qty += allocatedToThisLot;
-                existing.draftQty += allocatedToThisLot;
-                if (!existing.name && sibling.product_name) existing.name = sibling.product_name;
-                if (!existing.code && sibling.product_code) existing.code = sibling.product_code;
-                if (!existing.type && sibling.product_type) existing.type = sibling.product_type;
-                if (!existing.cat && sCat) existing.cat = sCat;
-                productQtyMap.set(pId, existing);
-              }
-            });
-          }
-
-          const storedProductSummaryMap = new Map<
-            string,
-            {
-              product_id: number;
-              product_name?: string;
-              product_code?: string;
-              product_type?: unknown;
-              category_name?: string;
-              classification: ProductClassification;
-              classification_label: string;
-              onhand_quantity: number;
-              warehouse_quantity: number;
-              draft_quantity: number;
-              is_draft: boolean;
-            }
-          >();
-
-          let totalQty = 0;
-          let totalWarehouseQty = 0;
-          let totalDraftQty = 0;
-          let primaryLabel = '';
-          let primaryClass: ProductClassification | undefined = undefined;
-
-          productQtyMap.forEach((info, pId) => {
-            totalQty += info.qty;
-            totalWarehouseQty += info.warehouseQty;
-            totalDraftQty += info.draftQty;
-            const c = resolveProductClassification(info.type, info.cat || undefined, info.code || undefined, info.name || undefined);
-            if (!primaryLabel) {
-              primaryLabel = c.label;
-              primaryClass = c.code;
-            }
-            const key = info.code || info.name || String(pId);
-            const existing = storedProductSummaryMap.get(key);
-            if (existing) {
-              existing.onhand_quantity += info.qty;
-              existing.warehouse_quantity += info.warehouseQty;
-              existing.draft_quantity += info.draftQty;
-              existing.is_draft = existing.warehouse_quantity === 0 && existing.draft_quantity > 0;
-            } else {
-              storedProductSummaryMap.set(key, {
-                product_id: pId,
-                product_name: info.name || undefined,
-                product_code: info.code || undefined,
-                product_type: info.type,
-                category_name: info.cat || undefined,
-                classification: c.code,
-                classification_label: c.label,
-                onhand_quantity: info.qty,
-                warehouse_quantity: info.warehouseQty,
-                draft_quantity: info.draftQty,
-                is_draft: info.warehouseQty === 0 && info.draftQty > 0,
-              });
-            }
-          });
-
-          const storedItems = Array.from(storedProductSummaryMap.values());
-          const lotStockQty = sQtyMap.get(lId) || 0;
-          const batchCount = bCountMap.get(lId) || 0;
-          // Lot is NOT empty if it has physical stock OR registered batches in this lot
-          const hasBatchesWithQty =
-            storedItems.some((p) => Math.abs(p.onhand_quantity) > 0.000001 || Math.abs(p.draft_quantity) > 0.000001) ||
-            Math.abs(lotStockQty) > 0.000001;
-          const hasRegisteredBatches = batchCount > 0 || storedItems.length > 0;
-          const isEmpty = !hasBatchesWithQty && !hasRegisteredBatches;
-          const isDraftOnly = !isEmpty && totalWarehouseQty === 0 && totalDraftQty > 0;
-
-          const distinctLabels = Array.from(
-            new Set(storedItems.map((p) => p.classification_label).filter(Boolean))
-          );
-          const combinedLabel = distinctLabels.length > 0 ? distinctLabels.join(' & ') : (primaryLabel || 'General Stock');
-
-          storedMap.set(lId, {
-            lot_id: lId,
-            lot_name: lot.lot_name,
-            total_stored_quantity: isEmpty ? 0 : totalQty,
-            warehouse_stock_quantity: isEmpty ? 0 : totalWarehouseQty,
-            draft_allocated_quantity: isEmpty ? 0 : totalDraftQty,
-            is_draft_allocation: isDraftOnly,
-            active_batch_count: isEmpty ? 0 : batchCount,
-            stored_products: storedItems,
-            primary_classification: primaryClass,
-            primary_classification_label: isEmpty
-              ? (primaryLabel ? `Empty Lot (${primaryLabel})` : 'Empty Lot')
-              : combinedLabel,
-            is_empty: isEmpty,
-          });
+        const storedSummaryOnhand = (branchOnhandData || []).map((balance) => ({
+          ...balance,
+          productType: balance.productTypeId || balance.productTypeName,
+        }));
+        const storedMap = buildLotStoredProductSummaryMap(
+          storedSummaryOnhand,
+          lotsData || [],
+          activeDraftAllocations,
+          branchInvLotsData || []
+        );
+        storedMap.forEach((summary, lotId) => {
+          summary.active_batch_count = summary.is_empty ? 0 : (bCountMap.get(lotId) || 0);
         });
 
         setLotStoredSummaryMap(storedMap);
@@ -910,8 +719,7 @@ export function QAMultiLotBatchAllocationModal({
             if (!preferBad && lotIsBad) return false;
             const stored = storedMap.get(Number(l.lot_id));
             if (!stored || stored.is_empty) return true;
-            if (targetClass.code === 'OTHER') return true;
-            return stored.stored_products.some((p) => p.classification === targetClass.code) || stored.primary_classification === targetClass.code;
+            return findQALotContentConflicts(stored, targetClass.code, productId).length === 0;
           }) || (lotsData || []).find((l) => {
             if (l.status && l.status !== 'ACTIVE') return false;
             if (!isLotMatchingUom(l)) return false;
@@ -1081,8 +889,7 @@ export function QAMultiLotBatchAllocationModal({
           if (!preferBad && lotIsBad) return false;
           const stored = storedMap.get(Number(l.lot_id));
           if (!stored || stored.is_empty) return true;
-          if (targetClass.code === 'OTHER') return true;
-          return stored.stored_products.some((p) => p.classification === targetClass.code) || stored.primary_classification === targetClass.code;
+          return findQALotContentConflicts(stored, targetClass.code, productId).length === 0;
         }) || (lotsData || []).find((l) => {
           if (l.status && l.status !== 'ACTIVE') return false;
           if (!isLotMatchingUom(l)) return false;

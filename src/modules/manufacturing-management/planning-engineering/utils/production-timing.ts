@@ -3,7 +3,16 @@ import { DecimalValue } from "../../decimal";
 export const PRODUCTION_TIMING_POLICY = "PROPORTIONAL_RUN_TIME" as const;
 
 export const PRODUCTION_DECIMAL_SCALE = 4;
+export const DEFAULT_PRODUCTION_SHIFT_HOURS = 6.5;
 const BATCH_BOUNDARY_TOLERANCE = DecimalValue.from("0.001");
+
+export function resolveProductionShiftHours(...values: unknown[]): number {
+    for (const value of values) {
+        const hours = Number(value);
+        if (Number.isFinite(hours) && hours > 0 && hours <= 24) return hours;
+    }
+    return DEFAULT_PRODUCTION_SHIFT_HOURS;
+}
 
 export function requirePositiveProductionNumber(value: unknown, label: string): number {
     const parsed = Number(value);
@@ -138,15 +147,13 @@ export function calculateReleaseMaterialRequirementPlan(
 ): MaterialRequirementPlan {
     const netOutputTarget = Number(netOutputTargetQuantity);
     if (Number.isFinite(netOutputTarget) && netOutputTarget > 0) {
-        const roundedNetOutputTarget = Math.round(netOutputTarget);
-        if (roundedNetOutputTarget > 0) {
-            return calculateMaterialRequirementPlan(
-                roundedNetOutputTarget,
-                roundedNetOutputTarget,
-                quantityPerFinishedUnit,
-                0
-            );
-        }
+        const normalizedNetOutputTarget = roundProductionValue(netOutputTarget);
+        return calculateMaterialRequirementPlan(
+            normalizedNetOutputTarget,
+            normalizedNetOutputTarget,
+            quantityPerFinishedUnit,
+            0
+        );
     }
 
     return calculateMaterialRequirementPlan(
@@ -232,6 +239,71 @@ export function calculateCumulativeRouteWorkloadHours(routes: readonly PlannedRo
     );
 }
 
+export interface BottleneckLeadTimeRoute {
+    stepBatchSize?: number | null;
+    setupTimeHours?: number | null;
+    runTimeHours?: number | null;
+    workCenterCapacityPerHour?: number | null;
+}
+
+export function calculateGrossRouteRate(route: BottleneckLeadTimeRoute): number {
+    const stepBatchSize = Number(route.stepBatchSize);
+    const setupTimeHours = Math.max(0, Number(route.setupTimeHours) || 0);
+    const runTimeHours = Number(route.runTimeHours);
+    const totalStepHours = setupTimeHours + Math.max(0, Number.isFinite(runTimeHours) ? runTimeHours : 0);
+    const configuredRate = Number(route.workCenterCapacityPerHour);
+    const calculatedRate = Number.isFinite(stepBatchSize) && stepBatchSize > 0 && totalStepHours > 0
+        ? stepBatchSize / totalStepHours
+        : 0;
+    const validConfiguredRate = Number.isFinite(configuredRate) && configuredRate > 0
+        ? configuredRate
+        : 0;
+    return calculatedRate > 0 && validConfiguredRate > 0
+        ? Math.min(calculatedRate, validConfiguredRate)
+        : validConfiguredRate || calculatedRate;
+}
+
+/**
+ * Scales the saved recipe's standard batch runtime to the quantity planned for
+ * this Job Order. Recipe base quantity is gross batch output; expected yield
+ * converts that standard batch into its net output before scaling.
+ */
+export function calculateBottleneckLeadTimeHours(input: {
+    targetQuantity?: number;
+    targetNetQuantity?: number;
+    baseGrossQuantity?: number;
+    expectedYieldPercentage?: number | null;
+    routes: readonly BottleneckLeadTimeRoute[];
+    fallbackLeadTimeHours?: number;
+}): number {
+    const target = Number(input.targetQuantity ?? input.targetNetQuantity);
+    const fallback = Math.max(0, Number(input.fallbackLeadTimeHours) || 0);
+    if (!Number.isFinite(target) || target <= 0) return fallback;
+
+    const configuredYieldPercentage = Number(input.expectedYieldPercentage);
+    const yieldFactor = Number.isFinite(configuredYieldPercentage) && configuredYieldPercentage > 0
+        ? Math.min(configuredYieldPercentage, 100) / 100
+        : 1;
+    const grossRates = input.routes
+        .map(calculateGrossRouteRate)
+        .filter((rate) => rate > 0);
+
+    if (grossRates.length === 0) return fallback;
+    const bottleneckGrossRate = Math.min(...grossRates);
+    const configuredBaseGrossQuantity = Number(input.baseGrossQuantity);
+    const baseGrossQuantity = Number.isFinite(configuredBaseGrossQuantity) && configuredBaseGrossQuantity > 0
+        ? configuredBaseGrossQuantity
+        : null;
+    const masterBatchRuntimeHours = baseGrossQuantity !== null
+        ? baseGrossQuantity / bottleneckGrossRate
+        : target / yieldFactor / bottleneckGrossRate;
+    const baseNetOutputQuantity = baseGrossQuantity === null
+        ? target
+        : baseGrossQuantity * yieldFactor;
+    const plannedBatchMultiplier = target / baseNetOutputQuantity;
+    return masterBatchRuntimeHours * plannedBatchMultiplier;
+}
+
 export function calculateAggregateRunHours(
     targetQuantity: number,
     baseQuantity: number,
@@ -303,6 +375,16 @@ export function assertCompatibleUoms(targetUomId?: unknown, baseUomId?: unknown)
 
 export function roundProductionValue(value: number): number {
     return Number(DecimalValue.from(Number.isFinite(value) ? value : 0).toFixed(PRODUCTION_DECIMAL_SCALE));
+}
+
+export function isPieceProductionUom(uom: unknown): boolean {
+    return /^(PC|PCS|PIECE|PIECES)$/i.test(String(uom ?? "").trim());
+}
+
+export function normalizeProductionOutputQuantity(quantity: number, uom: unknown): number {
+    const parsed = Number(quantity);
+    if (!Number.isFinite(parsed) || !isPieceProductionUom(uom)) return parsed;
+    return Number(DecimalValue.from(parsed).round(0).toFixed(0));
 }
 
 export function formatProductionValue(value: number | null | undefined): string {

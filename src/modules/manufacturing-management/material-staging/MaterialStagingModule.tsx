@@ -285,9 +285,9 @@ export default function MaterialStagingModule() {
             </div>
 
             {/* Main Interactive Dual-Panel Area */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
                 {/* Left Panel: Job Orders Queue */}
-                <div className="lg:col-span-5 flex flex-col space-y-3">
+                <div className="lg:col-span-5 flex flex-col space-y-3 lg:min-h-0 lg:rounded-2xl lg:border lg:border-border lg:bg-card lg:p-4">
                     <div className="flex items-center justify-between px-1">
                         <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
                             Active Job Orders ({filteredJobOrders.length})
@@ -298,13 +298,13 @@ export default function MaterialStagingModule() {
                     </div>
 
                     {loading && !hasSuccessfulLoad ? (
-                        <div className="space-y-3">
+                        <div className="space-y-3 lg:flex-1 lg:min-h-0">
                             {[1, 2, 3, 4].map((i) => (
                                 <div key={i} className="h-28 bg-muted/40 rounded-xl animate-pulse border border-border/50" />
                             ))}
                         </div>
                     ) : filteredJobOrders.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center p-8 text-center bg-card rounded-xl border border-dashed border-border text-muted-foreground min-h-[260px]">
+                        <div className="flex flex-col items-center justify-center p-8 text-center bg-card rounded-xl border border-dashed border-border text-muted-foreground min-h-[260px] lg:flex-1">
                             <Boxes className="h-8 w-8 mb-2 opacity-50" />
                             <p className="text-sm font-semibold text-foreground">No matching Job Orders</p>
                             <p className="text-xs text-muted-foreground mt-1">
@@ -312,7 +312,7 @@ export default function MaterialStagingModule() {
                             </p>
                         </div>
                     ) : (
-                        <div className="space-y-3 max-h-[750px] overflow-y-auto pr-1">
+                        <div className="space-y-3 max-h-[750px] overflow-y-auto pr-1 lg:flex-1 lg:min-h-0">
                             {filteredJobOrders.map((jo) => {
                                 const isSelected = selectedJobOrder?.job_order_id === jo.job_order_id;
                                 const cancelled = isCancelledJobOrderStatus(jo.status);
@@ -420,7 +420,7 @@ export default function MaterialStagingModule() {
                 </div>
 
                 {/* Right Panel: Detailed Staging Pick List & Workspace */}
-                <div className="lg:col-span-7">
+                <div className="lg:col-span-7 lg:h-full">
                     <StagingPickList
                         jobOrder={selectedJobOrder}
                         onOpenTransferModal={handleOpenAllocationModal}

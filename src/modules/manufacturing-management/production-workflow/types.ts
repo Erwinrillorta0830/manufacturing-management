@@ -369,7 +369,9 @@ export interface ProductionMaterialReservation {
     uom_id: number | null;
     unit_shortcut: string;
     mm_lot_id: number | null;
+    mm_lot_name?: string | null;
     inventory_lot_id: number | null;
+    inventory_lot_batch_no?: string | null;
     batch_no: string | null;
     reservation_status: string | null;
     allocated_quantity?: number;
@@ -483,6 +485,6 @@ export interface ShiftRunLogPayload {
     materialsConsumed: ShiftRunMaterialConsumption[];
     varianceReason?: string | null;
     approveVariance?: boolean;
-    /** Optional photo captured at the end of the production shift. */
-    evidenceImage?: File | null;
+    /** Required photo captured at the end of the production shift. */
+    evidenceImage: File;
 }
