@@ -520,7 +520,7 @@ export default function FinishedGoodsModule() {
                 lineElapsedHours = stepDur;
             }
 
-            const workCenter = workCenters.find(wc => wc.work_center_id === route.work_center_id);
+            const workCenter = route.work_center ?? workCenters.find(wc => wc.work_center_id === route.work_center_id);
             const routeBreakdown = calculateRouteBreakdown({
                 stepBatchSize: route.step_batch_size || 1,
                 machineHourlyRate: workCenter?.overhead_cost_per_hour || 0,
@@ -554,14 +554,18 @@ export default function FinishedGoodsModule() {
             targetNetQuantity: baseQuantity * (expectedYieldPercentage > 0 ? expectedYieldPercentage : 100) / 100,
             baseGrossQuantity: baseQuantity,
             expectedYieldPercentage,
-            routes: editedRoutes.map((route) => ({
-                stepBatchSize: route.step_batch_size,
-                setupTimeHours: route.setup_time_hours,
-                runTimeHours: route.run_time_hours,
-                workCenterCapacityPerHour: workCenters.find(
-                    (workCenter) => workCenter.work_center_id === route.work_center_id
-                )?.capacity_per_hour
-            })),
+            routes: editedRoutes.map((route) => {
+                const workCenter = route.work_center ?? workCenters.find(
+                    (item) => item.work_center_id === route.work_center_id
+                );
+                return {
+                    stepBatchSize: route.step_batch_size,
+                    setupTimeHours: route.setup_time_hours,
+                    runTimeHours: route.run_time_hours,
+                    workCenterCapacityPerHour: workCenter?.capacity_per_hour,
+                    qaTemplateId: Number(route.qa_template_id || 0) || null
+                };
+            }),
             fallbackLeadTimeHours: lineElapsedHours
         });
 
