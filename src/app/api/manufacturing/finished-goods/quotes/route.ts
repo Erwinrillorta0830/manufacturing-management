@@ -27,12 +27,13 @@ export async function POST(request: Request) {
 
         const invalidSnapshot = snapshots.find((snapshot: Record<string, unknown>) => {
             const productId = Number(snapshot.product_id);
-            const versionId = Number(snapshot.version_id);
+            const hasVersion = snapshot.version_id !== null && snapshot.version_id !== undefined && snapshot.version_id !== "";
+            const versionId = hasVersion ? Number(snapshot.version_id) : null;
             const quantity = Number(snapshot.quantity);
             const unitCost = Number(snapshot.frozen_unit_cost_php);
             const totalCost = Number(snapshot.frozen_total_cost_php);
             return !Number.isInteger(productId) || productId <= 0
-                || !Number.isInteger(versionId) || versionId <= 0
+                || (hasVersion && (!Number.isInteger(versionId) || (versionId as number) <= 0))
                 || !Number.isFinite(quantity) || quantity < 0
                 || !Number.isFinite(unitCost) || unitCost < 0
                 || !Number.isFinite(totalCost) || totalCost < 0

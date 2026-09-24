@@ -98,7 +98,8 @@ export async function saveQuotation(
         parent_product_name?: string | null;
         product_type_id?: number | null;
         product_type_name?: string | null;
-        version_id: number;
+        version_id?: number | null;
+        version_name?: string | null;
         node_name: string;
         node_type: string;
         quantity: number;

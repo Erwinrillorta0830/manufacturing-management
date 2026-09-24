@@ -85,6 +85,7 @@ async function resolveCustomerProductVersions(customerId: number, productIds: nu
         versionsByProduct.set(productId, productVersions);
     }
 
+    const validVersionIds = new Set<number>(versions.map((v: any) => Number(v.version_id)).filter((id: number) => Number.isSafeInteger(id) && id > 0));
     const resolved = new Map<number, number>();
     for (const productId of uniqueProductIds) {
         const overrideId = overrideByProduct.get(productId);
@@ -93,7 +94,7 @@ async function resolveCustomerProductVersions(customerId: number, productIds: nu
         const version = overrideVersion || preferredVersion;
         if (version) resolved.set(productId, Number(version.version_id));
     }
-    return resolved;
+    return { resolved, validVersionIds };
 }
 
 interface AuthenticatedUser {
@@ -461,7 +462,7 @@ export async function GET(request: Request) {
                     sort: "customer_name"
                 })),
                 read("products", new URLSearchParams({
-                    fields: "product_id,product_name,product_code,product_type,product_type.id,price_per_unit,cost_per_unit,parent_id,parent_id.product_id,unit_of_measurement.unit_id,unit_of_measurement.unit_name,unit_of_measurement.unit_shortcut,unit_of_measurement_count",
+                    fields: "product_id,product_name,product_code,product_type,product_type.id,price_per_unit,cost_per_unit,parent_id,parent_id.product_id,unit_of_measurement.unit_id,unit_of_measurement.unit_name,unit_of_measurement.unit_shortcut,unit_of_measurement_count,has_bom",
                     limit: "-1",
                     sort: "product_name",
                     "filter[isActive][_eq]": "1"
@@ -593,7 +594,10 @@ export async function GET(request: Request) {
                     unit_count: Number(product.unit_of_measurement_count) || 1,
                     manufacturing_lead_days: Number(product.manufacturing_lead_days) || 0,
                     has_active_version: hasVer,
-                    has_active_uom_version: activeVersionProductIds.has(productId) || (Boolean(unit?.unit_id) && (activeVersionProductUomPairs.has(`${productId}_${unit.unit_id}`) || activeVersionProductUomPairs.has(`${effectiveParentId}_${unit.unit_id}`)))
+                    has_active_uom_version: activeVersionProductIds.has(productId) || (Boolean(unit?.unit_id) && (activeVersionProductUomPairs.has(`${productId}_${unit.unit_id}`) || activeVersionProductUomPairs.has(`${effectiveParentId}_${unit.unit_id}`))),
+                    has_bom: product.has_bom === undefined || product.has_bom === null
+                        ? true
+                        : Boolean(product.has_bom === 1 || product.has_bom === true || String(product.has_bom) === "1")
                 };
             });
 
@@ -847,7 +851,7 @@ export async function POST(request: Request) {
             const productIds = directItems.map((item) => item.product_id);
             const productParams = new URLSearchParams({
                 "filter[product_id][_in]": productIds.join(","),
-                fields: "product_id,product_name,product_type",
+                fields: "product_id,product_name,product_type,has_bom",
                 limit: "-1"
             });
             const productRes = await fetch(`${DIRECTUS_URL}/items/products?${productParams.toString()}`, {
@@ -868,7 +872,7 @@ export async function POST(request: Request) {
 
             // Resolve an explicit customer override, then Standard BOM Version 1, then a legacy active version.
             const actualCustomerId = Number(cust.id);
-            const versionMap = await resolveCustomerProductVersions(actualCustomerId, productIds);
+            const { resolved: versionMap, validVersionIds } = await resolveCustomerProductVersions(actualCustomerId, productIds);
 
             const missingVersionProductNames: string[] = [];
             for (const productId of productIds) {
@@ -876,7 +880,8 @@ export async function POST(request: Request) {
                 const rawPt = p?.product_type;
                 const ptId = typeof rawPt === "object" && rawPt !== null ? Number(rawPt.id) : Number(rawPt);
                 const isFinishedGood = ptId === 388 || String(rawPt?.name || "").toLowerCase().includes("finished");
-                if (isFinishedGood && !versionMap.has(productId)) {
+                const requiresBom = p?.has_bom !== false && p?.has_bom !== 0 && String(p?.has_bom) !== "0";
+                if (isFinishedGood && requiresBom && !versionMap.has(productId)) {
                     missingVersionProductNames.push(p ? p.product_name : `Product #${productId}`);
                 }
             }
@@ -939,20 +944,26 @@ export async function POST(request: Request) {
                 currency: "PHP",
                 exchange_rate: 1
             };
-            const detailPayloads = directItems.map((item) => ({
-                product_id: item.product_id,
-                bom_version_id: item.bom_version_id || versionMap.get(item.product_id) || null,
-                unit_price: item.unit_price,
-                ordered_quantity: item.quantity,
-                allocated_quantity: 0,
-                served_quantity: 0,
-                allocated_amount: 0,
-                net_amount: (item.unit_price * item.quantity) - (item.discount_amount || 0),
-                gross_amount: item.unit_price * item.quantity,
-                discount_type: item.discount_type || null,
-                discount_amount: item.discount_amount || 0,
-                created_date: localCreatedDate
-            }));
+            const detailPayloads = directItems.map((item) => {
+                const requestedVerId = item.bom_version_id ? Number(item.bom_version_id) : null;
+                const safeVerId = (requestedVerId && validVersionIds.has(requestedVerId))
+                    ? requestedVerId
+                    : (versionMap.get(item.product_id) || null);
+                return {
+                    product_id: item.product_id,
+                    bom_version_id: safeVerId,
+                    unit_price: item.unit_price,
+                    ordered_quantity: item.quantity,
+                    allocated_quantity: 0,
+                    served_quantity: 0,
+                    allocated_amount: 0,
+                    net_amount: (item.unit_price * item.quantity) - (item.discount_amount || 0),
+                    gross_amount: item.unit_price * item.quantity,
+                    discount_type: item.discount_type || null,
+                    discount_amount: item.discount_amount || 0,
+                    created_date: localCreatedDate
+                };
+            });
             const created = await createSalesOrderWithDetails(salesOrderPayload, detailPayloads);
 
             return NextResponse.json({ success: true, order_id: created.orderId, order_no: orderNo });
@@ -1020,20 +1031,21 @@ export async function POST(request: Request) {
         // Resolve an explicit customer override, then Standard BOM Version 1, then a legacy active version.
         const quoteProductParams = new URLSearchParams({
             "filter[product_id][_in]": quoteParentIds.join(","),
-            fields: "product_id,product_name,product_type",
+            fields: "product_id,product_name,product_type,has_bom",
             limit: "-1"
         });
         const quoteProductRes = await fetch(`${DIRECTUS_URL}/items/products?${quoteProductParams.toString()}`, { headers, cache: "no-store" });
         const quoteProductsData = quoteProductRes.ok ? (await quoteProductRes.json()).data || [] : [];
         const quoteProductMap = new Map<number, any>(quoteProductsData.map((p: any) => [Number(p.product_id), p]));
 
-        const quoteVersionMap = await resolveCustomerProductVersions(actualQuoteCustomerId, quoteParentIds);
+        const { resolved: quoteVersionMap, validVersionIds: quoteValidVersionIds } = await resolveCustomerProductVersions(actualQuoteCustomerId, quoteParentIds);
 
         const missingQuoteVersionProductNames: string[] = [];
         for (const parentId of quoteParentIds) {
             const p = quoteProductMap.get(parentId);
             const isFinishedGood = p && (Number(p.product_type) === 388 || String(p.product_type?.name || "").toLowerCase().includes("finished"));
-            if (isFinishedGood && !quoteVersionMap.has(parentId)) {
+            const requiresBom = p?.has_bom !== false && p?.has_bom !== 0 && String(p?.has_bom) !== "0";
+            if (isFinishedGood && requiresBom && !quoteVersionMap.has(parentId)) {
                 missingQuoteVersionProductNames.push(p ? p.product_name : `Product #${parentId}`);
             }
         }
@@ -1086,9 +1098,11 @@ export async function POST(request: Request) {
             const productId = Number(item.product_id);
             const parentId = Number(item.parent_product_id || item.parent_id || item.product_id);
             const itemDiscount = Number(item.discount_amount || 0);
+            const requestedVerId = item.bom_version_id ? Number(item.bom_version_id) : (quoteVersionMap.get(parentId) || null);
+            const safeVerId = (requestedVerId && quoteValidVersionIds.has(requestedVerId)) ? requestedVerId : (quoteVersionMap.get(parentId) || null);
             return {
                 product_id: productId,
-                bom_version_id: item.bom_version_id || quoteVersionMap.get(parentId) || null,
+                bom_version_id: safeVerId,
                 unit_price: unitPrice,
                 ordered_quantity: quantity,
                 allocated_quantity: 0,

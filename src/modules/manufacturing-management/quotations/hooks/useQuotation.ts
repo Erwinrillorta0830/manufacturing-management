@@ -134,7 +134,10 @@ export function useQuotation() {
             fetch("/api/manufacturing/finished-goods/products?limit=-1&isActive=1").then(r => r.ok ? r.json() : []),
             fetch("/api/manufacturing/sales-order?action=create-lookups").then(r => r.ok ? r.json() : {})
         ]).then(([productsData, lookupsData]: [Record<string, unknown>[], Record<string, unknown>]) => {
-            const fgOnly = productsData.filter((p: Record<string, unknown>) => p.has_versions === true);
+            const fgOnly = productsData.filter((p: Record<string, unknown>) => {
+                const requiresBom = p.has_bom !== false && p.has_bom !== 0 && p.has_bom !== "0";
+                return requiresBom ? p.has_versions === true : true;
+            });
             setCatalogProducts(fgOnly as unknown as CatalogProduct[]);
             
             if (lookupsData.products) setAllProducts(lookupsData.products as unknown as CatalogProduct[]);
@@ -701,14 +704,17 @@ export function useQuotation() {
                     if (tMatch) pType = String(tMatch.name);
                 }
 
+                const isNonBomProduct = item.product?.has_bom === false || item.product?.has_bom === 0 || (item.product as Record<string, unknown>)?.has_bom === "0";
+                const defaultVersionName = isNonBomProduct ? "Standard / Non-BOM" : "v1.0";
+
                 return {
                     product_id: item.product.product_id,
                     parent_id: item.parent_product_id || null,
                     parent_product_name: pName || null,
                     product_type_id: item.product_type_id || null,
                     product_type_name: pType || "Finished Goods",
-                    version_id: item.versionId || 1, // Store the selected version ID
-                    version_name: item.versionName || "v1.0",
+                    version_id: item.versionId || null, // Store selected version ID or null if none/non-BOM
+                    version_name: item.versionName || defaultVersionName,
                     node_name: item.product.product_name,
                     node_type: "product_quota",
                     quantity: 1,

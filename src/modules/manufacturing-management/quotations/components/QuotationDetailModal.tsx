@@ -111,13 +111,15 @@ export function QuotationDetailModal({
                     : selectedQuote.customer_id,
                 quoteId: selectedQuote.id,
                 quoteNumber: selectedQuote.quote_number,
+                remarks: selectedQuote.remarks || "",
                 snapshots: snapshots.map(s => ({
                     productId: s.product_id,
-                    parentId: s.parent_id,
+                    parentId: s.parent_id || s.product_id,
                     productTypeId: s.product_type_id,
                     versionId: s.version_id,
+                    versionName: s.version_name,
                     productName: s.node_name,
-                    quantity: s.quantity,
+                    quantity: s.quantity || 1,
                     uom: s.uom,
                     frozenBaseCost: s.frozen_unit_cost_php,
                     agreedTargetPrice: s.frozen_total_cost_php

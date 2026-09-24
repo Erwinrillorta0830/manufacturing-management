@@ -81,3 +81,21 @@ export interface QuotationHeader {
     remarks: string;
 }
 
+export interface ProductLookupItem {
+    product_id: number;
+    parent_product_id: number;
+    is_parent: boolean;
+    product_name: string;
+    product_code: string;
+    product_type: number | string | { id: number; name: string };
+    price_per_unit?: number;
+    cost_per_unit?: number;
+    unit_id?: number | null;
+    unit_name?: string;
+    unit_shortcut?: string;
+    unit_count?: number;
+    manufacturing_lead_days?: number;
+    has_active_version?: boolean;
+    has_active_uom_version?: boolean;
+    has_bom?: boolean;
+}
