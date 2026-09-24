@@ -150,7 +150,7 @@ const selectedTask = useMemo(() => {
     return sortedTasks.find((t) => t.id === selectedTaskId) || null;
 }, [sortedTasks, selectedTaskId]);
 
-// Deep link support: /mm/production-workflow?id=... or ?jo=JO-XXXX selects the Job Order.
+// Deep link support: /mm/shop-floor-execution-terminal?id=... or ?jo=JO-XXXX selects the Job Order.
     useEffect(() => {
         const idParam = searchParams.get("id");
         const joParam = searchParams.get("jo");

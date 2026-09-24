@@ -666,7 +666,8 @@ export function usePlanningEngineering() {
     const handleConfirmRelease = async (
         selectedSubAssemblyVersions?: Record<number, number>,
         groupConfigurations?: Record<string, { subAssemblyVersions: Record<number, number>; assignments: Record<number, number[]> }>,
-        initialize = false
+        initialize = false,
+        materialTargetQuantity?: number
     ) => {
         const branchId = parseValidBranchId(selectedBranchId);
         if (branchId === null) {
@@ -746,6 +747,7 @@ export function usePlanningEngineering() {
                             product_name: targetProductName,
                             quantity: targetQuantity,
                             requested_quantity: targetQuantity,
+                            material_target_quantity: materialTargetQuantity,
                             bom: { version_id: firstLine.bom_version_id }
                         }]
                     },

@@ -521,7 +521,7 @@ export function WipDetailModal({
                         asChild
                         className="text-xs gap-1.5"
                     >
-                        <Link href={`/mm/production-workflow?id=${encodeURIComponent(job.job_order_id)}&jo=${encodeURIComponent(job.job_order_no)}`}>
+                        <Link href={`/mm/shop-floor-execution-terminal?id=${encodeURIComponent(job.job_order_id)}&jo=${encodeURIComponent(job.job_order_no)}`}>
                             <ExternalLink className="h-3.5 w-3.5" />
                             <span>Open Shop Floor Execution</span>
                         </Link>

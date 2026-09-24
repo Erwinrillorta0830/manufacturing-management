@@ -119,8 +119,7 @@ export function calculateProductionMetrics(input: ProductionMetricsInput): Produ
             input.targetSellingPrice,
             input.laborPositions || [],
             input.overheadItems || [],
-            input.materialCostPerUnit,
-            targetQuantity
+            input.materialCostPerUnit
         )
     };
 }

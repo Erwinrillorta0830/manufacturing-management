@@ -35,6 +35,7 @@ import {
     getKilogramsPerInventoryUnit,
     parseContainerizationProfile
 } from "@/modules/manufacturing-management/planning-engineering/utils/containerization-helper";
+import { aggregateWizardMaterialComponents } from "@/modules/manufacturing-management/planning-engineering/utils/material-summary";
 
 const WIZARD_STEP_TIMEOUT_MS = 20000;
 
@@ -1533,12 +1534,12 @@ export async function handleGET(request: Request) {
             if (allProductIds.length > 0) {
                 const productFilter = `filter[product_id][_in]=${allProductIds.join(",")}&limit=-1`;
                 let prodRes = await fetch(
-                    `${DIRECTUS_URL}/items/products?${productFilter}&fields=product_id,product_name,product_code,cost_per_unit,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type,net_weight,weight,weight_unit_id.*`,
+                    `${DIRECTUS_URL}/items/products?${productFilter}&fields=product_id,product_name,product_code,cost_per_unit,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type,net_weight,weight,weight_unit_id.*`,
                     { headers }
                 );
                 if (!prodRes.ok) {
                     prodRes = await fetch(
-                        `${DIRECTUS_URL}/items/products?${productFilter}&fields=product_id,product_name,product_code,cost_per_unit,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type`,
+                        `${DIRECTUS_URL}/items/products?${productFilter}&fields=product_id,product_name,product_code,cost_per_unit,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type`,
                         { headers }
                     );
                 }
@@ -1560,23 +1561,18 @@ export async function handleGET(request: Request) {
             };
 
             // Build parent components array
-            const components = parentBomItems.map(item => {
+            const wizardMaterialComponents = parentBomItems.map(item => {
                 const pId = extractProductId(item.product_id);
                 const pDetails = productsMap.get(pId);
                 const unitCost = Number(item.cost_per_unit ?? item.landed_cost ?? pDetails?.cost_per_unit ?? 0);
                 const quantityRequired = Number(item.quantity_required || 0);
                 const wastagePercentage = Number(item.wastage_factor_percentage || 0);
-                const requirement = requestedPreviewQuantity !== null && plannedPreviewQuantity !== null
-                    ? calculateMaterialRequirementPlan(
-                        requestedPreviewQuantity,
-                        plannedPreviewQuantity,
-                        quantityRequired,
-                        wastagePercentage
-                    )
-                    : null;
+                const unitOfMeasurement = pDetails?.unit_of_measurement?.unit_name || pDetails?.unit_of_measurement?.unit_shortcut || "pcs";
+                const lineUomId = readUomId(item.uom_id ?? item.unit_of_measurement);
                 return {
                     component_id: item.id,
                     bom_id: version.version_id,
+                    uom_id: lineUomId ?? pDetails?.unit_of_measurement?.unit_id ?? unitOfMeasurement,
                     component_product_id: {
                         product_id: pId,
                         product_name: pDetails?.product_name || `Product #${pId}`,
@@ -1590,14 +1586,29 @@ export async function handleGET(request: Request) {
                     quantity_required: quantityRequired,
                     wastage_factor_percentage: wastagePercentage,
                     quantity_basis: "PER_FINISHED_UNIT",
+                    unit_of_measurement: unitOfMeasurement
+                };
+            });
+            const componentSummaries = aggregateWizardMaterialComponents(wizardMaterialComponents);
+
+            const components = componentSummaries.map((component: any) => {
+                const requirement = requestedPreviewQuantity !== null && plannedPreviewQuantity !== null
+                    ? calculateMaterialRequirementPlan(
+                        requestedPreviewQuantity,
+                        plannedPreviewQuantity,
+                        Number(component.quantity_required || 0),
+                        Number(component.wastage_factor_percentage || 0)
+                    )
+                    : null;
+                return {
+                    ...component,
                     demand_required: requirement?.demandRequired ?? null,
-                    planned_required: requirement?.plannedRequired ?? null,
-                    unit_of_measurement: pDetails?.unit_of_measurement?.unit_name || pDetails?.unit_of_measurement?.unit_shortcut || "pcs"
+                    planned_required: requirement?.plannedRequired ?? null
                 };
             });
 
             const materialCostPerUnit = roundManufacturingUnitCost(calculateRecipeMaterialCostPerUnit(
-                components.map((component: any) => ({
+                wizardMaterialComponents.map((component: any) => ({
                     quantity_required: Number(component.quantity_required || 0),
                     wastage_factor_percentage: Number(component.wastage_factor_percentage || 0),
                     cost_per_unit: Number(component.cost_per_unit || 0)

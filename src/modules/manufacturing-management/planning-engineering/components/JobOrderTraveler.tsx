@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import Barcode from "react-barcode";
 import { QRCodeSVG } from "qrcode.react";
@@ -22,7 +22,8 @@ import {
     JobOrderAllocation 
 } from "../types";
 import { displayJobOrderStatus } from "../../job-order-status";
-import { buildTravelerSheetHtml } from "../utils/traveler-sheet-print";
+import { buildTravelerSheetHtml, formatTravelerOperators, resolveTravelerOperationName } from "../utils/traveler-sheet-print";
+import type { OperatorNameMap } from "../utils/traveler-sheet-print";
 
 export interface JobOrderTravelerProps {
     isOpen?: boolean;
@@ -49,6 +50,30 @@ export function JobOrderTraveler({
     childJobOrders = [],
     branchName = "Main Manufacturing Facility"
 }: JobOrderTravelerProps) {
+    // Operator directory for the Operator column (same source as planning assignment).
+    const [operatorNames, setOperatorNames] = useState<OperatorNameMap>({});
+    useEffect(() => {
+        if (!isOpen || !jobOrder) return;
+        let active = true;
+        fetch("/api/manufacturing/planning-engineering?action=users")
+            .then((response) => (response.ok ? response.json() : []))
+            .then((data) => {
+                if (!active || !Array.isArray(data)) return;
+                const directory: OperatorNameMap = {};
+                for (const user of data) {
+                    const id = Number(user?.user_id ?? user?.id);
+                    if (!Number.isInteger(id) || id <= 0) continue;
+                    const fullName = `${user?.user_fname || user?.first_name || ""} ${user?.user_lname || user?.last_name || ""}`.trim();
+                    directory[id] = fullName || `Operator #${id}`;
+                }
+                setOperatorNames(directory);
+            })
+            .catch(() => undefined);
+        return () => {
+            active = false;
+        };
+    }, [isOpen, jobOrder]);
+
     if (!isOpen || !jobOrder) return null;
 
     const handlePrint = async () => {
@@ -71,6 +96,7 @@ export function JobOrderTraveler({
                     })),
                 ],
                 branchName,
+                operatorNames,
             });
             printWin.document.write(html);
             printWin.document.close();
@@ -293,7 +319,6 @@ export function JobOrderTraveler({
                                 <th className="border border-neutral-300 p-1.5 text-left w-28">Work Center</th>
                                 <th className="border border-neutral-300 p-1.5 text-right w-16">Plan Setup</th>
                                 <th className="border border-neutral-300 p-1.5 text-right w-16">Plan Run</th>
-                                <th className="border border-neutral-300 p-1.5 text-center w-20">Step Barcode</th>
                                 <th className="border border-neutral-300 p-1.5 text-center w-16">Operator</th>
                                 <th className="border border-neutral-300 p-1.5 text-center w-16">Start Time</th>
                                 <th className="border border-neutral-300 p-1.5 text-center w-16">End Time</th>
@@ -305,18 +330,17 @@ export function JobOrderTraveler({
                         <tbody>
                             {currentOps.length === 0 ? (
                                 <tr>
-                                    <td colSpan={12} className="border border-neutral-300 p-3 text-center text-neutral-400 italic">
+                                    <td colSpan={11} className="border border-neutral-300 p-3 text-center text-neutral-400 italic">
                                         Standard single-step manufacturing execution flow.
                                     </td>
                                 </tr>
                             ) : (
                                 currentOps.map((op: JobOrderOperation, idx: number) => {
                                     const seq = op.sequence_order || (idx + 1) * 10;
-                                    const opName = op.operation_name || `Operation #${op.operation_id || op.id || idx + 1}`;
+                                    const opName = resolveTravelerOperationName(op, idx);
                                     const wcName = op.work_center_name || `Work Center #${op.work_center_id || 1}`;
                                     const setupHrs = Number(op.planned_setup_hours || 0);
                                     const runHrs = Number(op.planned_run_hours || 0);
-                                    const stepCode = `OP-${seq}-${op.operation_id || op.id || idx + 1}`;
 
                                     return (
                                         <tr key={`op-row-${idx}`} className="hover:bg-neutral-50">
@@ -325,7 +349,6 @@ export function JobOrderTraveler({
                                             </td>
                                             <td className="border border-neutral-300 p-1.5">
                                                 <div className="font-bold text-neutral-900">{opName}</div>
-                                                <div className="font-mono text-[9px] text-neutral-500">{stepCode}</div>
                                             </td>
                                             <td className="border border-neutral-300 p-1.5 text-neutral-800 font-medium">
                                                 {wcName}
@@ -336,20 +359,8 @@ export function JobOrderTraveler({
                                             <td className="border border-neutral-300 p-1.5 text-right font-mono font-bold text-neutral-900">
                                                 {runHrs.toFixed(1)}h
                                             </td>
-                                            <td className="border border-neutral-300 p-1 text-center">
-                                                <div className="inline-block p-0.5 bg-white">
-                                                    <Barcode 
-                                                        value={stepCode} 
-                                                        height={18} 
-                                                        width={0.8} 
-                                                        fontSize={8} 
-                                                        margin={0} 
-                                                        displayValue={false} 
-                                                    />
-                                                </div>
-                                            </td>
-                                            <td className="border border-neutral-300 p-1.5 text-center font-mono text-[9px] text-neutral-400">
-                                                _______
+                                            <td className="border border-neutral-300 p-1.5 text-center text-[10px] text-neutral-800">
+                                                {formatTravelerOperators(op, operatorNames)}
                                             </td>
                                             <td className="border border-neutral-300 p-1.5 text-center font-mono text-[9px] text-neutral-400">
                                                 ___:___
