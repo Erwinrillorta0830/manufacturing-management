@@ -1,6 +1,6 @@
 export type WarehouseReceiptType = "full" | "partial";
 
-export type WarehouseReceivingStatus = "Approved" | "Partially Received" | "Warehouse Receiving" | "Receiving (QA)" | "Received";
+export type WarehouseReceivingStatus = "Approved" | "Partially Received" | "Warehouse Receiving" | "QA Receiving" | "Received";
 
 export interface WarehouseReceivingSupplierOption {
     id: number;

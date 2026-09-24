@@ -32,6 +32,7 @@ import { AddReservedMaterialDialog, type TopUpTarget } from "./AddReservedMateri
 import { toast } from "sonner";
 import { calculatePipelinedLineDurationHours } from "../../planning-engineering/utils/production-timing";
 import { formatProductionQuantity, resolveJobOrderTargetQuantity } from "../utils/production-quantity";
+import { hasCompletedTimer } from "../operator-time";
 
 interface JobOrderShiftLogModalProps {
     open: boolean;
@@ -70,6 +71,7 @@ export function JobOrderShiftLogModal({
     const [materialsLoadError, setMaterialsLoadError] = useState<string | null>(null);
     const [loadingShiftMaterials, setLoadingShiftMaterials] = useState(false);
     const [submittingShiftLog, setSubmittingShiftLog] = useState(false);
+    const [isConfirmationOpen, setIsConfirmationOpen] = useState(false);
     const [insufficiencyError, setInsufficiencyError] = useState<string | null>(null);
     const [isInsufficiencyOpen, setIsInsufficiencyOpen] = useState(false);
     const [topUpTarget, setTopUpTarget] = useState<TopUpTarget | null>(null);
@@ -108,6 +110,9 @@ export function JobOrderShiftLogModal({
 
     const activeOperator = allJobOperators.find((operator) => operator.started_at !== null && operator.stopped_at === null);
     const operatorLabel = activeOperator ? getUserLabel(activeOperator.user_id) : "Authenticated operator";
+    const hasCompletedJobOrderTimer = allJobOperators.some((operator) =>
+        !operator.is_placeholder && hasCompletedTimer(operator.started_at, operator.stopped_at)
+    );
 
     useEffect(() => {
         if (!evidenceImage) {
@@ -321,11 +326,16 @@ export function JobOrderShiftLogModal({
         + (Number(rejectedQty) || 0)
         + (Number(scrapQty) || 0);
 
-    const handleShiftLogSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
+    const validateShiftLog = () => {
+        if (submittingShiftLog) return false;
+        if (!hasCompletedJobOrderTimer) {
+            toast.error("Start and stop at least one operator timer before recording the production session.");
+            return false;
+        }
+
         if (!evidenceImage || evidenceImageError) {
             toast.error("A valid shift evidence image is required.");
-            return;
+            return false;
         }
 
         const newYield = Number(shiftYieldQty) || 0;
@@ -333,25 +343,73 @@ export function JobOrderShiftLogModal({
         const newScrap = Number(scrapQty) || 0;
         if (newYield + newRejected + newScrap <= 0) {
             toast.error("Record at least one good, rejected, or scrap unit.");
-            return;
+            return false;
         }
 
         if (!productionDate) {
             toast.error("Please select a production date.");
-            return;
+            return false;
         }
 
+        if (!sessionKey || !shiftName.trim()) {
+            toast.error("Select a shift before recording the production session.");
+            return false;
+        }
+
+        if (loadingShiftMaterials) {
+            toast.error("Wait for the WIP reservation details to finish loading.");
+            return false;
+        }
+        if (materialsLoadError) {
+            toast.error(materialsLoadError);
+            return false;
+        }
+        if (hasInsufficiency) {
+            setIsInsufficiencyOpen(true);
+            return false;
+        }
         if (shiftMaterials.some((material) => !material.reservation_id)) {
             toast.error("Every required material must have an exact WIP reservation before recording production.");
-            return;
+            return false;
+        }
+        if (hasIncompleteMaterialLine) {
+            toast.error("Complete the lot, batch, and unit details for every WIP reservation before recording production.");
+            return false;
         }
         const consumedByMaterial = new Map<number, number>();
         shiftMaterials.forEach((material) => {
             const materialId = Number(material.jo_material_id || 0);
             consumedByMaterial.set(materialId, (consumedByMaterial.get(materialId) || 0) + Number(material.actual_qty || 0));
         });
-        if (shiftMaterials.some((material) => (consumedByMaterial.get(Number(material.jo_material_id || 0)) || 0) <= 0)) {
+        if (hasMissingMaterialConsumption || shiftMaterials.some((material) => (consumedByMaterial.get(Number(material.jo_material_id || 0)) || 0) <= 0)) {
             toast.error("Enter an actual consumed quantity against at least one exact WIP reservation for every material.");
+            return false;
+        }
+        if (missingVarianceApproval) {
+            toast.error("Provide a variance reason and confirm the material variance before recording production.");
+            return false;
+        }
+
+        return true;
+    };
+
+    const handleShiftLogSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (validateShiftLog()) setIsConfirmationOpen(true);
+    };
+
+    const handleConfirmShiftLog = async () => {
+        if (!validateShiftLog()) {
+            setIsConfirmationOpen(false);
+            return;
+        }
+
+        const newYield = Number(shiftYieldQty) || 0;
+        const newRejected = Number(rejectedQty) || 0;
+        const newScrap = Number(scrapQty) || 0;
+        const evidenceImageToSubmit = evidenceImage;
+        if (!evidenceImageToSubmit || evidenceImageError) {
+            setIsConfirmationOpen(false);
             return;
         }
 
@@ -376,7 +434,7 @@ export function JobOrderShiftLogModal({
                 approveVariance,
                 qaParameters: [],
                 remarks: remarks || undefined,
-                evidenceImage,
+                evidenceImage: evidenceImageToSubmit,
                 materialsConsumed: shiftMaterials.map((m) => ({
                     joMaterialId: Number(m.jo_material_id),
                     reservationId: Number(m.reservation_id),
@@ -400,10 +458,12 @@ export function JobOrderShiftLogModal({
                 } else {
                     toast.success(`Shift closed for ${fullShiftName} across ${sortedTasks.length || "all"} routing steps; staging materials backflushed.`);
                 }
+                setIsConfirmationOpen(false);
                 onOpenChange(false);
                 if (onSuccess) onSuccess();
             } else {
                 if (res.isShortfall && res.error) {
+                    setIsConfirmationOpen(false);
                     setInsufficiencyError(res.error);
                     setIsInsufficiencyOpen(true);
                 } else {
@@ -578,6 +638,7 @@ export function JobOrderShiftLogModal({
         || !evidenceImage
         || Boolean(evidenceImageError)
         || !hasOutput
+        || !hasCompletedJobOrderTimer
         || !sessionKey
         || !productionDate
         || !shiftName.trim();
@@ -1143,7 +1204,7 @@ export function JobOrderShiftLogModal({
                                 disabled={isSubmitDisabled}
                                 className="bg-primary hover:bg-primary/95 text-white font-bold h-10 text-xs px-6 shadow-md shadow-primary/10 hover:shadow-primary/20 transition-all duration-200 disabled:opacity-50 w-full sm:w-auto order-1 sm:order-2"
                             >
-                                {submittingShiftLog ? "Recording Session..." : "Record Production Session"}
+                                Review & Record
                             </Button>
                             <div className="grid grid-cols-2 gap-2 w-full sm:w-auto order-2 sm:order-1">
                                 <Button
@@ -1166,6 +1227,63 @@ export function JobOrderShiftLogModal({
                             </div>
                         </DialogFooter>
                     </form>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog
+                open={isConfirmationOpen}
+                onOpenChange={(nextOpen) => {
+                    if (!submittingShiftLog) setIsConfirmationOpen(nextOpen);
+                }}
+            >
+                <DialogContent className="sm:max-w-[480px] bg-background border border-border shadow-2xl rounded-2xl">
+                    <DialogHeader>
+                        <DialogTitle>Confirm End-of-Shift Progress</DialogTitle>
+                        <DialogDescription>
+                            Review the production details for Job Order #{selectedJobOrder?.order_no || selectedJobOrder?.jo_id}. Saving records the output, material consumption, and shift evidence.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="grid grid-cols-2 gap-3 rounded-lg border bg-muted/20 p-4 text-sm">
+                        <div>
+                            <p className="text-xs text-muted-foreground">Shift</p>
+                            <p className="font-medium">Day {productionDay} - {shiftName}</p>
+                        </div>
+                        <div>
+                            <p className="text-xs text-muted-foreground">Production Date</p>
+                            <p className="font-medium">{productionDate}</p>
+                        </div>
+                        <div>
+                            <p className="text-xs text-muted-foreground">Good Output</p>
+                            <p className="font-semibold">{formatProductionQuantity(Number(shiftYieldQty) || 0)}</p>
+                        </div>
+                        <div>
+                            <p className="text-xs text-muted-foreground">Rejected Units</p>
+                            <p className="font-semibold">{formatProductionQuantity(Number(rejectedQty) || 0)}</p>
+                        </div>
+                        <div>
+                            <p className="text-xs text-muted-foreground">Scrap Units</p>
+                            <p className="font-semibold">{formatProductionQuantity(Number(scrapQty) || 0)}</p>
+                        </div>
+                    </div>
+
+                    <DialogFooter>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            disabled={submittingShiftLog}
+                            onClick={() => setIsConfirmationOpen(false)}
+                        >
+                            Back to Edit
+                        </Button>
+                        <Button
+                            type="button"
+                            disabled={submittingShiftLog}
+                            onClick={() => void handleConfirmShiftLog()}
+                        >
+                            {submittingShiftLog ? "Saving Session..." : "Confirm & Save"}
+                        </Button>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
 

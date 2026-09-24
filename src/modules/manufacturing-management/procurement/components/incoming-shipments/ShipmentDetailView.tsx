@@ -341,7 +341,7 @@ export function ShipmentDetailView({
                                         ? [initialWorkflowStatus, "Returned", "Revision"]
                                         : effectiveStatus === "Rejected"
                                         ? [initialWorkflowStatus, "Returned", "Rejected"]
-                                        : [initialWorkflowStatus, "Approved", "Warehouse Receiving", "Receiving (QA)", "Received"]
+                                        : [initialWorkflowStatus, "Approved", "Warehouse Receiving", "QA Receiving", "Received"]
                                     ).map((st, idx, arr) => {
                                         const statuses = arr;
                                         const isInitialWorkflowStatus = effectiveStatus === initialWorkflowStatus
@@ -349,8 +349,8 @@ export function ShipmentDetailView({
                                             || effectiveStatus === "Ordered";
                                         const currentStatus = isInitialWorkflowStatus
                                             ? initialWorkflowStatus
-                                            : effectiveStatus === "For Pickup" || effectiveStatus === "Partially Received"
-                                            ? "Receiving (QA)"
+                                            : effectiveStatus === "For Pickup" || effectiveStatus === "Receiving (QA)" || effectiveStatus === "QA Receiving" || effectiveStatus === "Partially Received"
+                                            ? "QA Receiving"
                                             : effectiveStatus === "Awaiting Payment"
                                             ? (Number(activeShipment.inventory_status) === INVENTORY_STATUS.APPROVED ? "Approved" : initialWorkflowStatus)
                                             : effectiveStatus === "Approved" && statuses.includes("Warehouse Receiving")
