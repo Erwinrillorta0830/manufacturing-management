@@ -32,7 +32,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { SalesInvoice } from "../types";
-import { Loader2, FileText, AlertCircle, Receipt } from "lucide-react";
+import { Loader2, FileText,  Receipt } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
 const formSchema = z.object({

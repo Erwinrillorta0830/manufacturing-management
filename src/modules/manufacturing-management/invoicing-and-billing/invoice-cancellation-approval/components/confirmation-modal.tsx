@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Loader2, AlertTriangle, AlertCircle, ShieldCheck, CheckCircle2 } from "lucide-react";
+import { Loader2, AlertTriangle, AlertCircle, ShieldCheck} from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
