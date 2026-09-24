@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { GitFork, Briefcase, Calculator, Sparkles, XCircle, Clock, CheckCircle2, Star, Send, AlertCircle, Undo2, Archive, Edit3, Loader2 } from "lucide-react";
+import { GitFork, Briefcase, Calculator, XCircle, Clock, CheckCircle2, Star, Send, AlertCircle, Undo2, Archive, Edit3, Loader2 } from "lucide-react";
 import { RoutesBOMTab } from "./RoutesBOMTab";
 import { DirectLaborStandardsTab } from "./DirectLaborStandardsTab";
 import { OverheadManagementTab } from "./OverheadManagementTab";
@@ -236,7 +236,11 @@ export function VersionManagementTab({
                         <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
                         <div className="flex-1 min-w-0">
                             <p className="text-xs font-bold text-amber-700 dark:text-amber-300">
-                                {hasActiveDraft ? "Revision Draft (In Editor)" : "Revision Required (In Editor)"} — <span className="font-extrabold">{selectedVersion.version_name}</span>
+                                {hasActiveDraft
+                                    ? "Revision Draft (In Editor)"
+                                    : (selectedVersion.status === "Revision Required"
+                                        ? "Revision Required (In Editor)"
+                                        : "Draft Version (In Editor)")} — <span className="font-extrabold">{selectedVersion.version_name}</span>
                                 {hasActiveDraft && (
                                     <span className="ml-2 bg-amber-500/20 text-amber-800 dark:text-amber-200 border border-amber-500/30 text-[10px] font-extrabold px-2 py-0.5 rounded uppercase">
                                         Draft #{String(activeDraft?.draft_id ?? "")}
@@ -251,12 +255,14 @@ export function VersionManagementTab({
                             <p className="text-[11px] text-amber-700/90 dark:text-amber-300/90 mt-1">
                                 {hasActiveDraft
                                     ? "You are working on an isolated revision draft. Production job orders continue using the approved baseline until this draft is submitted and approved by QA."
-                                    : "This version is under revision and can be edited. Update the BOM, workstation routings, labor standards, and overheads below. When finished, click \"Submit for Approval\" to resubmit for review."}
+                                    : (selectedVersion.status === "Revision Required"
+                                        ? "This version is under revision and can be edited. Update the BOM, workstation routings, labor standards, and overheads below. When finished, click \"Submit for Approval\" to resubmit for review."
+                                        : "Configure your routing steps, BOM ingredients, direct labor standards, and overheads below. When finished, click \"Submit for Approval\" to save to the database and submit for QA review.")}
                             </p>
                         </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0 self-center">
-                        {onCancelRevision && (
+                        {onCancelRevision && hasActiveDraft && (
                             <button
                                 type="button"
                                 onClick={onCancelRevision}
@@ -271,39 +277,12 @@ export function VersionManagementTab({
                                 type="button"
                                 onClick={() => onSubmitForApproval(selectedVersionId)}
                                 className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 text-xs font-bold transition-all cursor-pointer shadow-2xs"
-                                title="Resubmit for QA Approval"
+                                title="Submit for QA Approval"
                             >
                                 <Send className="h-3.5 w-3.5" /> Submit for Approval
                             </button>
                         )}
                     </div>
-                </div>
-            )}
-
-            {/* 5. In-Memory Draft Info Banner */}
-            {!isVersionLocked && !isRevision && !hasActiveDraft && selectedVersionId !== null && (selectedVersionId < 0 || selectedVersion?.status === "Draft") && (
-                <div className="flex items-center justify-between gap-3 rounded-xl border border-blue-500/30 bg-blue-500/5 px-4 py-3 flex-wrap">
-                    <div className="flex items-center gap-3 min-w-0">
-                        <Sparkles className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0" />
-                        <div className="flex-1 min-w-0">
-                            <p className="text-xs font-bold text-blue-700 dark:text-blue-300">
-                                Draft Version (In Editor) — <span className="font-extrabold">{selectedVersion?.version_name || "New Version"}</span>
-                            </p>
-                            <p className="text-[11px] text-blue-600/80 dark:text-blue-400/80 mt-0.5">
-                                Configure your routing steps, BOM ingredients, direct labor standards, and overheads below. When finished, click <strong>&quot;Submit for Approval&quot;</strong> to save to the database and submit for QA review.
-                            </p>
-                        </div>
-                    </div>
-                    {onSubmitForApproval && (
-                        <button
-                            type="button"
-                            onClick={() => onSubmitForApproval(selectedVersionId)}
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 text-xs font-bold transition-all cursor-pointer shadow-2xs shrink-0"
-                            title="Submit for QA Approval"
-                        >
-                            <Send className="h-3.5 w-3.5" /> Submit for Approval
-                        </button>
-                    )}
                 </div>
             )}
 
