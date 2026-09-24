@@ -11,7 +11,7 @@ import {
     BreadcrumbPage,
     BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import JobOrderProfitabilityReportModule from "@/modules/business-intelligence-and-analytics/costing/job-order-profitability-report/JobOrderProfitabilityReportModule";
+import JobOrderProfitabilityReportModule from "@/modules/business-intelligence-and-analytics/costing/job-and-work-order-profitability-report/JobOrderProfitabilityReportModule";
 
 export const dynamic = "force-dynamic";
 
