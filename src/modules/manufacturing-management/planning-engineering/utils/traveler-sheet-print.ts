@@ -7,6 +7,7 @@ import type {
     JobOrderOperation,
 } from "../types";
 import { displayJobOrderStatus } from "../../job-order-status";
+import { resolveProductionShiftHours } from "./production-timing";
 
 export interface TravelerSheetPrintSheet {
     jobOrder: JobOrder;
@@ -170,7 +171,7 @@ function resolveSheet(sheet: TravelerSheetPrintSheet): ResolvedSheet {
         targetQty,
         uom: currentJo.unit_of_measurement || "PCS",
         batchNo: `LOT-${joNo}`,
-        shiftHours: currentJo.shift_option || "8",
+        shiftHours: String(resolveProductionShiftHours(currentJo.shift_option)),
         status: displayJobOrderStatus(currentJo.status || "Planned"),
         versionName: currentJo.version_name || (currentJo.version_id ? `v${currentJo.version_id}` : "Standard"),
         parentJoNo: currentJo.parent_job_order_id != null

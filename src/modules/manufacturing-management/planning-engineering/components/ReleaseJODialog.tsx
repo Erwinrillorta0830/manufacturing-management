@@ -30,7 +30,7 @@ import {
     getFactoryOverheadBasisLabel
 } from "../utils/cogs-helper";
 import { calculateProductionMetrics } from "../utils/production-metrics";
-import { calculateAggregateRunHours, calculatePerUnitMaterialRequirement, calculateFullBatchTarget, calculateReleaseMaterialRequirementPlan, calculateRequiredBatchCount, formatProductionValue, readUomId } from "../utils/production-timing";
+import { calculateAggregateRunHours, calculatePerUnitMaterialRequirement, calculateFullBatchTarget, calculateReleaseMaterialRequirementPlan, calculateRequiredBatchCount, DEFAULT_PRODUCTION_SHIFT_HOURS, formatProductionValue, readUomId, resolveProductionShiftHours } from "../utils/production-timing";
 import { buildReleaseSummaryHtml, type ReleaseSummaryComponent, type ReleaseSummaryFinancials, type ReleaseSummaryRoutingStep } from "../utils/release-summary-print";
 
 interface ReleaseJODialogProps {
@@ -248,13 +248,11 @@ export function ReleaseJODialog({
                             // Shift option is the available production capacity per day.
                             // Recipe net runtime is calculated separately and must not be
                             // used here because it represents only one recipe batch.
-                            const configuredShiftHours = data.bom.shift_option ?? data.bom.target_shift_hours;
-                            const parsedShiftHours = Number(configuredShiftHours);
-                            setShiftOption(
-                                Number.isFinite(parsedShiftHours) && parsedShiftHours > 0 && parsedShiftHours <= 24
-                                    ? parsedShiftHours.toFixed(1)
-                                    : "8"
-                            );
+                            setShiftOption(resolveProductionShiftHours(
+                                data.bom.shift_option,
+                                data.bom.shift_hours,
+                                data.bom.target_shift_hours
+                            ).toFixed(1));
                         }
                         setHasLoadedDetails(true);
                     }
@@ -361,7 +359,8 @@ export function ReleaseJODialog({
                     step_batch_size: route.step_batch_size == null ? undefined : Number(route.step_batch_size),
                     work_center_overhead_cost_per_hour: Number(
                         route.work_center?.overhead_cost_per_hour ?? route.overhead_cost_per_hour ?? 0
-                    )
+                    ),
+                    work_center_capacity_per_hour: Number(route.work_center?.capacity_per_hour || 0)
                 })),
                 bomItems: components.map((component) => ({
                     quantity_required: Number(component.quantity_required || 0),
@@ -434,7 +433,7 @@ export function ReleaseJODialog({
         }
     });
 
-    const totalEstimatedHours = boxEstimatedHours + subAssemblyEstimatedHours;
+    const totalEstimatedHours = boxEstimatedHours;
 
     // Initialize default print selections using the same material basis as the checklist.
     useEffect(() => {
@@ -704,7 +703,7 @@ export function ReleaseJODialog({
                             </div>
                             <div>
                                 <div class="jo-summary-label">Estimated Days</div>
-                                <div class="jo-summary-value">${(totalEstimatedHours / (Number(shiftOption) || 8)).toFixed(1)} Days</div>
+                                <div class="jo-summary-value">${(totalEstimatedHours / resolveProductionShiftHours(shiftOption)).toFixed(1)} Days</div>
                             </div>
                         </div>
                     </div>
@@ -977,7 +976,7 @@ export function ReleaseJODialog({
                                                     disabled={loadingDetails}
                                                     onChange={(e) => setShiftOption(e.target.value)}
                                                     className="h-9 font-semibold bg-card border-input text-foreground font-mono"
-                                                    placeholder={loadingDetails ? "Loading..." : "e.g. 8.0"}
+                                                    placeholder={loadingDetails ? "Loading..." : `e.g. ${DEFAULT_PRODUCTION_SHIFT_HOURS.toFixed(1)}`}
                                                     required
                                                 />
                                                 <p className="mt-1 text-[10px] text-muted-foreground">
@@ -1028,14 +1027,14 @@ export function ReleaseJODialog({
                                             <div className="bg-card border border-border rounded-xl p-3 flex flex-col justify-between">
                                                 <div className="flex items-center gap-2 mb-1">
                                                     <Package className="h-4 w-4 text-primary" />
-                                                    <span className="text-xs font-bold text-foreground">📦 Assembly</span>
+                                                        <span className="text-xs font-bold text-foreground">📦 Bottleneck-Paced Assembly</span>
                                                 </div>
                                                 <div>
                                                     <div className="text-base font-black text-foreground">
                                                         {formatProductionValue(boxEstimatedHours)} hrs
                                                     </div>
                                                     <div className="text-[10px] text-muted-foreground font-medium">
-                                                         {Number(shiftOption) > 0 ? `~${formatProductionValue(boxEstimatedHours / Number(shiftOption))} Days` : `${formatProductionValue(boxEstimatedHours)} hrs`}
+                                                        ~{formatProductionValue(boxEstimatedHours / resolveProductionShiftHours(shiftOption))} Days
                                                     </div>
                                                 </div>
                                             </div>
@@ -1051,8 +1050,8 @@ export function ReleaseJODialog({
                                                          {formatProductionValue(subAssemblyEstimatedHours)} hrs
                                                     </div>
                                                     <div className="text-[10px] text-muted-foreground font-medium">
-                                                        {subAssemblyEstimatedHours > 0 && Number(shiftOption) > 0
-                                                             ? `~${formatProductionValue(subAssemblyEstimatedHours / Number(shiftOption))} Days`
+                                                        {subAssemblyEstimatedHours > 0
+                                                            ? `~${formatProductionValue(subAssemblyEstimatedHours / resolveProductionShiftHours(shiftOption))} Days`
                                                             : "No piece shortfalls"}
                                                     </div>
                                                 </div>
@@ -1062,14 +1061,14 @@ export function ReleaseJODialog({
                                             <div className="bg-primary/10 border border-primary/30 rounded-xl p-3 flex flex-col justify-between">
                                                 <div className="flex items-center gap-2 mb-1">
                                                     <Clock className="h-4 w-4 text-primary" />
-                                                    <span className="text-xs font-bold text-foreground">⏱️ Total Lead Time</span>
+                                                    <span className="text-xs font-bold text-foreground">⏱️ Primary JO Lead Time</span>
                                                 </div>
                                                 <div>
                                                     <div className="text-base font-black text-primary font-mono tracking-tight">
                                                         {formatHoursToHMS(totalEstimatedHours)}
                                                     </div>
                                                     <div className="text-[10px] text-primary/80 font-bold">
-                                                         {Number(shiftOption) > 0 ? `~${formatProductionValue(totalEstimatedHours / Number(shiftOption))} Days (${formatProductionValue(totalEstimatedHours)} hrs)` : `${formatProductionValue(totalEstimatedHours)} hrs Total`}
+                                                        ~{formatProductionValue(totalEstimatedHours / resolveProductionShiftHours(shiftOption))} Days ({formatProductionValue(totalEstimatedHours)} hrs)
                                                     </div>
                                                 </div>
                                             </div>

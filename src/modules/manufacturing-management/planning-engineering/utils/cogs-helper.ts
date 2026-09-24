@@ -16,6 +16,7 @@ export interface RouteStepCosting {
     run_time_hours?: number;
     step_batch_size?: number;
     work_center_overhead_cost_per_hour?: number;
+    work_center_capacity_per_hour?: number;
 }
 
 export interface RouteBOMCosting {

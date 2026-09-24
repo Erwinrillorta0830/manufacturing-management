@@ -22,6 +22,7 @@ import {
     JobOrderAllocation 
 } from "../types";
 import { displayJobOrderStatus } from "../../job-order-status";
+import { resolveProductionShiftHours } from "../utils/production-timing";
 import { buildTravelerSheetHtml, formatTravelerOperators, resolveTravelerOperationName } from "../utils/traveler-sheet-print";
 import type { OperatorNameMap } from "../utils/traveler-sheet-print";
 
@@ -130,7 +131,7 @@ export function JobOrderTraveler({
         const cTargetQty = Number(currentJo.target_quantity || currentJo.quantity || 0);
         const cUom = currentJo.unit_of_measurement || "PCS";
         const cBatchNo = `LOT-${cJoNo}`;
-        const cShiftHours = currentJo.shift_option || "8";
+        const cShiftHours = resolveProductionShiftHours(currentJo.shift_option);
         const cStatus = displayJobOrderStatus(currentJo.status || "Planned");
         const cVersionName = currentJo.version_name || (currentJo.version_id ? `v${currentJo.version_id}` : "Standard");
         const parentJoNo = currentJo.parent_job_order_id || (cJoNo.includes("-SUB") ? cJoNo.split("-SUB")[0] : null);

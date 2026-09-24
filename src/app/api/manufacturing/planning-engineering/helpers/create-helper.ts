@@ -18,7 +18,8 @@ import {
     calculateReleaseMaterialRequirementPlan,
     calculateFullBatchTarget,
     readUomId,
-    roundProductionValue
+    roundProductionValue,
+    resolveProductionShiftHours
 } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
 import { normalizeOperatorAssignments, synchronizeJobOrderOperatorAssignments } from "../../job-orders/_operator-assignment-service";
 
@@ -458,7 +459,7 @@ export async function createJobOrder(
             assigned_personnel: normalizeOperatorAssignments(
                 (joData as any).assigned_personnel ?? (joData as any).assignments
             ),
-            shift_option: joData.shift_option || "8",
+            shift_option: String(resolveProductionShiftHours(joData.shift_option)),
             sub_assembly_version_map: (joData as any).sub_assembly_version_map 
                 ? (typeof (joData as any).sub_assembly_version_map === "object" ? JSON.stringify((joData as any).sub_assembly_version_map) : (joData as any).sub_assembly_version_map) 
                 : ((joData as any).subAssemblyVersionMap ? JSON.stringify((joData as any).subAssemblyVersionMap) : null),
@@ -466,7 +467,7 @@ export async function createJobOrder(
             created_by: joData.created_by ? Number(joData.created_by) : null,
             created_at: formatPhtDateTime(),
             modified_at: null,
-            remarks: (joData.remarks || `Consolidated production run. Shift: ${joData.shift_option || "8"}`) + forcedDraftRemarks
+            remarks: (joData.remarks || `Consolidated production run. Shift: ${resolveProductionShiftHours(joData.shift_option)}`) + forcedDraftRemarks
         };
 
         const headerRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders`, {
@@ -560,7 +561,8 @@ export async function createJobOrder(
                             (route as any).work_center?.overhead_cost_per_hour
                                 ?? (route as any).overhead_cost_per_hour
                                 ?? 0
-                        )
+                        ),
+                        work_center_capacity_per_hour: Number((route as any).work_center?.capacity_per_hour || 0)
                     })),
                     bomItems: costingComponents.map((component) => ({
                         quantity_required: Number(component.quantity_required || 0),
@@ -830,12 +832,11 @@ export async function createJobOrder(
                                                      route.work_center?.overhead_cost_per_hour
                                                          ?? route.overhead_cost_per_hour
                                                          ?? 0
-                                                 )
+                                                 ),
+                                                 work_center_capacity_per_hour: Number(route.work_center?.capacity_per_hour || 0)
                                              }))
                                          });
                                          const subHours = subMetrics.lineLeadTimeHours;
-                                        totalEstimatedHours += subHours;
-
                                         const childJoNo = `${joNoStr}-SUB${compProductId}`;
                                         const checkJoRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?filter[job_order_no][_eq]=${childJoNo}&limit=1`, { headers });
                                         const alreadyExists = checkJoRes.ok ? ((await checkJoRes.json()).data || []).length > 0 : false;
@@ -851,7 +852,7 @@ export async function createJobOrder(
                                                 branch_id: joData.branch_id,
                                                 created_by: joData.created_by,
                                                 parent_job_order_id: joIdInt,
-                                                shift_option: joData.shift_option || "8",
+                                                shift_option: String(resolveProductionShiftHours(joData.shift_option)),
                                                 remarks: `Auto-spawned sub-assembly run for parent Job Order ${joNoStr}`,
                                                 bom: {
                                                     version_id: activeVer.version.version_id
@@ -881,7 +882,7 @@ export async function createJobOrder(
         );
 
         // Calculate and generate daily breakdown runs based on total planned hours and shift option
-        const shiftHours = Number(joData.shift_option || "8") || 8;
+        const shiftHours = resolveProductionShiftHours(joData.shift_option);
         const numDays = Math.ceil(totalEstimatedHours / shiftHours) || 1;
         const baseQtyPerDay = Math.floor(totalMergedQuantity / numDays);
         const remainder = totalMergedQuantity % numDays;

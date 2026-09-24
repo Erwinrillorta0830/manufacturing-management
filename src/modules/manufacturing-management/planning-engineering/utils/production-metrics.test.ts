@@ -15,11 +15,13 @@ import {
 import {
     calculateBatchScaledMaterialRequirement,
     calculateAggregateRunHours,
+    calculateBottleneckLeadTimeHours,
     calculateFullBatchTarget,
     calculateMaterialRequirementPlan,
     calculatePerUnitMaterialRequirement,
     calculateRequiredBatchCount,
-    formatProductionValue
+    formatProductionValue,
+    resolveProductionShiftHours
 } from "./production-timing";
 
 assert.equal(calculateRequiredBatchCount(12001, 6986.19), 2);
@@ -179,6 +181,80 @@ const qaScaledRuntime = calculateProductionMetrics({
     routes: [{ sequence_order: 1, setup_time_hours: 0.5, run_time_hours: 17.2314, step_batch_size: 6986.17 }]
 });
 assert.equal(formatProductionValue(qaScaledRuntime.lineLeadTimeHours), "2.5279");
+
+const bottleneckBaseLead = calculateBottleneckLeadTimeHours({
+    targetNetQuantity: 6986.17,
+    baseNetQuantity: 6986.17,
+    expectedYieldPercentage: 98.5,
+    routes: [{
+        stepBatchSize: 7092.56,
+        setupTimeHours: 0.5,
+        runTimeHours: 17.2314,
+        workCenterCapacityPerHour: 400
+    }]
+});
+const bottleneckPartialLead = calculateBottleneckLeadTimeHours({
+    targetNetQuantity: 983,
+    baseNetQuantity: 6986.17,
+    expectedYieldPercentage: 98.5,
+    routes: [{
+        stepBatchSize: 7092.56,
+        setupTimeHours: 0.5,
+        runTimeHours: 17.2314,
+        workCenterCapacityPerHour: 400
+    }]
+});
+const bottleneckTwoBatchLead = calculateBottleneckLeadTimeHours({
+    targetNetQuantity: 13972.34,
+    baseNetQuantity: 6986.17,
+    expectedYieldPercentage: 98.5,
+    routes: [{
+        stepBatchSize: 7092.56,
+        setupTimeHours: 0.5,
+        runTimeHours: 17.2314,
+        workCenterCapacityPerHour: 400
+    }]
+});
+assert.equal(formatProductionValue(bottleneckBaseLead), "17.7314");
+assert.equal(formatProductionValue(bottleneckPartialLead), "2.4949");
+assert.equal(formatProductionValue(bottleneckTwoBatchLead), "35.4628");
+
+const bottleneckMetrics = calculateProductionMetrics({
+    targetQuantity: 983,
+    timingTargetQuantity: 983,
+    baseQuantity: 6986.17,
+    expectedYieldPercentage: 98.5,
+    routes: [
+        {
+            sequence_order: 2,
+            setup_time_hours: 0.5,
+            run_time_hours: 17.2314,
+            step_batch_size: 7092.56,
+            work_center_capacity_per_hour: 400
+        },
+        {
+            sequence_order: 3,
+            setup_time_hours: 0.5,
+            run_time_hours: 17.2314,
+            step_batch_size: 14185.12,
+            work_center_capacity_per_hour: 800
+        }
+    ]
+});
+assert.equal(formatProductionValue(bottleneckMetrics.lineLeadTimeHours), "2.4949");
+assert.notEqual(bottleneckMetrics.lineLeadTimeHours, bottleneckMetrics.cumulativeWorkloadHours);
+assert.equal(resolveProductionShiftHours(9), 9);
+assert.equal(resolveProductionShiftHours(0, 10), 10);
+assert.equal(resolveProductionShiftHours(0), 6.5);
+assert.equal(resolveProductionShiftHours(25), 6.5);
+
+assert.equal(calculateBottleneckLeadTimeHours({
+    targetNetQuantity: 983,
+    baseNetQuantity: 6986.17,
+    expectedYieldPercentage: 98.5,
+    routes: [],
+    fallbackLeadTimeHours: 2.75
+}), 2.75);
 
 const multiBatchRuntime = calculateProductionMetrics({
     targetQuantity: 12001,

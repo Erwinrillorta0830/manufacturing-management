@@ -25,7 +25,8 @@ import {
     calculatePerUnitMaterialRequirement,
     readUomId,
     roundProductionValue,
-    requirePositiveProductionNumber
+    requirePositiveProductionNumber,
+    resolveProductionShiftHours
 } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
 import {
     calculateRecipeMaterialCostPerUnit,
@@ -1975,7 +1976,7 @@ export async function handleGET(request: Request) {
                 routing_tasks: item.routing_tasks || [],
                 routingTasks: item.routing_tasks || [],
                 salesOrders: item.sales_orders || [],
-                shiftOption: item.shift_option || "8",
+                shiftOption: String(resolveProductionShiftHours(item.shift_option)),
                 dailyBreakdown: item.daily_breakdown || null,
                 remarks: item.remarks || null,
                 createdAt: item.created_at || null,

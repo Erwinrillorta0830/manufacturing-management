@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/select";
 import { Branch } from "../../types";
 import { SearchableSelect } from "../SearchableSelect";
+import { DEFAULT_PRODUCTION_SHIFT_HOURS } from "../../utils/production-timing";
 
 export interface Step1BasicDetailsProps {
     branches: Branch[];
@@ -305,7 +306,7 @@ export function Step1BasicDetails({
                         value={shiftOption}
                         onChange={(e) => setShiftOption(e.target.value)}
                         className="h-9 font-semibold bg-card border-input text-foreground font-mono"
-                        placeholder="e.g. 8.0"
+                        placeholder={`e.g. ${DEFAULT_PRODUCTION_SHIFT_HOURS.toFixed(1)}`}
                         required
                     />
                     <p className="text-[10px] text-muted-foreground">

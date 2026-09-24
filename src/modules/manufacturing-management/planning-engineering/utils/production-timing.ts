@@ -3,7 +3,16 @@ import { DecimalValue } from "../../decimal";
 export const PRODUCTION_TIMING_POLICY = "PROPORTIONAL_RUN_TIME" as const;
 
 export const PRODUCTION_DECIMAL_SCALE = 4;
+export const DEFAULT_PRODUCTION_SHIFT_HOURS = 6.5;
 const BATCH_BOUNDARY_TOLERANCE = DecimalValue.from("0.001");
+
+export function resolveProductionShiftHours(...values: unknown[]): number {
+    for (const value of values) {
+        const hours = Number(value);
+        if (Number.isFinite(hours) && hours > 0 && hours <= 24) return hours;
+    }
+    return DEFAULT_PRODUCTION_SHIFT_HOURS;
+}
 
 export function requirePositiveProductionNumber(value: unknown, label: string): number {
     const parsed = Number(value);
@@ -230,6 +239,62 @@ export function calculateCumulativeRouteWorkloadHours(routes: readonly PlannedRo
             + Math.max(0, Number(route.planned_run_hours) || 0),
         0
     );
+}
+
+export interface BottleneckLeadTimeRoute {
+    stepBatchSize?: number | null;
+    setupTimeHours?: number | null;
+    runTimeHours?: number | null;
+    workCenterCapacityPerHour?: number | null;
+}
+
+export function calculateGrossRouteRate(route: BottleneckLeadTimeRoute): number {
+    const stepBatchSize = Number(route.stepBatchSize);
+    const setupTimeHours = Math.max(0, Number(route.setupTimeHours) || 0);
+    const runTimeHours = Number(route.runTimeHours);
+    const totalStepHours = setupTimeHours + Math.max(0, Number.isFinite(runTimeHours) ? runTimeHours : 0);
+    const configuredRate = Number(route.workCenterCapacityPerHour);
+    const calculatedRate = Number.isFinite(stepBatchSize) && stepBatchSize > 0 && totalStepHours > 0
+        ? stepBatchSize / totalStepHours
+        : 0;
+    const validConfiguredRate = Number.isFinite(configuredRate) && configuredRate > 0
+        ? configuredRate
+        : 0;
+    return calculatedRate > 0 && validConfiguredRate > 0
+        ? Math.min(calculatedRate, validConfiguredRate)
+        : validConfiguredRate || calculatedRate;
+}
+
+/**
+ * Estimates elapsed production time from the slowest route-step throughput.
+ * Recipe base quantity is net output, while route batch sizes/rated capacities
+ * describe gross throughput, so the yield factor is applied once to convert
+ * the requested net output to its required gross throughput.
+ */
+export function calculateBottleneckLeadTimeHours(input: {
+    targetNetQuantity: number;
+    baseNetQuantity: number;
+    expectedYieldPercentage?: number | null;
+    routes: readonly BottleneckLeadTimeRoute[];
+    fallbackLeadTimeHours?: number;
+}): number {
+    const target = Number(input.targetNetQuantity);
+    const base = Number(input.baseNetQuantity);
+    const fallback = Math.max(0, Number(input.fallbackLeadTimeHours) || 0);
+    if (!Number.isFinite(target) || target <= 0 || !Number.isFinite(base) || base <= 0) return fallback;
+
+    const yieldPercentage = Number(input.expectedYieldPercentage);
+    const yieldFactor = Number.isFinite(yieldPercentage) && yieldPercentage > 0
+        ? Math.min(yieldPercentage, 100) / 100
+        : 1;
+    const grossRates = input.routes
+        .map(calculateGrossRouteRate)
+        .filter((rate) => rate > 0);
+
+    if (grossRates.length === 0) return fallback;
+    const bottleneckGrossRate = Math.min(...grossRates);
+    const baseBottleneckRuntimeHours = base / (yieldFactor * bottleneckGrossRate);
+    return baseBottleneckRuntimeHours * (target / base);
 }
 
 export function calculateAggregateRunHours(

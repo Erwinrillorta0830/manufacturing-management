@@ -8,7 +8,7 @@ import { formatHoursToHMS, formatInventoryQuantity } from "../../utils/container
 import {
     getFactoryOverheadBasisLabel
 } from "../../utils/cogs-helper";
-import { calculateAggregateRunHours, calculateMaterialRequirementPlan, calculatePerUnitMaterialRequirement, formatProductionValue } from "../../utils/production-timing";
+import { calculateAggregateRunHours, calculateMaterialRequirementPlan, calculatePerUnitMaterialRequirement, formatProductionValue, resolveProductionShiftHours } from "../../utils/production-timing";
 
 export interface Step2BOMReviewProps {
     loadingDetails: boolean;
@@ -109,14 +109,14 @@ export function Step2BOMReview({
                 <div className="bg-card border border-border rounded-xl p-3 flex flex-col justify-between">
                     <div className="flex items-center gap-2 mb-1">
                         <Package className="h-4 w-4 text-primary" />
-                        <span className="text-xs font-bold text-foreground">📦 {parentUomLabel} Assembly</span>
+                        <span className="text-xs font-bold text-foreground">📦 Bottleneck-Paced {parentUomLabel} Assembly</span>
                     </div>
                     <div>
                         <div className="text-base font-black text-foreground">
                             {formatProductionValue(boxEstimatedHours)} hrs
                         </div>
                         <div className="text-[10px] text-muted-foreground font-medium">
-                            {Number(shiftOption) > 0 ? `~${formatProductionValue(boxEstimatedHours / Number(shiftOption))} Days` : `${formatProductionValue(boxEstimatedHours)} hrs`}
+                            ~{formatProductionValue(boxEstimatedHours / resolveProductionShiftHours(shiftOption))} Days
                         </div>
                     </div>
                 </div>
@@ -132,8 +132,8 @@ export function Step2BOMReview({
                             {formatProductionValue(subAssemblyEstimatedHours)} hrs
                         </div>
                         <div className="text-[10px] text-muted-foreground font-medium">
-                            {subAssemblyEstimatedHours > 0 && Number(shiftOption) > 0
-                                ? `~${(subAssemblyEstimatedHours / Number(shiftOption)).toFixed(1)} Days`
+                            {subAssemblyEstimatedHours > 0
+                                ? `~${(subAssemblyEstimatedHours / resolveProductionShiftHours(shiftOption)).toFixed(1)} Days`
                                 : "No piece shortfalls"}
                         </div>
                     </div>
@@ -143,14 +143,14 @@ export function Step2BOMReview({
                 <div className="bg-primary/10 border border-primary/30 rounded-xl p-3 flex flex-col justify-between">
                     <div className="flex items-center gap-2 mb-1">
                         <Clock className="h-4 w-4 text-primary" />
-                        <span className="text-xs font-bold text-foreground">⏱️ Total Lead Time</span>
+                        <span className="text-xs font-bold text-foreground">⏱️ Primary JO Lead Time</span>
                     </div>
                     <div>
                         <div className="text-base font-black text-primary font-mono tracking-tight">
                             {formatHoursToHMS(totalEstimatedHours)}
                         </div>
                         <div className="text-[10px] text-primary/80 font-bold">
-                            {Number(shiftOption) > 0 ? `~${formatProductionValue(totalEstimatedHours / Number(shiftOption))} Days (${formatProductionValue(totalEstimatedHours)} hrs)` : `${formatProductionValue(totalEstimatedHours)} hrs Total`}
+                            ~{formatProductionValue(totalEstimatedHours / resolveProductionShiftHours(shiftOption))} Days ({formatProductionValue(totalEstimatedHours)} hrs)
                         </div>
                     </div>
                 </div>

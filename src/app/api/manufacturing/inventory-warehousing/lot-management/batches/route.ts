@@ -35,15 +35,14 @@ export async function GET(request: Request) {
             mmUrl += `&filter[lot_id][_eq]=${filterLotId}`;
         }
 
-        const [batchesRes, lotsRes, usersRes, unitsRes, productsRes, movementsRes, onhandRes, directusRejectedRes] = await Promise.all([
+        const [batchesRes, lotsRes, usersRes, unitsRes, productsRes, movementsRes, onhandRes] = await Promise.all([
             fetch(mmUrl, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/mm_lots?limit=-1&_t=${timestamp}`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/user?limit=-1&fields=user_id,user_fname,user_lname&_t=${timestamp}`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/units?limit=-1&fields=unit_id,unit_name,unit_shortcut&_t=${timestamp}`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,description,product_name,product_code,barcode,cost_per_unit,price_per_unit,estimated_unit_cost&_t=${timestamp}`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${SPRING_API_BASE}/api/mm-inventory-movements/all`, { headers: reqHeaders, cache: "no-store" }).catch(() => null),
-            fetch(`${SPRING_API_BASE}/api/mm-batch-onhand/all`, { headers: reqHeaders, cache: "no-store" }).catch(() => null),
-            fetch(`${DIRECTUS_URL}/items/inventory_movements?filter[transaction_type_id][_eq]=5&fields=movement_id,inventory_lot_id,mm_lot_id,product_id,branch_id,batch_no,quantity,source_document_no&limit=-1&_t=${timestamp}`, { headers, cache: "no-store" }).catch(() => null)
+            fetch(`${SPRING_API_BASE}/api/mm-batch-onhand/all`, { headers: reqHeaders, cache: "no-store" }).catch(() => null)
         ]);
 
         let rawBatches: Record<string, unknown>[] = [];
@@ -59,61 +58,6 @@ export async function GET(request: Request) {
                 rawMovements = Array.isArray(movJson) ? movJson : movJson?.data || [];
             } catch (err) {
                 console.error("Error parsing movements in GET batches:", err);
-            }
-        }
-
-        // Directus rejected-leg supplement: the Spring movement mirror does not
-        // carry QA Reject / Bad Order Receipt legs (transaction_type_id 5), so
-        // bad-stock receipts would otherwise show zero quantity here. Spring rows
-        // stay canonical: a supplement leg already covered by Spring is dropped
-        // to avoid double-counting if the mirror catches up later.
-        if (directusRejectedRes && directusRejectedRes.ok) {
-            try {
-                const rejJson = await directusRejectedRes.json();
-                const rejectedRows: Record<string, unknown>[] = rejJson.data || [];
-                if (rejectedRows.length > 0) {
-                    const springCovered = new Set<string>();
-                    for (const m of rawMovements) {
-                        const lotId = Number(m.mmLotId ?? m.mm_lot_id ?? m.lotId ?? m.lot_id ?? 0);
-                        const productId = Number(m.productId ?? m.product_id ?? 0);
-                        const batchNo = String(m.batchNo ?? m.batch_no ?? "").trim().toLowerCase();
-                        if (lotId > 0 && productId > 0 && batchNo) {
-                            springCovered.add(`${lotId}_${productId}_${batchNo}`);
-                        }
-                    }
-                    const qaStatusByInvLotId = new Map<number, string>();
-                    for (const row of rawBatches) {
-                        const invId = Number(row.inventory_lot_id ?? 0);
-                        const qa = String(row.qa_status || "").trim().toUpperCase();
-                        if (invId > 0 && qa) qaStatusByInvLotId.set(invId, qa);
-                    }
-                    for (const row of rejectedRows) {
-                        const lotId = Number(row.mm_lot_id ?? 0);
-                        const productId = Number(row.product_id ?? 0);
-                        const batchNo = String(row.batch_no || "").trim();
-                        const quantity = Number(row.quantity ?? 0);
-                        if (!(lotId > 0 && productId > 0 && batchNo && Number.isFinite(quantity) && quantity !== 0)) continue;
-                        const key = `${lotId}_${productId}_${batchNo.toLowerCase()}`;
-                        if (springCovered.has(key)) continue;
-                        const invId = Number(row.inventory_lot_id ?? 0);
-                        rawMovements.push({
-                            movement_id: row.movement_id ?? null,
-                            inventory_lot_id: invId > 0 ? invId : null,
-                            mm_lot_id: lotId,
-                            product_id: productId,
-                            branch_id: Number(row.branch_id ?? 0),
-                            batch_no: batchNo,
-                            quantity_in: Math.max(0, quantity),
-                            quantity_out: Math.max(0, -quantity),
-                            unit_cost: 0,
-                            inventoryCondition: qaStatusByInvLotId.get(invId) || "DAMAGED",
-                            referenceNo: String(row.source_document_no || ""),
-                        });
-                        springCovered.add(key);
-                    }
-                }
-            } catch (err) {
-                console.error("Error parsing Directus rejected movements in GET batches:", err);
             }
         }
 
