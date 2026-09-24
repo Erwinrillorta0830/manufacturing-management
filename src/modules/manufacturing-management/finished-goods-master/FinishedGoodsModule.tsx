@@ -987,7 +987,7 @@ export default function FinishedGoodsModule() {
                 setSelectedProductId={setSelectedProductId}
                 selectedProduct={selectedProduct}
                 onRequestSwitchProduct={handleRequestSwitchProduct}
-                isVersionLocked={selectedVersion?.status !== "Draft" && selectedVersion?.status !== "Revision Required"}
+                isVersionLocked={isNoBomProduct ? false : (selectedVersion?.status !== "Draft" && selectedVersion?.status !== "Revision Required")}
                 selectedVersion={selectedVersion}
                 onCreateRevision={handleReviseSpecification}
                 onSubmitForApproval={handlePromptSubmitForApproval}
