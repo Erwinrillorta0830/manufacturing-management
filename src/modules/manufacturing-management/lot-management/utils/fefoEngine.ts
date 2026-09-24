@@ -275,7 +275,8 @@ export function groupAndSumLotBatches(lotBatches: Batch[]): Batch[] {
         const bNo = (b.batchNumber || "").trim().toLowerCase();
         const pId = Number(b.productId || 0);
         const lId = Number(b.lotId || 0);
-        const key = `${lId}_${pId}_${bNo}`;
+        const brId = Number(b.branchId || 0);
+        const key = `${brId}_${lId}_${pId}_${bNo}`;
         const list = batchesByKey.get(key) || [];
         list.push(b);
         batchesByKey.set(key, list);
@@ -309,7 +310,7 @@ export function groupAndSumLotBatches(lotBatches: Batch[]): Batch[] {
             subGroup.forEach((b) => {
                 const key = b.batchId > 0
                     ? `id_${b.batchId}`
-                    : `${b.lotId}_${b.productId}_${(b.batchNumber || "").trim().toLowerCase()}`;
+                    : `${b.branchId}_${b.lotId}_${b.productId}_${(b.batchNumber || "").trim().toLowerCase()}`;
                 if (!uniqueBatchMap.has(key)) {
                     uniqueBatchMap.set(key, b);
                 }

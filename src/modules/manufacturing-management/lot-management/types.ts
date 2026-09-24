@@ -106,10 +106,13 @@ export type BatchStatus = "ACTIVE" | "CLOSED" | "INACTIVE" | "GOOD" | "DAMAGED" 
 
 export interface Batch {
     batchId: number;
+    inventoryLotId?: number;
     batchNumber: string;
     lotId: number;
     lotName: string;
     branchId: number;
+    branchName?: string;
+    branchCode?: string;
     productId: number;
     productName?: string;
     itemCode: string;

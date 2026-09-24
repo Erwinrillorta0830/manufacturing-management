@@ -12,6 +12,7 @@ export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         const filterLotId = searchParams.get("lotId") || searchParams.get("mmLotId") || searchParams.get("mm_lot_id") || searchParams.get("lot_id");
+        const filterBranchId = searchParams.get("branchId") || searchParams.get("branch_id") || searchParams.get("branch");
         const timestamp = Date.now();
 
         let token: string | undefined;
@@ -35,14 +36,15 @@ export async function GET(request: Request) {
             mmUrl += `&filter[lot_id][_eq]=${filterLotId}`;
         }
 
-        const [batchesRes, lotsRes, usersRes, unitsRes, productsRes, movementsRes, onhandRes] = await Promise.all([
+        const [batchesRes, lotsRes, usersRes, unitsRes, productsRes, movementsRes, onhandRes, branchesRes] = await Promise.all([
             fetch(mmUrl, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/mm_lots?limit=-1&_t=${timestamp}`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/user?limit=-1&fields=user_id,user_fname,user_lname&_t=${timestamp}`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/units?limit=-1&fields=unit_id,unit_name,unit_shortcut&_t=${timestamp}`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,description,product_name,product_code,barcode,cost_per_unit,price_per_unit,estimated_unit_cost&_t=${timestamp}`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${SPRING_API_BASE}/api/mm-inventory-movements/all`, { headers: reqHeaders, cache: "no-store" }).catch(() => null),
-            fetch(`${SPRING_API_BASE}/api/mm-batch-onhand/all`, { headers: reqHeaders, cache: "no-store" }).catch(() => null)
+            fetch(`${SPRING_API_BASE}/api/mm-batch-onhand/all`, { headers: reqHeaders, cache: "no-store" }).catch(() => null),
+            fetch(`${DIRECTUS_URL}/items/branches?limit=-1&fields=id,branch_name,branch_code&_t=${timestamp}`, { headers, cache: "no-store" }).catch(() => null)
         ]);
 
         let rawBatches: Record<string, unknown>[] = [];
@@ -71,15 +73,70 @@ export async function GET(request: Request) {
             }
         }
 
-        let lotsList: { lot_id: number; lot_name: string; unit_id?: number }[] = [];
+        let branchesList: { id: number; branch_name?: string; branch_code?: string }[] = [];
+        if (branchesRes && branchesRes.ok) {
+            try {
+                const bJson = await branchesRes.json();
+                branchesList = bJson.data || [];
+            } catch (err) {
+                console.error("Error parsing branches in GET batches:", err);
+            }
+        }
+
+        const getBranchInfo = (brId: number) => {
+            const b = branchesList.find((br) => Number(br.id) === Number(brId));
+            return {
+                branchName: b?.branch_name || (brId > 0 ? `Branch #${brId}` : "Unassigned"),
+                branchCode: b?.branch_code || ""
+            };
+        };
+
+        let lotsList: { lot_id: number; lot_name: string; unit_id?: number; branch_id?: number }[] = [];
         if (lotsRes && lotsRes.ok) {
             try {
                 const lotsJson = await lotsRes.json();
-                lotsList = lotsJson.data || [];
+                const rawLotsData: Record<string, unknown>[] = lotsJson.data || [];
+                lotsList = rawLotsData.map((l) => {
+                    const rawB = l.branch_id;
+                    const bId = typeof rawB === "object" && rawB !== null
+                        ? Number((rawB as { id?: number; branch_id?: number }).id || (rawB as { id?: number; branch_id?: number }).branch_id || 0)
+                        : Number(rawB || 0);
+                    return {
+                        lot_id: Number(l.lot_id),
+                        lot_name: String(l.lot_name || ""),
+                        unit_id: l.unit_id ? Number(l.unit_id) : undefined,
+                        branch_id: bId
+                    };
+                });
             } catch (err) {
                 console.error("Error parsing lots in GET batches:", err);
             }
         }
+
+        const resolveLotForBranch = (rawLotId: unknown, branchId: number) => {
+            let parsedLotId = 0;
+            if (typeof rawLotId === "object" && rawLotId !== null) {
+                parsedLotId = Number((rawLotId as { lot_id?: number }).lot_id || 0);
+            } else if (rawLotId !== null && rawLotId !== undefined) {
+                parsedLotId = Number(rawLotId || 0);
+            }
+
+            if (parsedLotId > 0) {
+                const matchedLot = lotsList.find((l) => Number(l.lot_id) === parsedLotId);
+                // Option B: Lot only applies if it belongs to this branch
+                if (matchedLot && Number(matchedLot.branch_id) === Number(branchId)) {
+                    return {
+                        lotId: parsedLotId,
+                        lotName: matchedLot.lot_name
+                    };
+                }
+            }
+
+            return {
+                lotId: 0,
+                lotName: "Unassigned / Pending Storage Rack (Ghost Rack)"
+            };
+        };
 
         let usersList: { user_id: number; user_fname?: string; user_lname?: string }[] = [];
         if (usersRes && usersRes.ok) {
@@ -129,51 +186,106 @@ export async function GET(request: Request) {
             }
         }
 
-        // Aggregate movements by inventoryLotId and (lotId, productId, batchNo)
-        const movementNetByInvLotId = new Map<number, { onhand: number; totalIn: number; totalOut: number; unitCost: number; count: number; mfgDate?: string; expDate?: string }>();
-        const movementNetByLotProductBatch = new Map<string, { onhand: number; totalIn: number; totalOut: number; unitCost: number; count: number; lotId: number; productId: number; batchNo: string; mfgDate?: string; expDate?: string; condition?: string; remarks?: string; referenceNo?: string; postedAt?: string; branchId?: number; unitId?: number; productName?: string; productCode?: string; }>();
-        const movementNetByLotProductBatchDate = new Map<string, { onhand: number; totalIn: number; totalOut: number; unitCost: number; count: number; lotId: number; productId: number; batchNo: string; mfgDate?: string; expDate?: string; condition?: string; remarks?: string; referenceNo?: string; postedAt?: string; branchId?: number; unitId?: number; productName?: string; productCode?: string; }>();
+        // Aggregate movements strictly partitioned by (branchId, inventoryLotId) and (branchId, lotId, productId, batchNo)
+        const movementNetByBranchInvLotId = new Map<string, {
+            onhand: number;
+            totalIn: number;
+            totalOut: number;
+            unitCost: number;
+            count: number;
+            branchId: number;
+            invId: number;
+            mfgDate?: string;
+            expDate?: string;
+        }>();
+
+        const movementNetByBranchLotProductBatch = new Map<string, {
+            onhand: number;
+            totalIn: number;
+            totalOut: number;
+            unitCost: number;
+            count: number;
+            branchId: number;
+            lotId: number;
+            productId: number;
+            batchNo: string;
+            mfgDate?: string;
+            expDate?: string;
+            condition?: string;
+            remarks?: string;
+            referenceNo?: string;
+            postedAt?: string;
+            unitId?: number;
+            productName?: string;
+            productCode?: string;
+        }>();
+
+        const movementNetByBranchLotProductBatchDate = new Map<string, {
+            onhand: number;
+            totalIn: number;
+            totalOut: number;
+            unitCost: number;
+            count: number;
+            branchId: number;
+            lotId: number;
+            productId: number;
+            batchNo: string;
+            mfgDate?: string;
+            expDate?: string;
+            condition?: string;
+            remarks?: string;
+            referenceNo?: string;
+            postedAt?: string;
+            unitId?: number;
+            productName?: string;
+            productCode?: string;
+        }>();
 
         rawMovements.forEach((m) => {
+            const branchId = Number(m.branchId || m.branch_id || 1);
             const rawInvId = m.inventoryLotId ?? m.inventory_lot_id;
-            const hasInvId = rawInvId !== null && rawInvId !== undefined && Number(rawInvId) > 0;
+            const invId = Number(rawInvId || 0);
             const rawLotId = m.mmLotId ?? m.mm_lot_id ?? m.lotId ?? m.lot_id;
-            const hasLotId = rawLotId !== null && rawLotId !== undefined && Number(rawLotId) > 0;
-            const parsedLotId = hasLotId ? Number(rawLotId) : 0;
-            const matchedLot = lotsList.find((l) => Number(l.lot_id) === parsedLotId);
-
-            const lId = (hasInvId && matchedLot) ? parsedLotId : 0;
+            const { lotId: lId } = resolveLotForBranch(rawLotId, branchId);
             const pId = Number(m.productId || m.product_id || 0);
             const bNo = String(m.batchNo || m.batch_no || "").trim();
             const qIn = Number(m.quantityIn || m.quantity_in || 0);
             const qOut = Number(m.quantityOut || m.quantity_out || 0);
             const net = qIn - qOut;
             const cost = Number(m.unitCost || m.unit_cost || 0);
-            const invId = Number(m.inventoryLotId || m.inventory_lot_id || 0);
+            const mfgDateStr = (m.manufacturingDate || m.manufacturing_date ? String(m.manufacturingDate || m.manufacturing_date).slice(0, 10) : "");
+            const expDateStr = (m.expirationDate || m.expiration_date || m.expiry_date ? String(m.expirationDate || m.expiration_date || m.expiry_date).slice(0, 10) : "");
 
             if (invId > 0) {
-                const cur = movementNetByInvLotId.get(invId) || { onhand: 0, totalIn: 0, totalOut: 0, unitCost: cost, count: 0 };
-                cur.onhand += net;
-                cur.totalIn += qIn;
-                cur.totalOut += qOut;
-                if (cost > 0) cur.unitCost = cost;
-                if (m.manufacturingDate || m.manufacturing_date) cur.mfgDate = (m.manufacturingDate || m.manufacturing_date) as string;
-                if (m.expirationDate || m.expiration_date || m.expiry_date) cur.expDate = (m.expirationDate || m.expiration_date || m.expiry_date) as string;
-                cur.count += 1;
-                movementNetByInvLotId.set(invId, cur);
-            }
-
-            if (bNo) {
-                const mfgDateStr = (m.manufacturingDate || m.manufacturing_date ? String(m.manufacturingDate || m.manufacturing_date).slice(0, 10) : "");
-                const expDateStr = (m.expirationDate || m.expiration_date || m.expiry_date ? String(m.expirationDate || m.expiration_date || m.expiry_date).slice(0, 10) : "");
-                const baseKey = `${lId}_${pId}_${bNo.toLowerCase()}`;
-
-                const curBase = movementNetByLotProductBatch.get(baseKey) || {
+                const invKey = `${branchId}_${invId}`;
+                const cur = movementNetByBranchInvLotId.get(invKey) || {
                     onhand: 0,
                     totalIn: 0,
                     totalOut: 0,
                     unitCost: cost,
                     count: 0,
+                    branchId,
+                    invId
+                };
+                cur.onhand += net;
+                cur.totalIn += qIn;
+                cur.totalOut += qOut;
+                if (cost > 0) cur.unitCost = cost;
+                if (mfgDateStr && !cur.mfgDate) cur.mfgDate = mfgDateStr;
+                if (expDateStr && !cur.expDate) cur.expDate = expDateStr;
+                cur.count += 1;
+                movementNetByBranchInvLotId.set(invKey, cur);
+            }
+
+            if (bNo) {
+                const baseKey = `${branchId}_${lId}_${pId}_${bNo.toLowerCase()}`;
+                const curBase = movementNetByBranchLotProductBatch.get(baseKey) || {
+                    onhand: 0,
+                    totalIn: 0,
+                    totalOut: 0,
+                    unitCost: cost,
+                    count: 0,
+                    branchId,
                     lotId: lId,
                     productId: pId,
                     batchNo: bNo,
@@ -183,7 +295,6 @@ export async function GET(request: Request) {
                     remarks: (m.remarks as string) || undefined,
                     referenceNo: (m.referenceNo || m.reference_no) as string | undefined,
                     postedAt: (m.postedAt || m.posted_at || m.transactionDate || m.transaction_date) as string | undefined,
-                    branchId: Number(m.branchId || m.branch_id || 1),
                     unitId: Number(m.unitId || m.unit_id || 1),
                     productName: (m.productName || m.product_name) as string | undefined,
                     productCode: (m.productCode || m.product_code) as string | undefined
@@ -196,11 +307,11 @@ export async function GET(request: Request) {
                 if (expDateStr) curBase.expDate = expDateStr;
                 if (m.inventoryCondition || m.inventory_condition) curBase.condition = String(m.inventoryCondition || m.inventory_condition);
                 curBase.count += 1;
-                movementNetByLotProductBatch.set(baseKey, curBase);
+                movementNetByBranchLotProductBatch.set(baseKey, curBase);
 
                 if (mfgDateStr || expDateStr) {
-                    const dateKey = `${lId}_${pId}_${bNo.toLowerCase()}_${mfgDateStr}_${expDateStr}`;
-                    const curDate = movementNetByLotProductBatchDate.get(dateKey) || {
+                    const dateKey = `${branchId}_${lId}_${pId}_${bNo.toLowerCase()}_${mfgDateStr}_${expDateStr}`;
+                    const curDate = movementNetByBranchLotProductBatchDate.get(dateKey) || {
                         ...curBase,
                         onhand: 0,
                         totalIn: 0,
@@ -215,26 +326,39 @@ export async function GET(request: Request) {
                     curDate.totalOut += qOut;
                     if (cost > 0) curDate.unitCost = cost;
                     curDate.count += 1;
-                    movementNetByLotProductBatchDate.set(dateKey, curDate);
+                    movementNetByBranchLotProductBatchDate.set(dateKey, curDate);
                 }
             }
         });
 
         rawOnhand.forEach((oh) => {
-            const lId = Number(oh.mmLotId || oh.mm_lot_id || oh.lotId || oh.lot_id || 0);
+            const branchId = Number(oh.branchId || oh.branch_id || 1);
+            const rawInvId = oh.inventoryLotId || oh.inventory_lot_id;
+            const invId = Number(rawInvId || 0);
+            const rawLotId = oh.mmLotId || oh.mm_lot_id || oh.lotId || oh.lot_id;
+            const { lotId: lId } = resolveLotForBranch(rawLotId, branchId);
             const pId = Number(oh.productId || oh.product_id || 0);
             const bNo = String(oh.batchNo || oh.batch_no || "").trim();
-            const invId = Number(oh.inventoryLotId || oh.inventory_lot_id || 0);
             const onhand = Number(oh.onhandQuantity ?? oh.onhand_quantity ?? 0);
             const qIn = Number(oh.totalQuantityIn ?? oh.total_quantity_in ?? onhand);
             const qOut = Number(oh.totalQuantityOut ?? oh.total_quantity_out ?? 0);
             const mfgDate = (oh.manufacturingDate || oh.manufacturing_date) as string | undefined;
             const expDate = (oh.expirationDate || oh.expiration_date || oh.expiry_date) as string | undefined;
+            const mfgDateStr = mfgDate ? String(mfgDate).slice(0, 10) : "";
+            const expDateStr = expDate ? String(expDate).slice(0, 10) : "";
             const cond = String(oh.inventoryCondition || oh.inventory_condition || "GOOD");
 
             if (invId > 0) {
-                const cur = movementNetByInvLotId.get(invId) || { onhand: 0, totalIn: 0, totalOut: 0, unitCost: 0, count: 0 };
-                // Only use onhand snapshot if no movements were found
+                const invKey = `${branchId}_${invId}`;
+                const cur = movementNetByBranchInvLotId.get(invKey) || {
+                    onhand: 0,
+                    totalIn: 0,
+                    totalOut: 0,
+                    unitCost: 0,
+                    count: 0,
+                    branchId,
+                    invId
+                };
                 if (cur.count === 0) {
                     cur.onhand = onhand;
                     cur.totalIn = qIn;
@@ -242,30 +366,28 @@ export async function GET(request: Request) {
                 }
                 if (mfgDate && !cur.mfgDate) cur.mfgDate = mfgDate;
                 if (expDate && !cur.expDate) cur.expDate = expDate;
-                movementNetByInvLotId.set(invId, cur);
+                movementNetByBranchInvLotId.set(invKey, cur);
             }
 
             if (bNo) {
-                const mfgDateStr = mfgDate ? String(mfgDate).slice(0, 10) : "";
-                const expDateStr = expDate ? String(expDate).slice(0, 10) : "";
-                const baseKey = `${lId}_${pId}_${bNo.toLowerCase()}`;
-
-                const curBase = movementNetByLotProductBatch.get(baseKey) || {
+                const baseKey = `${branchId}_${lId}_${pId}_${bNo.toLowerCase()}`;
+                const curBase = movementNetByBranchLotProductBatch.get(baseKey) || {
                     onhand: 0,
                     totalIn: 0,
                     totalOut: 0,
                     unitCost: 0,
                     count: 0,
+                    branchId,
                     lotId: lId,
                     productId: pId,
                     batchNo: bNo,
                     mfgDate,
                     expDate,
                     condition: cond,
-                    branchId: Number(oh.branchId || oh.branch_id || 1),
-                    unitId: Number(oh.unitId || oh.unit_id || 1)
+                    unitId: Number(oh.unitId || oh.unit_id || 1),
+                    productName: (oh.productName || oh.product_name) as string | undefined,
+                    productCode: (oh.productCode || oh.product_code) as string | undefined
                 };
-                // Only use onhand snapshot if no movements were found
                 if (curBase.count === 0) {
                     curBase.onhand = onhand;
                     curBase.totalIn = qIn;
@@ -273,11 +395,11 @@ export async function GET(request: Request) {
                 }
                 if (mfgDate && !curBase.mfgDate) curBase.mfgDate = mfgDate;
                 if (expDate && !curBase.expDate) curBase.expDate = expDate;
-                movementNetByLotProductBatch.set(baseKey, curBase);
+                movementNetByBranchLotProductBatch.set(baseKey, curBase);
 
                 if (mfgDateStr || expDateStr) {
-                    const dateKey = `${lId}_${pId}_${bNo.toLowerCase()}_${mfgDateStr}_${expDateStr}`;
-                    const curDate = movementNetByLotProductBatchDate.get(dateKey) || {
+                    const dateKey = `${branchId}_${lId}_${pId}_${bNo.toLowerCase()}_${mfgDateStr}_${expDateStr}`;
+                    const curDate = movementNetByBranchLotProductBatchDate.get(dateKey) || {
                         ...curBase,
                         onhand: 0,
                         totalIn: 0,
@@ -292,39 +414,27 @@ export async function GET(request: Request) {
                         curDate.totalIn = qIn;
                         curDate.totalOut = qOut;
                     }
-                    movementNetByLotProductBatchDate.set(dateKey, curDate);
+                    movementNetByBranchLotProductBatchDate.set(dateKey, curDate);
                 }
             }
         });
 
-        const mappedBatches: Batch[] = rawBatches.map((row) => {
+        const emittedBranchInvLots = new Set<string>();
+        const emittedBranchBatchKeys = new Set<string>();
+        const emittedBranchBatchDateKeys = new Set<string>();
+
+        const mappedBatches: Batch[] = [];
+
+        rawBatches.forEach((row) => {
             const batchId = Number(row.inventory_lot_id ?? 0);
             const batchNumber = String(row.batch_no || "");
+            const rawBranchId = row.branch_id;
+            const branchId = typeof rawBranchId === "object" && rawBranchId !== null
+                ? Number((rawBranchId as { id?: number; branch_id?: number }).id || (rawBranchId as { id?: number; branch_id?: number }).branch_id || 1)
+                : Number(rawBranchId || 1);
+            const branchInfo = getBranchInfo(branchId);
 
-            let lotId = 0;
-            let lotName = "Unassigned / Pending Storage Rack (Ghost Rack)";
-            const rawInvLotId = row.inventory_lot_id;
-            const hasInvLotId = rawInvLotId !== null && rawInvLotId !== undefined && Number(rawInvLotId) > 0;
-            const rawLotId = row.lot_id;
-
-            if (hasInvLotId && rawLotId) {
-                if (typeof rawLotId === "object" && rawLotId !== null) {
-                    const lotObj = rawLotId as { lot_id?: number; lot_name?: string };
-                    const parsedId = Number(lotObj.lot_id || 0);
-                    const matched = lotsList.find((l) => Number(l.lot_id) === parsedId);
-                    if (matched) {
-                        lotId = parsedId;
-                        lotName = matched.lot_name;
-                    }
-                } else {
-                    const parsedId = Number(rawLotId);
-                    const matched = lotsList.find((l) => Number(l.lot_id) === parsedId);
-                    if (matched) {
-                        lotId = parsedId;
-                        lotName = matched.lot_name;
-                    }
-                }
-            }
+            const { lotId, lotName } = resolveLotForBranch(row.lot_id, branchId);
 
             let productId = 0;
             let productName = "";
@@ -411,15 +521,19 @@ export async function GET(request: Request) {
 
             const matchedP = productsList.find((p) => Number(p.product_id) === productId);
 
-            // Compute live onhand quantity and unit cost from movements if present
-            // Prioritize exact dates movement first, then general lot/product/batch
+            // Compute live onhand quantity and unit cost from branch movements/onhand
             const mfgNorm = String(row.manufacturing_date || "").slice(0, 10);
             const expNorm = String(row.expiry_date || row.expiration_date || "").slice(0, 10);
+
+            const invKey = `${branchId}_${batchId}`;
+            const dateKey = `${branchId}_${lotId}_${productId}_${batchNumber.toLowerCase()}_${mfgNorm}_${expNorm}`;
+            const baseKey = `${branchId}_${lotId}_${productId}_${batchNumber.toLowerCase()}`;
+
             const movementByExactDates = (mfgNorm || expNorm)
-                ? movementNetByLotProductBatchDate.get(`${lotId}_${productId}_${batchNumber.toLowerCase()}_${mfgNorm}_${expNorm}`)
+                ? movementNetByBranchLotProductBatchDate.get(dateKey)
                 : undefined;
-            const movementByLotProdBatch = movementNetByLotProductBatch.get(`${lotId}_${productId}_${batchNumber.toLowerCase()}`);
-            const movementByInvId = batchId > 0 ? movementNetByInvLotId.get(batchId) : undefined;
+            const movementByLotProdBatch = movementNetByBranchLotProductBatch.get(baseKey);
+            const movementByInvId = batchId > 0 ? movementNetByBranchInvLotId.get(invKey) : undefined;
             const movementInfo = movementByExactDates || movementByLotProdBatch || movementByInvId;
 
             const quantity = movementInfo !== undefined
@@ -435,12 +549,15 @@ export async function GET(request: Request) {
             const manufacturingDate = String(row.manufacturing_date || movementInfo?.mfgDate || "");
             const expirationDate = String(row.expiry_date || movementInfo?.expDate || "");
 
-            return {
+            mappedBatches.push({
                 batchId,
+                inventoryLotId: batchId,
                 batchNumber,
                 lotId,
                 lotName,
-                branchId: Number(row.branch_id || 1),
+                branchId,
+                branchName: branchInfo.branchName,
+                branchCode: branchInfo.branchCode,
                 productId,
                 productName,
                 itemCode,
@@ -460,46 +577,143 @@ export async function GET(request: Request) {
                 updatedAt: String(row.updated_at || ""),
                 createdBy,
                 updatedBy
-            };
-        });
+            });
 
-        // Synthesize any batches that exist in movements but not in Directus mm_inventory_lots
-        const existingKeys = new Set<string>();
-        mappedBatches.forEach((b) => {
-            const mfg = (b.manufacturingDate || "").slice(0, 10);
-            const exp = (b.expirationDate || "").slice(0, 10);
-            const bNoLower = (b.batchNumber || "").trim().toLowerCase();
-
-            existingKeys.add(`${b.lotId}_${b.productId}_${bNoLower}`);
-            existingKeys.add(`${b.lotId}_${bNoLower}`);
-            if (mfg || exp) {
-                existingKeys.add(`${b.lotId}_${b.productId}_${bNoLower}_${mfg}_${exp}`);
-                existingKeys.add(`${b.lotId}_${bNoLower}_${mfg}_${exp}`);
-            }
-            if (b.batchId > 0) existingKeys.add(`id_${b.batchId}`);
+            emittedBranchInvLots.add(invKey);
+            emittedBranchBatchKeys.add(baseKey);
+            if (mfgNorm || expNorm) emittedBranchBatchDateKeys.add(dateKey);
         });
 
         let synthIdCounter = -1;
-        // First synthesize any date-specific groups that aren't represented
-        movementNetByLotProductBatchDate.forEach((mv, dateKey) => {
-            const bNoLower = (mv.batchNo || "").trim().toLowerCase();
-            const baseKey = `${mv.lotId}_${mv.productId}_${bNoLower}`;
-            const lotBatchKey = `${mv.lotId}_${bNoLower}`;
 
-            if (!existingKeys.has(dateKey) && !existingKeys.has(baseKey) && !existingKeys.has(lotBatchKey)) {
-                existingKeys.add(dateKey);
-                existingKeys.add(baseKey);
-                existingKeys.add(lotBatchKey);
+        // Emit separate batch rows for other branches that have stock/movements for registered inventoryLotIds
+        movementNetByBranchInvLotId.forEach((mv, invKey) => {
+            if (!emittedBranchInvLots.has(invKey)) {
+                emittedBranchInvLots.add(invKey);
 
-                let lotId = 0;
-                let lotName = "Unassigned / Pending Storage Rack (Ghost Rack)";
-                if (mv.lotId > 0) {
-                    const matchedLot = lotsList.find((l) => Number(l.lot_id) === mv.lotId);
-                    if (matchedLot) {
-                        lotId = mv.lotId;
-                        lotName = matchedLot.lot_name;
+                const branchInfo = getBranchInfo(mv.branchId);
+                const matchedRaw = rawBatches.find((r) => Number(r.inventory_lot_id) === mv.invId);
+
+                let productId = 0;
+                let productName = "";
+                let itemCode = "";
+                let batchNumber = "";
+                let unitCost = mv.unitCost || 0;
+                let qaStatus: BatchQaStatus = "GOOD";
+                let status: BatchStatus = "ACTIVE";
+                let uomId: number | null = null;
+                let uomName = "";
+                let uomShortcut = "";
+                let mfgDate = mv.mfgDate || "";
+                let expDate = mv.expDate || "";
+                let remarks = "";
+
+                if (matchedRaw) {
+                    batchNumber = String(matchedRaw.batch_no || "");
+                    mfgDate = String(matchedRaw.manufacturing_date || mv.mfgDate || "");
+                    expDate = String(matchedRaw.expiry_date || matchedRaw.expiration_date || mv.expDate || "");
+                    unitCost = unitCost || Number(matchedRaw.unit_cost || 0);
+                    const rawQa = String(matchedRaw.qa_status || "GOOD").toUpperCase();
+                    if (["GOOD", "DAMAGED", "QUARANTINED", "EXPIRED"].includes(rawQa)) {
+                        qaStatus = rawQa as BatchQaStatus;
+                    }
+                    const rawSt = String(matchedRaw.status || "ACTIVE").toUpperCase();
+                    if (["ACTIVE", "CLOSED", "INACTIVE"].includes(rawSt)) {
+                        status = rawSt as BatchStatus;
+                    }
+                    remarks = String(matchedRaw.remarks || "");
+
+                    if (matchedRaw.product_id) {
+                        if (typeof matchedRaw.product_id === "object" && matchedRaw.product_id !== null) {
+                            const pObj = matchedRaw.product_id as Record<string, unknown>;
+                            productId = Number(pObj.product_id ?? pObj.id ?? 0);
+                            productName = String(pObj.description || pObj.product_name || pObj.name || pObj.title || "").trim();
+                            itemCode = String(pObj.sku_code || pObj.product_code || pObj.barcode || "").trim();
+                        } else {
+                            productId = Number(matchedRaw.product_id);
+                            const matchedP = productsList.find((p) => Number(p.product_id) === productId);
+                            if (matchedP) {
+                                productName = matchedP.product_name || "";
+                                itemCode = matchedP.sku_code || "";
+                            }
+                        }
+                    }
+
+                    const rawUnit = matchedRaw.uom_id ?? matchedRaw.unit_id;
+                    if (rawUnit && typeof rawUnit === "object") {
+                        const uObj = rawUnit as { unit_id?: number; unit_name?: string; unit_shortcut?: string };
+                        uomId = uObj.unit_id ?? null;
+                        uomName = uObj.unit_name || "";
+                        uomShortcut = uObj.unit_shortcut || uObj.unit_name || "";
+                    } else if (rawUnit !== null && rawUnit !== undefined) {
+                        uomId = Number(rawUnit);
+                    }
+                    if (uomId !== null) {
+                        const matchedUnit = unitsList.find((u) => Number(u.unit_id) === Number(uomId));
+                        if (matchedUnit) {
+                            uomName = matchedUnit.unit_name || uomName;
+                            uomShortcut = matchedUnit.unit_shortcut || matchedUnit.unit_name || uomShortcut;
+                        }
                     }
                 }
+
+                // Option B: Resolve lot specifically in the context of THIS branch
+                const { lotId, lotName } = resolveLotForBranch(matchedRaw?.lot_id, mv.branchId);
+
+                if (!productName && productId > 0) productName = `Product #${productId}`;
+                if (!itemCode && productId > 0) itemCode = `PROD-${productId}`;
+
+                const mfgNorm = mfgDate.slice(0, 10);
+                const expNorm = expDate.slice(0, 10);
+                const baseKey = `${mv.branchId}_${lotId}_${productId}_${batchNumber.toLowerCase()}`;
+                const dateKey = `${mv.branchId}_${lotId}_${productId}_${batchNumber.toLowerCase()}_${mfgNorm}_${expNorm}`;
+
+                emittedBranchBatchKeys.add(baseKey);
+                if (mfgNorm || expNorm) emittedBranchBatchDateKeys.add(dateKey);
+
+                mappedBatches.push({
+                    batchId: synthIdCounter--,
+                    inventoryLotId: mv.invId,
+                    batchNumber,
+                    lotId,
+                    lotName,
+                    branchId: mv.branchId,
+                    branchName: branchInfo.branchName,
+                    branchCode: branchInfo.branchCode,
+                    productId,
+                    productName,
+                    itemCode,
+                    quantity: mv.onhand,
+                    unitCost,
+                    uomId,
+                    uomName,
+                    uomShortcut,
+                    manufacturingDate: mfgDate,
+                    expirationDate: expDate,
+                    qaStatus,
+                    status,
+                    sourceType: "INVENTORY_MOVEMENT",
+                    sourceReference: matchedRaw?.source_reference ? String(matchedRaw.source_reference) : undefined,
+                    remarks,
+                    createdAt: String(matchedRaw?.created_at || new Date().toISOString()),
+                    updatedAt: String(matchedRaw?.updated_at || new Date().toISOString()),
+                    createdBy: "System",
+                    updatedBy: "System"
+                });
+            }
+        });
+
+        // Synthesize any date-specific groups not yet represented
+        movementNetByBranchLotProductBatchDate.forEach((mv, dateKey) => {
+            const bNoLower = (mv.batchNo || "").trim().toLowerCase();
+            const baseKey = `${mv.branchId}_${mv.lotId}_${mv.productId}_${bNoLower}`;
+
+            if (!emittedBranchBatchDateKeys.has(dateKey) && !emittedBranchBatchKeys.has(baseKey)) {
+                emittedBranchBatchDateKeys.add(dateKey);
+                emittedBranchBatchKeys.add(baseKey);
+
+                const branchInfo = getBranchInfo(mv.branchId);
+                const { lotId, lotName } = resolveLotForBranch(mv.lotId, mv.branchId);
 
                 let prodName = mv.productName || "";
                 let itemCode = mv.productCode || "";
@@ -531,7 +745,9 @@ export async function GET(request: Request) {
                     batchNumber: mv.batchNo,
                     lotId,
                     lotName,
-                    branchId: mv.branchId || 1,
+                    branchId: mv.branchId,
+                    branchName: branchInfo.branchName,
+                    branchCode: branchInfo.branchCode,
                     productId: mv.productId,
                     productName: prodName,
                     itemCode,
@@ -556,23 +772,12 @@ export async function GET(request: Request) {
         });
 
         // Next synthesize any base batches with no dates that were not represented
-        movementNetByLotProductBatch.forEach((mv, baseKey) => {
-            const bNoLower = (mv.batchNo || "").trim().toLowerCase();
-            const lotBatchKey = `${mv.lotId}_${bNoLower}`;
+        movementNetByBranchLotProductBatch.forEach((mv, baseKey) => {
+            if (!emittedBranchBatchKeys.has(baseKey)) {
+                emittedBranchBatchKeys.add(baseKey);
 
-            if (!existingKeys.has(baseKey) && !existingKeys.has(lotBatchKey)) {
-                existingKeys.add(baseKey);
-                existingKeys.add(lotBatchKey);
-
-                let lotId = 0;
-                let lotName = "Unassigned / Pending Storage Rack (Ghost Rack)";
-                if (mv.lotId > 0) {
-                    const matchedLot = lotsList.find((l) => Number(l.lot_id) === mv.lotId);
-                    if (matchedLot) {
-                        lotId = mv.lotId;
-                        lotName = matchedLot.lot_name;
-                    }
-                }
+                const branchInfo = getBranchInfo(mv.branchId);
+                const { lotId, lotName } = resolveLotForBranch(mv.lotId, mv.branchId);
 
                 let prodName = mv.productName || "";
                 let itemCode = mv.productCode || "";
@@ -604,7 +809,9 @@ export async function GET(request: Request) {
                     batchNumber: mv.batchNo,
                     lotId,
                     lotName,
-                    branchId: mv.branchId || 1,
+                    branchId: mv.branchId,
+                    branchName: branchInfo.branchName,
+                    branchCode: branchInfo.branchCode,
                     productId: mv.productId,
                     productName: prodName,
                     itemCode,
@@ -628,9 +835,13 @@ export async function GET(request: Request) {
             }
         });
 
-        const finalBatches = filterLotId
-            ? mappedBatches.filter((b) => Number(b.lotId) === Number(filterLotId))
-            : mappedBatches;
+        let finalBatches = mappedBatches;
+        if (filterLotId) {
+            finalBatches = finalBatches.filter((b) => Number(b.lotId) === Number(filterLotId));
+        }
+        if (filterBranchId && filterBranchId !== "ALL") {
+            finalBatches = finalBatches.filter((b) => Number(b.branchId) === Number(filterBranchId));
+        }
 
         return NextResponse.json(finalBatches);
     } catch (e) {

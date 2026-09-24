@@ -364,8 +364,11 @@ export function useBatchRegistration(
         const rawFiltered = batches.filter((b) => {
             if (Number(b.quantity || 0) === 0) return false;
             if (selectedBranchId !== "ALL") {
+                const batchBranchId = Number(b.branchId || 0);
                 const matchedLot = lots.find((l) => Number(l.lotId) === Number(b.lotId));
-                if (matchedLot && Number(matchedLot.branchId) !== Number(selectedBranchId)) {
+                const lotBranchId = matchedLot ? Number(matchedLot.branchId) : 0;
+                const matchesBranch = batchBranchId === Number(selectedBranchId) || (batchBranchId === 0 && lotBranchId === Number(selectedBranchId));
+                if (!matchesBranch) {
                     return false;
                 }
             }
@@ -468,8 +471,11 @@ export function useBatchRegistration(
         const targetBatches = batches.filter((b) => {
             if (Number(b.quantity || 0) === 0) return false;
             if (!isAllBranches) {
+                const batchBranchId = Number(b.branchId || 0);
                 const matchedLot = lots.find((l) => Number(l.lotId) === Number(b.lotId));
-                if (matchedLot && Number(matchedLot.branchId) !== Number(selectedBranchId)) {
+                const lotBranchId = matchedLot ? Number(matchedLot.branchId) : 0;
+                const matchesBranch = batchBranchId === Number(selectedBranchId) || (batchBranchId === 0 && lotBranchId === Number(selectedBranchId));
+                if (!matchesBranch) {
                     return false;
                 }
             }

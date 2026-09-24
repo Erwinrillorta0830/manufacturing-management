@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Batch, InventoryMovement, Lot, Branch } from "../types";
-import { ArrowDownLeft, ArrowUpRight, History, Layers, Package, Warehouse, Loader2 } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, History, Layers, Package, Warehouse, Loader2, Building2 } from "lucide-react";
 import { resolveProductClassification } from "../services/lot-tracking.service";
 
 interface BatchMovementsDialogProps {
@@ -185,7 +185,7 @@ export default function BatchMovementsDialog({
                     </div>
 
                     {/* Metadata chips */}
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mt-3 pt-3 border-t border-border/40">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2 mt-3 pt-3 border-t border-border/40">
                         <div className="flex items-center gap-2">
                             <Package className="h-4 w-4 text-muted-foreground shrink-0" />
                             <div className="truncate">
@@ -202,6 +202,16 @@ export default function BatchMovementsDialog({
                                 <p className="text-[10px] text-muted-foreground uppercase font-semibold">Storage Rack</p>
                                 <p className="text-xs font-bold text-foreground truncate">
                                     {batch.lotName}
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                            <Building2 className="h-4 w-4 text-muted-foreground shrink-0" />
+                            <div className="truncate">
+                                <p className="text-[10px] text-muted-foreground uppercase font-semibold">Branch</p>
+                                <p className="text-xs font-bold text-foreground truncate">
+                                    {branchDisplay || "-"}
                                 </p>
                             </div>
                         </div>
