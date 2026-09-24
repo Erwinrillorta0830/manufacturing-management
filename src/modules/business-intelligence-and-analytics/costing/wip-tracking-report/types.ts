@@ -1,4 +1,4 @@
-import type { CanonicalJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
+import type { CanonicalJobOrderStatus } from "./job-order-status";
 
 export interface WipOperatorAssignment {
     id: number;
