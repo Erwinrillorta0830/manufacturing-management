@@ -85,7 +85,7 @@ export function getFefoPriorityMap(
     // Process each product group independently to enforce per-product FEFO ordering
     productGroups.forEach((groupBatches, productId) => {
         const sampleBatch = groupBatches[0];
-        const productName = sampleBatch?.productName || sampleBatch?.itemCode || `Product #${productId}`;
+        const productName = sampleBatch?.productName || sampleBatch?.itemCode || "-";
 
         const eligibleBatches: Batch[] = [];
 

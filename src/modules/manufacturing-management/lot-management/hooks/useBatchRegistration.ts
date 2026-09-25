@@ -87,10 +87,10 @@ export function useBatchRegistration(
                 const matchedP = productList.find((p) => Number(p.productId) === Number(b.productId));
                 const prodName = (matchedP?.productName && !matchedP.productName.startsWith("Product #"))
                     ? matchedP.productName
-                    : (b.productName && !b.productName.startsWith("Product #") ? b.productName : (matchedP?.productName || b.productName || `Product #${b.productId}`));
+                    : (b.productName && !b.productName.startsWith("Product #") ? b.productName : (matchedP?.productName || b.productName || "-"));
                 const itemCode = (matchedP?.skuCode && !matchedP.skuCode.startsWith("PROD-"))
                     ? matchedP.skuCode
-                    : (b.itemCode && !b.itemCode.startsWith("PROD-") ? b.itemCode : (matchedP?.skuCode || b.itemCode || `PROD-${b.productId}`));
+                    : (b.itemCode && !b.itemCode.startsWith("PROD-") ? b.itemCode : (matchedP?.skuCode || b.itemCode || "-"));
 
                 const pType = (matchedP as { productType?: unknown; product_type?: unknown })?.productType || (matchedP as { productType?: unknown; product_type?: unknown })?.product_type || b.productType;
                 const pCat = (matchedP as { productCategory?: unknown; category_name?: unknown })?.productCategory || (matchedP as { productCategory?: unknown; category_name?: unknown })?.category_name || b.productCategory;
@@ -126,10 +126,10 @@ export function useBatchRegistration(
                         const matchedP = productList.find((p) => Number(p.productId) === Number(b.productId));
                         const prodName = (matchedP?.productName && !matchedP.productName.startsWith("Product #"))
                             ? matchedP.productName
-                            : (b.productName && !b.productName.startsWith("Product #") ? b.productName : (matchedP?.productName || b.productName || `Product #${b.productId}`));
+                            : (b.productName && !b.productName.startsWith("Product #") ? b.productName : (matchedP?.productName || b.productName || "-"));
                         const itemCode = (matchedP?.skuCode && !matchedP.skuCode.startsWith("PROD-"))
                             ? matchedP.skuCode
-                            : (b.itemCode && !b.itemCode.startsWith("PROD-") ? b.itemCode : (matchedP?.skuCode || b.itemCode || `PROD-${b.productId}`));
+                            : (b.itemCode && !b.itemCode.startsWith("PROD-") ? b.itemCode : (matchedP?.skuCode || b.itemCode || "-"));
 
                         const pType = (matchedP as { productType?: unknown; product_type?: unknown })?.productType || (matchedP as { productType?: unknown; product_type?: unknown })?.product_type || b.productType;
                         const pCat = (matchedP as { productCategory?: unknown; category_name?: unknown })?.productCategory || (matchedP as { productCategory?: unknown; category_name?: unknown })?.category_name || b.productCategory;
@@ -361,15 +361,28 @@ export function useBatchRegistration(
     };
 
     const filteredBatches = useMemo(() => {
+        const knownLotIds = new Set(lots.map((l) => Number(l.lotId)));
         const rawFiltered = batches.filter((b) => {
             if (Number(b.quantity || 0) === 0) return false;
-            if (selectedBranchId !== "ALL") {
+
+            const isGhost = !b.lotId || Number(b.lotId) === 0 || !knownLotIds.has(Number(b.lotId));
+
+            if (selectedBranchId === 0) {
+                // System Virtual Rack: show all batches in ghost rack across all branches
+                if (!isGhost) return false;
+            } else if (selectedBranchId !== "ALL") {
+                const branchIdNum = Number(selectedBranchId);
                 const batchBranchId = Number(b.branchId || 0);
                 const matchedLot = lots.find((l) => Number(l.lotId) === Number(b.lotId));
                 const lotBranchId = matchedLot ? Number(matchedLot.branchId) : 0;
-                const matchesBranch = batchBranchId === Number(selectedBranchId) || (batchBranchId === 0 && lotBranchId === Number(selectedBranchId));
-                if (!matchesBranch) {
-                    return false;
+
+                if (isGhost) {
+                    // Show in branch if it belongs to this branch OR has a cross-branch conflict involving this branch
+                    const matchesGhost = batchBranchId === branchIdNum || lotBranchId === branchIdNum;
+                    if (!matchesGhost) return false;
+                } else {
+                    const matchesBranch = batchBranchId === branchIdNum || (batchBranchId === 0 && lotBranchId === branchIdNum);
+                    if (!matchesBranch) return false;
                 }
             }
             if (selectedProductType !== "ALL") {
@@ -468,15 +481,26 @@ export function useBatchRegistration(
         const isAllBatches = Array.isArray(selectedBatchId) ? selectedBatchId.length === 0 : selectedBatchId === "ALL";
         const globalQuery = globalSearchQuery.toLowerCase().trim();
 
+        const knownLotIds = new Set(lots.map((l) => Number(l.lotId)));
         const targetBatches = batches.filter((b) => {
             if (Number(b.quantity || 0) === 0) return false;
-            if (!isAllBranches) {
+
+            const isGhost = !b.lotId || Number(b.lotId) === 0 || !knownLotIds.has(Number(b.lotId));
+
+            if (selectedBranchId === 0) {
+                if (!isGhost) return false;
+            } else if (!isAllBranches) {
+                const branchIdNum = Number(selectedBranchId);
                 const batchBranchId = Number(b.branchId || 0);
                 const matchedLot = lots.find((l) => Number(l.lotId) === Number(b.lotId));
                 const lotBranchId = matchedLot ? Number(matchedLot.branchId) : 0;
-                const matchesBranch = batchBranchId === Number(selectedBranchId) || (batchBranchId === 0 && lotBranchId === Number(selectedBranchId));
-                if (!matchesBranch) {
-                    return false;
+
+                if (isGhost) {
+                    const matchesGhost = batchBranchId === branchIdNum || lotBranchId === branchIdNum;
+                    if (!matchesGhost) return false;
+                } else {
+                    const matchesBranch = batchBranchId === branchIdNum || (batchBranchId === 0 && lotBranchId === branchIdNum);
+                    if (!matchesBranch) return false;
                 }
             }
             if (!isAllTypes) {
@@ -516,7 +540,9 @@ export function useBatchRegistration(
 
         const fefoMap = getFefoPriorityMap(targetBatches, selectedProductId);
         const relevantLotIds = new Set(targetBatches.map((b) => b.lotId));
-        let branchLots = !isAllBranches ? lots.filter((l) => Number(l.branchId) === Number(selectedBranchId)) : lots;
+        let branchLots = selectedBranchId === 0
+            ? []
+            : (!isAllBranches ? lots.filter((l) => Number(l.branchId) === Number(selectedBranchId)) : lots);
         if (!isAllUoms) {
             branchLots = branchLots.filter((l) => Number(l.uomId) === Number(selectedUomId));
         }
@@ -558,7 +584,7 @@ export function useBatchRegistration(
         const selectedProd = !isAllProducts
             ? products.find((p) => Number(p.productId) === Number(selectedProductId))
             : undefined;
-        const selectedProductName = selectedProd?.productName || (selectedProd ? `Product #${selectedProd.productId}` : undefined);
+        const selectedProductName = selectedProd?.productName || (selectedProd ? "-" : undefined);
 
         return {
             totalLots,

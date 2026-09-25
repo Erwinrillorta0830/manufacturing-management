@@ -231,15 +231,15 @@ export default function BatchTable({
                                             <div className="flex flex-col min-w-[180px] max-w-[360px]">
                                                 <span
                                                     className="font-semibold text-xs text-foreground truncate"
-                                                    title={batch.productName || `Product #${batch.productId}`}
+                                                    title={batch.productName || "-"}
                                                 >
-                                                    {batch.productName || `Product #${batch.productId}`}
+                                                    {batch.productName || "-"}
                                                 </span>
                                                 <span
                                                     className="font-mono text-[10px] text-muted-foreground truncate"
-                                                    title={batch.itemCode || `PROD-${batch.productId}`}
+                                                    title={batch.itemCode || "-"}
                                                 >
-                                                    {batch.itemCode || `PROD-${batch.productId}`}
+                                                    {batch.itemCode || "-"}
                                                 </span>
                                             </div>
                                         </TableCell>

@@ -114,11 +114,27 @@ export default function WarehouseRackView({
             createdAt: "2025-01-01T00:00:00.000Z",
             updatedAt: "2025-01-01T00:00:00.000Z"
         };
-        let baseLots = hasGhostBatches ? [ghostLot, ...lots] : [...lots];
+        let baseLots: Lot[] = [];
 
-        if (selectedBranchId !== "ALL") {
-            baseLots = baseLots.filter((lot) => Number(lot.lotId) === 0 || Number(lot.branchId) === Number(selectedBranchId));
+        if (selectedBranchId === 0) {
+            // System Virtual Rack mode: only show Ghost Rack if ghost batches exist
+            baseLots = hasGhostBatches ? [ghostLot] : [];
+        } else if (selectedBranchId !== "ALL") {
+            const branchIdNum = Number(selectedBranchId);
+            const hasBranchGhost = batches.some((b) => {
+                const isUnassigned = !b.lotId || Number(b.lotId) === 0 || !knownLotIds.has(Number(b.lotId));
+                if (!isUnassigned) return false;
+                const batchBranchId = Number(b.branchId || 0);
+                const matchedLot = lots.find((l) => Number(l.lotId) === Number(b.lotId));
+                const lotBranchId = matchedLot ? Number(matchedLot.branchId) : 0;
+                return batchBranchId === branchIdNum || lotBranchId === branchIdNum;
+            });
+            const branchLots = lots.filter((lot) => Number(lot.branchId) === branchIdNum);
+            baseLots = hasBranchGhost ? [ghostLot, ...branchLots] : branchLots;
+        } else {
+            baseLots = hasGhostBatches ? [ghostLot, ...lots] : [...lots];
         }
+
         if (selectedUomId !== "ALL") {
             baseLots = baseLots.filter((lot) => Number(lot.lotId) === 0 || Number(lot.uomId) === Number(selectedUomId));
         }
@@ -137,11 +153,23 @@ export default function WarehouseRackView({
 
         const matchingLots = baseLots.filter((lot) => {
             const isGhost = Number(lot.lotId) === 0;
-            const knownLotIds = new Set(lots.map((l) => Number(l.lotId)));
             const lotBatches = batches.filter((b) => {
                 const isUnassigned = !b.lotId || Number(b.lotId) === 0 || !knownLotIds.has(Number(b.lotId));
-                return isGhost ? isUnassigned : Number(b.lotId) === Number(lot.lotId);
+                if (isGhost) {
+                    if (!isUnassigned) return false;
+                    if (selectedBranchId !== "ALL" && selectedBranchId !== 0) {
+                        const branchIdNum = Number(selectedBranchId);
+                        const batchBranchId = Number(b.branchId || 0);
+                        const matchedLot = lots.find((l) => Number(l.lotId) === Number(b.lotId));
+                        const lotBranchId = matchedLot ? Number(matchedLot.branchId) : 0;
+                        return batchBranchId === branchIdNum || lotBranchId === branchIdNum;
+                    }
+                    return true;
+                }
+                return Number(b.lotId) === Number(lot.lotId);
             });
+
+            if (isGhost && lotBatches.length === 0) return false;
 
             if (selectedProductType !== "ALL") {
                 const hasMatchingType = lotBatches.some(
@@ -271,6 +299,13 @@ export default function WarehouseRackView({
                         const isUnassigned = !b.lotId || Number(b.lotId) === 0 || !knownLotIds.has(Number(b.lotId));
                         if (isGhostLot) {
                             if (!isUnassigned) return false;
+                            if (selectedBranchId !== "ALL" && selectedBranchId !== 0) {
+                                const branchIdNum = Number(selectedBranchId);
+                                const batchBranchId = Number(b.branchId || 0);
+                                const matchedLot = lots.find((l) => Number(l.lotId) === Number(b.lotId));
+                                const lotBranchId = matchedLot ? Number(matchedLot.branchId) : 0;
+                                if (batchBranchId !== branchIdNum && lotBranchId !== branchIdNum) return false;
+                            }
                         } else {
                             if (Number(b.lotId) !== Number(lot.lotId)) return false;
                         }
@@ -314,7 +349,18 @@ export default function WarehouseRackView({
                     const allLotBatches = groupAndSumLotBatches(
                         batches.filter((b) => {
                             const isUnassigned = !b.lotId || Number(b.lotId) === 0 || !knownLotIds.has(Number(b.lotId));
-                            return isGhostLot ? isUnassigned : Number(b.lotId) === Number(lot.lotId);
+                            if (isGhostLot) {
+                                if (!isUnassigned) return false;
+                                if (selectedBranchId !== "ALL" && selectedBranchId !== 0) {
+                                    const branchIdNum = Number(selectedBranchId);
+                                    const batchBranchId = Number(b.branchId || 0);
+                                    const matchedLot = lots.find((l) => Number(l.lotId) === Number(b.lotId));
+                                    const lotBranchId = matchedLot ? Number(matchedLot.branchId) : 0;
+                                    if (batchBranchId !== branchIdNum && lotBranchId !== branchIdNum) return false;
+                                }
+                                return true;
+                            }
+                            return Number(b.lotId) === Number(lot.lotId);
                         })
                     );
 
@@ -427,8 +473,8 @@ export default function WarehouseRackView({
                                             ) : (
                                                 <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md bg-muted/80 text-foreground border border-border/80 shadow-2xs shrink-0">
                                                     <Building2 className="h-3 w-3 text-primary shrink-0" />
-                                                    <span className="truncate max-w-[120px]" title={lot.branchName || `Branch #${lot.branchId}`}>
-                                                        {lot.branchName || `Branch #${lot.branchId}`}
+                                                    <span className="truncate max-w-[120px]" title={lot.branchName || "-"}>
+                                                        {lot.branchName || "-"}
                                                     </span>
                                                     {lot.branchCode && (
                                                         <span className="text-[9px] font-mono font-bold text-muted-foreground ml-0.5">
@@ -596,10 +642,22 @@ export default function WarehouseRackView({
                                                                         {statusConfig.label}
                                                                     </span>
                                                                 )}
+
+                                                                {isGhostLot && (() => {
+                                                                    const matchedLot = lots.find((l) => Number(l.lotId) === Number(batch.lotId));
+                                                                    const isCrossBranchConflict = matchedLot && Number(matchedLot.branchId) > 0 && Number(batch.branchId) > 0 && Number(matchedLot.branchId) !== Number(batch.branchId);
+                                                                    if (!isCrossBranchConflict) return null;
+                                                                    return (
+                                                                        <span className="px-1.5 py-0.2 text-[9px] font-bold rounded-full bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/40 shadow-2xs flex items-center gap-0.5" title={`Catalog rack is in ${matchedLot.branchName || "another branch"}, but movement occurred under ${batch.branchName || "different branch"}`}>
+                                                                            <AlertTriangle className="h-2 w-2 shrink-0 text-amber-500" />
+                                                                            Branch Conflict
+                                                                        </span>
+                                                                    );
+                                                                })()}
                                                             </div>
                                                             <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground flex-wrap">
                                                                 <span className="truncate max-w-[130px] font-semibold text-foreground">
-                                                                    {batch.productName || `Product #${batch.productId}`}
+                                                                    {batch.productName || "-"}
                                                                 </span>
                                                                 {batch.itemCode && (
                                                                     <span className="truncate max-w-[110px] font-mono text-[10px]">
