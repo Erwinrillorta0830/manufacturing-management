@@ -17,7 +17,7 @@ import { computePreviewStatus } from "../hooks/useDeliveries";
 import {
     SearchableSelect,
     SearchableSelectOption,
-} from "@/modules/manufacturing-management/shared/components/SearchableSelect";
+} from "../../shared/components/SearchableSelect";
 import {
     X,
     CheckCircle2,
@@ -37,7 +37,7 @@ import {
     Link2,
     SlidersHorizontal,
     Lock,
-
+    Lightbulb,
 } from "lucide-react";
 import ReconciliationLotAllocationModal from "./ReconciliationLotAllocationModal";
 
@@ -61,7 +61,7 @@ const getReservationPickedQty = (r: LineItemReservation): number => {
     return Number(r.reserved_quantity || 0);
 };
 
-function initLineItemReservations(items: ClearanceLineItem[]): ClearanceLineItem[] {
+function initLineItemReservations(items: ClearanceLineItem[], status?: FulfillmentStatus): ClearanceLineItem[] {
     return items.map((item) => {
         const reservations = (item.reservations || []).map((r) => ({
             ...r,
@@ -69,6 +69,7 @@ function initLineItemReservations(items: ClearanceLineItem[]): ClearanceLineItem
         }));
         return {
             ...item,
+            received_quantity: status === "Unfulfilled / Returns" ? 0 : item.received_quantity,
             reservations,
         };
     });
@@ -78,6 +79,8 @@ interface ReconciliationRowItemProps {
     item: ClearanceLineItem;
     originalIndex: number;
     effectiveReadOnly: boolean;
+    dynamicStatus: FulfillmentStatus;
+    onFulfilledQtyChange: (originalIndex: number, newFulfilledQty: number) => void;
     onReturnedQtyChange: (originalIndex: number, newReturnedQty: number) => void;
     onOpenAllocationModal: (originalIndex: number) => void;
 }
@@ -86,6 +89,8 @@ const ReconciliationRowItem = React.memo(function ReconciliationRowItem({
     item,
     originalIndex,
     effectiveReadOnly,
+    dynamicStatus,
+    onFulfilledQtyChange,
     onReturnedQtyChange,
     onOpenAllocationModal,
 }: ReconciliationRowItemProps) {
@@ -94,54 +99,114 @@ const ReconciliationRowItem = React.memo(function ReconciliationRowItem({
     const variance = targetQty - (item.received_quantity + item.returned_quantity);
     const isBalanced = variance === 0;
 
-    const [rawQty, setRawQty] = useState<string>("");
-    const [isFocused, setIsFocused] = useState<boolean>(false);
+    const isFulfilledWithReturns = dynamicStatus === "Fulfilled with Returns";
+    const isUnfulfilledReturns = dynamicStatus === "Unfulfilled / Returns";
 
-    const displayQty = isFocused
-        ? rawQty
+    // Returned Input state
+    const [rawReturnQty, setRawReturnQty] = useState<string>("");
+    const [isReturnFocused, setIsReturnFocused] = useState<boolean>(false);
+
+    // Fulfilled Input state (editable when dynamicStatus is "Fulfilled with Returns")
+    const [rawFulfilledQty, setRawFulfilledQty] = useState<string>("");
+    const [isFulfilledFocused, setIsFulfilledFocused] = useState<boolean>(false);
+
+    const displayReturnQty = isReturnFocused
+        ? rawReturnQty
         : item.returned_quantity === 0
             ? ""
             : String(item.returned_quantity);
 
-    const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
-        setIsFocused(true);
-        setRawQty(item.returned_quantity === 0 ? "" : String(item.returned_quantity));
+    const displayFulfilledQty = isFulfilledFocused
+        ? rawFulfilledQty
+        : item.received_quantity === 0
+            ? ""
+            : String(item.received_quantity);
+
+    // Handlers for Returned input
+    const handleReturnFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+        setIsReturnFocused(true);
+        setRawReturnQty(item.returned_quantity === 0 ? "" : String(item.returned_quantity));
         e.target.select();
     };
 
-    const handleClick = (e: React.MouseEvent<HTMLInputElement>) => {
-        if (!isFocused) {
-            setIsFocused(true);
-            setRawQty(item.returned_quantity === 0 ? "" : String(item.returned_quantity));
+    const handleReturnClick = (e: React.MouseEvent<HTMLInputElement>) => {
+        if (!isReturnFocused) {
+            setIsReturnFocused(true);
+            setRawReturnQty(item.returned_quantity === 0 ? "" : String(item.returned_quantity));
             (e.target as HTMLInputElement).select();
         }
     };
 
-    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleReturnChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const val = e.target.value;
-        // Allow empty string or digits while typing
         if (val === "" || /^\d+$/.test(val)) {
-            setRawQty(val);
+            setRawReturnQty(val);
             if (val !== "") {
                 const parsed = parseInt(val, 10);
                 if (!isNaN(parsed)) {
-                    const clamped = Math.max(0, Math.min(parsed, targetQty));
-                    onReturnedQtyChange(originalIndex, clamped);
+                    const allowed = isFulfilledWithReturns || isUnfulfilledReturns
+                        ? Math.max(0, parsed)
+                        : Math.max(0, Math.min(parsed, targetQty));
+                    onReturnedQtyChange(originalIndex, allowed);
                 }
             }
         }
     };
 
-    const handleBlur = () => {
-        setIsFocused(false);
-        if (rawQty === "" || isNaN(parseInt(rawQty, 10))) {
-            setRawQty("");
+    const handleReturnBlur = () => {
+        setIsReturnFocused(false);
+        if (rawReturnQty === "" || isNaN(parseInt(rawReturnQty, 10))) {
+            setRawReturnQty("");
             onReturnedQtyChange(originalIndex, 0);
         } else {
-            const parsed = parseInt(rawQty, 10);
-            const clamped = Math.max(0, Math.min(parsed, targetQty));
-            setRawQty(clamped === 0 ? "" : String(clamped));
-            onReturnedQtyChange(originalIndex, clamped);
+            const parsed = parseInt(rawReturnQty, 10);
+            const allowed = isFulfilledWithReturns || isUnfulfilledReturns
+                ? Math.max(0, parsed)
+                : Math.max(0, Math.min(parsed, targetQty));
+            setRawReturnQty(allowed === 0 ? "" : String(allowed));
+            onReturnedQtyChange(originalIndex, allowed);
+        }
+    };
+
+    // Handlers for Fulfilled input (editable for Fulfilled with Returns)
+    const handleFulfilledFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+        setIsFulfilledFocused(true);
+        setRawFulfilledQty(item.received_quantity === 0 ? "" : String(item.received_quantity));
+        e.target.select();
+    };
+
+    const handleFulfilledClick = (e: React.MouseEvent<HTMLInputElement>) => {
+        if (!isFulfilledFocused) {
+            setIsFulfilledFocused(true);
+            setRawFulfilledQty(item.received_quantity === 0 ? "" : String(item.received_quantity));
+            (e.target as HTMLInputElement).select();
+        }
+    };
+
+    const handleFulfilledChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const val = e.target.value;
+        if (val === "" || /^\d+$/.test(val)) {
+            setRawFulfilledQty(val);
+            if (val !== "") {
+                const parsed = parseInt(val, 10);
+                if (!isNaN(parsed)) {
+                    onFulfilledQtyChange(originalIndex, Math.max(0, parsed));
+                }
+            }
+        }
+    };
+
+    const handleFulfilledBlur = () => {
+        setIsFulfilledFocused(false);
+        if (rawFulfilledQty === "" || isNaN(parseInt(rawFulfilledQty, 10))) {
+            const fallback = Math.max(0, targetQty - item.returned_quantity);
+            setRawFulfilledQty(fallback === 0 ? "" : String(fallback));
+            onFulfilledQtyChange(originalIndex, fallback);
+        } else {
+            const parsed = parseInt(rawFulfilledQty, 10);
+            const allowed = Math.max(0, parsed);
+            setRawFulfilledQty(allowed === 0 ? "" : String(allowed));
+            onFulfilledQtyChange(originalIndex, allowed);
         }
     };
 
@@ -188,9 +253,32 @@ const ReconciliationRowItem = React.memo(function ReconciliationRowItem({
 
             {/* Fulfilled Input */}
             <td className="p-3.5 text-center align-middle">
-                <span className="font-black text-sm text-emerald-600 dark:text-emerald-400">
-                    {item.received_quantity}
-                </span>
+                {effectiveReadOnly ? (
+                    <span className="font-black text-sm text-emerald-600 dark:text-emerald-400">
+                        {isUnfulfilledReturns ? 0 : item.received_quantity}
+                    </span>
+                ) : isFulfilledWithReturns ? (
+                    <input
+                        type="number"
+                        min={0}
+                        value={displayFulfilledQty}
+                        placeholder="0"
+                        onFocus={handleFulfilledFocus}
+                        onClick={handleFulfilledClick}
+                        onChange={handleFulfilledChange}
+                        onBlur={handleFulfilledBlur}
+                        className="w-20 h-8 text-center bg-background border border-emerald-500/40 focus:border-emerald-500 rounded-lg px-2 text-xs font-black text-foreground outline-none shadow-xs"
+                        title="Fulfilled quantity received by customer"
+                    />
+                ) : isUnfulfilledReturns ? (
+                    <span className="font-black text-sm text-muted-foreground select-none">
+                        0
+                    </span>
+                ) : (
+                    <span className="font-black text-sm text-emerald-600 dark:text-emerald-400 select-none">
+                        {item.received_quantity}
+                    </span>
+                )}
             </td>
 
             {/* Returned Input */}
@@ -199,25 +287,46 @@ const ReconciliationRowItem = React.memo(function ReconciliationRowItem({
                     <span className="font-black text-sm text-rose-500">
                         {item.returned_quantity}
                     </span>
-                ) : (
+                ) : isFulfilledWithReturns ? (
+                    <div className="flex flex-col items-center gap-0.5">
+                        <input
+                            type="number"
+                            disabled
+                            value={item.returned_quantity}
+                            className="w-20 h-8 text-center bg-muted/60 border border-muted text-xs font-black text-rose-500 rounded-lg cursor-not-allowed select-none opacity-90 shadow-2xs"
+                            title="Returned quantity is auto-populated and handled by the linked Sales Return"
+                        />
+                        <span className="text-[9px] font-semibold text-muted-foreground">
+                            Auto from SR
+                        </span>
+                    </div>
+                ) : isUnfulfilledReturns ? (
                     <input
                         type="number"
                         min={0}
-                        max={targetQty}
-                        value={displayQty}
+                        value={displayReturnQty}
                         placeholder="0"
-                        onFocus={handleFocus}
-                        onClick={handleClick}
-                        onChange={handleChange}
-                        onBlur={handleBlur}
+                        onFocus={handleReturnFocus}
+                        onClick={handleReturnClick}
+                        onChange={handleReturnChange}
+                        onBlur={handleReturnBlur}
                         className="w-20 h-8 text-center bg-background border border-rose-500/40 focus:border-rose-500 rounded-lg px-2 text-xs font-black text-foreground outline-none shadow-xs"
+                        title="Manual returned quantity"
                     />
+                ) : (
+                    <span className="font-black text-sm text-muted-foreground select-none">
+                        0
+                    </span>
                 )}
             </td>
 
             {/* Dedicated Column: Lot & Batch Allocation */}
             <td className="p-3.5 text-center align-middle">
-                {item.returned_quantity > 0 && item.reservations && item.reservations.length > 0 ? (
+                {isFulfilledWithReturns ? (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-700 dark:text-blue-300 bg-blue-500/10 border border-blue-500/20 px-2.5 py-1 rounded-full shadow-2xs">
+                        Handled by Sales Return
+                    </span>
+                ) : isUnfulfilledReturns && item.returned_quantity > 0 && item.reservations && item.reservations.length > 0 ? (
                     <div className="flex flex-col items-center gap-1">
                         {!effectiveReadOnly && (
                             <button
@@ -282,7 +391,7 @@ export default function ProductReconciliationModal({
     const [prevOrder, setPrevOrder] = useState<typeof order>(order);
 
     const [lineItems, setLineItems] = useState<ClearanceLineItem[]>(() => {
-        return initLineItemReservations(order?.items || []);
+        return initLineItemReservations(order?.items || [], order?.fulfillment_status);
     });
 
     // Linked Sales Return state (1:1 relationship per Sales Order)
@@ -294,7 +403,7 @@ export default function ProductReconciliationModal({
     if (order !== prevOrder) {
         setPrevOrder(order);
         setOrderRemarks(order?.remarks || "");
-        setLineItems(initLineItemReservations(order?.items || []));
+        setLineItems(initLineItemReservations(order?.items || [], order?.fulfillment_status));
         setSelectedLinkedReturn(order?.linked_sales_return || null);
     }
 
@@ -313,10 +422,101 @@ export default function ProductReconciliationModal({
         >
     >([]);
 
+    // Helper to fetch details of a linked sales return and sync line item quantities
+    const syncReturnDetails = useCallback(async (returnId: number, returnNo: string) => {
+        try {
+            const res = await fetch(
+                `/api/manufacturing/sales-and-fulfillment/sales-return-and-credit-notes?action=details&id=${returnId}&returnNo=${encodeURIComponent(returnNo)}`,
+                { cache: "no-store" }
+            );
+            if (!res.ok) return;
+            const json = await res.json();
+            const returnItems: Array<{
+                productId?: number;
+                product_id?: number;
+                id?: number;
+                code?: string;
+                product_code?: string;
+                quantity?: number;
+                qty?: number;
+            }> = Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : [];
+            console.log("[SR-Debug] [syncReturnDetails] fetched return items for", returnNo, returnItems);
+
+            setLineItems((prev) =>
+                prev.map((item) => {
+                    const matchingReturnLines = returnItems.filter((r) => {
+                        const rPid = Number(r.productId || r.product_id || 0);
+                        const itemPid = Number(item.product_id || 0);
+                        const isPidMatch = rPid > 0 && itemPid > 0 && rPid === itemPid;
+
+                        const rCode = String(r.code || r.product_code || "").trim().toLowerCase();
+                        const itemCode = String(item.product_code || "").trim().toLowerCase();
+                        const isCodeMatch = Boolean(rCode && itemCode && rCode === itemCode);
+
+                        return isPidMatch || isCodeMatch;
+                    });
+
+                    const targetQty =
+                        item.invoiced_quantity !== undefined && item.invoiced_quantity !== null
+                            ? item.invoiced_quantity
+                            : item.ordered_quantity;
+
+                    if (matchingReturnLines.length > 0) {
+                        const retQty = matchingReturnLines.reduce(
+                            (sum, r) => sum + (Number(r.quantity ?? r.qty) || 0),
+                            0
+                        );
+                        const recQty = Math.max(0, targetQty - retQty);
+
+                        // Auto-distribute returned quantity across batch reservations up to picked capacity
+                        let remainingToAllocate = retQty;
+                        const updatedReservations = (item.reservations || []).map((r) => {
+                            const maxForThis = getReservationPickedQty(r);
+                            const alloc = Math.min(maxForThis, remainingToAllocate);
+                            remainingToAllocate = Math.max(0, remainingToAllocate - alloc);
+                            return {
+                                ...r,
+                                returned_quantity: alloc,
+                            };
+                        });
+
+                        return {
+                            ...item,
+                            returned_quantity: retQty,
+                            received_quantity: recQty,
+                            reservations: updatedReservations,
+                            line_status: "Fulfilled with Returns" as LineStatus,
+                        };
+                    } else {
+                        // Product is not part of this return: reset returned to 0 and fulfilled to 100%
+                        const clearedReservations = (item.reservations || []).map((r) => ({
+                            ...r,
+                            returned_quantity: 0,
+                        }));
+                        return {
+                            ...item,
+                            returned_quantity: 0,
+                            received_quantity: targetQty,
+                            reservations: clearedReservations,
+                            line_status: "Fulfilled" as LineStatus,
+                        };
+                    }
+                })
+            );
+        } catch (err) {
+            console.warn("[ProductReconciliationModal] Error syncing return details:", err);
+        }
+    }, []);
+
     // Fetch candidate sales returns from backend on modal open
     useEffect(() => {
         let isMounted = true;
         if (isOpen) {
+            // If already linked and order is Fulfilled with Returns, sync return details immediately
+            if (order?.fulfillment_status === "Fulfilled with Returns" && order?.linked_sales_return?.return_id && order?.linked_sales_return?.return_number) {
+                syncReturnDetails(order.linked_sales_return.return_id, order.linked_sales_return.return_number);
+            }
+
             fetch("/api/manufacturing/sales-and-fulfillment/sales-return-and-credit-notes?action=list&limit=100", { cache: "no-store" })
                 .then((res) => (res.ok ? res.json() : null))
                 .then((data: unknown) => {
@@ -350,16 +550,41 @@ export default function ProductReconciliationModal({
                         console.log("[SR-Debug] [onOpen] mapped returns (invoice_no / order_id):", mapped.map(m => ({ id: m.return_id, rNo: m.return_number, inv: m.invoice_no, ord: m.order_id, status: m.status })));
                         setAvailableReturns(mapped);
 
-                        // Auto-select the most recent matching return (highest return_id) if nothing is linked yet
-                        if (!order?.linked_sales_return) {
+                        // 1. If a return is currently linked (from order or state), update with fresh mapped data
+                        const targetId = order?.linked_sales_return?.return_id || selectedLinkedReturn?.return_id;
+                        const targetNo = order?.linked_sales_return?.return_number || selectedLinkedReturn?.return_number;
+                        const currentMatch = (targetId || targetNo)
+                            ? mapped.find(
+                                  (r) =>
+                                      (targetId && r.return_id === targetId) ||
+                                      (targetNo && r.return_number.trim().toLowerCase() === targetNo.trim().toLowerCase())
+                              )
+                            : null;
+
+                        if (order?.fulfillment_status === "Fulfilled with Returns" && currentMatch && isMounted) {
+                            setSelectedLinkedReturn({
+                                return_id: currentMatch.return_id,
+                                return_number: currentMatch.return_number,
+                                status: currentMatch.status,
+                                is_received: currentMatch.is_received,
+                                return_date: currentMatch.return_date,
+                                total_amount: currentMatch.total_amount,
+                            });
+                            syncReturnDetails(currentMatch.return_id, currentMatch.return_number);
+                        } else if (order?.fulfillment_status === "Fulfilled with Returns" && !order?.linked_sales_return && !selectedLinkedReturn) {
+                            // 2. Auto-select the most recent matching return (highest return_id) if nothing is linked yet
                             const orderNo = (order?.order_no || "").trim().toLowerCase();
                             const invNo = (order?.invoice_no || "").trim().toLowerCase();
+                            const hasSpecificInvoice = Boolean(invNo && invNo !== "---");
                             const matches = mapped.filter(r => {
                                 const rOrd = String(r.order_id || "").trim().toLowerCase();
                                 const rInv = String(r.invoice_no || "").trim().toLowerCase();
+                                const invMatch = Boolean(rInv && rInv !== "---" && hasSpecificInvoice && (rInv === invNo || rInv.includes(invNo) || invNo.includes(rInv)));
+                                if (hasSpecificInvoice) {
+                                    return invMatch;
+                                }
                                 const ordMatch = Boolean(rOrd && rOrd !== "---" && (rOrd === orderNo || (orderNo && rOrd.includes(orderNo)) || (orderNo && orderNo.includes(rOrd))));
-                                const invMatch = Boolean(rInv && rInv !== "---" && invNo && invNo !== "---" && (rInv === invNo || rInv.includes(invNo) || invNo.includes(rInv)));
-                                return ordMatch || invMatch;
+                                return ordMatch;
                             });
                             console.log("[SR-Debug] [onOpen] auto-select candidates:", matches.map(m => m.return_number));
                             // Pick the most recent (highest return_id); dropdown remains editable
@@ -373,6 +598,7 @@ export default function ProductReconciliationModal({
                                     return_date: best.return_date,
                                     total_amount: best.total_amount,
                                 });
+                                syncReturnDetails(best.return_id, best.return_number);
                                 console.log("[SR-Debug] [onOpen] auto-linked:", best.return_number);
                             }
                         }
@@ -383,7 +609,7 @@ export default function ProductReconciliationModal({
         return () => {
             isMounted = false;
         };
-    }, [isOpen, order?.invoice_no, order?.linked_sales_return, order?.order_no]);
+    }, [isOpen, order?.invoice_no, order?.linked_sales_return, order?.order_no, syncReturnDetails]);
 
     // Manual refresh handler for sales returns
     const fetchAvailableReturns = useCallback(async () => {
@@ -418,16 +644,41 @@ export default function ProductReconciliationModal({
                 console.log("[SR-Debug] [refresh] mapped returns:", mapped.map(m => ({ id: m.return_id, rNo: m.return_number, inv: m.invoice_no, ord: m.order_id, status: m.status })));
                 setAvailableReturns(mapped);
 
-                // Auto-select the most recent matching return if nothing is currently linked
-                if (!order?.linked_sales_return && !selectedLinkedReturn) {
+                // 1. If a return is currently linked (from state or order), find it in fresh mapped list and update its live status/fields
+                const targetId = selectedLinkedReturn?.return_id || order?.linked_sales_return?.return_id;
+                const targetNo = selectedLinkedReturn?.return_number || order?.linked_sales_return?.return_number;
+                const currentMatch = (targetId || targetNo)
+                    ? mapped.find(
+                          (r) =>
+                              (targetId && r.return_id === targetId) ||
+                              (targetNo && r.return_number.trim().toLowerCase() === targetNo.trim().toLowerCase())
+                      )
+                    : null;
+
+                if (currentMatch) {
+                    setSelectedLinkedReturn({
+                        return_id: currentMatch.return_id,
+                        return_number: currentMatch.return_number,
+                        status: currentMatch.status,
+                        is_received: currentMatch.is_received,
+                        return_date: currentMatch.return_date,
+                        total_amount: currentMatch.total_amount,
+                    });
+                    syncReturnDetails(currentMatch.return_id, currentMatch.return_number);
+                } else if (order?.fulfillment_status === "Fulfilled with Returns" && !order?.linked_sales_return && !selectedLinkedReturn) {
+                    // 2. Auto-select the most recent matching return if nothing is currently linked
                     const orderNo = (order?.order_no || "").trim().toLowerCase();
                     const invNo = (order?.invoice_no || "").trim().toLowerCase();
+                    const hasSpecificInvoice = Boolean(invNo && invNo !== "---");
                     const matches = mapped.filter(r => {
                         const rOrd = String(r.order_id || "").trim().toLowerCase();
                         const rInv = String(r.invoice_no || "").trim().toLowerCase();
+                        const invMatch = Boolean(rInv && rInv !== "---" && hasSpecificInvoice && (rInv === invNo || rInv.includes(invNo) || invNo.includes(rInv)));
+                        if (hasSpecificInvoice) {
+                            return invMatch;
+                        }
                         const ordMatch = Boolean(rOrd && rOrd !== "---" && (rOrd === orderNo || (orderNo && rOrd.includes(orderNo)) || (orderNo && orderNo.includes(rOrd))));
-                        const invMatch = Boolean(rInv && rInv !== "---" && invNo && invNo !== "---" && (rInv === invNo || rInv.includes(invNo) || invNo.includes(rInv)));
-                        return ordMatch || invMatch;
+                        return ordMatch;
                     });
                     console.log("[SR-Debug] [refresh] auto-select candidates:", matches.map(m => m.return_number));
                     // Pick the most recent (highest return_id); dropdown remains editable
@@ -441,6 +692,7 @@ export default function ProductReconciliationModal({
                             return_date: best.return_date,
                             total_amount: best.total_amount,
                         });
+                        syncReturnDetails(best.return_id, best.return_number);
                         console.log("[SR-Debug] [refresh] auto-linked:", best.return_number);
                     }
                 }
@@ -448,7 +700,7 @@ export default function ProductReconciliationModal({
         } catch (err: unknown) {
             console.warn("[ProductReconciliationModal] Error fetching sales returns:", err);
         }
-    }, [order?.invoice_no, order?.linked_sales_return, order?.order_no, selectedLinkedReturn]);
+    }, [order?.invoice_no, order?.linked_sales_return, order?.order_no, selectedLinkedReturn, syncReturnDetails]);
 
     // Format options for SearchableSelect combobox with SO & Invoice matching
     const returnOptions: SearchableSelectOption[] = useMemo(() => {
@@ -487,8 +739,9 @@ export default function ProductReconciliationModal({
         const currentInvNo = (order?.invoice_no || "").trim().toLowerCase();
         const currentInvId = String(order?.invoice_id || "").trim().toLowerCase();
         const currentCustCode = (order?.customer_code || "").trim().toLowerCase();
+        const hasSpecificInvoice = Boolean(currentInvNo && currentInvNo !== "---");
 
-        console.log("[SR-Debug] [matching] order keys:", { currentOrderNo, currentOrderId, currentInvNo, currentInvId, currentCustCode });
+        console.log("[SR-Debug] [matching] order keys:", { currentOrderNo, currentOrderId, currentInvNo, currentInvId, currentCustCode, hasSpecificInvoice });
         console.log("[SR-Debug] [matching] availableReturns count:", availableReturns.length);
         availableReturns.forEach(r => {
             const rOrderId = String(r.order_id || "").trim().toLowerCase();
@@ -504,15 +757,6 @@ export default function ProductReconciliationModal({
             const rInvNo = String(r.invoice_no || "").trim().toLowerCase();
             const rCustCode = String(r.customer_code || "").trim().toLowerCase();
 
-            const isOrderMatch = Boolean(
-                rOrderId &&
-                rOrderId !== "---" &&
-                (rOrderId === currentOrderNo ||
-                    rOrderId === currentOrderId ||
-                    (currentOrderNo && rOrderId.includes(currentOrderNo)) ||
-                    (currentOrderNo && currentOrderNo.includes(rOrderId)))
-            );
-
             const isInvoiceMatch = Boolean(
                 rInvNo &&
                 rInvNo !== "---" &&
@@ -522,7 +766,22 @@ export default function ProductReconciliationModal({
                     (currentInvNo && currentInvNo !== "---" && currentInvNo.includes(rInvNo)))
             );
 
+            const isOrderMatch = Boolean(
+                rOrderId &&
+                rOrderId !== "---" &&
+                (rOrderId === currentOrderNo ||
+                    rOrderId === currentOrderId ||
+                    (currentOrderNo && rOrderId.includes(currentOrderNo)) ||
+                    (currentOrderNo && currentOrderNo.includes(rOrderId)))
+            );
+
             const isCustMatch = Boolean(rCustCode && currentCustCode && rCustCode === currentCustCode);
+
+            if (hasSpecificInvoice) {
+                if (isInvoiceMatch && isOrderMatch) return 4000;
+                if (isInvoiceMatch) return 3000;
+                return 0;
+            }
 
             if (isOrderMatch && isInvoiceMatch) return 4000;
             if (isOrderMatch) return 3000;
@@ -539,22 +798,13 @@ export default function ProductReconciliationModal({
             return (b.return_id || 0) - (a.return_id || 0);
         });
 
-        // Strictly filter candidate returns to only those matching SO or Invoice (or the currently selected return)
+        // Strictly filter candidate returns to only those matching Invoice (or SO if no invoice exists), or currently selected return
         const matchingReturns = sorted.filter((r) => {
             if (selectedLinkedReturn?.return_id && r.return_id === selectedLinkedReturn.return_id) {
                 return true;
             }
             const rOrderId = String(r.order_id || "").trim().toLowerCase();
             const rInvNo = String(r.invoice_no || "").trim().toLowerCase();
-
-            const isOrderMatch = Boolean(
-                rOrderId &&
-                rOrderId !== "---" &&
-                (rOrderId === currentOrderNo ||
-                    rOrderId === currentOrderId ||
-                    (currentOrderNo && rOrderId.includes(currentOrderNo)) ||
-                    (currentOrderNo && currentOrderNo.includes(rOrderId)))
-            );
 
             const isInvoiceMatch = Boolean(
                 rInvNo &&
@@ -563,6 +813,20 @@ export default function ProductReconciliationModal({
                     rInvNo === currentInvId ||
                     (currentInvNo && currentInvNo !== "---" && rInvNo.includes(currentInvNo)) ||
                     (currentInvNo && currentInvNo !== "---" && currentInvNo.includes(rInvNo)))
+            );
+
+            if (hasSpecificInvoice) {
+                // When order has an invoice, strictly filter by invoice to ensure 1 Sales Invoice : 1 Sales Return
+                return isInvoiceMatch;
+            }
+
+            const isOrderMatch = Boolean(
+                rOrderId &&
+                rOrderId !== "---" &&
+                (rOrderId === currentOrderNo ||
+                    rOrderId === currentOrderId ||
+                    (currentOrderNo && rOrderId.includes(currentOrderNo)) ||
+                    (currentOrderNo && currentOrderNo.includes(rOrderId)))
             );
 
             return isOrderMatch || isInvoiceMatch;
@@ -618,25 +882,22 @@ export default function ProductReconciliationModal({
                 amountStr,
             ].filter(Boolean);
 
-            let badge = r.status || (r.is_received ? "Received" : "Pending");
+            const statusLabel = r.status || (r.is_received ? "Received" : "Pending");
+            let badge = statusLabel;
             let badgeStyle = "bg-muted text-muted-foreground border-border";
 
-            if (isOrderMatch && isInvoiceMatch) {
-                badge = "Matching SO & Inv";
+            if (statusLabel === "Received" || statusLabel === "Approved" || r.is_received) {
                 badgeStyle = "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 font-black";
-            } else if (isOrderMatch) {
-                badge = "Matching SO";
-                badgeStyle = "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 font-black";
+            } else if (statusLabel === "Pending" || statusLabel === "Draft") {
+                badgeStyle = "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 font-black";
+            }
+
+            if (isInvoiceMatch && isOrderMatch) {
+                subParts.unshift("Matched Inv & SO");
             } else if (isInvoiceMatch) {
-                badge = "Matching Inv";
-                badgeStyle = "bg-primary/15 text-primary border-primary/30 font-black";
-            } else if (isCustMatch) {
-                badge = "Matching Cust";
-                badgeStyle = "bg-primary/10 text-primary border-primary/20";
-            } else if (badge === "Received" || badge === "Approved") {
-                badgeStyle = "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30";
-            } else if (badge === "Pending") {
-                badgeStyle = "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30";
+                subParts.unshift("Matched Inv");
+            } else if (isOrderMatch) {
+                subParts.unshift("Matched SO");
             }
 
             opts.push({
@@ -659,6 +920,25 @@ export default function ProductReconciliationModal({
     const handleSelectReturn = (val: string) => {
         if (val === "none" || !val) {
             setSelectedLinkedReturn(null);
+            // Reset returned items when unlinked
+            setLineItems((prev) =>
+                prev.map((item) => {
+                    const targetQty =
+                        item.invoiced_quantity !== undefined && item.invoiced_quantity !== null
+                            ? item.invoiced_quantity
+                            : item.ordered_quantity;
+                    return {
+                        ...item,
+                        returned_quantity: 0,
+                        received_quantity: targetQty,
+                        reservations: (item.reservations || []).map((r) => ({
+                            ...r,
+                            returned_quantity: 0,
+                        })),
+                        line_status: "Fulfilled" as LineStatus,
+                    };
+                })
+            );
             toast.info("Sales Return unlinked from this order.");
             return;
         }
@@ -675,33 +955,13 @@ export default function ProductReconciliationModal({
                 return_date: found.return_date,
                 total_amount: found.total_amount,
             });
-            toast.success(`Linked Sales Return ${found.return_number} to this order.`);
+            syncReturnDetails(found.return_id, found.return_number);
+            toast.success(`Linked Sales Return ${found.return_number} and synced quantities.`);
         }
     };
 
-    // Dynamic fulfillment status derived live from line items and selected order status
-    const dynamicStatus: FulfillmentStatus = useMemo(() => {
-        // If order has a linked sales return, it MUST strictly be "Fulfilled with Returns"
-        if (selectedLinkedReturn) {
-            return "Fulfilled with Returns";
-        }
-        // If a matching SR already exists for this order's invoice/SO, surface the section
-        if (hasMatchingReturns) {
-            return "Fulfilled with Returns";
-        }
-        const computed = computePreviewStatus(lineItems);
-        if (order?.fulfillment_status === "Fulfilled with Returns") {
-            if (computed === "Unfulfilled / Returns") return "Unfulfilled / Returns";
-            return "Fulfilled with Returns";
-        }
-        if (order?.fulfillment_status === "Unfulfilled / Returns") {
-            return "Unfulfilled / Returns";
-        }
-        if (order?.fulfillment_status === "Fulfilled with Concerns") {
-            return "Fulfilled with Concerns";
-        }
-        return computed;
-    }, [lineItems, order, selectedLinkedReturn, hasMatchingReturns]);
+    // Dynamic fulfillment status is authoritative from the order row set by user
+    const dynamicStatus: FulfillmentStatus = order?.fulfillment_status || "Fulfilled";
 
 
     // Total ordered units calculation for KPI card
@@ -743,22 +1003,11 @@ export default function ProductReconciliationModal({
             order?.fulfillment_status === "Fulfilled with Returns" ||
             Boolean(sr));
 
-    // Terminal status lock: Any invoice that has reached a terminal status (Fulfilled, Fulfilled with Concerns, or Fulfilled with Returns)
-    const isTerminalStatus = Boolean(
-        order?.fulfillment_status === "Fulfilled" ||
-        order?.fulfillment_status === "Fulfilled with Concerns" ||
-        order?.fulfillment_status === "Fulfilled with Returns" ||
-        order?.is_cleared
-    );
+    // Terminal status lock: Any invoice that has already been cleared
+    const isTerminalStatus = Boolean(order?.is_cleared);
 
-    // If invoice status is anything other than Unfulfilled / Pending, strictly lock inputs
-    const isStatusLocked = isTerminalStatus || Boolean(
-        order?.fulfillment_status &&
-        order.fulfillment_status !== "Pending" &&
-        order.fulfillment_status !== "Unfulfilled / Returns"
-    );
-
-    const effectiveReadOnly = isReadOnly || isStatusLocked;
+    // If clearance is read-only or invoice is cleared, lock inputs
+    const effectiveReadOnly = isReadOnly || isTerminalStatus;
 
     // Helper to redirect to Sales Return module for this order
     const handleRedirectToSalesReturn = () => {
@@ -827,6 +1076,19 @@ export default function ProductReconciliationModal({
         });
     };
 
+    const handleFulfilledQtyChange = useCallback((originalIndex: number, newFulfilledQty: number) => {
+        setLineItems((prev) => {
+            const next = [...prev];
+            const item = next[originalIndex];
+            if (!item) return prev;
+            next[originalIndex] = {
+                ...item,
+                received_quantity: newFulfilledQty,
+            };
+            return next;
+        });
+    }, []);
+
     const handleReturnedQtyChange = useCallback((originalIndex: number, newReturnedQty: number) => {
         setLineItems((prev) => {
             const next = [...prev];
@@ -841,34 +1103,35 @@ export default function ProductReconciliationModal({
                     returned_quantity: 0,
                 }));
             } else if (updatedReservations.length > 0) {
-                const currentTotalAllocated = updatedReservations.reduce(
-                    (sum, r) => sum + (Number(r.returned_quantity) || 0),
-                    0
-                );
-                // If allocations exceed the new returned quantity, clamp them sequentially down
-                if (currentTotalAllocated > newReturnedQty) {
-                    let remainingAllowed = newReturnedQty;
-                    updatedReservations = updatedReservations.map((r) => {
-                        const currentVal = Number(r.returned_quantity) || 0;
-                        const maxForThis = getReservationPickedQty(r);
-                        const clamped = Math.min(currentVal, maxForThis, remainingAllowed);
-                        remainingAllowed = Math.max(0, remainingAllowed - clamped);
-                        return {
-                            ...r,
-                            returned_quantity: clamped,
-                        };
-                    });
-                }
+                // Auto-distribute the returned quantity across batch reservations up to each batch's picked capacity
+                let remainingToAllocate = newReturnedQty;
+                updatedReservations = updatedReservations.map((r) => {
+                    const maxForThis = getReservationPickedQty(r);
+                    const alloc = Math.min(maxForThis, remainingToAllocate);
+                    remainingToAllocate = Math.max(0, remainingToAllocate - alloc);
+                    return {
+                        ...r,
+                        returned_quantity: alloc,
+                    };
+                });
             }
+
+            const targetQty = item.invoiced_quantity !== undefined && item.invoiced_quantity !== null
+                ? item.invoiced_quantity
+                : item.ordered_quantity;
+            const newReceivedQty = dynamicStatus === "Unfulfilled / Returns"
+                ? 0
+                : Math.max(0, targetQty - newReturnedQty);
 
             next[originalIndex] = {
                 ...item,
+                received_quantity: newReceivedQty,
                 returned_quantity: newReturnedQty,
                 reservations: updatedReservations,
             };
             return next;
         });
-    }, []);
+    }, [dynamicStatus]);
 
     const handleConfirmLotAllocation = (updatedReservations: LineItemReservation[]) => {
         if (allocationModalItemIndex === null) return;
@@ -878,33 +1141,54 @@ export default function ProductReconciliationModal({
         setAllocationModalItemIndex(null);
     };
 
-    // Helper to zero out received quantities and mark all items as unfulfilled
-    // const handleMarkAllUnfulfilled = () => {
-    //     if (effectiveReadOnly) return;
-    //     setLineItems((prev) =>
-    //         prev.map((item) => {
-    //             const ordQty = Number(item.ordered_quantity || 0);
-    //             const updatedReservations = (item.reservations || []).map((r) => ({
-    //                 ...r,
-    //                 returned_quantity: Number(r.picked_quantity || r.reserved_quantity || 0),
-    //             }));
-    //             return {
-    //                 ...item,
-    //                 received_quantity: 0,
-    //                 returned_quantity: ordQty,
-    //                 line_status: "Unfulfilled / Returns" as LineStatus,
-    //                 reservations: updatedReservations,
-    //             };
-    //         })
-    //     );
-    //     toast.info("Order marked as Unfulfilled. It will return to 'For Consolidation' for re-dispatch upon clearance.");
-    // };
-
     // Helper to save remarks only when product reconciliation quantities are locked
-    const handleSaveRemarks = () => {
+    const handleSaveRemarks = async () => {
         if (!order) return;
-        onSave(order.items, order.linked_sales_return ?? selectedLinkedReturn, orderRemarks);
-        toast.success("Order remarks updated successfully.");
+        const hasVariance = lineItems.some((i) => {
+            const target = i.invoiced_quantity !== undefined && i.invoiced_quantity !== null
+                ? i.invoiced_quantity
+                : i.ordered_quantity;
+            return target !== i.received_quantity + i.returned_quantity;
+        });
+        const isRemarksRequired =
+            dynamicStatus === "Fulfilled with Returns" ||
+            dynamicStatus === "Fulfilled with Concerns" ||
+            dynamicStatus === "Unfulfilled / Returns" ||
+            hasVariance;
+
+        if (isRemarksRequired && (!orderRemarks || orderRemarks.trim().length === 0)) {
+            if (hasVariance) {
+                toast.error("Remarks are required due to quantity variance on this order. Please enter remarks below.");
+            } else {
+                toast.error(`Remarks are required when order status is "${dynamicStatus}". Please enter remarks below.`);
+            }
+            return;
+        }
+
+        // Persist remarks directly to sales_invoice if invoice_id exists
+        if (order.invoice_id) {
+            try {
+                const patchRes = await fetch("/api/manufacturing/sales-and-fulfillment/fulfilment-and-deliveries", {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        invoice_id: order.invoice_id,
+                        remarks: orderRemarks.trim(),
+                    }),
+                });
+                if (!patchRes.ok) {
+                    const errJson = await patchRes.json().catch(() => null);
+                    throw new Error(errJson?.message || "Failed to update remarks on server.");
+                }
+            } catch (err: unknown) {
+                console.error("[handleSaveRemarks] Failed to persist invoice remarks:", err);
+                toast.error(err instanceof Error ? err.message : "Failed to save remarks to server.");
+                return;
+            }
+        }
+
+        onSave(lineItems, selectedLinkedReturn ?? order.linked_sales_return, orderRemarks);
+        toast.success("Invoice remarks updated successfully.");
         onClose();
     };
 
@@ -939,19 +1223,22 @@ export default function ProductReconciliationModal({
         }
 
         // Validate batch reservations allocation for returns across all items with physical batch reservations
-        for (const item of lineItems) {
-            if (item.returned_quantity > 0 && item.reservations && item.reservations.length > 0) {
-                const physicalDispatched = item.reservations.reduce(
-                    (sum, r) => sum + getReservationPickedQty(r),
-                    0
-                );
-                const targetReturn = physicalDispatched > 0 ? Math.min(item.returned_quantity, physicalDispatched) : item.returned_quantity;
-                const totalAlloc = item.reservations.reduce((sum, r) => sum + (Number(r.returned_quantity) || 0), 0);
-                if (totalAlloc !== targetReturn) {
-                    toast.error(
-                        `Batch return allocation mismatch on "${item.product_name}": ${totalAlloc} allocated of ${targetReturn} returned. Please allocate all returned batches.`
+        // Exempt when dynamicStatus === "Fulfilled with Returns" as returns are handled by Sales Return module
+        if (dynamicStatus !== "Fulfilled with Returns") {
+            for (const item of lineItems) {
+                if (item.returned_quantity > 0 && item.reservations && item.reservations.length > 0) {
+                    const physicalDispatched = item.reservations.reduce(
+                        (sum, r) => sum + getReservationPickedQty(r),
+                        0
                     );
-                    return;
+                    const targetReturn = physicalDispatched > 0 ? Math.min(item.returned_quantity, physicalDispatched) : item.returned_quantity;
+                    const totalAlloc = item.reservations.reduce((sum, r) => sum + (Number(r.returned_quantity) || 0), 0);
+                    if (totalAlloc !== targetReturn) {
+                        toast.error(
+                            `Batch return allocation mismatch on "${item.product_name}": ${totalAlloc} allocated of ${targetReturn} returned. Please allocate all returned batches.`
+                        );
+                        return;
+                    }
                 }
             }
         }
@@ -970,12 +1257,14 @@ export default function ProductReconciliationModal({
                 ? item.reservations.map((r) => ({ ...r, returned_quantity: 0 }))
                 : item.reservations;
 
-            if (rec === 0 && ret === target && target > 0) {
+            if (dynamicStatus === "Unfulfilled / Returns") {
                 status = "Unfulfilled / Returns";
-            } else if (ret > 0) {
+            } else if (rec === 0 && ret === target && target > 0) {
+                status = "Unfulfilled / Returns";
+            } else if (ret > 0 && dynamicStatus === "Fulfilled with Returns") {
                 status = "Fulfilled with Returns";
-            } else if (rec === target && ret === 0) {
-                status = "Fulfilled";
+            } else if (dynamicStatus) {
+                status = dynamicStatus as LineStatus;
             } else {
                 status = "Fulfilled";
             }
@@ -1232,6 +1521,41 @@ export default function ProductReconciliationModal({
                             </div>
                         )}
 
+                    {/* Tip Banner: Status is Fulfilled but Sales Return is Linked */}
+                        {dynamicStatus === "Fulfilled" && (selectedLinkedReturn || order?.linked_sales_return) && (
+                            <div className="p-4 rounded-xl border border-sky-500/30 bg-sky-500/10 text-sky-900 dark:text-sky-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                                <div className="flex items-start gap-3">
+                                    <div className="p-2 rounded-lg bg-sky-500/20 text-sky-700 dark:text-sky-300 shrink-0 mt-0.5">
+                                        <Lightbulb className="h-4 w-4" />
+                                    </div>
+                                    <div className="space-y-0.5">
+                                        <div className="text-xs font-black uppercase tracking-wider flex items-center gap-2">
+                                            <span>Tip: Sales Return Linked</span>
+                                            <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-background/80 border font-mono">
+                                                {(selectedLinkedReturn || order?.linked_sales_return)?.return_number}
+                                            </span>
+                                        </div>
+                                        <p className="text-xs opacity-90 leading-relaxed">
+                                            This order is currently marked as <b>Fulfilled</b>, but Sales Return{" "}
+                                            <b>{(selectedLinkedReturn || order?.linked_sales_return)?.return_number}</b> is linked to it.
+                                            If items were returned by the customer, consider setting the order status to{" "}
+                                            <b>Fulfilled with Returns</b> to reconcile returned quantities.
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                                    <button
+                                        type="button"
+                                        onClick={handleRedirectToSalesReturn}
+                                        className="px-3.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs transition-all flex items-center gap-1.5 shadow-xs cursor-pointer active:scale-95"
+                                    >
+                                        <ExternalLink className="h-3.5 w-3.5" />
+                                        View Sales Return
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
                         {/* Linked Sales Return Section (Only shown when status is Fulfilled with Returns) */}
                         {dynamicStatus === "Fulfilled with Returns" && (
                             <div className="p-4 rounded-xl border bg-card/60 shadow-xs space-y-3">
@@ -1243,13 +1567,13 @@ export default function ProductReconciliationModal({
                                                 Linked Sales Return
                                             </span>
                                             <span className="text-[10px] font-bold text-muted-foreground bg-muted px-2 py-0.5 rounded-full border">
-                                                1 Sales Order : 1 Sales Return
+                                                1 Sales Invoice : 1 Sales Return
                                             </span>
                                         </div>
                                         <p className="text-[11px] text-muted-foreground font-medium">
                                             {selectedLinkedReturn
-                                                ? "This sales order is linked to the Sales Return below. You can change or unlink it at any time."
-                                                : "If this order has returned products, select an existing Sales Return or create a new one to link."}
+                                                ? "This sales invoice is linked to the Sales Return below. You can change or unlink it at any time."
+                                                : "If this invoice has returned products, select an existing Sales Return or create a new one to link."}
                                         </p>
                                     </div>
 
@@ -1412,6 +1736,8 @@ export default function ProductReconciliationModal({
                                                         item={item}
                                                         originalIndex={originalIndex}
                                                         effectiveReadOnly={effectiveReadOnly}
+                                                        dynamicStatus={dynamicStatus}
+                                                        onFulfilledQtyChange={handleFulfilledQtyChange}
                                                         onReturnedQtyChange={handleReturnedQtyChange}
                                                         onOpenAllocationModal={setAllocationModalItemIndex}
                                                     />

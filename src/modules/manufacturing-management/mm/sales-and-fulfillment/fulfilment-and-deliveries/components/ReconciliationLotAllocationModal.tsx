@@ -156,28 +156,44 @@ export default function ReconciliationLotAllocationModal({
     reservations,
     onConfirm,
 }: ReconciliationLotAllocationModalProps) {
-    // Local copy of reservations with per-batch returned_quantity
-    const [allocations, setAllocations] = useState<LineItemReservation[]>(() => {
-        return (reservations || []).map((r) => ({
+    // Helper to auto-distribute target return quantity across batch reservations up to picked quantity
+    const computeAllocations = (resvs: LineItemReservation[], targetReq: number): LineItemReservation[] => {
+        const raw = (resvs || []).map((r) => ({
             ...r,
             returned_quantity: Number(r.returned_quantity || 0),
         }));
+        const currentTotal = raw.reduce((sum, r) => sum + (Number(r.returned_quantity) || 0), 0);
+        if (currentTotal !== targetReq && targetReq > 0) {
+            let remaining = targetReq;
+            return raw.map((r) => {
+                const maxPick = getReservationPickedQty(r);
+                const alloc = Math.min(maxPick, remaining);
+                remaining = Math.max(0, remaining - alloc);
+                return {
+                    ...r,
+                    returned_quantity: alloc,
+                };
+            });
+        }
+        return raw;
+    };
+
+    // Local copy of reservations with per-batch returned_quantity
+    const [allocations, setAllocations] = useState<LineItemReservation[]>(() => {
+        return computeAllocations(reservations || [], requestedQuantity);
     });
 
     const [showUnbalancedConfirm, setShowUnbalancedConfirm] = useState(false);
 
     const [prevOpen, setPrevOpen] = useState(open);
     const [prevReservations, setPrevReservations] = useState(reservations);
+    const [prevReqQty, setPrevReqQty] = useState(requestedQuantity);
 
-    if (open !== prevOpen || reservations !== prevReservations) {
+    if (open !== prevOpen || reservations !== prevReservations || requestedQuantity !== prevReqQty) {
         setPrevOpen(open);
         setPrevReservations(reservations);
-        setAllocations(
-            (reservations || []).map((r) => ({
-                ...r,
-                returned_quantity: Number(r.returned_quantity || 0),
-            }))
-        );
+        setPrevReqQty(requestedQuantity);
+        setAllocations(computeAllocations(reservations || [], requestedQuantity));
         setShowUnbalancedConfirm(false);
     }
 

@@ -64,6 +64,8 @@ import {
 // Import API Client & Helpers
 import { SalesReturnApiClient } from "../services/sales-return.api-client";
 import { resolveFinalDiscount } from "../services/sales-return.helpers";
+import type { LotAllocationGroup, QAStatus } from "@/modules/manufacturing-management/shared/types/lot-tracking.types";
+import { fetchInventoryLots, fetchBatchOnhand } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
 
 interface Props {
   isOpen: boolean;
@@ -694,18 +696,51 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
 
   // --- 5c. PRE-FILL FROM CLEARANCE / URL PARAMS ---
   useEffect(() => {
-    if (!isOpen || customers.length === 0) return;
+    if (!isOpen) return;
+    if (customers.length === 0 || salesmen.length === 0) return;
+
+    interface ClearanceReservationItem {
+      reservation_id?: number;
+      sales_order_detail_id?: number;
+      inventory_lot_id?: number;
+      product_id?: number;
+      lot_id?: number;
+      lot_name?: string;
+      lot_number?: string;
+      batch_no?: string;
+      reserved_quantity?: number;
+      picked_quantity?: number;
+      returned_quantity?: number;
+      status?: string;
+      manufacturing_date?: string | null;
+      expiry_date?: string | null;
+    }
 
     interface ClearancePayloadItem {
       product_id?: number | string;
       product_code?: string;
       product_name?: string;
       uom?: string;
+      unit_id?: number | string;
+      uom_id?: number | string;
       ordered_quantity?: number | string;
       received_quantity?: number | string;
       returned_quantity?: number | string;
       unit_price?: number | string;
       concern_notes?: string;
+      product_type?: number | string | null;
+      product_type_name?: string | null;
+      product_category?: number | string | null;
+      category_name?: string | null;
+      lot_id?: number | null;
+      lot_name?: string | null;
+      inventory_lot_id?: number | null;
+      batch?: string | null;
+      batch_no?: string | null;
+      manufacturing_date?: string | null;
+      expiry_date?: string | null;
+      reservations?: ClearanceReservationItem[];
+      lot_allocations?: LotAllocationGroup[];
     }
 
     const storedRaw = typeof window !== "undefined" ? localStorage.getItem("scm_dispatch_return_data") : null;
@@ -718,6 +753,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       salesmanId?: string;
       salesmanCode?: string;
       salesmanName?: string;
+      branchId?: string | number;
       branchName?: string;
       remarks?: string;
       items?: ClearancePayloadItem[];
@@ -738,6 +774,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     const targetSalesmanId = salesmanIdParam || data.salesmanId || "";
     const targetSalesmanCode = data.salesmanCode || "";
     const targetSalesmanName = data.salesmanName || "";
+    const targetBranchId = data.branchId ? Number(data.branchId) : null;
     const targetBranchName = data.branchName || "";
     const targetRemarks = data.remarks || "";
 
@@ -818,16 +855,18 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                 setPriceTypeSearch(resolvedPt.startsWith("Type ") ? resolvedPt : `Type ${resolvedPt}`);
               }
 
+              const sBranchId = foundSalesman.branchId ? Number(foundSalesman.branchId) : null;
               const linkedBranch = branches.find((b) => 
-                Number(b.id) === Number(foundSalesman.branchId) ||
+                (sBranchId && Number(b.id) === sBranchId) ||
                 (b.branch_code && foundSalesman.branchId && String(b.branch_code).trim().toLowerCase() === String(foundSalesman.branchId).trim().toLowerCase()) ||
                 (b.name && foundSalesman.branchId && String(b.name).trim().toLowerCase() === String(foundSalesman.branchId).trim().toLowerCase())
               );
-              if (linkedBranch) {
-                const bName = linkedBranch.name || linkedBranch.branch_name || "";
+              const resolvedBId = linkedBranch ? Number(linkedBranch.id) : sBranchId;
+              if (resolvedBId) {
+                const bName = linkedBranch ? (linkedBranch.name || linkedBranch.branch_name || "") : (targetBranchName || "");
                 setBranchName(bName);
                 setBranchSearch(bName);
-                setBranchId(Number(linkedBranch.id));
+                setBranchId(resolvedBId);
               }
             }
           }
@@ -840,6 +879,9 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     fetchAndLinkInvoice();
 
     // 4. Fallback Salesman / Branch from data if not resolved from invoice
+    let resolvedBranchId: number | null = null;
+    let resolvedBranchName = targetBranchName || "";
+
     const foundSalesman = salesmen.find(
       (s) =>
         (targetSalesmanId && s.id.toString() === targetSalesmanId.toString()) ||
@@ -858,27 +900,36 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
         setPriceType(resolvedPt);
         setPriceTypeSearch(resolvedPt.startsWith("Type ") ? resolvedPt : `Type ${resolvedPt}`);
       }
+      const sBranchId = foundSalesman.branchId ? Number(foundSalesman.branchId) : null;
       const linkedBranch = branches.find((b) => 
-        Number(b.id) === Number(foundSalesman.branchId) ||
+        (sBranchId && Number(b.id) === sBranchId) ||
         (b.branch_code && foundSalesman.branchId && String(b.branch_code).trim().toLowerCase() === String(foundSalesman.branchId).trim().toLowerCase()) ||
         (b.name && foundSalesman.branchId && String(b.name).trim().toLowerCase() === String(foundSalesman.branchId).trim().toLowerCase())
       );
+      resolvedBranchId = linkedBranch ? Number(linkedBranch.id) : sBranchId;
       if (linkedBranch) {
-        const bName = linkedBranch.name || linkedBranch.branch_name || "";
-        setBranchName(bName);
-        setBranchSearch(bName);
-        setBranchId(Number(linkedBranch.id));
+        resolvedBranchName = linkedBranch.name || linkedBranch.branch_name || resolvedBranchName;
       }
-    } else if (targetBranchName) {
-      setBranchName(targetBranchName);
-      setBranchSearch(targetBranchName);
+    }
+
+    if (!resolvedBranchId && (targetBranchId || targetBranchName)) {
       const matchedBranch = branches.find((b) => 
-        b.name.trim().toLowerCase() === targetBranchName.trim().toLowerCase() ||
-        (b.branch_code && b.branch_code.trim().toLowerCase() === targetBranchName.trim().toLowerCase())
+        (targetBranchId && Number(b.id) === targetBranchId) ||
+        (targetBranchName && b.name.trim().toLowerCase() === targetBranchName.trim().toLowerCase()) ||
+        (targetBranchName && b.branch_code && b.branch_code.trim().toLowerCase() === targetBranchName.trim().toLowerCase())
       );
       if (matchedBranch) {
-        setBranchId(Number(matchedBranch.id));
+        resolvedBranchId = Number(matchedBranch.id);
+        resolvedBranchName = matchedBranch.name || matchedBranch.branch_name || resolvedBranchName;
+      } else if (targetBranchId) {
+        resolvedBranchId = targetBranchId;
       }
+    }
+
+    if (resolvedBranchId) {
+      setBranchName(resolvedBranchName);
+      setBranchSearch(resolvedBranchName);
+      setBranchId(resolvedBranchId);
     }
 
     // 5. Pre-fill products summary from clearance items
@@ -889,11 +940,96 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
           const qty = Number(it.returned_quantity) > 0 ? Number(it.returned_quantity) : Number(it.ordered_quantity || 1);
           const price = Number(it.unit_price || 0);
           const gross = Math.round(qty * price * 100) / 100;
+          const pTypeId = it.product_type !== undefined && it.product_type !== null && it.product_type !== "" ? Number(it.product_type) : null;
+          const rawUnitId = it.unit_id ?? it.uom_id;
+          const parsedUnitId = rawUnitId !== undefined && rawUnitId !== null && rawUnitId !== "" ? Number(rawUnitId) : undefined;
+
+          // Parse source reservations into LotAllocationGroup[]
+          let itemLotAllocations: LotAllocationGroup[] = [];
+          if (Array.isArray(it.lot_allocations) && it.lot_allocations.length > 0) {
+            itemLotAllocations = it.lot_allocations;
+          } else if (Array.isArray(it.reservations) && it.reservations.length > 0) {
+            let remainingQty = qty;
+            const groupedMap = new Map<number, LotAllocationGroup>();
+
+            it.reservations.forEach((res, resIdx) => {
+              const resLotId = Number(res.lot_id || it.lot_id || 0);
+              const resLotName = res.lot_name || res.lot_number || it.lot_name || (resLotId ? `Lot #${resLotId}` : "Assigned Lot");
+              let allocQty = Number(res.returned_quantity || 0);
+              if (allocQty <= 0) {
+                const picked = Number(res.picked_quantity || res.reserved_quantity || 0);
+                allocQty = picked > 0 ? Math.min(remainingQty, picked) : remainingQty;
+              }
+              allocQty = Math.min(remainingQty, allocQty);
+              if (allocQty <= 0 && remainingQty > 0 && resIdx === it.reservations!.length - 1) {
+                allocQty = remainingQty;
+              }
+              if (allocQty > 0) {
+                remainingQty -= allocQty;
+                if (!groupedMap.has(resLotId)) {
+                  groupedMap.set(resLotId, {
+                    lot_id: resLotId,
+                    lot_name: resLotName,
+                    max_batch_capacity: 10,
+                    allocated_quantity: 0,
+                    batches: [],
+                  });
+                }
+                const grp = groupedMap.get(resLotId)!;
+                grp.allocated_quantity += allocQty;
+                grp.batches.push({
+                  inventory_lot_id: res.inventory_lot_id ? Number(res.inventory_lot_id) : undefined,
+                  batch_no: res.batch_no || it.batch || it.batch_no || "",
+                  manufacturing_date: res.manufacturing_date || it.manufacturing_date || null,
+                  expiry_date: res.expiry_date || it.expiry_date || null,
+                  quantity: allocQty,
+                  qa_status: "GOOD" as QAStatus,
+                });
+              }
+            });
+
+            // If remainingQty > 0 and we have groups, assign remainder to last batch
+            if (remainingQty > 0 && groupedMap.size > 0) {
+              const lastGrp = Array.from(groupedMap.values())[groupedMap.size - 1];
+              if (lastGrp.batches.length > 0) {
+                lastGrp.batches[lastGrp.batches.length - 1].quantity += remainingQty;
+                lastGrp.allocated_quantity += remainingQty;
+              }
+            }
+            itemLotAllocations = Array.from(groupedMap.values());
+          } else if (it.lot_id || it.batch || it.batch_no) {
+            const lId = Number(it.lot_id || 0);
+            itemLotAllocations = [{
+              lot_id: lId,
+              lot_name: it.lot_name || `Lot #${lId}`,
+              max_batch_capacity: 10,
+              allocated_quantity: qty,
+              batches: [{
+                inventory_lot_id: it.inventory_lot_id ? Number(it.inventory_lot_id) : undefined,
+                batch_no: it.batch || it.batch_no || "",
+                manufacturing_date: it.manufacturing_date || null,
+                expiry_date: it.expiry_date || null,
+                quantity: qty,
+                qa_status: "GOOD" as QAStatus,
+              }],
+            }];
+          }
+
+          const firstAlloc = itemLotAllocations[0];
+          const firstBatch = firstAlloc?.batches?.[0];
+          const primaryLotId = firstAlloc?.lot_id || (it.lot_id ? Number(it.lot_id) : null);
+          const primaryLotName = firstAlloc?.lot_name || it.lot_name || null;
+          const primaryInvLotId = firstBatch?.inventory_lot_id || (it.inventory_lot_id ? Number(it.inventory_lot_id) : null);
+          const primaryBatchNo = firstBatch?.batch_no || it.batch || it.batch_no || null;
+          const primaryMfgDate = firstBatch?.manufacturing_date || it.manufacturing_date || null;
+          const primaryExpDate = firstBatch?.expiry_date || it.expiry_date || null;
+
           return {
             productId: Number(it.product_id),
             code: it.product_code || `SKU-${it.product_id}`,
             description: it.product_name || `Product #${it.product_id}`,
             unit: it.uom || "PCS",
+            unit_id: parsedUnitId,
             quantity: qty,
             unitPrice: price,
             agreedPrice: price,
@@ -903,10 +1039,169 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
             totalAmount: gross,
             returnType: "Good Order",
             reason: it.concern_notes || "",
+            product_type: pTypeId,
+            product_type_name: it.product_type_name || null,
+            product_category: it.product_category ? Number(it.product_category) : undefined,
+            category_name: it.category_name || undefined,
+            lot_id: primaryLotId,
+            lot_name: primaryLotName,
+            inventory_lot_id: primaryInvLotId,
+            batch: primaryBatchNo,
+            manufacturing_date: primaryMfgDate,
+            expiry_date: primaryExpDate,
+            qa_status: "GOOD" as QAStatus,
+            lot_allocations: itemLotAllocations.length > 0 ? itemLotAllocations : undefined,
           };
         });
+
       if (mappedItems.length > 0) {
         setItems(mappedItems);
+
+        // Auto-enrich product catalog metadata AND source lot/batch dates (mfg & exp)
+        const effectiveBranch = resolvedBranchId || branchId;
+        Promise.all([
+          SalesReturnApiClient.getFullCatalog(targetCustomerCode),
+          effectiveBranch ? fetchInventoryLots({ branchId: effectiveBranch }) : fetchInventoryLots({}),
+          effectiveBranch ? fetchBatchOnhand({ branchId: effectiveBranch }) : Promise.resolve([]),
+        ])
+          .then(([catalog, invLots, onhandLots]) => {
+            const batchMetaMap = new Map<
+              string,
+              { mfgDate?: string; expDate?: string; invId?: number; unitCost?: number }
+            >();
+
+            (invLots || []).forEach((ib) => {
+              const bNo = String(ib.batch_no || "").trim().toLowerCase();
+              if (bNo) {
+                batchMetaMap.set(bNo, {
+                  mfgDate: ib.manufacturing_date ? String(ib.manufacturing_date).substring(0, 10) : undefined,
+                  expDate: ib.expiry_date ? String(ib.expiry_date).substring(0, 10) : undefined,
+                  invId: ib.inventory_lot_id,
+                  unitCost: ib.unit_cost,
+                });
+              }
+            });
+
+            (onhandLots || []).forEach((bo) => {
+              const bNo = String(bo.batchNo || "").trim().toLowerCase();
+              if (bNo) {
+                const existing = batchMetaMap.get(bNo);
+                batchMetaMap.set(bNo, {
+                  mfgDate: bo.manufacturingDate ? String(bo.manufacturingDate).substring(0, 10) : existing?.mfgDate,
+                  expDate: bo.expirationDate ? String(bo.expirationDate).substring(0, 10) : existing?.expDate,
+                  invId: bo.inventoryLotId !== null && bo.inventoryLotId !== undefined ? Number(bo.inventoryLotId) : existing?.invId,
+                  unitCost: existing?.unitCost,
+                });
+              }
+            });
+
+            const typeMap = new Map<number, string>();
+            (catalog?.productTypes || []).forEach((pt) => typeMap.set(Number(pt.id), pt.name));
+
+            const unitMap = new Map<number, { name: string; shortcut: string }>();
+            (catalog?.units || []).forEach((u) => {
+              unitMap.set(Number(u.unit_id), {
+                name: u.unit_name,
+                shortcut: u.unit_shortcut,
+              });
+            });
+
+            setItems((prevItems) =>
+              prevItems.map((pi) => {
+                const catProd = catalog?.products?.find((p) => Number(p.product_id) === Number(pi.productId));
+
+                const rawPt = typeof catProd?.product_type === "object" && catProd?.product_type !== null
+                  ? ((catProd.product_type as { id?: number; type_id?: number }).id ?? (catProd.product_type as { id?: number; type_id?: number }).type_id)
+                  : catProd?.product_type;
+                const numTypeId = rawPt ? Number(rawPt) : null;
+                const pTypeName = typeof catProd?.product_type === "object" && catProd?.product_type !== null
+                  ? (catProd.product_type as { name?: string }).name || null
+                  : (numTypeId ? typeMap.get(numTypeId) || null : null);
+
+                const rawUom = typeof catProd?.unit_of_measurement === "object" && catProd?.unit_of_measurement !== null
+                  ? (catProd.unit_of_measurement as { unit_id?: number; id?: number }).unit_id ?? (catProd.unit_of_measurement as { unit_id?: number; id?: number }).id
+                  : catProd?.unit_of_measurement;
+                const numUnitId = rawUom ? Number(rawUom) : undefined;
+                const uomMeta = numUnitId ? unitMap.get(numUnitId) : undefined;
+
+                const rawCat = typeof catProd?.product_category === "object" && catProd?.product_category !== null
+                  ? (catProd.product_category as { category_id?: number; id?: number }).category_id ?? (catProd.product_category as { category_id?: number; id?: number }).id
+                  : catProd?.product_category;
+                const numCatId = rawCat ? Number(rawCat) : undefined;
+                const catName = typeof catProd?.product_category === "object" && catProd?.product_category !== null
+                  ? (catProd.product_category as { category_name?: string }).category_name || undefined
+                  : undefined;
+
+                // Batch & Date lookup from source batch registry
+                const bKey = String(pi.batch || "").trim().toLowerCase();
+                let lookedUp = bKey ? batchMetaMap.get(bKey) : undefined;
+                let resolvedBatch = pi.batch;
+                let resolvedInvId = pi.inventory_lot_id;
+                let resolvedMfg = pi.manufacturing_date || lookedUp?.mfgDate || null;
+                let resolvedExp = pi.expiry_date || lookedUp?.expDate || null;
+
+                if (!resolvedBatch) {
+                  const prodBatch = (invLots || []).find((ib) => Number(ib.product_id) === Number(pi.productId) && ib.batch_no);
+                  if (prodBatch) {
+                    resolvedBatch = prodBatch.batch_no;
+                    resolvedInvId = resolvedInvId || prodBatch.inventory_lot_id;
+                    resolvedMfg = resolvedMfg || (prodBatch.manufacturing_date ? String(prodBatch.manufacturing_date).substring(0, 10) : null);
+                    resolvedExp = resolvedExp || (prodBatch.expiry_date ? String(prodBatch.expiry_date).substring(0, 10) : null);
+                    lookedUp = batchMetaMap.get(prodBatch.batch_no.toLowerCase());
+                  }
+                }
+
+                // Update lot_allocations with enriched dates & inventoryLotIds
+                let updatedAllocations = pi.lot_allocations;
+                if (Array.isArray(updatedAllocations) && updatedAllocations.length > 0) {
+                  updatedAllocations = updatedAllocations.map((grp) => ({
+                    ...grp,
+                    batches: (grp.batches || []).map((b) => {
+                      const subKey = String(b.batch_no || "").trim().toLowerCase();
+                      const subMeta = subKey ? batchMetaMap.get(subKey) : undefined;
+                      return {
+                        ...b,
+                        inventory_lot_id: b.inventory_lot_id ?? subMeta?.invId,
+                        manufacturing_date: b.manufacturing_date || subMeta?.mfgDate || resolvedMfg,
+                        expiry_date: b.expiry_date || subMeta?.expDate || resolvedExp,
+                      };
+                    }),
+                  }));
+                } else if (resolvedBatch && (pi.lot_id || resolvedInvId)) {
+                  updatedAllocations = [{
+                    lot_id: Number(pi.lot_id || 0),
+                    lot_name: pi.lot_name || `Lot #${pi.lot_id || 0}`,
+                    max_batch_capacity: 10,
+                    allocated_quantity: pi.quantity,
+                    batches: [{
+                      inventory_lot_id: resolvedInvId || undefined,
+                      batch_no: resolvedBatch,
+                      manufacturing_date: resolvedMfg,
+                      expiry_date: resolvedExp,
+                      quantity: pi.quantity,
+                      qa_status: "GOOD" as QAStatus,
+                    }],
+                  }];
+                }
+
+                return {
+                  ...pi,
+                  product_type: pi.product_type || numTypeId,
+                  product_type_name: pi.product_type_name || pTypeName,
+                  unit_id: pi.unit_id || numUnitId,
+                  unit: pi.unit || uomMeta?.shortcut?.toUpperCase() || uomMeta?.name || "PCS",
+                  product_category: pi.product_category || numCatId,
+                  category_name: pi.category_name || catName,
+                  batch: resolvedBatch,
+                  inventory_lot_id: resolvedInvId,
+                  manufacturing_date: resolvedMfg,
+                  expiry_date: resolvedExp,
+                  lot_allocations: updatedAllocations,
+                };
+              })
+            );
+          })
+          .catch((err) => console.error("Failed to enrich product and lot metadata", err));
       }
     }
 
