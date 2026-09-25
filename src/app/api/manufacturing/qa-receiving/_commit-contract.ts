@@ -178,6 +178,8 @@ export interface FinalReceivingRecord {
     batchNumber: string;
     receivedQuantity: number;
     rejectedQuantity: number;
+    rejectedLotId: number | null;
+    rejectedBatchId: string | null;
     isOverReceived: boolean;
     overDeliveryQuantity: number;
     unitPrice: number;
