@@ -31,13 +31,11 @@ import { JobOrderShiftLogModal } from "./components/JobOrderShiftLogModal";
 import { DailyYieldAuditDialog } from "../manufacturing-job-order-inspection-qa/components/DailyYieldAuditDialog";
 import { useDailyYieldAudit } from "../manufacturing-job-order-inspection-qa/hooks/useDailyYieldAudit";
 import { hasCompletedTimer } from "./operator-time";
-import { StationStartScanner } from "./components/StationStartScanner";
 import { RouteWorkstationAssignmentDialog } from "./components/RouteWorkstationAssignmentDialog";
 import { GenealogyAuditModal } from "./components/GenealogyAuditModal";
 import { StatusHistoryModal } from "./components/StatusHistoryModal";
 import { JobOrderCancellationModal } from "./components/JobOrderCancellationModal";
 import { JobOrderWorkflowActionModal, type ProductionWorkflowAction } from "./components/JobOrderWorkflowActionModal";
-import { StationScanResponse } from "./types";
 import { isCancellableJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "../job-order-status";
 import { resolveJobOrderJourney } from "../shared/job-order-journey";
 import { JobOrderJourneyBar } from "../shared/components/JobOrderJourneyBar";
@@ -106,6 +104,7 @@ export default function ProductionWorkflowModule() {
         openCancellationModal,
         handleConfirmCancellation,
         workflowSubmitting,
+        handleStartProduction,
         handleWorkflowAction
     } = useProductionWorkflow();
 
@@ -130,8 +129,6 @@ export default function ProductionWorkflowModule() {
     // UI state
     const [clockedInCount, setClockedInCount] = React.useState(0);
     const [isShiftLogOpen, setIsShiftLogOpen] = useState(false);
-    const [isScannerOpen, setIsScannerOpen] = useState(false);
-    const [scannerJobOrder, setScannerJobOrder] = useState<any | null>(null);
     const [isRouteAssignmentOpen, setIsRouteAssignmentOpen] = useState(false);
     const [isGenealogyOpen, setIsGenealogyOpen] = useState(false);
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
@@ -247,24 +244,6 @@ export default function ProductionWorkflowModule() {
 
     const parentJo = selectedJobOrder?.parentJobOrderId ? jobOrders.find((j) => Number(j.order_id) === Number(selectedJobOrder.parentJobOrderId)) : null;
     const parentJoNo = parentJo?.jo_id || null;
-
-    // Station Scan callback
-    const handleStationStarted = (response: StationScanResponse) => {
-        if (response.jobOrder) {
-            const targetJoId = response.jobOrder.job_order_no || response.jobOrder.jo_id;
-            setSelectedJobOrderId(targetJoId);
-            if (response.activeOperation) {
-                setSelectedTaskId(response.activeOperation.id ?? response.activeOperation.jo_route_id ?? null);
-            }
-        }
-        fetchJobs(response.jobOrder ? (response.jobOrder.job_order_no || response.jobOrder.jo_id) : undefined);
-        fetchClockedIn();
-    };
-
-    const openStationScanner = (jobOrder?: any | null) => {
-        setScannerJobOrder(jobOrder || null);
-        setIsScannerOpen(true);
-    };
 
     return (
         <div className={`flex flex-col space-y-6 max-w-7xl mx-auto p-1 sm:p-2 transition-all ${isKioskMode ? "fixed inset-0 z-50 bg-background p-4 overflow-y-auto max-w-none" : ""}`}>
@@ -469,12 +448,13 @@ export default function ProductionWorkflowModule() {
                                         <Undo2 className="mr-1.5 h-4 w-4" /> Return Raw Materials
                                     </Button>
                                 )}
-                                {isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.PICKED) && !selectedJobOrder?.primary_work_center_id && (
+                                {isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.PICKED) && (
                                     <Button
-                                        onClick={() => openStationScanner(selectedJobOrder)}
-                                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-10 text-xs px-5 shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/20 transition-all duration-200 flex items-center"
+                                        onClick={() => void handleStartProduction()}
+                                        disabled={workflowSubmitting}
+                                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-10 text-xs px-5 shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/20 transition-all duration-200 flex items-center disabled:opacity-60"
                                     >
-                                        <Building2 className="mr-1.5 h-4 w-4" /> Start Production
+                                        <Play className="mr-1.5 h-4 w-4" /> {workflowSubmitting ? "Starting Production..." : "Start Production"}
                                     </Button>
                                 )}
                                 {isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.IN_PRODUCTION)
@@ -696,18 +676,6 @@ export default function ProductionWorkflowModule() {
                     }}
                 />
             )}
-
-            {/* --- STATION START SCANNER MODAL --- */}
-            <StationStartScanner
-                open={isScannerOpen}
-                onOpenChange={(open) => {
-                    setIsScannerOpen(open);
-                    if (!open) setScannerJobOrder(null);
-                }}
-                jobOrders={jobOrders}
-                initialJobOrder={scannerJobOrder}
-                onStationStarted={handleStationStarted}
-            />
 
             {/* --- MATERIAL GENEALOGY & BACKFLUSHING AUDIT MODAL --- */}
             {selectedJobOrder && (

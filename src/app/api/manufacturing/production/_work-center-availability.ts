@@ -1,7 +1,7 @@
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { JOB_ORDER_STATUS, isJobOrderStatus, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 import type {
-    StationJobOrderSummary,
+    WorkCenterJobOrderSummary,
     WorkCenterJobOrderAssignmentSource,
     WorkCenterJobOrderAvailability
 } from "@/modules/manufacturing-management/production-workflow/types";
@@ -65,7 +65,7 @@ function buildSummary(
     operationNameById: Map<number, string>,
     assignmentSource: WorkCenterJobOrderAssignmentSource,
     fallbackRouteStatus: string
-): StationJobOrderSummary {
+): WorkCenterJobOrderSummary {
     const jobOrderId = relationId(jobOrder.job_order_id, ["job_order_id"]) || relationId(jobOrder.id);
     const productId = relationId(jobOrder.product_id, ["product_id"]) || null;
     const routeId = relationId(route?.jo_route_id, ["jo_route_id"]) || relationId(route?.id);
@@ -259,7 +259,7 @@ export async function fetchWorkCenterJobOrderAvailability(options: {
     });
 
     availabilityByWorkCenter.forEach((availability) => {
-        const sortSummaries = (left: StationJobOrderSummary, right: StationJobOrderSummary) =>
+        const sortSummaries = (left: WorkCenterJobOrderSummary, right: WorkCenterJobOrderSummary) =>
             left.routeSequence - right.routeSequence
             || left.jobOrderNo.localeCompare(right.jobOrderNo);
         availability.availableJobOrders.sort(sortSummaries);
