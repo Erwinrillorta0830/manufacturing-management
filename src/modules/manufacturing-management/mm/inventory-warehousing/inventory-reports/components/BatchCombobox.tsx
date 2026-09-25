@@ -24,8 +24,8 @@ import {
   CommandList,
   CommandSeparator,
 } from '@/components/ui/command';
-import { MMBatchOnhand } from '../services/lot-tracking.service';
-import { QAStatus } from '../types/lot-tracking.types';
+import { MMBatchOnhand } from '@/modules/manufacturing-management/shared/services/lot-tracking.service';
+import { QAStatus } from '@/modules/manufacturing-management/shared/types/lot-tracking.types';
 
 export interface BatchComboboxProps {
   value: string;

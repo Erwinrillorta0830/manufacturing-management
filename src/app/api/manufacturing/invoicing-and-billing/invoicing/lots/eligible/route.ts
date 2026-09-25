@@ -8,7 +8,7 @@ import {
     resolveProductUnitId,
     lotUnitId,
     MmLotError
-} from "../../services/mm-lots.service";
+} from "@/app/api/manufacturing/services/mm-lots.service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
