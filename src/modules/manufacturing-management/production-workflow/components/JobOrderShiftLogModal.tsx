@@ -31,7 +31,7 @@ import { validateProductionYieldImage } from "../services/production-yield-image
 import { AddReservedMaterialDialog, type TopUpTarget } from "./AddReservedMaterialDialog";
 import { toast } from "sonner";
 import { calculatePipelinedLineDurationHours } from "../../planning-engineering/utils/production-timing";
-import { formatProductionQuantity, resolveJobOrderTargetQuantity } from "../utils/production-quantity";
+import { exceedsAvailableStock, formatProductionQuantity, resolveJobOrderTargetQuantity } from "../utils/production-quantity";
 import { hasCompletedTimer } from "../operator-time";
 
 interface JobOrderShiftLogModalProps {
@@ -590,7 +590,7 @@ export function JobOrderShiftLogModal({
         setIsTopUpOpen(true);
     };
 
-    const hasInsufficiency = shiftMaterials.some((m) => Boolean(m.reservation_id) && Number(m.actual_qty || 0) > Number(m.available_stock || 0));
+    const hasInsufficiency = shiftMaterials.some((m) => Boolean(m.reservation_id) && exceedsAvailableStock(m.actual_qty, m.available_stock));
     const hasIncompleteMaterialLine = shiftMaterials.some((m) =>
         !m.reservation_id
         || !m.mm_lot_id
@@ -1003,7 +1003,7 @@ export function JobOrderShiftLogModal({
                                                  const actual = Number(m.actual_qty || 0);
                                                  const variance = actual - theoretical;
                                                  const isExceeded = Math.abs(variance) > Math.max(0.000001, Math.abs(theoretical) * varianceTolerancePct / 100);
-                                                 const isInsufficient = actual > Number(m.available_stock || 0);
+                                                 const isInsufficient = exceedsAvailableStock(actual, m.available_stock);
 
                                                 const percentage = Math.min(200, theoretical > 0 ? (actual / theoretical) * 100 : 0);
                                                 const barColor = isInsufficient 
@@ -1320,7 +1320,7 @@ export function JobOrderShiftLogModal({
                                 variant="outline"
                                 onClick={() => {
                                     const shortMaterial =
-                                        shiftMaterials.find((m) => Number(m.actual_qty || 0) > Number(m.available_stock || 0))
+                                        shiftMaterials.find((m) => exceedsAvailableStock(m.actual_qty, m.available_stock))
                                         || shiftMaterials.find((m) => !m.reservation_id)
                                         || shiftMaterials[0];
                                     if (!shortMaterial) return;

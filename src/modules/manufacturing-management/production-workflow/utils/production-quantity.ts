@@ -12,6 +12,18 @@ export function resolveJobOrderTargetQuantity(
     return Number.isFinite(quantity) && quantity > 0 ? quantity : 0;
 }
 
+export const MATERIAL_QUANTITY_EPSILON = 0.000001;
+
+/**
+ * Compares consumed/actual quantities against reservation balances with the
+ * codebase float tolerance. Reservation sums accumulate sub-display dust, so
+ * a strict `>` misfires (red shortfall bar on variance-0 entries) when the
+ * raw values differ below what any display rounding shows.
+ */
+export function exceedsAvailableStock(actual: unknown, available: unknown): boolean {
+    return Number(actual || 0) > Number(available || 0) + MATERIAL_QUANTITY_EPSILON;
+}
+
 export function formatProductionQuantity(value: number | null | undefined): string {
     const quantity = Number(value);
     if (!Number.isFinite(quantity)) return "0";
