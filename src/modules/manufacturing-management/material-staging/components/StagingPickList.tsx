@@ -29,6 +29,7 @@ import { isCancelledJobOrderStatus } from "../../job-order-status";
 import { resolveJobOrderJourney, stagingStateInfo } from "../../shared/job-order-journey";
 import { JobOrderJourneyBar } from "../../shared/components/JobOrderJourneyBar";
 import { downloadStagingSlipPdf } from "../utils/generateStagingSlipPdf";
+import { formatShiftLabel } from "../utils/format-shift-label";
 import { JobOrderStatusBadge } from "../../shared/components/JobOrderStatusBadge";
 import { NextStepCallout } from "../../shared/components/NextStepCallout";
 
@@ -85,7 +86,7 @@ export function StagingPickList({
         status: jobOrder.status,
         allMaterialsStaged: jobOrder.all_staged,
         hasShortage: jobOrder.has_shortage,
-        hasActiveDestination: Boolean(jobOrder.staging_work_center_id)
+        hasActiveDestination: Boolean(jobOrder.suggested_staging_bin)
     });
 
     return (
@@ -137,11 +138,9 @@ export function StagingPickList({
                         <span>&bull;</span>
                         <span>Branch: <strong className="text-foreground">{jobOrder.branch_name || (jobOrder.branch_id ? `Branch #${jobOrder.branch_id}` : "Unassigned")}</strong></span>
                         <span>&bull;</span>
-                        <span>Work Center: <strong className="text-foreground">{jobOrder.primary_work_center_name}</strong></span>
-                        <span>&bull;</span>
                         <span>Target Bin: <code className="font-mono text-emerald-600 dark:text-emerald-400 font-semibold">{jobOrder.suggested_staging_bin || "No active destination"}</code></span>
                         <span>&bull;</span>
-                        <span>Shift: <strong className="text-foreground">{jobOrder.shift_option || "Shift 1"}</strong></span>
+                        <span>Shift Hours: <strong className="text-foreground">{formatShiftLabel(jobOrder.shift_option)}</strong></span>
                     </div>
                 </div>
 
@@ -453,9 +452,6 @@ export function StagingPickList({
                                                                         <span className="font-mono font-bold text-foreground">
                                                                             {lot.batch_no}
                                                                         </span>
-                                                                        <Badge variant="outline" className="text-[10px] bg-background">
-                                                                            QA: {lot.qa_status || "Passed"}
-                                                                        </Badge>
                                                                         {lot.expiry_date && (
                                                                             <span className="text-[11px] text-muted-foreground">
                                                                                 Exp: {lot.expiry_date}

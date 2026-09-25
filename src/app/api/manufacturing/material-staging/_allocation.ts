@@ -28,6 +28,7 @@ import type {
     BatchStageMaterialResult,
     StagingCommitResponse
 } from "@/modules/manufacturing-management/material-staging/types";
+import { resolveStagingTargetBin } from "@/modules/manufacturing-management/material-staging/types";
 import {
     isJobOrderStatus,
     normalizeJobOrderStatus,
@@ -36,8 +37,10 @@ import {
 import { executeJobOrderWorkflow } from "../job-orders/_workflow-service";
 
 const QUANTITY_EPSILON = 0.000001;
-const PREVIEW_TOKEN_VERSION = 1;
+const PREVIEW_TOKEN_VERSION = 2;
 const SOURCE_BIN = "MAIN-STORE";
+
+
 
 type DirectusRecord = Record<string, unknown>;
 
@@ -84,7 +87,7 @@ interface AllocationContext {
     jobOrderId: number;
     jobOrderNo: string;
     branchId: number;
-    workCenterId: number;
+    workCenterId: number | null;
     targetBin: string;
     materials: MaterialContext[];
     reservations: ReservationContext[];
@@ -101,7 +104,7 @@ interface PreviewTokenPayload {
     v: number;
     fingerprint: string;
     job_order_id: number;
-    work_center_id: number;
+    work_center_id: number | null;
     mode: AllocationMode;
     material_ids: number[];
     lines: AllocationLine[];
@@ -353,9 +356,12 @@ export function verifyPreviewToken(token: string): PreviewTokenPayload {
     }
     try {
         const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as PreviewTokenPayload;
-        if (payload.v !== PREVIEW_TOKEN_VERSION || !payload.fingerprint || !payload.job_order_id || !payload.work_center_id) {
+        const tokenWorkCenterId = payload.work_center_id ?? null;
+        if (payload.v !== PREVIEW_TOKEN_VERSION || !payload.fingerprint || !payload.job_order_id
+            || (tokenWorkCenterId !== null && (!Number.isSafeInteger(tokenWorkCenterId) || tokenWorkCenterId <= 0))) {
             throw new Error("invalid preview token payload");
         }
+        payload.work_center_id = tokenWorkCenterId;
         return payload;
     } catch {
         throw new MaterialStagingAllocationError("The allocation preview token is invalid. Generate a new preview before posting.", 409, "PREVIEW_TOKEN_INVALID");
@@ -366,7 +372,10 @@ async function loadAllocationContext(payload: AllocationPreviewPayload): Promise
     if (!Number.isSafeInteger(payload.job_order_id) || payload.job_order_id <= 0) {
         throw new MaterialStagingAllocationError("A valid Job Order is required.", 400, "JOB_ORDER_REQUIRED");
     }
-    if (!Number.isSafeInteger(payload.work_center_id) || payload.work_center_id <= 0) {
+    // Staging is raw-material level: a null work center stages to the generic
+    // floor bin. A provided work center must still be a positive integer.
+    const workCenterId = payload.work_center_id ?? null;
+    if (workCenterId !== null && (!Number.isSafeInteger(workCenterId) || workCenterId <= 0)) {
         throw new MaterialStagingAllocationError("A valid work center is required.", 400, "WORK_CENTER_REQUIRED");
     }
 
@@ -387,13 +396,15 @@ async function loadAllocationContext(payload: AllocationPreviewPayload): Promise
         throw new MaterialStagingAllocationError("This Job Order cannot accept staged material in its current status.", 409, "JOB_ORDER_NOT_STAGEABLE");
     }
 
-    const workCenters = await directusRows(
-        `/items/manufacturing_work_centers?filter[work_center_id][_eq]=${payload.work_center_id}&fields=*&limit=1`,
-        "Load target work center"
-    );
-    const workCenter = workCenters[0];
-    if (!workCenter || ["0", "FALSE", "INACTIVE"].includes(canonicalTypeName(workCenter.is_active))) {
-        throw new MaterialStagingAllocationError("The selected work center is not active.", 409, "WORK_CENTER_NOT_ACTIVE");
+    if (workCenterId !== null) {
+        const workCenters = await directusRows(
+            `/items/manufacturing_work_centers?filter[work_center_id][_eq]=${workCenterId}&fields=*&limit=1`,
+            "Load target work center"
+        );
+        const workCenter = workCenters[0];
+        if (!workCenter || ["0", "FALSE", "INACTIVE"].includes(canonicalTypeName(workCenter.is_active))) {
+            throw new MaterialStagingAllocationError("The selected work center is not active.", 409, "WORK_CENTER_NOT_ACTIVE");
+        }
     }
 
     const materialRows = await directusRows(
@@ -598,8 +609,8 @@ async function loadAllocationContext(payload: AllocationPreviewPayload): Promise
         jobOrderId,
         jobOrderNo,
         branchId,
-        workCenterId: payload.work_center_id,
-        targetBin: `FLOOR-STAGING-${payload.work_center_id}`,
+        workCenterId,
+        targetBin: resolveStagingTargetBin(workCenterId),
         materials,
         reservations: reservationContexts,
         candidatesByMaterial
@@ -977,7 +988,7 @@ export async function commitAllocation(
         throw new MaterialStagingAllocationError("An authenticated user is required to stage material.", 401, "AUTHENTICATION_REQUIRED");
     }
     const token = verifyPreviewToken(payload.preview_token);
-    if (token.job_order_id !== payload.job_order_id || token.work_center_id !== payload.work_center_id || token.mode !== payload.mode) {
+    if (token.job_order_id !== payload.job_order_id || token.work_center_id !== (payload.work_center_id ?? null) || token.mode !== payload.mode) {
         throw new MaterialStagingAllocationError("The allocation preview does not match this commit request.", 409, "PREVIEW_TOKEN_MISMATCH");
     }
     const existing = await existingOperation(operationId, token.fingerprint);
@@ -1006,6 +1017,13 @@ export async function commitAllocation(
         }
         if (prepared.preview.shortages.length > 0) {
             throw new MaterialStagingAllocationError("The selected allocations do not fully cover every required material.", 409, "ALLOCATION_INCOMPLETE", { shortages: prepared.preview.shortages });
+        }
+        // Backstop for no-op commits (e.g. Re-stage on a Floor Ready material
+        // with no quantity, lot, or destination changes): posting zero
+        // movements is never a valid staging transaction.
+        const proposedTotal = prepared.preview.proposed_allocations.reduce((total, line) => total + quantity(line.quantity), 0);
+        if (proposedTotal <= QUANTITY_EPSILON) {
+            throw new MaterialStagingAllocationError("No quantity or lot changes vs the staged baseline — nothing to commit.", 409, "NO_ALLOCATION_DELTA");
         }
 
         const transactionTypeId = await resolveTransactionTypeId("MATERIAL_STAGING_ISSUE");
@@ -1068,7 +1086,7 @@ export async function commitAllocation(
             reservationIds.push(reservationId);
 
             const overrideRemark = line.override_negative ? `[NEGATIVE OVERRIDE] ${text(payload.override_remarks)}; ` : "";
-            const remarks = `[MM-MATERIAL-STAGING] operation_id=${operationId};preview_fingerprint=${prepared.fingerprint};staging_allocation_line_id=${line.allocation_line_id};target_bin=${prepared.context.targetBin};work_center_id=${prepared.context.workCenterId};jo_material_id=${material.id}; source_bin=${SOURCE_BIN}; JO #${prepared.context.jobOrderNo}. ${overrideRemark}${text(payload.remarks) || "Canonical material staging issue"}`;
+            const remarks = `[MM-MATERIAL-STAGING] operation_id=${operationId};preview_fingerprint=${prepared.fingerprint};staging_allocation_line_id=${line.allocation_line_id};target_bin=${prepared.context.targetBin};work_center_id=${prepared.context.workCenterId ?? ""};jo_material_id=${material.id}; source_bin=${SOURCE_BIN}; JO #${prepared.context.jobOrderNo}. ${overrideRemark}${text(payload.remarks) || "Canonical material staging issue"}`;
             const movement = await directusRequest<DirectusRecord>(
                 "/items/inventory_movements",
                 {

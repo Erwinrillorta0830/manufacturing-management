@@ -95,7 +95,7 @@ export interface AllocationPreview {
     success: boolean;
     job_order_id: number;
     job_order_no: string;
-    work_center_id: number;
+    work_center_id: number | null;
     target_bin: string;
     mode: AllocationMode;
     preview_token: string;
@@ -112,10 +112,23 @@ export interface AllocationPreview {
     }>;
 }
 
+/** Generic floor staging bin used when no work center is selected (raw-material-level staging). */
+export const GENERIC_FLOOR_STAGING_BIN = "FLOOR-STAGING";
+
+/**
+ * Resolves the destination bin: work-center-scoped for legacy callers that
+ * still pass a work center, generic floor bin otherwise.
+ */
+export function resolveStagingTargetBin(workCenterId: number | null | undefined): string {
+    const id = Number(workCenterId);
+    return Number.isSafeInteger(id) && id > 0 ? `FLOOR-STAGING-${id}` : GENERIC_FLOOR_STAGING_BIN;
+}
+
 export interface AllocationPreviewPayload {
     job_order_id: number;
     job_order_no?: string;
-    work_center_id: number;
+    /** Deprecated: staging is raw-material level. Null selects the generic floor bin. */
+    work_center_id?: number | null;
     mode: AllocationMode;
     material_ids?: number[];
     lines?: AllocationLine[];
@@ -222,9 +235,11 @@ export interface StagingJobOrder {
     rejected_quantity: number;
     status: JobOrderStatus | string;
     primary_work_center_id: number | null;
+    /** Floor staging destination work center (not the production routing); retained for search and bin derivation. */
     primary_work_center_name: string;
     staging_work_center_id: number | null;
     suggested_staging_bin: string | null; // e.g. "FLOOR-STAGING-112"
+    /** Shift hours persisted from planning (e.g. "6.5"); falls back to a named schedule. */
     shift_option?: string | null;
     branch_id: number | null;
     branch_name: string;
@@ -237,23 +252,6 @@ export interface StagingJobOrder {
     has_shortage: boolean;
     all_staged: boolean;
     created_at?: string | null;
-}
-
-export interface BinTransferPayload {
-    job_order_id: number;
-    job_order_no: string;
-    jo_material_id: number;
-    product_id: number;
-    product_name?: string;
-    lot_id: number;
-    allocation_id?: number;
-    batch_no: string;
-    transfer_quantity: number;
-    source_bin: string; // Default "MAIN-STORE"
-    target_bin: string; // "FLOOR-STAGING-[WorkCenterID]"
-    work_center_id: number;
-    override_negative?: boolean;
-    remarks?: string;
 }
 
 export interface ShortageWarningInfo {

@@ -39,7 +39,6 @@ export default function MaterialStagingModule() {
         filteredJobOrders,
         selectedJobOrder,
         setSelectedJobOrderId,
-        workCenters,
         branches,
         stats,
         loading,
@@ -335,7 +334,7 @@ export default function MaterialStagingModule() {
                                     status: jo.status,
                                     allMaterialsStaged: jo.all_staged,
                                     hasShortage: jo.has_shortage,
-                                    hasActiveDestination: Boolean(jo.staging_work_center_id)
+                                    hasActiveDestination: Boolean(jo.suggested_staging_bin)
                                 });
 
                                 return (
@@ -486,7 +485,6 @@ export default function MaterialStagingModule() {
                 isOpen={isAllocationModalOpen}
                 onClose={handleCloseAllocationModal}
                 activeItem={activeAllocationItem}
-                workCenters={workCenters}
                 onCommit={handleCommitAllocation}
                 isLoading={transferring}
             />

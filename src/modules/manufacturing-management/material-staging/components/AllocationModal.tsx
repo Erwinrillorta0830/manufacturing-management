@@ -7,9 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { fetchAllocationPreview } from "../services/staging-api";
 import { createMaterialStagingOperationId } from "../utils/operation-id";
+import { hasStagingDelta } from "../utils/allocation-delta";
+import { GENERIC_FLOOR_STAGING_BIN } from "../types";
 import type {
     AllocationLine,
     AllocationMode,
@@ -19,8 +20,7 @@ import type {
     MaterialAllocationPreview,
     MaterialStagingItem,
     StagingCommitPayload,
-    StagingJobOrder,
-    WorkCenter
+    StagingJobOrder
 } from "../types";
 
 interface AllocationModalProps {
@@ -31,7 +31,6 @@ interface AllocationModalProps {
         material: MaterialStagingItem;
         lot?: AllocatedLot;
     } | null;
-    workCenters: WorkCenter[];
     onCommit: (payload: StagingCommitPayload) => Promise<void>;
     isLoading?: boolean;
 }
@@ -68,7 +67,6 @@ export function AllocationModal({
     isOpen,
     onClose,
     activeItem,
-    workCenters,
     onCommit,
     isLoading = false
 }: AllocationModalProps) {
@@ -80,7 +78,6 @@ export function AllocationModal({
                 <AllocationForm
                     key={`${activeItem.jobOrder.job_order_id}-${(activeItem.material.jo_material_ids || [activeItem.material.jo_material_id]).join("-")}`}
                     activeItem={activeItem}
-                    workCenters={workCenters}
                     onCommit={onCommit}
                     onClose={onClose}
                     isLoading={isLoading}
@@ -93,14 +90,12 @@ export function AllocationModal({
 
 function AllocationForm({
     activeItem,
-    workCenters,
     onCommit,
     onClose,
     isLoading,
     isOpen
 }: {
     activeItem: NonNullable<AllocationModalProps["activeItem"]>;
-    workCenters: WorkCenter[];
     onCommit: AllocationModalProps["onCommit"];
     onClose: () => void;
     isLoading: boolean;
@@ -111,17 +106,18 @@ function AllocationForm({
         () => [...new Set(material.jo_material_ids?.length ? material.jo_material_ids : [material.jo_material_id])],
         [material.jo_material_ids, material.jo_material_id]
     );
-    const defaultWorkCenter = jobOrder.staging_work_center_id || workCenters.find(center => center.is_active !== false)?.work_center_id || 0;
     const [mode, setMode] = useState<AllocationMode>("auto");
-    const [selectedWorkCenterId, setSelectedWorkCenterId] = useState(String(defaultWorkCenter || ""));
     const [preview, setPreview] = useState<AllocationPreview | null>(null);
     const [manualLines, setManualLines] = useState<AllocationLine[]>([]);
     const [remarks, setRemarks] = useState(`Staging materials for JO #${jobOrder.job_order_no}`);
     const [loadingPreview, setLoadingPreview] = useState(false);
     const [formError, setFormError] = useState<string | null>(null);
 
-    const selectedMaterialPreviews = preview?.materials.filter(item => sourceMaterialIds.includes(item.jo_material_id)) || [];
-    const selectedMaterialPreview: MaterialAllocationPreview | null = selectedMaterialPreviews.length > 0
+    const selectedMaterialPreviews = useMemo(
+        () => preview?.materials.filter(item => sourceMaterialIds.includes(item.jo_material_id)) || [],
+        [preview, sourceMaterialIds]
+    );
+    const selectedMaterialPreview: MaterialAllocationPreview | null = useMemo(() => selectedMaterialPreviews.length > 0
         ? {
             ...selectedMaterialPreviews[0],
             required_quantity: selectedMaterialPreviews.reduce((total, item) => total + item.required_quantity, 0),
@@ -139,29 +135,48 @@ function AllocationForm({
             proposed_allocations: selectedMaterialPreviews.flatMap(item => item.proposed_allocations),
             message: selectedMaterialPreviews.find(item => item.message)?.message
         }
-        : null;
-    const selectedLines = mode === "auto"
+        : null,
+    [selectedMaterialPreviews]);
+    const selectedLines = useMemo(() => mode === "auto"
         ? selectedMaterialPreview?.proposed_allocations || []
-        : manualLines.filter(line => line.quantity > 0);
+        : manualLines.filter(line => line.quantity > 0),
+    [mode, selectedMaterialPreview, manualLines]);
     const selectedQuantity = roundQuantity(selectedLines.reduce((total, line) => total + line.quantity, 0));
     const remainingQuantity = selectedMaterialPreview?.remaining_quantity ?? Math.max(0, material.required_quantity - material.staged_quantity);
-    const selectedWorkCenter = workCenters.find(center => String(center.work_center_id) === selectedWorkCenterId);
-    const targetBin = selectedWorkCenter ? `FLOOR-STAGING-${selectedWorkCenter.work_center_id}` : "";
+    // Staging is raw-material level: everything stages to the generic floor bin.
+    const targetBin = GENERIC_FLOOR_STAGING_BIN;
+    // Inventory delta vs the staged baseline: quantity adjustment, lot
+    // reassignment, or destination-bin change. Re-entering the identical
+    // staged allocation (e.g. Re-stage on a Floor Ready material) is not
+    // committable.
+    const hasDelta = useMemo(() => hasStagingDelta(
+        (material.allocations || []).map((lot) => ({
+            mm_lot_id: Number(lot.mm_lot_id || 0),
+            inventory_lot_id: Number(lot.inventory_lot_id || 0),
+            batch_no: lot.batch_no,
+            staged_quantity: Number(lot.staged_quantity || 0),
+            staging_bin: lot.staging_bin ?? null
+        })),
+        selectedLines.map((line) => ({
+            mm_lot_id: Number(line.mm_lot_id || 0),
+            inventory_lot_id: Number(line.inventory_lot_id || 0),
+            batch_no: line.batch_no,
+            quantity: Number(line.quantity || 0)
+        })),
+        targetBin || null,
+        remainingQuantity
+    ), [material.allocations, selectedLines, targetBin, remainingQuantity]);
 
     const previewPayload = useMemo<AllocationPreviewPayload>(() => ({
         job_order_id: jobOrder.job_order_id,
         job_order_no: jobOrder.job_order_no,
-        work_center_id: Number(selectedWorkCenterId),
+        work_center_id: null,
         mode,
         material_ids: sourceMaterialIds,
         ...(mode === "manual" && manualLines.length > 0 ? { lines: manualLines } : {})
-    }), [jobOrder.job_order_id, jobOrder.job_order_no, sourceMaterialIds, mode, selectedWorkCenterId, manualLines]);
+    }), [jobOrder.job_order_id, jobOrder.job_order_no, sourceMaterialIds, mode, manualLines]);
 
     const loadPreview = async (payload: AllocationPreviewPayload) => {
-        if (!payload.work_center_id) {
-            setFormError("Select an active target work center before loading allocations.");
-            return;
-        }
         setLoadingPreview(true);
         setFormError(null);
         try {
@@ -183,7 +198,7 @@ function AllocationForm({
         void loadPreview({
             job_order_id: jobOrder.job_order_id,
             job_order_no: jobOrder.job_order_no,
-            work_center_id: Number(selectedWorkCenterId),
+            work_center_id: null,
             mode: "auto",
             material_ids: sourceMaterialIds
         });
@@ -235,16 +250,16 @@ function AllocationForm({
     const handleSubmit = async (event: React.FormEvent) => {
         event.preventDefault();
         setFormError(null);
-        if (!selectedWorkCenter || !targetBin) {
-            setFormError("Select an active target work center.");
-            return;
-        }
         if (remainingQuantity > 0 && selectedQuantity + 0.000001 < remainingQuantity) {
             setFormError(`Allocate the full remaining ${remainingQuantity} ${material.uom} before staging.`);
             return;
         }
         if (selectedLines.length === 0) {
             setFormError("No eligible lot/batch allocation was selected.");
+            return;
+        }
+        if (!hasDelta) {
+            setFormError("No quantity, lot, or destination changes vs the staged baseline — nothing to commit.");
             return;
         }
 
@@ -262,7 +277,7 @@ function AllocationForm({
             await onCommit({
                 job_order_id: jobOrder.job_order_id,
                 job_order_no: jobOrder.job_order_no,
-                work_center_id: selectedWorkCenter.work_center_id,
+                work_center_id: null,
                 mode,
                 material_ids: sourceMaterialIds,
                 lines: latestPreview.proposed_allocations,
@@ -297,22 +312,9 @@ function AllocationForm({
                         </div>
                     </div>
                     <div className="w-full min-w-0 space-y-1 sm:w-[220px]">
-                        <Label className="text-[11px] uppercase tracking-wider text-muted-foreground">Target work center</Label>
-                        <Select value={selectedWorkCenterId} onValueChange={(value) => {
-                            setSelectedWorkCenterId(value);
-                            setPreview(null);
-                            void loadPreview({ ...previewPayload, work_center_id: Number(value), lines: undefined });
-                        }}>
-                            <SelectTrigger className="h-9 w-full min-w-0 text-xs"><SelectValue placeholder="Select work center" /></SelectTrigger>
-                            <SelectContent>
-                                {workCenters.filter(center => center.is_active !== false).map(center => (
-                                    <SelectItem key={center.work_center_id} value={String(center.work_center_id)} className="text-xs">
-                                        {center.work_center_name}
-                                    </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                        <div className="text-[11px] text-muted-foreground">Derived target bin: <span className="font-mono text-foreground">{targetBin || "—"}</span></div>
+                        <Label className="text-[11px] uppercase tracking-wider text-muted-foreground">Target bin</Label>
+                        <div className="font-mono text-xs text-foreground">{targetBin}</div>
+                        <div className="text-[11px] text-muted-foreground">Generic floor bin (raw-material level staging)</div>
                     </div>
                 </div>
             </div>
@@ -389,11 +391,14 @@ function AllocationForm({
                     <Input id="staging-remarks" value={remarks} onChange={event => setRemarks(event.target.value)} className="text-xs" />
                 </div>
                 {formError && <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />{formError}</div>}
+                {!formError && preview && !hasDelta && (
+                    <div className="text-xs text-muted-foreground">No quantity, lot, or destination changes vs the staged baseline — Commit is disabled.</div>
+                )}
             </div>
 
             <DialogFooter className="w-full min-w-0 border-t border-border bg-muted/10 p-5">
                 <Button type="button" variant="outline" onClick={onClose} disabled={isLoading}>Cancel</Button>
-                <Button type="submit" disabled={isLoading || loadingPreview || !preview || selectedQuantity + 0.000001 < remainingQuantity}>
+                <Button type="submit" disabled={isLoading || loadingPreview || !preview || selectedQuantity + 0.000001 < remainingQuantity || !hasDelta} title={!hasDelta ? "No changes vs the staged baseline" : undefined}>
                     {isLoading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Staging…</> : <><CheckCircle2 className="mr-2 h-4 w-4" />Commit Staging Issue</>}
                 </Button>
             </DialogFooter>

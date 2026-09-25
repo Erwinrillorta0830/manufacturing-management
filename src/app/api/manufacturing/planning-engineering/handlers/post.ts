@@ -14,6 +14,10 @@ import {
     JOB_ORDER_STATUS
 } from "@/modules/manufacturing-management/job-order-status";
 import { isProductionSchedulingStatus } from "../../sales-order/_status";
+import {
+    effectiveReplacementCreditQuantity,
+    loadReplacementCreditData
+} from "../../sales-order/_replacement-credits";
 import { salesOrderStatusAfterFulfillment } from "../../sales-order/_fulfillment";
 import { SalesOrderAllocationConflictError } from "../helpers/create-helper";
 import type { SalesOrderSchedulingPlan } from "../helpers/create-helper";
@@ -141,6 +145,32 @@ async function fetchSchedulingAllocations(detailIds: number[]): Promise<any[]> {
         throw new Error(`Unable to validate existing Job Order allocations (${legacyResponse.status}).`);
     }
     return (await legacyResponse.json()).data || [];
+}
+
+async function readReplacementCreditCollection(collection: string, params: URLSearchParams): Promise<{ data: any[] }> {
+    const response = await fetchWithTimeout(
+        `${DIRECTUS_URL}/items/${collection}?${params.toString()}`,
+        { headers, cache: "no-store" }
+    );
+    if (!response.ok) {
+        throw new Error(`Unable to validate replacement credits (${response.status}).`);
+    }
+    return (await response.json()) as { data: any[] };
+}
+
+async function readFinishedGoodsReceipts(jobOrderIds: number[]): Promise<Array<Record<string, unknown>>> {
+    const receipts: Array<Record<string, unknown>> = [];
+    const concurrency = 8;
+    for (let index = 0; index < jobOrderIds.length; index += concurrency) {
+        const chunk = jobOrderIds.slice(index, index + concurrency);
+        const movementRows = await Promise.all(chunk.map((jobOrderId) => fetchMmInventoryMovements({
+            transactionTypeId: 2,
+            movementDirection: "IN",
+            referenceId: jobOrderId
+        }).then((rows) => rows as Array<Record<string, unknown>>)));
+        receipts.push(...movementRows.flat());
+    }
+    return receipts;
 }
 
 async function validateSalesOrderScheduling(
@@ -301,6 +331,16 @@ async function validateSalesOrderScheduling(
         availableQuantity: number;
     }> = [];
     const selectedBranchIds = new Set<number>();
+    // Net terminated-predecessor output credits so a replacement JO is
+    // planned against the still-uncovered demand (mirrors create-helper and
+    // the planning queue). Without this, a partially credited line is
+    // unschedulable: validation demands the gross quantity while creation
+    // caps the allocation at the netted remainder.
+    const replacementCreditData = await loadReplacementCreditData(
+        readReplacementCreditCollection,
+        details,
+        readFinishedGoodsReceipts
+    );
     for (const detailId of detailIds) {
         const detail = detailsById.get(detailId);
         const parentOrderId = relationId(detail.order_id);
@@ -322,7 +362,14 @@ async function validateSalesOrderScheduling(
             throw new PlanningConflictError(`Sales Order detail ${detailId} does not match the consolidated BOM version.`);
         }
         const planned = plannedQuantityByDetail.get(detailId) || 0;
-        const remainingQuantity = Math.max(0, ordered - Math.max(allocated, served) - planned);
+        const replacementCredit = effectiveReplacementCreditQuantity(
+            ordered,
+            allocated,
+            served,
+            planned,
+            replacementCreditData.byDetail.get(detailId) || 0
+        );
+        const remainingQuantity = Math.max(0, ordered - Math.max(allocated, served) - planned - replacementCredit);
         if (!Number.isFinite(ordered) || ordered <= 0 || !Number.isFinite(allocated) || allocated < 0 || !Number.isFinite(served) || served < 0) {
             throw new PlanningConflictError(`Sales Order detail ${detailId} has invalid quantities.`);
         }
