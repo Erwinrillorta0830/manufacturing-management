@@ -67,6 +67,90 @@ export function calculateFullBatchTarget(
     );
 }
 
+export interface RecipeBatchSizeDisplay {
+    grossBaseQuantity: number;
+    expectedYieldPercentage: number;
+    expectedNetQuantity: number;
+}
+
+/**
+ * Recipe Batch Size display contract: `base_quantity` is the GROSS batch
+ * output. The net output is derived (gross * yield %) for display only and
+ * must never be fed back in as the batch size for batch-count math —
+ * net-stored base quantities (e.g. 6986.19 instead of 7092.5556 at 98.5%
+ * yield) under-plan full-batch targets by the yield factor.
+ */
+export function resolveRecipeBatchSizeDisplay(
+    baseQuantity: number,
+    expectedYieldPercentage?: number | null
+): RecipeBatchSizeDisplay {
+    const gross = requirePositiveProductionNumber(baseQuantity, "Recipe base quantity");
+    const parsedYield = Number(expectedYieldPercentage);
+    const yieldPct = Number.isFinite(parsedYield) && parsedYield > 0
+        ? Math.min(parsedYield, 100)
+        : 100;
+    const net = Number(
+        DecimalValue.from(gross)
+            .multiply(DecimalValue.from(yieldPct).divideRounded(100, 8))
+            .toFixed(PRODUCTION_DECIMAL_SCALE)
+    );
+    return {
+        grossBaseQuantity: roundProductionValue(gross),
+        expectedYieldPercentage: yieldPct,
+        expectedNetQuantity: net
+    };
+}
+
+/**
+ * Estimates the gross batch size that would produce a given net output at
+ * the configured yield (net / yieldFactor). Display/recovery helper only —
+ * callers must re-pin or correct master data, never silently rewrite plans.
+ */
+export function estimateGrossBaseQuantityFromNet(
+    netBaseQuantity: number,
+    expectedYieldPercentage?: number | null
+): number {
+    const net = requirePositiveProductionNumber(netBaseQuantity, "Net base quantity");
+    const parsedYield = Number(expectedYieldPercentage);
+    const yieldPct = Number.isFinite(parsedYield) && parsedYield > 0
+        ? Math.min(parsedYield, 100)
+        : 100;
+    if (yieldPct >= 100) return roundProductionValue(net);
+    return Number(
+        DecimalValue.from(net)
+            .divideRounded(DecimalValue.from(yieldPct).divideRounded(100, 8), 8)
+            .toFixed(PRODUCTION_DECIMAL_SCALE)
+    );
+}
+
+/**
+ * Detects a net-stored base quantity at the editor boundary, where the
+ * bottleneck gross output is known. Returns true when the entered base
+ * quantity matches the derived net output (within 1% relative) while
+ * differing from gross by more than the yield loss (0.5%), so genuine
+ * gross entries and 100%-yield recipes never flag.
+ */
+export function isLikelyNetStoredBaseQuantity(
+    enteredBaseQuantity: number,
+    grossOutput: number,
+    expectedYieldPercentage?: number | null
+): boolean {
+    const entered = Number(enteredBaseQuantity);
+    const gross = Number(grossOutput);
+    if (!Number.isFinite(entered) || entered <= 0) return false;
+    if (!Number.isFinite(gross) || gross <= 0) return false;
+    const parsedYield = Number(expectedYieldPercentage);
+    const yieldPct = Number.isFinite(parsedYield) && parsedYield > 0
+        ? Math.min(parsedYield, 100)
+        : 100;
+    if (!(yieldPct < 99.99)) return false;
+    const net = gross * (yieldPct / 100);
+    if (!(net > 0)) return false;
+    const netGap = Math.abs(entered - net) / net;
+    const grossGap = Math.abs(entered - gross) / gross;
+    return netGap < 0.01 && grossGap > 0.005;
+}
+
 export interface ProductionQuantityPlan {
     requestedQuantity: number;
     baseQuantity: number;

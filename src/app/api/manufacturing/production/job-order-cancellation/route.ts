@@ -7,6 +7,7 @@ import {
     returnJobOrderMaterialLeftovers,
     JobOrderCancellationError
 } from "./_cancellation-service";
+import { reconcileSalesOrderAfterJobOrderEnd } from "@/app/api/manufacturing/job-orders/_workflow-service";
 import {
     deleteJobOrderCancellationImage,
     JobOrderCancellationImageError,
@@ -142,7 +143,15 @@ export async function POST(request: Request) {
                 actorUserId: actor,
                 cancellationImageId: uploadedImageId
             });
-            return NextResponse.json({ success: true, data: execution.response });
+            const warnings = await reconcileSalesOrderAfterJobOrderEnd(
+                Number(execution.response.jobOrderId),
+                "cancel"
+            );
+            return NextResponse.json({
+                success: true,
+                data: execution.response,
+                ...(warnings.length > 0 ? { warnings } : {})
+            });
         }
 
         if (action === "return-materials") {

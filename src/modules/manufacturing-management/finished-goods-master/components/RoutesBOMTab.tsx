@@ -471,6 +471,24 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
         setHasUnsavedChanges(true);
     };
 
+    // Base Quantity must be the GROSS batch output. Flag a manually entered
+    // value that matches the derived net output instead — saving net here
+    // understates downstream batch targets and material plans by the yield factor.
+    const netStoredBaseQtyWarning = React.useMemo(() => {
+        const entered = Number(editedVersionDetails?.base_quantity);
+        const gross = Number(bottleneckCalc?.grossOutput);
+        const net = Number(bottleneckCalc?.netBaseQuantity);
+        const yieldPct = Number(editedVersionDetails?.expected_yield_percentage);
+        if (!Number.isFinite(entered) || entered <= 0) return null;
+        if (!Number.isFinite(gross) || gross <= 0) return null;
+        if (!Number.isFinite(net) || net <= 0) return null;
+        if (!Number.isFinite(yieldPct) || yieldPct <= 0 || yieldPct >= 99.99) return null;
+        const netGap = Math.abs(entered - net) / net;
+        const grossGap = Math.abs(entered - gross) / gross;
+        if (!(netGap < 0.01 && grossGap > 0.005)) return null;
+        return { entered, gross, net, yieldPct, understatePct: (1 - net / gross) * 100 };
+    }, [editedVersionDetails?.base_quantity, editedVersionDetails?.expected_yield_percentage, bottleneckCalc?.grossOutput, bottleneckCalc?.netBaseQuantity]);
+
 
 
     return (
@@ -617,6 +635,26 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                         {unitShortcut}
                                     </span>
                                 </div>
+                                {netStoredBaseQtyWarning && !isVersionLocked && (
+                                    <div className="flex items-start gap-2 p-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-xs">
+                                        <AlertCircle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                                        <div className="space-y-1">
+                                            <p className="font-semibold text-amber-700 dark:text-amber-300">
+                                                Base Quantity looks like Net Output ({netStoredBaseQtyWarning.entered.toFixed(4)} {unitShortcut}), not Gross ({netStoredBaseQtyWarning.gross.toFixed(4)} {unitShortcut}).
+                                            </p>
+                                            <p className="text-amber-700/80 dark:text-amber-300/80">
+                                                Base Quantity must be the gross batch size. Saving the net value understates batch targets and material plans by ~{netStoredBaseQtyWarning.understatePct.toFixed(1)}%.
+                                            </p>
+                                            <button
+                                                type="button"
+                                                onClick={handleApplyBottleneckQty}
+                                                className="text-[11px] font-semibold text-amber-700 dark:text-amber-300 underline underline-offset-2 hover:text-amber-800 dark:hover:text-amber-200 cursor-pointer"
+                                            >
+                                                Apply gross {netStoredBaseQtyWarning.gross.toFixed(4)} {unitShortcut}
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
 
                             <div className="space-y-1">

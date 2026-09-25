@@ -8,18 +8,26 @@ import {
     formatProductionValue
 } from "./production-timing";
 
-const recipeBatchSize = 6986.19;
+// Gross basis: FG-SAMPLE-001 Rev 2 gross base 7092.5556 @ 98.5% yield.
+// The stale net-stored v1.0 row (6986.19) must never be the batch-size basis:
+// calculateFullBatchTarget(12001, 6986.19) === 13972.38 (understated by ~1.5%)
+// instead of the correct calculateFullBatchTarget(12001, 7092.5556) === 14185.1112.
+const recipeBatchSize = 7092.5556;
 const salesOrderQuantity = 12001;
 const netOutputQuantity = 996;
 const oneBatchTarget = calculateFullBatchTarget(1000, recipeBatchSize);
 assert.equal(calculateRequiredBatchCount(1000, recipeBatchSize), 1);
-assert.equal(oneBatchTarget, 6986.19);
+assert.equal(oneBatchTarget, 7092.5556);
 assert.equal(calculateFullBatchTarget(recipeBatchSize, recipeBatchSize), recipeBatchSize);
-assert.equal(normalizeProductionOutputQuantity(oneBatchTarget, "PCS"), 6986);
+assert.equal(normalizeProductionOutputQuantity(oneBatchTarget, "PCS"), 7093);
 const plannedProductionQuantity = calculateFullBatchTarget(salesOrderQuantity, recipeBatchSize);
 
-assert.equal(plannedProductionQuantity, 13972.38);
+assert.equal(plannedProductionQuantity, 14185.1112);
 assert.equal(calculateRequiredBatchCount(plannedProductionQuantity, recipeBatchSize), 2);
+assert.notEqual(
+    formatProductionValue(calculateFullBatchTarget(salesOrderQuantity, 6986.19)),
+    formatProductionValue(plannedProductionQuantity)
+);
 
 const qaReleasePlan = calculateReleaseMaterialRequirementPlan(
     salesOrderQuantity,
@@ -58,8 +66,8 @@ const unconfiguredContainerizationPlan = calculateReleaseMaterialRequirementPlan
     1.02,
     2
 );
-assert.equal(formatProductionValue(unconfiguredContainerizationPlan.plannedRequired), "14536.8642");
+assert.equal(formatProductionValue(unconfiguredContainerizationPlan.plannedRequired), "14758.1897");
 
 const previousFullBatchBasis = calculatePerUnitMaterialRequirement(recipeBatchSize, 1.02, 2);
-assert.equal(formatProductionValue(previousFullBatchBasis), "7268.4321");
+assert.equal(formatProductionValue(previousFullBatchBasis), "7379.0948");
 assert.notEqual(formatProductionValue(previousFullBatchBasis), "1015.9200");

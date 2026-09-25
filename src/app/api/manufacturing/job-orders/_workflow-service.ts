@@ -289,7 +289,7 @@ async function persistedMaterialConsumption(jobOrderId: number): Promise<number>
     return Math.max(materialAggregate, reservationAggregate);
 }
 
-async function reconcileSalesOrderAfterJobOrderEnd(
+export async function reconcileSalesOrderAfterJobOrderEnd(
     jobOrderId: number,
     action: Extract<JobOrderWorkflowAction, "cancel" | "terminate-production">
 ): Promise<string[]> {

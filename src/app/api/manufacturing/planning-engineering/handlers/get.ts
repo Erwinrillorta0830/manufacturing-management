@@ -1772,6 +1772,41 @@ export async function handleGET(request: Request) {
                 includeReservations: !(isBuffer || usePhysicalOnHand)
             });
 
+            // 2e: Surface version drift so a stale pinned base quantity (e.g. a
+            // net-stored v1.0 row) is visible at release time. The pinned
+            // recipe stays authoritative; this metadata is advisory only.
+            let latestVersion: {
+                version_id: number;
+                version_name: string | null;
+                base_quantity: number | null;
+                expected_yield_percentage: number | null;
+            } | null = null;
+            let isPinnedStale = false;
+            try {
+                const latestFilter = encodeURIComponent(JSON.stringify({ product_id: { _eq: prodId } }));
+                const latestRes = await fetch(
+                    `${DIRECTUS_URL}/items/product_manufacturing_version?filter=${latestFilter}&fields=version_id,version_name,base_quantity,expected_yield_percentage,status,is_primary,is_active,product_id&limit=-1`,
+                    { headers, cache: "no-store" }
+                );
+                if (latestRes.ok) {
+                    const allVersions = (await latestRes.json()).data || [];
+                    const preferred = selectPreferredActiveVersion(allVersions) || null;
+                    if (preferred) {
+                        latestVersion = {
+                            version_id: Number((preferred as any).version_id),
+                            version_name: (preferred as any).version_name ?? null,
+                            base_quantity: (preferred as any).base_quantity != null ? Number((preferred as any).base_quantity) : null,
+                            expected_yield_percentage: (preferred as any).expected_yield_percentage != null
+                                ? Number((preferred as any).expected_yield_percentage)
+                                : null
+                        };
+                        isPinnedStale = Number(version.version_id) !== Number(latestVersion.version_id);
+                    }
+                }
+            } catch (e) {
+                console.warn("Pinned-vs-latest version comparison unavailable:", e);
+            }
+
             // 2e: Return { bom, components, routings, subAssemblyVersions, selectedSubAssemblyVersions, subAssemblyBoms, subAssemblyRoutings, inventories }
             return NextResponse.json({
                 bom,
@@ -1783,7 +1818,9 @@ export async function handleGET(request: Request) {
                 selectedSubAssemblyVersions,
                 subAssemblyBoms,
                 subAssemblyRoutings,
-                inventories
+                inventories,
+                latestVersion,
+                isPinnedStale
             });
         }
 

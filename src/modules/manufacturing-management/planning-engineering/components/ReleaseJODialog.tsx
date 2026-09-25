@@ -31,7 +31,7 @@ import {
     getFactoryOverheadBasisLabel
 } from "../utils/cogs-helper";
 import { calculateProductionMetrics } from "../utils/production-metrics";
-import { calculateAggregateRunHours, calculateFullBatchTarget, calculatePerUnitMaterialRequirement, calculateReleaseMaterialRequirementPlan, calculateRequiredBatchCount, DEFAULT_PRODUCTION_SHIFT_HOURS, formatProductionValue, isPieceProductionUom, normalizeProductionOutputQuantity, readUomId, resolveProductionShiftHours } from "../utils/production-timing";
+import { calculateAggregateRunHours, calculateFullBatchTarget, calculatePerUnitMaterialRequirement, calculateReleaseMaterialRequirementPlan, calculateRequiredBatchCount, DEFAULT_PRODUCTION_SHIFT_HOURS, formatProductionValue, isPieceProductionUom, normalizeProductionOutputQuantity, readUomId, resolveProductionShiftHours, resolveRecipeBatchSizeDisplay } from "../utils/production-timing";
 import { buildReleaseSummaryHtml, type ReleaseSummaryComponent, type ReleaseSummaryFinancials, type ReleaseSummaryRoutingStep } from "../utils/release-summary-print";
 
 interface ReleaseJODialogProps {
@@ -392,6 +392,37 @@ export function ReleaseJODialog({
     const requiredBatchCount = activeGroupBaseQuantity > 0 && targetQuantity > 0
         ? calculateRequiredBatchCount(targetQuantity, activeGroupBaseQuantity)
         : 0;
+
+    // Gross-vs-net display contract: the pinned recipe's base quantity is the
+    // gross batch size; the net expectation is derived for display only so a
+    // net-stored base quantity is immediately visible at release time.
+    const batchSizeDisplay = useMemo(() => {
+        if (!hasLoadedDetails || bomBaseQty <= 0) return null;
+        try {
+            return resolveRecipeBatchSizeDisplay(bomBaseQty, bomData?.expected_yield_percentage);
+        } catch {
+            return null;
+        }
+    }, [hasLoadedDetails, bomBaseQty, bomData]);
+
+    // Version drift is advisory: the pinned SO recipe stays authoritative for
+    // batch math, but a stale pin (e.g. a net-stored v1.0 row) understates
+    // targets and materials by the yield factor until re-pinned or corrected.
+    const versionDrift = useMemo(() => {
+        if (!hasLoadedDetails) return null;
+        const details = groupDetailsByKey[activeGroupKey];
+        const latest = details?.latestVersion;
+        if (!details?.isPinnedStale || !latest) return null;
+        const pinnedId = Number(activeReleaseGroup?.bomVersionId || (selectedLines[0] as any)?.bom_version_id || bomData?.version_id || 0);
+        const latestId = Number(latest.version_id || 0);
+        if (!Number.isFinite(pinnedId) || !Number.isFinite(latestId) || pinnedId === latestId) return null;
+        const pinnedBase = Number(bomBaseQty);
+        const latestBase = Number(latest.base_quantity);
+        const understatePct = Number.isFinite(pinnedBase) && Number.isFinite(latestBase) && latestBase > 0 && latestBase > pinnedBase
+            ? (1 - pinnedBase / latestBase) * 100
+            : null;
+        return { pinnedId, latestId, latestName: latest.version_name || "latest", pinnedBase, latestBase, understatePct };
+    }, [hasLoadedDetails, groupDetailsByKey, activeGroupKey, activeReleaseGroup, selectedLines, bomData, bomBaseQty]);
 
     const containerMetrics = useMemo(() => {
         if (!selectedLines || selectedLines.length === 0) return null;
@@ -909,7 +940,7 @@ export function ReleaseJODialog({
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-muted-foreground">Recipe Version:</span>
-                                        <span className="font-bold text-primary">{selectedLines[0].bom_version_name || "Default"}</span>
+                                        <span className="font-bold text-primary">{selectedLines[0].bom_version_name || "Default"}{selectedLines[0]?.bom_version_id ? ` (#${selectedLines[0].bom_version_id})` : ""}</span>
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-muted-foreground">Target Branch:</span>
@@ -920,15 +951,41 @@ export function ReleaseJODialog({
                                         <span className="font-semibold text-foreground">{(selectedLines[0].product_id as any)?.uom_name || (selectedLines[0].product_id as any)?.uom || "Pieces"}</span>
                                     </div>
                                     <div className="flex justify-between pt-1 border-t border-border/50">
-                                        <span className="text-muted-foreground">Recipe Batch Size (Base Qty):</span>
+                                        <span className="text-muted-foreground">Recipe Batch Size (Gross Base Qty):</span>
                                         {loadingDetails ? (
                                             <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono text-xs flex items-center gap-1">
                                                 <Loader2 className="h-3 w-3 animate-spin text-emerald-600" /> Loading...
                                             </span>
                                         ) : (
-                                            <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">{bomBaseQty.toLocaleString()}</span>
+                                            <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">{bomBaseQty.toLocaleString()} {releaseSummaryUom}</span>
                                         )}
                                     </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Expected Net Output{batchSizeDisplay ? ` (${batchSizeDisplay.expectedYieldPercentage}% Yield)` : ""}:</span>
+                                        {loadingDetails || !batchSizeDisplay ? (
+                                            <span className="font-bold text-blue-600 dark:text-blue-400 font-mono text-xs flex items-center gap-1">
+                                                {loadingDetails ? <><Loader2 className="h-3 w-3 animate-spin text-blue-600" /> Loading...</> : "—"}
+                                            </span>
+                                        ) : (
+                                            <span className="font-bold text-blue-600 dark:text-blue-400 font-mono">{batchSizeDisplay.expectedNetQuantity.toLocaleString()} {releaseSummaryUom}</span>
+                                        )}
+                                    </div>
+                                    {versionDrift && !loadingDetails && (
+                                        <div className="flex items-start gap-2 p-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-xs">
+                                            <ShieldAlert className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                                            <div className="space-y-0.5">
+                                                <p className="font-semibold text-amber-700 dark:text-amber-300">
+                                                    Pinned recipe #{versionDrift.pinnedId} differs from {versionDrift.latestName} #{versionDrift.latestId}.
+                                                </p>
+                                                <p className="text-amber-700/80 dark:text-amber-300/80">
+                                                    Batch math uses the pinned version ({versionDrift.pinnedBase.toLocaleString()} vs latest {Number.isFinite(versionDrift.latestBase) ? versionDrift.latestBase.toLocaleString() : "—"} {releaseSummaryUom}).
+                                                    {versionDrift.understatePct !== null && versionDrift.understatePct > 0
+                                                        ? ` Material plans understate by ~${versionDrift.understatePct.toFixed(1)}% until re-pinned or corrected.`
+                                                        : " Re-pin the SO line or correct master data if the pinned row is stale."}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    )}
                                     <div className="flex justify-between">
                                         <span className="text-muted-foreground">Ordered Quantity (from SO):</span>
                                         <span className="font-bold text-blue-600 dark:text-blue-400 font-mono">{maxAvailableQuantity.toLocaleString()}</span>
