@@ -851,8 +851,8 @@ export default function PlanningEngineeringModule() {
             `).join("");
 
             return `
-                <div style="border: 2px solid ${color}; border-radius: 10px; padding: 18px; margin-bottom: 25px; page-break-inside: avoid;">
-                    <div style="display: flex; justify-content: space-between; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px; margin-bottom: 15px;">
+                <div style="border: 2px solid ${color}; border-radius: 10px; padding: 18px; margin-bottom: 25px;">
+                    <div style="display: flex; justify-content: space-between; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px; margin-bottom: 15px; break-inside: avoid;">
                         <div>
                             <span style="background: ${color}; color: white; padding: 4px 10px; border-radius: 6px; font-weight: 800; font-size: 11px; text-transform: uppercase;">${title}</span>
                             <h2 style="margin: 8px 0 0 0; font-size: 20px; color: #111827;">${jo.jo_id}</h2>
@@ -959,6 +959,8 @@ export default function PlanningEngineeringModule() {
                         .no-print { display: none !important; }
                         * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
                         table tr, .jo-summary-block { page-break-inside: avoid; }
+                        thead { display: table-header-group; }
+                        h4 { break-after: avoid; }
                     }
                 </style>
             </head>

@@ -1,6 +1,6 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-import { StagingJobOrder } from "../types";
+import { MaterialStagingItem, StagingJobOrder } from "../types";
 import { displayJobOrderStatus } from "../../job-order-status";
 import { stagingStateInfo } from "../../shared/job-order-journey";
 
@@ -12,6 +12,31 @@ function formatAllocationLabel(allocation: {
     const lotName = String(allocation.lot_name || "").trim();
     if (lotName && batchNo) return `${lotName} (${batchNo})`;
     return lotName || batchNo;
+}
+
+/**
+ * Builds the materials-table rows for the slip. The Lot / Batch cell lists
+ * only lots with actually staged quantity: SOFT reservations created at
+ * JO-initialize carry suggested lot numbers that must never print as staged.
+ */
+export function buildStagingSlipRows(materials: MaterialStagingItem[]): string[][] {
+    return materials.map((material) => {
+        const remaining = Math.max(0, Number(material.required_quantity || 0) - Number(material.staged_quantity || 0));
+        const lotBatchLabel = material.allocations
+            .filter((allocation) => Number(allocation.staged_quantity || 0) > 0)
+            .map(formatAllocationLabel)
+            .filter((label) => label.length > 0)
+            .join(", ") || "—";
+        return [
+            material.product_code ? `${material.product_name}\n${material.product_code}` : material.product_name,
+            `${Number(material.required_quantity || 0).toLocaleString()} ${material.uom}`,
+            `${Number(material.staged_quantity || 0).toLocaleString()} ${material.uom}`,
+            `${remaining.toLocaleString()} ${material.uom}`,
+            material.staging_bin || "—",
+            stagingStateInfo(material.reservation_status)?.label || material.reservation_status,
+            lotBatchLabel
+        ];
+    });
 }
 
 /**
@@ -116,22 +141,7 @@ export function generateStagingSlipPdf(jobOrder: StagingJobOrder): jsPDF {
 
     // Materials Table
     const tableHeaders = ["Component", "Required", "Staged", "Remaining", "Bin", "Reservation", "Lot / Batch"];
-    const tableRows = jobOrder.materials.map((material) => {
-        const remaining = Math.max(0, Number(material.required_quantity || 0) - Number(material.staged_quantity || 0));
-        const lotBatchLabel = material.allocations
-            .map(formatAllocationLabel)
-            .filter((label) => label.length > 0)
-            .join(", ") || "—";
-        return [
-            material.product_code ? `${material.product_name}\n${material.product_code}` : material.product_name,
-            `${Number(material.required_quantity || 0).toLocaleString()} ${material.uom}`,
-            `${Number(material.staged_quantity || 0).toLocaleString()} ${material.uom}`,
-            `${remaining.toLocaleString()} ${material.uom}`,
-            material.staging_bin || "—",
-            stagingStateInfo(material.reservation_status)?.label || material.reservation_status,
-            lotBatchLabel
-        ];
-    });
+    const tableRows = buildStagingSlipRows(jobOrder.materials);
 
     autoTable(doc, {
         head: [tableHeaders],
