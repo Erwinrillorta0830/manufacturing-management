@@ -240,7 +240,7 @@ export const InvoicingService = {
         const params = new URLSearchParams();
         if (branchId) params.append("branch", String(branchId));
         if (productId) params.append("product", String(productId));
-        const res = await fetch(`/api/manufacturing/product-onhand?${params.toString()}`);
+        const res = await fetch(`/api/manufacturing/invoicing-and-billing/invoicing/product-onhand?${params.toString()}`);
         if (!res.ok) return [];
         return res.json();
     },
@@ -250,7 +250,7 @@ export const InvoicingService = {
         if (branchId) params.append("branch", String(branchId));
         if (productId) params.append("product", String(productId));
         if (batchNo) params.append("batchNo", batchNo);
-        const res = await fetch(`/api/manufacturing/batch-onhand?${params.toString()}`);
+        const res = await fetch(`/api/manufacturing/invoicing-and-billing/invoicing/batch-onhand?${params.toString()}`);
         if (!res.ok) return [];
         return res.json();
     },
