@@ -51,7 +51,7 @@ async function fetchRows(path: string, label: string): Promise<Array<Record<stri
 }
 
 /**
- * Resolves the work stations that may run a Job Order. The product version's
+ * Resolves the work centers that may run a Job Order. The product version's
  * routing is authoritative (it is what Finished Goods Master -> Version
  * Management edits); the Job Order route snapshot is only a fallback for
  * versions that have no configured routing rows.

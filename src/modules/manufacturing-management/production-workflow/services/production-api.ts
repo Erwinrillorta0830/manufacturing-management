@@ -4,8 +4,6 @@ import {
     User, 
     RouteOperatorRecord, 
     WorkCenter, 
-    StationScanPayload, 
-    StationScanResponse, 
     JobOrderStatusHistoryRecord, 
     RejectionReason, 
     MaterialGenealogyRecord,
@@ -254,19 +252,6 @@ export async function addReservedMaterial(payload: WipTopUpPayload): Promise<Wip
     return data as WipTopUpResponse;
 }
 
-export async function scanStationStart(payload: StationScanPayload): Promise<StationScanResponse> {
-    const res = await fetch("/api/manufacturing/production/station-scan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-    });
-    const data = await res.json();
-    if (!res.ok) {
-        throw new Error(data.error || "Failed to process station start scan.");
-    }
-    return data;
-}
-
 export type WorkCenterApplicabilitySource = "VERSION_ROUTING" | "JO_ROUTES" | "NONE" | "ALL";
 
 export interface RouteWorkCenterOption {
@@ -289,9 +274,9 @@ export interface WorkCenterListResponse {
 export async function fetchWorkCenters(jobOrderId?: number | string | null): Promise<WorkCenterListResponse> {
     const hasJobOrder = jobOrderId !== undefined && jobOrderId !== null && String(jobOrderId).trim() !== "";
     const query = hasJobOrder
-        ? `?action=applicable-work-centers&joId=${encodeURIComponent(String(jobOrderId))}`
+        ? `?joId=${encodeURIComponent(String(jobOrderId))}`
         : "";
-    const res = await fetch(`/api/manufacturing/production/station-scan${query}`, { cache: "no-store" });
+    const res = await fetch(`/api/manufacturing/production/work-centers${query}`, { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to load work centers list.");
     const json = await res.json();
     return {
@@ -310,7 +295,7 @@ export async function fetchWorkCenterAvailability(options: {
     if (options.workCenterId) params.set("workCenterId", String(options.workCenterId));
     if (options.branchId) params.set("branchId", String(options.branchId));
 
-    const res = await fetch(`/api/manufacturing/production/station-scan?${params.toString()}`, { cache: "no-store" });
+    const res = await fetch(`/api/manufacturing/production/work-center-availability?${params.toString()}`, { cache: "no-store" });
     const json = await res.json().catch(() => ({}));
     if (!res.ok || json.success === false) {
         throw new Error(json.error || "Failed to load Job Order workstation availability.");
@@ -360,7 +345,7 @@ export async function assignRouteWorkCenters(
 }
 
 export async function fetchJobOrderStatusHistory(joId: string | number): Promise<JobOrderStatusHistoryRecord[]> {
-    const res = await fetch(`/api/manufacturing/production/station-scan?action=history&joId=${joId}`, { cache: "no-store" });
+    const res = await fetch(`/api/manufacturing/job-orders/${encodeURIComponent(String(joId))}/status-history`, { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to load Job Order status history.");
     const json = await res.json();
     return json.data || [];

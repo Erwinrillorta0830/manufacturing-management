@@ -885,6 +885,32 @@ const selectedTask = useMemo(() => {
         }
     }, [cancellationPreview, cancellationMode, fetchJobs]);
 
+    const handleStartProduction = useCallback(async (): Promise<boolean> => {
+        if (!selectedJobOrder) return false;
+        const jobOrderId = selectedJobOrder.order_id || selectedJobOrder.job_order_id;
+        if (!jobOrderId) {
+            toast.error("The selected Job Order has no valid identifier.");
+            return false;
+        }
+        if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.PICKED)) {
+            toast.error("Only Picked Job Orders can start production.");
+            return false;
+        }
+
+        setWorkflowSubmitting(true);
+        try {
+            await executeJobOrderWorkflow(jobOrderId, { action: "start-production" });
+            toast.success("Production started.");
+            await fetchJobs(selectedJobOrder.jo_id, true);
+            return true;
+        } catch (err: any) {
+            toast.error(err.message || "Failed to start production.");
+            return false;
+        } finally {
+            setWorkflowSubmitting(false);
+        }
+    }, [selectedJobOrder, fetchJobs]);
+
     const handleWorkflowAction = useCallback(async (
         action: Extract<JobOrderWorkflowAction, "place-on-hold" | "resume-production" | "complete-production" | "terminate-production">,
         input: {
@@ -1033,6 +1059,7 @@ const selectedTask = useMemo(() => {
         openCancellationModal,
         handleConfirmCancellation,
         workflowSubmitting,
+        handleStartProduction,
         handleWorkflowAction
     };
 }

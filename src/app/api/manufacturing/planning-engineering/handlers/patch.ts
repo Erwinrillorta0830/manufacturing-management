@@ -10,7 +10,7 @@ import {
     uploadJobOrderWorkflowEvidence,
     validateJobOrderWorkflowEvidence
 } from "../../job-orders/_workflow-evidence";
-import { resolveApplicableRouteWorkCenters } from "../../production/station-scan/_applicable-work-centers";
+import { resolveApplicableRouteWorkCenters } from "../../production/_applicable-work-centers";
 import {
     JOB_ORDER_MODULE_PATHS,
     JobOrderModuleAccessError,

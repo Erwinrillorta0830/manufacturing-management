@@ -236,7 +236,7 @@ export interface WorkCenter {
 
 export type WorkCenterJobOrderAssignmentSource = "JO_ROUTE" | "VERSION_ROUTING" | "PRIMARY_WORK_CENTER";
 
-export interface StationJobOrderSummary {
+export interface WorkCenterJobOrderSummary {
     jobOrderId: number;
     jobOrderNo: string;
     productId: number | null;
@@ -254,8 +254,8 @@ export interface StationJobOrderSummary {
 export interface WorkCenterJobOrderAvailability {
     workCenterId: number;
     workCenterName: string;
-    availableJobOrders: StationJobOrderSummary[];
-    inProgressJobOrders: StationJobOrderSummary[];
+    availableJobOrders: WorkCenterJobOrderSummary[];
+    inProgressJobOrders: WorkCenterJobOrderSummary[];
 }
 
 export interface JobOrderStatusHistoryRecord {
@@ -321,28 +321,6 @@ export interface QATemplate {
     template_name: string;
     description: string | null;
     is_active: boolean;
-}
-
-export interface StationScanPayload {
-    workCenterBarcode?: string;
-    jobOrderBarcode?: string;
-    workCenterId?: number;
-    jobOrderId?: number | string;
-    joRouteId?: number;
-    operatorId?: number;
-    action?: "scan" | "start-station" | "lookup";
-}
-
-export interface StationScanResponse {
-    success: boolean;
-    message: string;
-    workCenter?: WorkCenter | null;
-    jobOrder?: JobOrder | null;
-    activeOperation?: RoutingTask | null;
-    statusTransitioned?: boolean;
-    stationHistoryRecorded?: boolean;
-    statusHistoryRecord?: JobOrderStatusHistoryRecord | null;
-    error?: string;
 }
 
 export interface MaterialCandidateLot {

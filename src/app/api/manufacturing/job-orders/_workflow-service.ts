@@ -1078,8 +1078,10 @@ export async function executeJobOrderWorkflow(
     }
     if (command.action === "complete-staging") await assertFullStaging(jobOrderId);
     if (command.action === "start-production") {
-        const workCenterId = positiveInteger(command.workCenterId);
-        if (!workCenterId) throw new JobOrderWorkflowError("A valid work center is required to start production.", 400, "WORK_CENTER_REQUIRED");
+        const hasWorkCenterId = command.workCenterId !== undefined && command.workCenterId !== null;
+        if (hasWorkCenterId && !positiveInteger(command.workCenterId)) {
+            throw new JobOrderWorkflowError("The work center ID must be a positive integer.", 400, "WORK_CENTER_INVALID");
+        }
         await assertFullStaging(jobOrderId);
     }
     if (command.action === "complete-production") await assertProductionCanComplete(jobOrder);
