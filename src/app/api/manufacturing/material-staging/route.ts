@@ -10,7 +10,7 @@ import {
 } from "./_stock";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../services/mm-inventory-movements.service";
 import { loadMmLots, mmLotId } from "../services/mm-lots.service";
-import { isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
+import { canStageJobOrderMaterials, isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 import { groupMaterialRequirements } from "@/modules/manufacturing-management/planning-engineering/utils/material-requirement-groups";
 import {
     authorizeJobOrderModuleAccess,
@@ -524,7 +524,7 @@ export async function GET(request: Request) {
 
         // Assemble Job Orders
         const transformedJOs = rawJOs
-            .filter((jo: { status: string }) => isJobOrderStatus(jo.status, JOB_ORDER_STATUS.FOR_PICKING))
+            .filter((jo: { status: string }) => canStageJobOrderMaterials(jo.status))
             .map((jo: {
             job_order_id?: number;
             id?: number;
@@ -749,6 +749,7 @@ export async function GET(request: Request) {
             const sf = statusFilter.toUpperCase();
             filtered = filtered.filter((j: { status: string }) => {
                 if (sf === "FOR_PICKING" || sf === "RELEASED") return isJobOrderStatus(j.status, JOB_ORDER_STATUS.FOR_PICKING);
+                if (sf === "PICKED" || sf === "RESERVED") return isJobOrderStatus(j.status, JOB_ORDER_STATUS.PICKED);
                 const normalized = normalizeJobOrderStatus(j.status);
                 return normalized?.toUpperCase() === sf;
             });
@@ -781,7 +782,7 @@ export async function GET(request: Request) {
         // Summary KPI statistics. Only in-flight Job Orders count toward floor
         // readiness and shortages so terminal/cancelled runs never inflate the
         // numbers a planner acts on.
-        const activeJOs = transformedJOs.filter((j: { status: string }) => isJobOrderStatus(j.status, JOB_ORDER_STATUS.FOR_PICKING));
+        const activeJOs = transformedJOs.filter((j: { status: string }) => canStageJobOrderMaterials(j.status));
         const stats = {
             totalActiveJobs: activeJOs.length,
             plannedJobs: activeJOs.length,

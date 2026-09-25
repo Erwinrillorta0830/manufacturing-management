@@ -95,9 +95,14 @@ async function handleRouteWorkCenterAssignment(body: any): Promise<NextResponse>
     if (!normalizedStatus) {
         return NextResponse.json({ error: "The Job Order has an unknown status and cannot receive route workstation assignments." }, { status: 409 });
     }
-    if (!isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.PICKED, JOB_ORDER_STATUS.IN_PRODUCTION)) {
+    if (!isJobOrderStatus(
+        normalizedStatus,
+        JOB_ORDER_STATUS.FOR_PICKING,
+        JOB_ORDER_STATUS.PICKED,
+        JOB_ORDER_STATUS.IN_PRODUCTION
+    )) {
         return NextResponse.json({
-            error: `Job Order ${jobOrder?.job_order_no || jobOrderId} must be Picked or In Production before route workstations can be assigned.`,
+            error: `Job Order ${jobOrder?.job_order_no || jobOrderId} must be For Picking, Picked, or In Production before route workstations can be assigned.`,
             code: "ROUTE_WORKCENTER_ASSIGNMENT_STATUS_NOT_ALLOWED"
         }, { status: 409 });
     }

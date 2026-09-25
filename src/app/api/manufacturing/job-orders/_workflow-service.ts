@@ -105,6 +105,14 @@ function text(value: unknown): string {
     return String(value ?? "").trim();
 }
 
+function batchValues<T>(values: T[], batchSize = 100): T[][] {
+    const batches: T[][] = [];
+    for (let index = 0; index < values.length; index += batchSize) {
+        batches.push(values.slice(index, index + batchSize));
+    }
+    return batches;
+}
+
 function workflowRequestHash(command: JobOrderWorkflowCommand): string {
     return createHash("sha256").update(JSON.stringify({
         action: command.action,
@@ -187,8 +195,7 @@ function jobOrderIdFromPath(value: string | number): number {
 function allowedStatuses(action: JobOrderWorkflowAction): CanonicalJobOrderStatus[] {
     switch (action) {
         case "initialize": return [JOB_ORDER_STATUS.DRAFT];
-        case "complete-staging": return [JOB_ORDER_STATUS.FOR_PICKING];
-        case "start-production": return [JOB_ORDER_STATUS.PICKED];
+        case "start-production": return [JOB_ORDER_STATUS.FOR_PICKING, JOB_ORDER_STATUS.PICKED];
         case "place-on-hold": return [JOB_ORDER_STATUS.IN_PRODUCTION];
         case "resume-production": return [JOB_ORDER_STATUS.ON_HOLD];
         case "complete-production": return [JOB_ORDER_STATUS.IN_PRODUCTION];
@@ -202,7 +209,6 @@ function allowedStatuses(action: JobOrderWorkflowAction): CanonicalJobOrderStatu
 function actionTarget(action: JobOrderWorkflowAction): CanonicalJobOrderStatus {
     switch (action) {
         case "initialize": return JOB_ORDER_STATUS.FOR_PICKING;
-        case "complete-staging": return JOB_ORDER_STATUS.PICKED;
         case "start-production": return JOB_ORDER_STATUS.IN_PRODUCTION;
         case "place-on-hold": return JOB_ORDER_STATUS.ON_HOLD;
         case "resume-production": return JOB_ORDER_STATUS.IN_PRODUCTION;
@@ -354,6 +360,14 @@ export async function reconcileSalesOrderAfterJobOrderEnd(
             jobOrder.status
         ]));
 
+        const orderIds = [...orderDetails.keys()];
+        const salesOrders = (await Promise.all(batchValues(orderIds).map(ids => directusRows(
+            `/items/sales_order?filter[order_id][_in]=${ids.join(",")}&fields=order_id,order_status&limit=-1`,
+            `Load linked Sales Orders for Job Order ${jobOrderId}`
+        )))).flat();
+        const salesOrderById = new Map(salesOrders.map(order => [numberValue(order.order_id ?? order.id), order]));
+        const statusUpdates: DirectusRecord[] = [];
+
         for (const [orderId, linkedDetailIds] of orderDetails) {
             const linkedDetailSet = new Set(linkedDetailIds);
             const hasOtherActiveJobOrder = otherAllocations.some((allocation) => {
@@ -374,10 +388,10 @@ export async function reconcileSalesOrderAfterJobOrderEnd(
             });
             if (hasOtherActiveJobOrder) continue;
 
-            const order = (await directusRequest<DirectusRecord>(
-                `/items/sales_order/${orderId}?fields=order_id,order_status`,
-                `Re-read Sales Order ${orderId} before status rollback`
-            ));
+            const order = salesOrderById.get(orderId);
+            if (!order) {
+                throw new Error(`Sales Order ${orderId} could not be loaded before status rollback.`);
+            }
             const nextStatus = salesOrderStatusAfterJobOrderEnd(
                 order.order_status,
                 shouldRollback,
@@ -385,10 +399,14 @@ export async function reconcileSalesOrderAfterJobOrderEnd(
             );
             if (nextStatus === text(order.order_status)) continue;
 
+            statusUpdates.push({ order_id: orderId, order_status: nextStatus });
+        }
+
+        for (const updateBatch of batchValues(statusUpdates)) {
             await directusRequest(
-                `/items/sales_order/${orderId}`,
-                `Recalculate Sales Order ${orderId} after Job Order end`,
-                { method: "PATCH", body: JSON.stringify({ order_status: nextStatus }) }
+                "/items/sales_order",
+                `Recalculate ${updateBatch.length} linked Sales Order status(es) after Job Order end`,
+                { method: "PATCH", body: JSON.stringify(updateBatch) }
             );
         }
         return [];
@@ -561,7 +579,7 @@ async function assertFullStaging(jobOrderId: number): Promise<void> {
     }).filter((item) => item.required > 0 && item.staged + QUANTITY_EPSILON < item.required);
     if (incomplete.length > 0) {
         throw new JobOrderWorkflowError(
-            "The Job Order is only partially staged. Complete every material requirement before marking it Picked.",
+            "The Job Order is only partially staged. Stage every required material before starting production.",
             422,
             "MATERIAL_STAGING_INCOMPLETE",
             { incomplete }
@@ -839,9 +857,6 @@ async function writeTransition(
     if (command.action === "initialize") {
         lifecycleFields.initialized_at = now;
         lifecycleFields.initialized_by = command.actorUserId;
-    } else if (command.action === "complete-staging") {
-        lifecycleFields.picked_at = now;
-        lifecycleFields.picked_by = command.actorUserId;
     } else if (command.action === "start-production") {
         lifecycleFields.production_started_at = now;
         lifecycleFields.production_started_by = command.actorUserId;
@@ -951,7 +966,6 @@ async function writeTransition(
         }
         const lifecycleFieldByAction: Partial<Record<JobOrderWorkflowAction, string>> = {
             initialize: "initialized",
-            "complete-staging": "picked",
             "start-production": "production_started",
             "complete-production": "production_completed",
             "terminate-production": "cancelled",
@@ -1076,7 +1090,6 @@ export async function executeJobOrderWorkflow(
         await assertInitializationPrerequisites(jobOrder);
         if (!command.force) await assertMaterialReservations(jobOrderId);
     }
-    if (command.action === "complete-staging") await assertFullStaging(jobOrderId);
     if (command.action === "start-production") {
         const hasWorkCenterId = command.workCenterId !== undefined && command.workCenterId !== null;
         if (hasWorkCenterId && !positiveInteger(command.workCenterId)) {

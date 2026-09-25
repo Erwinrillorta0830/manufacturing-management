@@ -170,7 +170,12 @@ export async function fetchWorkCenterJobOrderAvailability(options: {
 
     jobOrders.forEach((jobOrder) => {
         const normalizedStatus = normalizeJobOrderStatus(jobOrder.status);
-        if (!normalizedStatus || !isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.PICKED, JOB_ORDER_STATUS.IN_PRODUCTION)) return;
+        if (!normalizedStatus || !isJobOrderStatus(
+            normalizedStatus,
+            JOB_ORDER_STATUS.FOR_PICKING,
+            JOB_ORDER_STATUS.PICKED,
+            JOB_ORDER_STATUS.IN_PRODUCTION
+        )) return;
 
         const branchId = relationId(jobOrder.branch_id, ["branch_id"]);
         if (allowedBranchId > 0 && branchId !== allowedBranchId) return;
@@ -250,7 +255,7 @@ export async function fetchWorkCenterJobOrderAvailability(options: {
                 fallbackRouteStatus
             );
 
-            if (normalizedStatus === JOB_ORDER_STATUS.PICKED) {
+            if (isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.FOR_PICKING, JOB_ORDER_STATUS.PICKED)) {
                 availability.availableJobOrders.push(summary);
             } else {
                 availability.inProgressJobOrders.push(summary);

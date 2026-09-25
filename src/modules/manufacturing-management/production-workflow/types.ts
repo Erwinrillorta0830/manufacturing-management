@@ -388,6 +388,7 @@ export interface JobOrderMaterialLine {
     jo_material_id?: number;
     product_id: number;
     product_name: string;
+    required_quantity?: number;
     reservations: JobOrderMaterialBatch[];
 }
 

@@ -19,7 +19,11 @@ interface JobOrderCancellationModalProps {
     preview: JobOrderCancellationPreview | null;
     loading: boolean;
     submitting: boolean;
+    refreshing: boolean;
+    mutationSucceeded: boolean;
     error: string | null;
+    onRetryPreview: () => void;
+    onRetryRefresh: () => void;
     onConfirm: (reason: string, cancellationImage?: File | null) => void;
 }
 
@@ -34,7 +38,11 @@ export function JobOrderCancellationModal({
     preview,
     loading,
     submitting,
+    refreshing,
+    mutationSucceeded,
     error,
+    onRetryPreview,
+    onRetryRefresh,
     onConfirm
 }: JobOrderCancellationModalProps) {
     const [reason, setReason] = useState("");
@@ -72,6 +80,7 @@ export function JobOrderCancellationModal({
         : !preview?.cancellable);
     const confirmDisabled = loading
         || submitting
+        || mutationSucceeded
         || !preview
         || (isReturnMode
             ? !preview.canReturnMaterials
@@ -115,8 +124,8 @@ export function JobOrderCancellationModal({
     };
 
     return (
-        <Dialog open={open} onOpenChange={(next) => { if (!submitting) onOpenChange(next); }}>
-            <DialogContent className="w-[98vw] md:w-full md:max-w-[980px] max-h-[92vh] flex flex-col p-0 overflow-hidden">
+        <Dialog open={open} onOpenChange={(next) => { if (!submitting && !mutationSucceeded) onOpenChange(next); }}>
+            <DialogContent className="w-[98vw] md:w-full md:max-w-[980px] max-h-[92vh] flex flex-col p-0 overflow-hidden" aria-busy={loading || submitting}>
                 <DialogHeader className="p-5 border-b border-border/50 bg-muted/10 shrink-0">
                     <DialogTitle className="flex items-center gap-2 text-lg font-extrabold">
                         {isReturnMode ? <Undo2 className="h-5 w-5 text-amber-500" /> : <XCircle className="h-5 w-5 text-destructive" />}
@@ -127,6 +136,19 @@ export function JobOrderCancellationModal({
                             ? "Return the unconsumed floor material from this Job Order to its destination lot and MAIN-STORE bin."
                             : "Return all unconsumed floor material, release reservations, and mark the Job Order as Cancelled."}
                     </DialogDescription>
+                    {submitting && (
+                        <p className="flex items-center gap-2 pt-2 text-xs font-semibold text-primary" role="status" aria-live="polite">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            {refreshing
+                                ? "Operation completed. Refreshing the terminal…"
+                                : isReturnMode ? "Returning materials…" : "Cancelling Job Order…"}
+                        </p>
+                    )}
+                    {mutationSucceeded && !submitting && (
+                        <p className="pt-2 text-xs font-semibold text-amber-700 dark:text-amber-400" role="status" aria-live="polite">
+                            The operation is complete. Refresh the terminal before continuing.
+                        </p>
+                    )}
                 </DialogHeader>
 
                 <div className="flex-1 overflow-y-auto p-5 space-y-4 min-h-0">
@@ -232,7 +254,7 @@ export function JobOrderCancellationModal({
                                     onChange={(e) => setReason(e.target.value)}
                                     placeholder={isReturnMode ? "Optional remarks for the return..." : "State why this Job Order is being cancelled..."}
                                     rows={3}
-                                    disabled={submitting}
+                                    disabled={submitting || mutationSucceeded}
                                     required={!isReturnMode}
                                     aria-required={!isReturnMode}
                                 />
@@ -253,7 +275,7 @@ export function JobOrderCancellationModal({
                                         accept="image/jpeg,image/jpg,image/png,image/webp"
                                         required
                                         onChange={handleCancellationImageChange}
-                                        disabled={submitting}
+                                        disabled={submitting || mutationSucceeded}
                                         aria-describedby="job-order-cancellation-image-help"
                                     />
                                     <p id="job-order-cancellation-image-help" className="text-[11px] text-muted-foreground">
@@ -280,7 +302,7 @@ export function JobOrderCancellationModal({
                                                 variant="ghost"
                                                 size="icon-xs"
                                                 onClick={removeCancellationImage}
-                                                disabled={submitting}
+                                                disabled={submitting || mutationSucceeded}
                                                 aria-label="Remove cancellation evidence image"
                                             >
                                                 <Trash2 className="h-3.5 w-3.5" />
@@ -293,22 +315,37 @@ export function JobOrderCancellationModal({
                     )}
 
                     {error && (
-                        <div className="flex items-start gap-2 p-3 rounded-xl border border-destructive/30 bg-destructive/10 text-destructive text-xs font-semibold">
+                        <div className={`flex items-start gap-2 p-3 rounded-xl border text-xs font-semibold ${mutationSucceeded
+                            ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                            : "border-destructive/30 bg-destructive/10 text-destructive"}`}>
                             <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-                            <span>{error}</span>
+                            <div className="flex flex-1 flex-col gap-2">
+                                <span>{error}</span>
+                                {mutationSucceeded && !submitting ? (
+                                    <Button type="button" variant="outline" size="sm" onClick={onRetryRefresh}>
+                                        Retry Terminal Refresh
+                                    </Button>
+                                ) : !preview && !loading && !submitting ? (
+                                    <Button type="button" variant="outline" size="sm" onClick={onRetryPreview}>
+                                        Retry Preview
+                                    </Button>
+                                ) : null}
+                            </div>
                         </div>
                     )}
                 </div>
 
                 <DialogFooter className="p-4 border-t border-border/50 bg-muted/10 shrink-0">
-                    <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>Close</Button>
+                    <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting || mutationSucceeded}>Close</Button>
                     <Button
                         variant={isReturnMode ? "default" : "destructive"}
                         onClick={handleConfirm}
                         disabled={confirmDisabled}
                     >
                         {submitting && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
-                        {isReturnMode ? "Return Raw Materials" : "Confirm Cancellation"}
+                        {submitting
+                            ? refreshing ? "Refreshing Terminal…" : isReturnMode ? "Returning…" : "Cancelling…"
+                            : isReturnMode ? "Return Raw Materials" : "Confirm Cancellation"}
                     </Button>
                 </DialogFooter>
             </DialogContent>

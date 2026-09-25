@@ -32,6 +32,12 @@ import { AddReservedMaterialDialog, type TopUpTarget } from "./AddReservedMateri
 import { toast } from "sonner";
 import { calculatePipelinedLineDurationHours } from "../../planning-engineering/utils/production-timing";
 import { exceedsAvailableStock, formatProductionQuantity, resolveJobOrderTargetQuantity, roundToInputStep } from "../utils/production-quantity";
+import {
+    calculateMaterialConsumptionDefaults,
+    preserveExistingActualQuantities,
+    sumProductionOutputQuantities
+} from "../utils/material-consumption";
+import { getProductionCameraErrorMessage } from "../utils/production-camera";
 import { hasCompletedTimer } from "../operator-time";
 
 interface JobOrderShiftLogModalProps {
@@ -42,6 +48,26 @@ interface JobOrderShiftLogModalProps {
     users: UserType[];
     allJobOperators: RouteOperatorRecord[];
     onSuccess?: () => void;
+}
+
+type OutputQuantityField = "good" | "rejected" | "scrap";
+
+interface OutputQuantities {
+    good: string;
+    rejected: string;
+    scrap: string;
+}
+
+function applyConsumptionDefaults(
+    materials: ProductionMaterialReservation[],
+    targetQuantity: number,
+    outputQuantity: number
+): ProductionMaterialReservation[] {
+    const defaults = calculateMaterialConsumptionDefaults(materials, targetQuantity, outputQuantity);
+    return materials.map((material, index) => ({
+        ...material,
+        actual_qty: defaults[index].actualQuantity
+    }));
 }
 
 export function JobOrderShiftLogModal({
@@ -79,7 +105,14 @@ export function JobOrderShiftLogModal({
     const [evidenceImage, setEvidenceImage] = useState<File | null>(null);
     const [evidenceImageError, setEvidenceImageError] = useState<string | null>(null);
     const [evidenceImagePreview, setEvidenceImagePreview] = useState<string | null>(null);
-    const cameraInputRef = useRef<HTMLInputElement>(null);
+    const outputQuantitiesRef = useRef<OutputQuantities>({ good: "", rejected: "0", scrap: "0" });
+    const [cameraError, setCameraError] = useState<string | null>(null);
+    const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+    const [isCameraStarting, setIsCameraStarting] = useState(false);
+    const [isCameraReady, setIsCameraReady] = useState(false);
+    const cameraVideoRef = useRef<HTMLVideoElement>(null);
+    const cameraStreamRef = useRef<MediaStream | null>(null);
+    const cameraRequestIdRef = useRef(0);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const filteredShiftMaterials = React.useMemo(() => {
@@ -125,24 +158,146 @@ export function JobOrderShiftLogModal({
         return () => URL.revokeObjectURL(previewUrl);
     }, [evidenceImage]);
 
-    const setEvidenceImageFromFile = (file: File | null) => {
-        if (!file) return;
+    const setEvidenceImageFromFile = (file: File | null): boolean => {
+        if (!file) return false;
 
         const validationError = validateProductionYieldImage(file);
         setEvidenceImageError(validationError);
         setEvidenceImage(validationError ? null : file);
+        return !validationError;
     };
 
     const handleEvidenceImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0] || null;
         event.target.value = "";
+        setCameraError(null);
         setEvidenceImageFromFile(file);
     };
 
+    const stopCamera = useCallback(() => {
+        cameraRequestIdRef.current += 1;
+        cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+        cameraStreamRef.current = null;
+        setCameraStream(null);
+        setIsCameraStarting(false);
+        setIsCameraReady(false);
+    }, []);
+
+    const startCamera = async () => {
+        setCameraError(null);
+        setIsCameraReady(false);
+        cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+        cameraStreamRef.current = null;
+        setCameraStream(null);
+
+        const requestId = ++cameraRequestIdRef.current;
+        if (!navigator.mediaDevices?.getUserMedia) {
+            setCameraError("No camera detected or camera access is unavailable in this browser. Use Choose File to select an image.");
+            return;
+        }
+
+        setIsCameraStarting(true);
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: false,
+                video: { facingMode: { ideal: "environment" } }
+            });
+
+            if (requestId !== cameraRequestIdRef.current || !open) {
+                stream.getTracks().forEach((track) => track.stop());
+                return;
+            }
+
+            cameraStreamRef.current = stream;
+            setCameraStream(stream);
+        } catch (error) {
+            if (requestId === cameraRequestIdRef.current) {
+                setCameraError(getProductionCameraErrorMessage(error));
+            }
+        } finally {
+            if (requestId === cameraRequestIdRef.current) {
+                setIsCameraStarting(false);
+            }
+        }
+    };
+
+    const captureCameraPhoto = () => {
+        const video = cameraVideoRef.current;
+        if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth || !video.videoHeight) {
+            setCameraError("The camera preview is not ready yet. Wait a moment and try again.");
+            return;
+        }
+        const captureRequestId = cameraRequestIdRef.current;
+
+        const canvas = document.createElement("canvas");
+        const scale = Math.min(1, 2560 / Math.max(video.videoWidth, video.videoHeight));
+        canvas.width = Math.round(video.videoWidth * scale);
+        canvas.height = Math.round(video.videoHeight * scale);
+        const context = canvas.getContext("2d");
+        if (!context) {
+            setCameraError("Could not capture the camera image. Please try again or use Choose File.");
+            return;
+        }
+
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => {
+            if (captureRequestId !== cameraRequestIdRef.current) return;
+            if (!blob) {
+                setCameraError("Could not capture the camera image. Please try again or use Choose File.");
+                return;
+            }
+
+            const file = new File([blob], `shift-evidence-${Date.now()}.jpg`, {
+                type: "image/jpeg",
+                lastModified: Date.now()
+            });
+            setCameraError(null);
+            if (setEvidenceImageFromFile(file)) stopCamera();
+        }, "image/jpeg", 0.82);
+    };
+
+    const openFilePicker = () => {
+        setCameraError(null);
+        stopCamera();
+        fileInputRef.current?.click();
+    };
+
     const removeEvidenceImage = () => {
+        setCameraError(null);
+        stopCamera();
         setEvidenceImage(null);
         setEvidenceImageError(null);
     };
+
+    useEffect(() => {
+        if (open) return;
+        setCameraError(null);
+        stopCamera();
+    }, [open, stopCamera]);
+
+    useEffect(() => {
+        return () => {
+            cameraRequestIdRef.current += 1;
+            cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+            cameraStreamRef.current = null;
+        };
+    }, []);
+
+    useEffect(() => {
+        const video = cameraVideoRef.current;
+        if (!cameraStream || !video) return;
+
+        video.srcObject = cameraStream;
+        void video.play().catch(() => {
+            if (cameraStreamRef.current === cameraStream) {
+                setCameraError("The camera opened, but its preview could not start. Check browser permissions or use Choose File.");
+            }
+        });
+
+        return () => {
+            if (video.srcObject === cameraStream) video.srcObject = null;
+        };
+    }, [cameraStream]);
 
     const getAvailableShifts = useCallback(() => {
         const hours = Number(selectedJobOrder?.shiftOption || 8);
@@ -205,7 +360,18 @@ export function JobOrderShiftLogModal({
                     reservation_status: null
                 }];
             });
-            setShiftMaterials(reservationRows);
+            setShiftMaterials((previous) => preserveExistingActualQuantities(
+                applyConsumptionDefaults(
+                    reservationRows,
+                    targetQuantity,
+                    sumProductionOutputQuantities(
+                        outputQuantitiesRef.current.good,
+                        outputQuantitiesRef.current.rejected,
+                        outputQuantitiesRef.current.scrap
+                    )
+                ),
+                previous
+            ));
         } catch (err) {
             const message = err instanceof Error ? err.message : "Failed to load Job Order materials";
             setShiftMaterials([]);
@@ -219,6 +385,9 @@ export function JobOrderShiftLogModal({
     // Fetch full Job Order BOM materials, physical lots, and rejection reasons
     useEffect(() => {
         if (open && selectedJobOrder && (selectedJobOrder.order_id || selectedJobOrder.job_order_id)) {
+            setCameraError(null);
+            stopCamera();
+            outputQuantitiesRef.current = { good: "", rejected: "0", scrap: "0" };
             setShiftYieldQty("");
             setRejectedQty("0");
             setScrapQty("0");
@@ -251,7 +420,7 @@ export function JobOrderShiftLogModal({
             // Fetch all BOM materials for the whole Job Order
             void loadShiftMaterials();
         }
-    }, [open, selectedJobOrder, getAvailableShifts, loadShiftMaterials]);
+    }, [open, selectedJobOrder, getAvailableShifts, loadShiftMaterials, stopCamera]);
 
     useEffect(() => {
         setReservationSearch("");
@@ -304,22 +473,19 @@ export function JobOrderShiftLogModal({
         return Object.values(groups);
     }, [allJobOperators]);
 
-    const handleShiftYieldChange = (val: string) => {
-        setShiftYieldQty(val);
-        const qtyNum = Number(val) || 0;
-        const targetQ = targetQuantity || 1;
-        
-        setShiftMaterials((prev) =>
-            prev.map((m) => {
-                const plannedQty = Number(m.issued_to_wip_quantity || m.reserved_quantity || m.staged_quantity || m.allocated_quantity || 0);
-                const stdQty = plannedQty / targetQ;
-                const computed = stdQty * qtyNum;
-                return {
-                    ...m,
-                    actual_qty: computed > 0 ? computed.toFixed(6) : "0"
-                };
-            })
-        );
+    const handleOutputQuantityChange = (field: OutputQuantityField, value: string) => {
+        const nextQuantities = { ...outputQuantitiesRef.current, [field]: value };
+        outputQuantitiesRef.current = nextQuantities;
+
+        if (field === "good") setShiftYieldQty(value);
+        if (field === "rejected") setRejectedQty(value);
+        if (field === "scrap") setScrapQty(value);
+
+        setShiftMaterials((previous) => applyConsumptionDefaults(
+            previous,
+            targetQuantity,
+            sumProductionOutputQuantities(nextQuantities.good, nextQuantities.rejected, nextQuantities.scrap)
+        ));
     };
 
     const totalOutputQuantity = (Number(shiftYieldQty) || 0)
@@ -362,6 +528,11 @@ export function JobOrderShiftLogModal({
         }
         if (materialsLoadError) {
             toast.error(materialsLoadError);
+            return false;
+        }
+        if (hasTheoreticalShortage) {
+            setInsufficiencyError("The theoretical material requirement exceeds the remaining WIP reservation. Add raw materials before recording this production session.");
+            setIsInsufficiencyOpen(true);
             return false;
         }
         if (hasInsufficiency) {
@@ -492,8 +663,7 @@ export function JobOrderShiftLogModal({
         const materialsHtml = shiftMaterials.length === 0
             ? "<tr><td colspan='4' style='text-align: center; font-style: italic; padding: 12px;'>No raw materials consumed.</td></tr>"
             : shiftMaterials.map(m => {
-                const stdQty = Number(m.allocated_quantity || 0) / (targetQuantity || 1);
-                const theoretical = stdQty * totalOutputQuantity;
+                const theoretical = materialTheoretical(m);
                 const actual = Number(m.actual_qty || 0);
                 const deviation = actual - theoretical;
                 return `
@@ -557,19 +727,14 @@ export function JobOrderShiftLogModal({
         printWindow.document.close();
     };
 
-    const materialTheoretical = useCallback((material: ProductionMaterialReservation) => {
-        const sameMaterial = shiftMaterials.filter((candidate) => Number(candidate.jo_material_id) === Number(material.jo_material_id));
-        const lineBasis = Number(material.issued_to_wip_quantity || material.reserved_quantity || material.staged_quantity || 0);
-        const totalBasis = sameMaterial.reduce((sum, candidate) => sum + Number(candidate.issued_to_wip_quantity || candidate.reserved_quantity || candidate.staged_quantity || 0), 0);
-        const baseQty = Number(material.allocated_quantity || 0)
-            || Number(material.required_quantity || 0)
-            || totalBasis;
-        const targetQty = targetQuantity || 1;
-        const totalTheoretical = (baseQty / targetQty) * totalOutputQuantity;
-        return totalBasis > 0 && lineBasis > 0
-            ? totalTheoretical * (lineBasis / totalBasis)
-            : totalTheoretical / Math.max(1, sameMaterial.length);
-    }, [selectedJobOrder, shiftMaterials, totalOutputQuantity]);
+    const materialConsumptionDefaults = React.useMemo(
+        () => calculateMaterialConsumptionDefaults(shiftMaterials, targetQuantity, totalOutputQuantity),
+        [shiftMaterials, targetQuantity, totalOutputQuantity]
+    );
+    const materialTheoretical = (material: ProductionMaterialReservation) => {
+        const index = shiftMaterials.indexOf(material);
+        return index >= 0 ? materialConsumptionDefaults[index]?.theoreticalQuantity || 0 : 0;
+    };
 
     const openTopUp = (material: ProductionMaterialReservation) => {
         const theoretical = materialTheoretical(material);
@@ -591,6 +756,9 @@ export function JobOrderShiftLogModal({
     };
 
     const hasInsufficiency = shiftMaterials.some((m) => Boolean(m.reservation_id) && exceedsAvailableStock(m.actual_qty, m.available_stock));
+    const hasTheoreticalShortage = shiftMaterials.some((material) =>
+        exceedsAvailableStock(materialTheoretical(material), material.available_stock)
+    );
     const hasIncompleteMaterialLine = shiftMaterials.some((m) =>
         !m.reservation_id
         || !m.mm_lot_id
@@ -626,12 +794,13 @@ export function JobOrderShiftLogModal({
             variance: values.actual - values.theoretical
         }))
         .filter((group) => Math.abs(group.variance) > Math.max(0.000001, Math.abs(group.theoretical) * varianceTolerancePct / 100));
-    const hasVarianceException = varianceExceptions.length > 0;
+    const hasVarianceException = !hasTheoreticalShortage && varianceExceptions.length > 0;
     const missingVarianceApproval = hasVarianceException && (!varianceReason.trim() || !approveVariance);
     const isSubmitDisabled = submittingShiftLog
         || loadingShiftMaterials
         || Boolean(materialsLoadError)
         || hasInsufficiency
+        || hasTheoreticalShortage
         || hasIncompleteMaterialLine
         || hasMissingMaterialConsumption
         || missingVarianceApproval
@@ -723,7 +892,7 @@ export function JobOrderShiftLogModal({
                                                  min="0"
                                                  step="0.000001"
                                                  value={shiftYieldQty}
-                                                onChange={(e) => handleShiftYieldChange(e.target.value)}
+                                                onChange={(e) => handleOutputQuantityChange("good", e.target.value)}
                                                 className="h-10 rounded-xl bg-background border-emerald-500/50 text-foreground text-xs font-bold font-mono focus-visible:ring-emerald-500/20 focus-visible:border-emerald-500 transition-all duration-200"
                                                 placeholder="e.g. 5000"
                                                 required
@@ -790,7 +959,7 @@ export function JobOrderShiftLogModal({
                                                      min="0"
                                                      step="0.000001"
                                                      value={rejectedQty}
-                                                     onChange={(e) => setRejectedQty(e.target.value)}
+                                                     onChange={(e) => handleOutputQuantityChange("rejected", e.target.value)}
                                                      className="h-8.5 rounded-lg bg-background border-rose-500/30 text-xs font-mono font-bold"
                                                      placeholder="0"
                                                  />
@@ -803,7 +972,7 @@ export function JobOrderShiftLogModal({
                                                      min="0"
                                                      step="0.000001"
                                                      value={scrapQty}
-                                                    onChange={(e) => setScrapQty(e.target.value)}
+                                                    onChange={(e) => handleOutputQuantityChange("scrap", e.target.value)}
                                                     className="h-8.5 rounded-lg bg-background border-rose-500/30 text-xs font-mono font-bold"
                                                     placeholder="0"
                                                 />
@@ -850,61 +1019,89 @@ export function JobOrderShiftLogModal({
                                             </Badge>
                                         </div>
                                         <p className="text-[10px] text-muted-foreground">
-                                            Capture a photo or choose an existing PNG, JPG, or WEBP image. Maximum file size: 5 MB.
+                                            Take Photo opens the device camera. If no camera is detected or access is unavailable, use Choose File to select a saved PNG, JPG, or WEBP image. Maximum file size: 5 MB.
                                         </p>
                                         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                                             <Button
                                                 type="button"
                                                 variant="outline"
-                                                onClick={() => cameraInputRef.current?.click()}
+                                                onClick={() => void startCamera()}
+                                                disabled={isCameraStarting || Boolean(cameraStream)}
                                                 className="h-10 w-full rounded-lg border-sky-500/30 text-xs font-semibold"
                                                 aria-label="Take a shift evidence photo"
                                             >
-                                                <Camera className="mr-2 h-4 w-4" /> Take Photo
+                                                <Camera className="mr-2 h-4 w-4" /> {isCameraStarting ? "Opening Camera…" : "Take Photo"}
                                             </Button>
                                             <Button
                                                 type="button"
                                                 variant="outline"
-                                                onClick={() => fileInputRef.current?.click()}
+                                                onClick={openFilePicker}
                                                 className="h-10 w-full rounded-lg border-sky-500/30 text-xs font-semibold"
                                                 aria-label="Choose a shift evidence image file"
                                             >
                                                 <FolderOpen className="mr-2 h-4 w-4" /> Choose File
                                             </Button>
                                             <Input
-                                                ref={cameraInputRef}
-                                                id="production-evidence-camera"
-                                                type="file"
-                                                accept="image/*"
-                                                capture="environment"
-                                                onChange={handleEvidenceImageChange}
-                                                aria-label="Take a shift evidence photo"
-                                                className="sr-only"
-                                            />
-                                            <Input
                                                 ref={fileInputRef}
                                                 id="production-evidence-image"
-                                                    type="file"
-                                                    accept="image/jpeg,image/jpg,image/png,image/webp"
+                                                type="file"
+                                                accept="image/jpeg,image/jpg,image/png,image/webp"
                                                 onChange={handleEvidenceImageChange}
                                                 aria-label="Choose a shift evidence image file"
                                                 className="sr-only"
                                             />
+                                            {cameraStream && (
+                                                <div className="space-y-2 rounded-lg border border-sky-500/20 bg-background/70 p-2 sm:col-span-2">
+                                                    <video
+                                                        ref={cameraVideoRef}
+                                                        autoPlay
+                                                        muted
+                                                        playsInline
+                                                        onCanPlay={() => setIsCameraReady(true)}
+                                                        aria-label="Live shift evidence camera preview"
+                                                        className="max-h-72 w-full rounded-md bg-black object-contain"
+                                                    />
+                                                    <div className="grid grid-cols-2 gap-2">
+                                                        <Button
+                                                            type="button"
+                                                            onClick={captureCameraPhoto}
+                                                            disabled={!isCameraReady}
+                                                            className="h-9 text-xs"
+                                                        >
+                                                            <Camera className="mr-2 h-4 w-4" /> Capture Photo
+                                                        </Button>
+                                                        <Button
+                                                            type="button"
+                                                            variant="outline"
+                                                            onClick={() => {
+                                                                stopCamera();
+                                                                setCameraError(null);
+                                                            }}
+                                                            className="h-9 text-xs"
+                                                        >
+                                                            Cancel Camera
+                                                        </Button>
+                                                    </div>
+                                                </div>
+                                            )}
                                             {evidenceImage && (
                                                 <Button
                                                     type="button"
                                                     variant="outline"
                                                     onClick={removeEvidenceImage}
-                                                    className="h-10 rounded-lg border-sky-500/30 text-xs sm:col-span-3"
+                                                    className="h-10 rounded-lg border-sky-500/30 text-xs sm:col-span-2"
                                                 >
                                                     <X className="h-3.5 w-3.5 mr-1" /> Remove
                                                 </Button>
                                             )}
                                         </div>
+                                        {cameraError && (
+                                            <p className="text-[10px] font-semibold text-destructive" role="alert">{cameraError}</p>
+                                        )}
                                         {evidenceImageError && (
                                             <p className="text-[10px] font-semibold text-destructive" role="alert">{evidenceImageError}</p>
                                         )}
-                                        {!evidenceImage && !evidenceImageError && (
+                                        {!evidenceImage && !evidenceImageError && !cameraError && (
                                             <p className="text-[10px] text-muted-foreground" role="status">
                                                 A shift evidence image is required before recording this session.
                                             </p>
@@ -999,21 +1196,22 @@ export function JobOrderShiftLogModal({
                                     ) : (
                                         <div className="min-w-0 space-y-3">
                                             {filteredShiftMaterials.map((m, index) => {
-                                                 const theoretical = materialTheoretical(m);
+                                                 const materialIndex = shiftMaterials.indexOf(m);
+                                                 const theoretical = materialConsumptionDefaults[materialIndex]?.theoreticalQuantity || 0;
                                                  const actual = Number(m.actual_qty || 0);
                                                  const variance = actual - theoretical;
                                                  const isExceeded = Math.abs(variance) > Math.max(0.000001, Math.abs(theoretical) * varianceTolerancePct / 100);
                                                  const isInsufficient = exceedsAvailableStock(actual, m.available_stock);
-
-                                                const percentage = Math.min(200, theoretical > 0 ? (actual / theoretical) * 100 : 0);
-                                                const barColor = isInsufficient 
+                                                const availableStock = roundToInputStep(m.available_stock);
+                                                const shortfall = Math.max(0, theoretical - availableStock);
+                                                const hasTheoreticalShortfall = exceedsAvailableStock(theoretical, availableStock);
+                                                 const percentage = Math.min(200, theoretical > 0 ? (actual / theoretical) * 100 : 0);
+                                                const barColor = isInsufficient || hasTheoreticalShortfall
                                                     ? "bg-red-500" 
                                                     : isExceeded 
                                                     ? "bg-amber-500" 
                                                     : "bg-emerald-500";
-                                                const availableStock = roundToInputStep(m.available_stock);
-                                                const shortfall = Math.max(0, theoretical - availableStock);
-                                                const needsTopUp = !m.reservation_id || shortfall > 0.000001;
+                                                const needsTopUp = !m.reservation_id || hasTheoreticalShortfall;
 
                                                 return (
                                                      <div key={m.reservation_id || `${m.jo_material_id}-${index}`} className="p-3.5 bg-background rounded-xl border border-border/80 hover:border-primary/20 hover:shadow-sm transition-all duration-200 space-y-3">
@@ -1036,14 +1234,14 @@ export function JobOrderShiftLogModal({
                                                                 <Badge
                                                                     variant="outline"
                                                                     className={`font-bold text-[8px] uppercase tracking-wider px-2 py-0.5 shrink-0 border ${
-                                                                        isInsufficient
+                                                                        isInsufficient || hasTheoreticalShortfall
                                                                             ? "bg-red-500/10 text-red-600 border-red-500/20"
-                                                                            : isExceeded 
+                                                                            : isExceeded
                                                                             ? "bg-amber-500/10 text-amber-600 border-amber-500/20" 
                                                                             : "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
                                                                     }`}
                                                                 >
-                                                                     {!m.reservation_id ? "Unavailable" : isInsufficient ? "Shortfall" : isExceeded ? "Outside tolerance" : "Normal"}
+                                                                     {!m.reservation_id ? "Unavailable" : isInsufficient || hasTheoreticalShortfall ? "Shortfall" : isExceeded ? "Outside tolerance" : "Normal"}
                                                                  </Badge>
                                                              </div>
                                                          </div>
@@ -1111,7 +1309,7 @@ export function JobOrderShiftLogModal({
                                                                                 const raw = e.target.value;
                                                                                 if (raw === "") {
                                                                                     setShiftMaterials((prev) =>
-                                                                                        prev.map((item, idx) => idx === index ? { ...item, actual_qty: "" } : item)
+                                                                                        prev.map((item, idx) => idx === materialIndex ? { ...item, actual_qty: "" } : item)
                                                                                     );
                                                                                     return;
                                                                                 }
@@ -1119,7 +1317,7 @@ export function JobOrderShiftLogModal({
                                                                                 if (!Number.isFinite(parsed)) return;
                                                                                 const clamped = Math.min(Math.max(0, parsed), availableStock);
                                                                                 setShiftMaterials((prev) =>
-                                                                                    prev.map((item, idx) => idx === index ? { ...item, actual_qty: String(clamped) } : item)
+                                                                                    prev.map((item, idx) => idx === materialIndex ? { ...item, actual_qty: String(clamped) } : item)
                                                                                 );
                                                                             }}
                                                                              onBlur={(e) => {
@@ -1127,7 +1325,7 @@ export function JobOrderShiftLogModal({
                                                                                  if (e.target.value === "" || !Number.isFinite(parsed)) return;
                                                                                  const clamped = Math.min(Math.max(0, parsed), availableStock);
                                                                                  setShiftMaterials((prev) =>
-                                                                                     prev.map((item, idx) => idx === index ? { ...item, actual_qty: String(clamped) } : item)
+                                                                                     prev.map((item, idx) => idx === materialIndex ? { ...item, actual_qty: String(clamped) } : item)
                                                                                  );
                                                                              }}
                                                                              disabled={!m.reservation_id}
@@ -1321,6 +1519,7 @@ export function JobOrderShiftLogModal({
                                 onClick={() => {
                                     const shortMaterial =
                                         shiftMaterials.find((m) => exceedsAvailableStock(m.actual_qty, m.available_stock))
+                                        || shiftMaterials.find((m) => exceedsAvailableStock(materialTheoretical(m), m.available_stock))
                                         || shiftMaterials.find((m) => !m.reservation_id)
                                         || shiftMaterials[0];
                                     if (!shortMaterial) return;
