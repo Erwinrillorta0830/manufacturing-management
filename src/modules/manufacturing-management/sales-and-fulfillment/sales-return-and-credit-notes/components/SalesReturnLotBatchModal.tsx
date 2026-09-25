@@ -587,7 +587,7 @@ export function SalesReturnLotBatchModal({
           onhandForLot.forEach((bo) => {
             const pId = getProductId(bo);
             const addQty = Number(bo.onhandQuantity || 0);
-            if (pId > 0 && Math.abs(addQty) > 0) {
+            if (pId > 0 && addQty > 0) {
               const meta = productMetaMap.get(pId);
               const existing = productQtyMap.get(pId) || {
                 qty: 0,
@@ -612,24 +612,24 @@ export function SalesReturnLotBatchModal({
           invLotsForLot.forEach((ib) => {
             const pId = getProductId(ib);
             const prodObj = typeof ib.product_id === 'object' && ib.product_id !== null ? (ib.product_id as Record<string, unknown>) : null;
-            const ibQty = Number(ib.available_quantity || 0);
             if (pId > 0) {
               const meta = productMetaMap.get(pId);
-              const existing = productQtyMap.get(pId) || {
-                qty: 0,
-                warehouseQty: 0,
-                draftQty: 0,
-                name: ib.product_name || (prodObj?.product_name as string) || meta?.name,
-                code: ib.product_code || (prodObj?.product_code as string) || meta?.code,
-                type: ib.product_type || prodObj?.product_type || meta?.type,
-                cat: ib.category_name || (typeof prodObj?.product_category === 'object' ? (prodObj.product_category as { category_name?: string })?.category_name : String(prodObj?.product_category || '')) || (meta?.cat ? String(meta.cat) : null),
-              };
-              existing.qty += ibQty;
-              existing.warehouseQty += ibQty;
-              if (!existing.name && (ib.product_name || prodObj?.product_name)) existing.name = ib.product_name || (prodObj?.product_name as string);
-              if (!existing.code && (ib.product_code || prodObj?.product_code)) existing.code = ib.product_code || (prodObj?.product_code as string);
-              if (!existing.type && (ib.product_type || prodObj?.product_type)) existing.type = ib.product_type || prodObj?.product_type;
-              productQtyMap.set(pId, existing);
+              const existing = productQtyMap.get(pId);
+              if (existing) {
+                if (!existing.type && (ib.product_type || prodObj?.product_type)) {
+                  existing.type = ib.product_type || prodObj?.product_type;
+                }
+                const rawCat = ib.category_name || (typeof prodObj?.product_category === 'object' ? (prodObj.product_category as { category_name?: string })?.category_name : String(prodObj?.product_category || '')) || meta?.cat;
+                if (!existing.cat && rawCat) {
+                  existing.cat = String(rawCat);
+                }
+                if (!existing.name && (ib.product_name || prodObj?.product_name)) {
+                  existing.name = ib.product_name || (prodObj?.product_name as string);
+                }
+                if (!existing.code && (ib.product_code || prodObj?.product_code)) {
+                  existing.code = ib.product_code || (prodObj?.product_code as string);
+                }
+              }
             }
           });
 
@@ -704,50 +704,48 @@ export function SalesReturnLotBatchModal({
           let primaryClass: ProductClassification | undefined = undefined;
 
           productQtyMap.forEach((info, pId) => {
-            totalQty += info.qty;
-            totalWarehouseQty += info.warehouseQty;
-            totalDraftQty += info.draftQty;
-            const c = resolveProductClassification(info.type, info.cat || undefined, info.code || undefined, info.name || undefined);
-            if (!primaryLabel) {
-              primaryLabel = c.label;
-              primaryClass = c.code;
-            }
-            const key = info.code || info.name || String(pId);
-            const existing = storedProductSummaryMap.get(key);
-            if (existing) {
-              existing.onhand_quantity += info.qty;
-              existing.warehouse_quantity += info.warehouseQty;
-              existing.draft_quantity += info.draftQty;
-              existing.is_draft = existing.warehouse_quantity === 0 && existing.draft_quantity > 0;
-            } else {
-              storedProductSummaryMap.set(key, {
-                product_id: pId,
-                product_name: info.name || undefined,
-                product_code: info.code || undefined,
-                product_type: info.type,
-                category_name: info.cat || undefined,
-                classification: c.code,
-                classification_label: c.label,
-                onhand_quantity: info.qty,
-                warehouse_quantity: info.warehouseQty,
-                draft_quantity: info.draftQty,
-                is_draft: info.warehouseQty === 0 && info.draftQty > 0,
-              });
+            if (info.qty > 0) {
+              totalQty += info.qty;
+              totalWarehouseQty += info.warehouseQty;
+              totalDraftQty += info.draftQty;
+              const c = resolveProductClassification(info.type, info.cat || undefined, info.code || undefined, info.name || undefined);
+              if (!primaryLabel) {
+                primaryLabel = c.label;
+                primaryClass = c.code;
+              }
+              const key = info.code || info.name || String(pId);
+              const existing = storedProductSummaryMap.get(key);
+              if (existing) {
+                existing.onhand_quantity += info.qty;
+                existing.warehouse_quantity += info.warehouseQty;
+                existing.draft_quantity += info.draftQty;
+                existing.is_draft = existing.warehouse_quantity === 0 && existing.draft_quantity > 0;
+              } else {
+                storedProductSummaryMap.set(key, {
+                  product_id: pId,
+                  product_name: info.name || undefined,
+                  product_code: info.code || undefined,
+                  product_type: info.type,
+                  category_name: typeof info.cat === 'object' && info.cat !== null ? String((info.cat as { category_name?: string }).category_name || '') : String(info.cat || ''),
+                  classification: c.code,
+                  classification_label: c.label,
+                  onhand_quantity: info.qty,
+                  warehouse_quantity: info.warehouseQty,
+                  draft_quantity: info.draftQty,
+                  is_draft: info.warehouseQty === 0 && info.draftQty > 0,
+                });
+              }
             }
           });
 
           const storedItems = Array.from(storedProductSummaryMap.values());
           const lotStockQty = sQtyMap.get(lId) || 0;
-          const batchCount = bCountMap.get(lId) || 0;
-          const hasBatchesWithQty =
-            storedItems.some((p) => Math.abs(p.onhand_quantity) > 0.000001 || Math.abs(p.draft_quantity) > 0.000001) ||
-            Math.abs(lotStockQty) > 0.000001;
-          const hasRegisteredBatches = batchCount > 0 || storedItems.length > 0;
-          const isEmpty = !hasBatchesWithQty && !hasRegisteredBatches;
+          const hasPositiveStock = totalQty > 0 || storedItems.some((p) => (p.onhand_quantity ?? 0) > 0 || (p.draft_quantity ?? 0) > 0);
+          const isEmpty = !hasPositiveStock && lotStockQty <= 0;
           const isDraftOnly = !isEmpty && totalWarehouseQty === 0 && totalDraftQty > 0;
 
           const distinctLabels = Array.from(
-            new Set(storedItems.map((p) => p.classification_label).filter(Boolean))
+            new Set(storedItems.filter((p) => (p.onhand_quantity ?? 0) > 0 || (p.draft_quantity ?? 0) > 0).map((p) => p.classification_label).filter(Boolean))
           );
           const combinedLabel = distinctLabels.length > 0 ? distinctLabels.join(' & ') : (primaryLabel || 'General Stock');
 
@@ -758,12 +756,10 @@ export function SalesReturnLotBatchModal({
             warehouse_stock_quantity: isEmpty ? 0 : totalWarehouseQty,
             draft_allocated_quantity: isEmpty ? 0 : totalDraftQty,
             is_draft_allocation: isDraftOnly,
-            active_batch_count: isEmpty ? 0 : batchCount,
-            stored_products: storedItems,
-            primary_classification: primaryClass,
-            primary_classification_label: isEmpty
-              ? (primaryLabel ? `Empty Lot (${primaryLabel})` : 'Empty Lot')
-              : combinedLabel,
+            active_batch_count: isEmpty ? 0 : storedItems.length,
+            stored_products: isEmpty ? [] : storedItems,
+            primary_classification: isEmpty ? undefined : primaryClass,
+            primary_classification_label: isEmpty ? 'Empty Lot' : combinedLabel,
             is_empty: isEmpty,
           });
         });
@@ -1934,7 +1930,7 @@ export function SalesReturnLotBatchModal({
 
                                     const isMultipleStored = Boolean(
                                       lStored?.primary_classification_label?.includes('&') ||
-                                      (lStored?.stored_products && lStored.stored_products.length > 1)
+                                      (lStored?.stored_products && lStored.stored_products.filter((p) => (p.onhand_quantity ?? 0) > 0 || (p.draft_quantity ?? 0) > 0).length > 1 && new Set(lStored.stored_products.map((p) => p.classification_label)).size > 1)
                                     );
 
                                     let tag = '';
