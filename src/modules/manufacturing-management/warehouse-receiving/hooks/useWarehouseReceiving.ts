@@ -145,7 +145,7 @@ export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWa
                 const entered = Math.max(0, Number(quantities[line.lineId] || 0));
                 return entered > line.allowableQuantity + 1e-9;
             });
-            if (hasOverReceiving && action !== "start") {
+            if (hasOverReceiving && action !== "start" && receiptType !== "partial") {
                 toast.warning("Over-receiving quantities will be recorded and flagged for review.");
             }
             const result = await postWarehouseReceiving({

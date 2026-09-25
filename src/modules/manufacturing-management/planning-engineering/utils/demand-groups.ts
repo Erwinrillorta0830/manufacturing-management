@@ -1,5 +1,5 @@
 import { isTerminalJobOrderStatus } from "../../job-order-status";
-import { SalesOrder, SalesOrderDetail, SalesOrderDemandGroup, SalesOrderReleaseGroup } from "../types";
+import type { SalesOrder, SalesOrderDetail, SalesOrderDemandGroup, SalesOrderReleaseGroup } from "../types";
 
 export function remainingQuantity(line: SalesOrderDetail): number {
     const resolved = Number(line.remaining_quantity);
@@ -19,6 +19,12 @@ export function isSchedulableSalesOrderLine(line: SalesOrderDetail): boolean {
     return (line.parent_order_status === "For Production" || line.parent_order_status === "In Production")
         && remainingQuantity(line) > 0
         && (!line.linkedJobOrders || line.linkedJobOrders.every((jobOrder) => isTerminalJobOrderStatus(jobOrder.status)));
+}
+
+export function canCreateReplacementJobOrder(line: SalesOrderDetail): boolean {
+    return line.parent_order_status === "In Production"
+        && Boolean(line.linkedJobOrders?.some((jobOrder) => jobOrder.isTerminated))
+        && isSchedulableSalesOrderLine(line);
 }
 
 export function buildSalesOrderDemandGroups(

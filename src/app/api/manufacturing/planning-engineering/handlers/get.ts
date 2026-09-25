@@ -38,6 +38,7 @@ import {
 } from "@/modules/manufacturing-management/planning-engineering/utils/containerization-helper";
 import { aggregateWizardMaterialComponents } from "@/modules/manufacturing-management/planning-engineering/utils/material-summary";
 import { buildFinishedGoodsProgress } from "@/modules/manufacturing-management/production-workflow/finished-goods-progress";
+import { roundToInputStep } from "@/modules/manufacturing-management/production-workflow/utils/production-quantity";
 import {
     authorizeJobOrderModuleAccess,
     JOB_ORDER_MODULE_PATHS,
@@ -776,7 +777,10 @@ export async function handleGET(request: Request) {
                     const actualUsedQuantity = Number(reservation.actual_used_quantity || 0);
                     const returnedQuantity = Number(reservation.returned_quantity || 0);
                     const availableBasis = issuedToWipQuantity > 0 ? issuedToWipQuantity : stagedQuantity;
-                    const calculatedRemainingWip = Math.max(0, availableBasis - actualUsedQuantity - returnedQuantity);
+                    // Round to the 6dp input step: raw float dust (e.g. 273.1389999999)
+                    // would otherwise disagree with the rounded display and fail
+                    // native max validation for the exact value 273.139.
+                    const calculatedRemainingWip = roundToInputStep(Math.max(0, availableBasis - actualUsedQuantity - returnedQuantity));
 
                     return {
                         reservation_id: reservationId > 0 ? reservationId : null,
