@@ -75,10 +75,10 @@ export function DemandLinesTable({
                 <div>
                     <CardTitle className="text-base font-bold flex items-center gap-2">
                         <Plus className="h-5 w-5 text-primary" />
-                        For Production Demand
+                        Schedulable Sales Order Demand
                     </CardTitle>
                     <CardDescription className="text-xs">
-                        Sales Order product lines with status For Production. Select individual product lines to schedule into Job Orders.
+                        Select residual For Production or In Production demand with no active Job Order. Prior output reduces the remaining quantity only after final QA approval and receipt.
                     </CardDescription>
                 </div>
                 <div className="flex w-full md:w-auto gap-2 shrink-0">
@@ -119,6 +119,7 @@ export function DemandLinesTable({
                                     <TableHead className="font-bold text-xs">Connected JO</TableHead>
                                     <TableHead className="font-bold text-xs text-right">Ordered</TableHead>
                                     <TableHead className="font-bold text-xs text-right">Planned</TableHead>
+                                    <TableHead className="font-bold text-xs text-right">Prior QA Credit</TableHead>
                                     <TableHead className="font-bold text-xs text-right">Remaining</TableHead>
                                 </TableRow>
                             </TableHeader>
@@ -173,6 +174,9 @@ export function DemandLinesTable({
                                             </TableCell>
                                             <TableCell className="py-3 text-right font-semibold text-xs text-amber-700">
                                                 <span>{Number(line.planned_quantity || 0).toLocaleString()}</span>
+                                            </TableCell>
+                                            <TableCell className="py-3 text-right font-semibold text-xs text-sky-700">
+                                                <span>{Number(line.replacement_credit_quantity || 0).toLocaleString()}</span>
                                             </TableCell>
                                             <TableCell className="py-3 text-right font-bold text-xs text-emerald-700">
                                                 <span>{remainingQuantity(line).toLocaleString()} <span className="text-[10px] text-muted-foreground font-normal lowercase">{line.product_id?.uom || "pcs"}</span></span>

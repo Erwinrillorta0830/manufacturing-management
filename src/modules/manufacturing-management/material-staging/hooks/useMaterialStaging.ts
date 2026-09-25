@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
     AllocatedLot,
@@ -11,7 +10,6 @@ import {
     StagingCommitPayload,
     StagingJobOrder,
     StagingStats,
-    WorkCenter,
     Branch
 } from "../types";
 import { commitMaterialStaging, fetchAllocationPreview, fetchStagingJobOrders } from "../services/staging-api";
@@ -19,9 +17,8 @@ import { createMaterialStagingOperationId } from "../utils/operation-id";
 import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 
 export function useMaterialStaging() {
-    const router = useRouter();
     const [jobOrders, setJobOrders] = useState<StagingJobOrder[]>([]);
-    const [workCenters, setWorkCenters] = useState<WorkCenter[]>([]);
+
     const [branches, setBranches] = useState<Branch[]>([]);
     const [stats, setStats] = useState<StagingStats>({
         totalActiveJobs: 0,
@@ -47,7 +44,6 @@ export function useMaterialStaging() {
     } | null>(null);
     const [transferring, setTransferring] = useState(false);
     const [batchStageResult, setBatchStageResult] = useState<BatchStageResult | null>(null);
-    const [fullyStagedJobOrderNo, setFullyStagedJobOrderNo] = useState<string | null>(null);
     const [stageProgressLabel, setStageProgressLabel] = useState<string | null>(null);
     const [debouncedSearch, setDebouncedSearch] = useState("");
     const [pendingDeepLinkJo, setPendingDeepLinkJo] = useState<string | null>(null);
@@ -82,7 +78,6 @@ export function useMaterialStaging() {
             if (!response.success) throw new Error(response.error || "Failed to load data");
             setLoadError(null);
             setJobOrders(response.data);
-            setWorkCenters(response.workCenters || []);
             setBranches(response.branches || []);
             if (response.stats) setStats(response.stats);
             setHasSuccessfulLoad(true);
@@ -134,7 +129,6 @@ export function useMaterialStaging() {
 
     const handleDismissBatchStageResult = useCallback(() => {
         setBatchStageResult(null);
-        setFullyStagedJobOrderNo(null);
     }, []);
 
     const handleOpenAllocationModal = useCallback((jobOrder: StagingJobOrder, material: MaterialStagingItem, lot?: AllocatedLot) => {
@@ -186,11 +180,6 @@ export function useMaterialStaging() {
                 setSelectedStatusFilter("all");
                 setSelectedJobOrderId(result.data.job_order_id);
             }
-            setFullyStagedJobOrderNo(
-                isFullyStaged
-                    ? (result.data.job_order_no || refreshedJobOrder?.job_order_no || stagedJobOrderSnapshot?.job_order_no || null)
-                    : null
-            );
         } catch (error) {
             toast.error(error instanceof Error ? error.message : "Material staging failed.");
             throw error;
@@ -203,11 +192,6 @@ export function useMaterialStaging() {
     const handleStageAllAvailable = useCallback(async (jobOrder: StagingJobOrder) => {
         if (isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.CANCELLED)) {
             toast.error(`Cannot stage JO #${jobOrder.job_order_no}: it is cancelled.`);
-            return;
-        }
-        const workCenterId = jobOrder.staging_work_center_id;
-        if (!workCenterId) {
-            toast.error(`Cannot stage JO #${jobOrder.job_order_no}: no active work-center destination is configured.`);
             return;
         }
         const materialIds = [...new Set(jobOrder.materials
@@ -224,7 +208,7 @@ export function useMaterialStaging() {
             const preview = await fetchAllocationPreview({
                 job_order_id: jobOrder.job_order_id,
                 job_order_no: jobOrder.job_order_no,
-                work_center_id: workCenterId,
+                work_center_id: null,
                 mode: "auto",
                 material_ids: materialIds
             });
@@ -246,7 +230,7 @@ export function useMaterialStaging() {
             const result = await commitMaterialStaging({
                 job_order_id: jobOrder.job_order_id,
                 job_order_no: jobOrder.job_order_no,
-                work_center_id: workCenterId,
+                work_center_id: null,
                 mode: "auto",
                 material_ids: materialIds,
                 lines: preview.proposed_allocations,
@@ -287,11 +271,6 @@ export function useMaterialStaging() {
                 setSelectedStatusFilter("all");
                 setSelectedJobOrderId(jobOrder.job_order_id);
             }
-            setFullyStagedJobOrderNo(
-                isFullyStaged
-                    ? (result.data.job_order_no || jobOrder.job_order_no || refreshedJobOrder?.job_order_no || null)
-                    : null
-            );
         } catch (error) {
             toast.error(error instanceof Error ? error.message : "Batch staging failed.");
         } finally {
@@ -300,17 +279,12 @@ export function useMaterialStaging() {
         }
     }, [loadData]);
 
-    const handleProceedToProduction = useCallback((jobOrderNo: string) => {
-        router.push(`/mm/shop-floor-execution-terminal?jo=${encodeURIComponent(jobOrderNo)}`);
-    }, [router]);
-
     return {
         jobOrders,
         filteredJobOrders,
         selectedJobOrder,
         selectedJobOrderId,
         setSelectedJobOrderId,
-        workCenters,
         branches,
         stats,
         loading,
@@ -328,14 +302,12 @@ export function useMaterialStaging() {
         activeAllocationItem,
         transferring,
         batchStageResult,
-        fullyStagedJobOrderNo,
         stageProgressLabel,
         handleDismissBatchStageResult,
         handleOpenAllocationModal,
         handleCloseAllocationModal,
         handleCommitAllocation,
         handleStageAllAvailable,
-        handleProceedToProduction,
         refreshData: loadData
     };
 }

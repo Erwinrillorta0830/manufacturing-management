@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { commitAllocation, MaterialStagingAllocationError } from "../_allocation";
-import { getMaterialStagingActorId } from "../_auth";
+import {
+    JOB_ORDER_MODULE_PATHS,
+    JobOrderModuleAccessError,
+    requireJobOrderModuleAccess
+} from "@/app/api/manufacturing/job-orders/_module-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,7 +26,7 @@ const allocationLineSchema = z.object({
 const commitSchema = z.object({
     job_order_id: z.number().int().positive(),
     job_order_no: z.string().optional(),
-    work_center_id: z.number().int().positive(),
+    work_center_id: z.number().int().positive().nullish(),
     mode: z.enum(["auto", "manual"]),
     material_ids: z.array(z.number().int().positive()).optional(),
     lines: z.array(allocationLineSchema).optional(),
@@ -35,6 +39,9 @@ const commitSchema = z.object({
 });
 
 function errorResponse(error: unknown) {
+    if (error instanceof JobOrderModuleAccessError) {
+        return NextResponse.json({ success: false, error: error.message, failure_code: error.code }, { status: error.status });
+    }
     if (error instanceof MaterialStagingAllocationError) {
         return NextResponse.json({ success: false, error: error.message, failure_code: error.code, ...(error.details || {}) }, { status: error.status });
     }
@@ -44,8 +51,7 @@ function errorResponse(error: unknown) {
 
 export async function POST(request: Request) {
     try {
-        const actorId = await getMaterialStagingActorId(request);
-        if (!actorId) return NextResponse.json({ success: false, error: "An authenticated user is required to stage material.", failure_code: "AUTHENTICATION_REQUIRED" }, { status: 401 });
+        const { userId: actorId } = await requireJobOrderModuleAccess(JOB_ORDER_MODULE_PATHS.staging);
         const parsed = commitSchema.safeParse(await request.json());
         if (!parsed.success) {
             return NextResponse.json({ success: false, error: "Invalid material staging commit parameters.", details: parsed.error.flatten().fieldErrors }, { status: 400 });

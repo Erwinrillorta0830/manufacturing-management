@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { EligibleFinishedGoodsLot } from "./finished-goods-lots-api";
 
@@ -40,11 +39,7 @@ export function FinishedGoodsLotSelect({
             <div className="text-xs text-muted-foreground border border-dashed rounded-lg p-2.5 space-y-1">
                 <p className="font-semibold text-foreground">No active storage lot matches this branch and UOM.</p>
                 <p>
-                    Create one in{" "}
-                    <Link href="/mm/inventory-warehousing/lot-management" className="text-primary underline underline-offset-2">
-                        Lot Management
-                    </Link>{" "}
-                    before posting.
+                    Ask a user with Lot Management access to create one before posting.
                 </p>
             </div>
         );

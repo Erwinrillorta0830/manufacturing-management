@@ -22,7 +22,6 @@ import {
     ImagePlus
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import Link from "next/link";
 import { useProductionWorkflow } from "./hooks/useProductionWorkflow";
 import { ReleasedJobQueue } from "./components/ReleasedJobQueue";
 import { RouteExecutionTable } from "./components/RouteExecutionTable";
@@ -216,8 +215,7 @@ export default function ProductionWorkflowModule() {
     const selectedJobOrderJourney = selectedJobOrder
         ? resolveJobOrderJourney({
             status: selectedJobOrderStatus,
-            allMaterialsStaged: isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.RESERVED),
-            jobOrderNo: selectedJobOrder.jo_id
+            allMaterialsStaged: isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.RESERVED)
         })
         : null;
 
@@ -600,11 +598,6 @@ export default function ProductionWorkflowModule() {
                                 <div className="flex items-center gap-2 shrink-0">
                                     <Button size="sm" variant="outline" onClick={() => setWorkflowAction("resume-production")} className="h-8 border-amber-500/40 text-amber-700 hover:bg-amber-500/10 dark:text-amber-400">
                                         Resume Production
-                                    </Button>
-                                    <Button asChild size="sm" variant="outline" className="h-8 border-amber-500/40 text-amber-700 hover:bg-amber-500/10 dark:text-amber-400">
-                                        <Link href={`/mm/manufacturing-qa?jo=${encodeURIComponent(selectedJobOrder?.jo_id || "")}`}>
-                                            Open QA Console
-                                        </Link>
                                     </Button>
                                 </div>
                             </div>

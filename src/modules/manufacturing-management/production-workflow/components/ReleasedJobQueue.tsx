@@ -227,8 +227,7 @@ export function ReleasedJobQueue({
                                         || (jo.primary_work_center_id ? `WC #${jo.primary_work_center_id}` : "Unassigned");
                                     const journey = resolveJobOrderJourney({
                                         status: jo.status,
-                                        allMaterialsStaged: isJobOrderStatus(jo.status, JOB_ORDER_STATUS.RESERVED),
-                                        jobOrderNo: jo.jo_id
+                                        allMaterialsStaged: isJobOrderStatus(jo.status, JOB_ORDER_STATUS.RESERVED)
                                     });
                                     const routingTasks = jo.routing_tasks || jo.routingTasks || [];
                                     const totalSteps = routingTasks.length;

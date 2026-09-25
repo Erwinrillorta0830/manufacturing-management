@@ -12,6 +12,10 @@ import { fetchMmInventoryMovements, MmInventoryMovementError } from "../services
 import { loadMmLots, mmLotId } from "../services/mm-lots.service";
 import { isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 import { groupMaterialRequirements } from "@/modules/manufacturing-management/planning-engineering/utils/material-requirement-groups";
+import {
+    authorizeJobOrderModuleAccess,
+    JOB_ORDER_MODULE_PATHS
+} from "@/app/api/manufacturing/job-orders/_module-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -98,6 +102,8 @@ function requireDirectusResponse(response: Response | null, collection: string):
 }
 
 export async function GET(request: Request) {
+    const accessDenied = await authorizeJobOrderModuleAccess(JOB_ORDER_MODULE_PATHS.staging);
+    if (accessDenied) return accessDenied;
     try {
         const { searchParams } = new URL(request.url);
         const branchFilter = searchParams.get("branchId");
@@ -147,6 +153,34 @@ export async function GET(request: Request) {
         requireDirectusResponse(productsRes, "Products");
 
         const rawJOs = joRes.ok ? (await joRes.json()).data || [] : [];
+        // Batch-resolve BOM version names so slips/queues show real codes
+        // (e.g. FG-SAMPLE-001 Rev 3) instead of falling back to "Default".
+        const versionIds = [...new Set(
+            rawJOs
+                .map((jo: { version_id?: number | null }) => Number(jo.version_id))
+                .filter((id: number) => Number.isFinite(id) && id > 0)
+        )];
+        const versionNameById = new Map<number, string>();
+        if (versionIds.length > 0) {
+            try {
+                const versionFilter = encodeURIComponent(JSON.stringify({ version_id: { _in: versionIds } }));
+                const versionsRes = await fetch(
+                    `${DIRECTUS_URL}/items/product_manufacturing_version?filter=${versionFilter}&fields=version_id,version_name,version_code&limit=-1`,
+                    { headers, cache: "no-store" }
+                ).catch(() => null);
+                if (versionsRes && versionsRes.ok) {
+                    const versions = (await versionsRes.json()).data || [];
+                    versions.forEach((version: { version_id?: number | null; version_name?: string | null; version_code?: string | null }) => {
+                        const id = Number(version.version_id);
+                        if (Number.isFinite(id) && id > 0) {
+                            versionNameById.set(id, version.version_name || version.version_code || `v${id}`);
+                        }
+                    });
+                }
+            } catch {
+                // Version names stay unresolved; consumers fall back per-row.
+            }
+        }
         const rawMaterials: DirectusMaterial[] = materialsRes && materialsRes.ok ? (await materialsRes.json()).data || [] : [];
         const rawReservations: DirectusAllocation[] = reservationsRes && reservationsRes.ok ? (await reservationsRes.json()).data || [] : [];
         const rawProducts = productsRes.ok ? (await productsRes.json()).data || [] : [];
@@ -265,13 +299,15 @@ export async function GET(request: Request) {
         });
 
         // Recover the actual destination for staged transfers from the movement audit trail.
-        // Older rows may contain FLOOR-STAGING-WC01, so only the current explicit work-center
-        // audit format is trusted as an override of the resolved Job Order destination.
+        // Older rows may contain FLOOR-STAGING-WC01, so only explicit audit formats are
+        // trusted as an override of the resolved Job Order destination: either the
+        // work-center-scoped bin (FLOOR-STAGING-{id} with matching work_center_id) or the
+        // generic floor bin (FLOOR-STAGING) written when no work center is selected.
         const stagedDestinationByMaterialBatch = new Map<string, string>();
         rawMovements.forEach((m) => {
             if (Number(m.quantity || 0) === 0) return;
             const remarks = String(m.remarks || "");
-            const workCenterMatch = remarks.match(/work_center_id=(\d+)/i);
+            const workCenterMatch = remarks.match(/work_center_id=(\d*)/i);
             const targetBinMatch = remarks.match(/target_bin=([^;]+)/i);
             const materialMatch = remarks.match(/jo_material_id=(\d+)/i);
             const stagingMarker = remarks.includes("[MM-MATERIAL-STAGING]") || remarks.includes("[MM-MATERIAL-STAGING-RETURN]");
@@ -279,7 +315,10 @@ export async function GET(request: Request) {
 
             const workCenterId = Number(workCenterMatch[1]);
             const targetBin = targetBinMatch[1].trim();
-            if (targetBin !== `FLOOR-STAGING-${workCenterId}`) return;
+            const isGenericBin = targetBin === "FLOOR-STAGING";
+            const isScopedBin = Number.isSafeInteger(workCenterId) && workCenterId > 0
+                && targetBin === `FLOOR-STAGING-${workCenterId}`;
+            if (!isGenericBin && !isScopedBin) return;
 
             const batchNo = String(m.batch_no || "").trim();
             if (!batchNo) return;
@@ -509,15 +548,13 @@ export async function GET(request: Request) {
             const primaryWorkCenterId = jo.primary_work_center_id ? numericRelationId(jo.primary_work_center_id, ["work_center_id", "id"]) : null;
             const primaryWorkCenter = primaryWorkCenterId ? workCenterMap.get(primaryWorkCenterId) : null;
             const stagingWorkCenter = primaryWorkCenter?.is_active ? primaryWorkCenter : fallbackWorkCenter;
-            const stagingWorkCenterId = stagingWorkCenter?.work_center_id || null;
             const wcName = stagingWorkCenter?.work_center_name || "No active work center";
             const branchId = jo.branch_id ? numericRelationId(jo.branch_id, ["branch_id", "id"]) : 0;
             const branchInfo = branchId ? branchMap.get(branchId) : null;
 
-            // The staging bin is derived from the same active work center used by the UI and transfer API.
-            const suggestedStagingBin = stagingWorkCenterId
-                ? `FLOOR-STAGING-${stagingWorkCenterId}`
-                : null;
+            // Staging is raw-material level: the suggested bin is the generic
+            // floor bin, no longer derived from any work center.
+            const suggestedStagingBin = "FLOOR-STAGING";
 
             // Filter materials belonging to this JO
             const joMaterials = rawMaterials.filter((m) => getJoId(m.job_order_id) === joId);
@@ -674,15 +711,18 @@ export async function GET(request: Request) {
                 product_name: joProduct?.product_name || `Product #${jo.product_id}`,
                 product_code: joProduct?.product_code || `ITEM-${jo.product_id}`,
                 version_id: jo.version_id ? Number(jo.version_id) : null,
+                version_name: jo.version_id && Number(jo.version_id) > 0
+                    ? versionNameById.get(Number(jo.version_id)) ?? `v${Number(jo.version_id)}`
+                    : null,
                 target_quantity: Number(jo.target_quantity || 0),
                 completed_quantity: Number(jo.completed_quantity || 0),
                 rejected_quantity: Number(jo.rejected_quantity || 0),
                 status: normalizeJobOrderStatus(jo.status) || jo.status,
                 primary_work_center_id: jo.primary_work_center_id ? Number(jo.primary_work_center_id) : null,
                 primary_work_center_name: wcName,
-                staging_work_center_id: stagingWorkCenterId,
+                staging_work_center_id: null,
                 suggested_staging_bin: suggestedStagingBin,
-                shift_option: jo.shift_option || "Shift 1 (Day)",
+                shift_option: jo.shift_option || null,
                 branch_id: branchId || null,
                 branch_name: branchInfo?.branchName || "Main Facility",
                 remarks: jo.remarks || null,

@@ -211,7 +211,7 @@ export function usePlanningEngineering() {
         }
     };
 
-    // Initial Fetch: Branches & For Production Sales Orders
+    // Initial Fetch: branches and all residual Sales Order demand eligible for planning.
     const loadInitialData = async (silent = false) => {
         if (!silent) {
             setLoadingBranches(true);
@@ -222,7 +222,7 @@ export function usePlanningEngineering() {
         try {
             const [activeBranches, soResult, jobOrderQueues] = await Promise.all([
                 fetchBranches(),
-                fetchSalesOrders(),
+                fetchSalesOrders("planning"),
                 fetch("/api/manufacturing/planning-engineering").then(async (res) => {
                     if (res.ok) {
                         const data = await res.json();
@@ -368,7 +368,7 @@ export function usePlanningEngineering() {
         if (selectedBranchId === null) return [];
         const lines: SalesOrderDetail[] = [];
         [...salesOrders].sort(compareNewestSalesOrders).forEach((so) => {
-            if (so.order_status !== "For Production") return;
+            if (so.order_status !== "For Production" && so.order_status !== "In Production") return;
             if (so.branch_id === undefined || so.branch_id === null || Number(so.branch_id) !== Number(selectedBranchId)) {
                 return;
             }
@@ -669,7 +669,9 @@ export function usePlanningEngineering() {
         groupConfigurations?: Record<string, { subAssemblyVersions: Record<number, number>; assignments: Record<number, number[]> }>,
         initialize = false,
         materialTargetQuantity?: number,
-        timingTargetQuantity?: number
+        timingTargetQuantity?: number,
+        groupProductionTargets?: Record<string, number>,
+        groupMaterialTargets?: Record<string, number>
     ) => {
         const branchId = parseValidBranchId(selectedBranchId);
         if (branchId === null) {
@@ -683,13 +685,22 @@ export function usePlanningEngineering() {
             || selectedLines[0]?.product_id?.uom
             || (selectedLines[0] as any)?.unit_of_measurement;
         const requiredOutputQuantity = normalizeProductionOutputQuantity(maxAvailableQuantity, outputUom);
-        const operationalTargetQuantity = normalizeProductionOutputQuantity(targetQuantity, outputUom);
+        const operationalTargetQuantity = Number(
+            timingTargetQuantity ?? normalizeProductionOutputQuantity(targetQuantity, outputUom)
+        );
         if (releaseGroups.length === 1 && (!Number.isFinite(operationalTargetQuantity) || operationalTargetQuantity <= 0)) {
             toast.error("Enter a valid Job Order target quantity.");
             return;
         }
         if (releaseGroups.length === 1 && operationalTargetQuantity < requiredOutputQuantity - 0.000001) {
             toast.error(`The requested Job Order quantity (${operationalTargetQuantity}) is less than the required Sales Order quantity (${requiredOutputQuantity}). Job Order quantity cannot be less than Sales Order quantity.`);
+            return;
+        }
+        if (releaseGroups.length > 1 && releaseGroups.some((group) => {
+            const quantity = Number(groupProductionTargets?.[group.key]);
+            return !Number.isFinite(quantity) || quantity <= 0;
+        })) {
+            toast.error("Recipe batch targets are still loading. Please wait and try again.");
             return;
         }
 
@@ -705,16 +716,14 @@ export function usePlanningEngineering() {
                     shared: { branchId, plannedDate, dueDate, priority, shiftOption, remarks },
                     jobs: releaseGroups.map((group) => {
                         const configuration = groupConfigurations?.[group.key];
+                        const groupTarget = Number(groupProductionTargets?.[group.key]);
                         return {
                             productId: group.productId,
                             productName: group.productName,
                             bomVersionId: group.bomVersionId,
-                            quantity: normalizeProductionOutputQuantity(
-                                group.totalRemainingQuantity,
-                                (group.lines[0]?.product_id as any)?.uom_name
-                                    || group.lines[0]?.product_id?.uom
-                                    || (group.lines[0] as any)?.unit_of_measurement
-                            ),
+                            quantity: groupTarget,
+                            timingTargetQuantity: groupTarget,
+                            materialTargetQuantity: Number(groupMaterialTargets?.[group.key]),
                             salesOrderIds: group.salesOrderIds,
                             salesOrderDetailIds: group.salesOrderDetailIds,
                             subAssemblyVersionMap: configuration?.subAssemblyVersions || {},
@@ -760,7 +769,7 @@ export function usePlanningEngineering() {
                             quantity: operationalTargetQuantity,
                             requested_quantity: operationalTargetQuantity,
                             material_target_quantity: materialTargetQuantity,
-                            timing_target_quantity: timingTargetQuantity ?? materialTargetQuantity ?? targetQuantity,
+                            timing_target_quantity: timingTargetQuantity ?? operationalTargetQuantity,
                             bom: { version_id: firstLine.bom_version_id }
                         }]
                     },

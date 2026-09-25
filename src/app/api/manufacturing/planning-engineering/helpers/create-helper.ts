@@ -14,6 +14,7 @@ import {
     calculateRecipeMaterialCostPerUnit,
     roundManufacturingUnitCost
 } from "@/modules/manufacturing-management/planning-engineering/utils/cogs-helper";
+import { fetchMmInventoryMovements } from "../../services/mm-inventory-movements.service";
 import {
     calculateReleaseMaterialRequirementPlan,
     calculateFullBatchTarget,
@@ -23,8 +24,154 @@ import {
 } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
 import { groupMaterialRequirements } from "@/modules/manufacturing-management/planning-engineering/utils/material-requirement-groups";
 import { normalizeOperatorAssignments, synchronizeJobOrderOperatorAssignments } from "../../job-orders/_operator-assignment-service";
+import {
+    capReplacementCreditsToRemainingDemand,
+    effectiveReplacementCreditQuantity,
+    loadReplacementCreditData,
+    type ReplacementCreditAttribution
+} from "../../sales-order/_replacement-credits";
 
 const QUANTITY_EPSILON = 0.000001;
+
+async function readReplacementCreditCollection(collection: string, params: URLSearchParams) {
+    const response = await fetch(`${DIRECTUS_URL}/items/${collection}?${params.toString()}`, {
+        headers,
+        cache: "no-store"
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to read ${collection} from Manufacturing Directus (${response.status}).`);
+    }
+    const payload = await response.json();
+    if (!Array.isArray(payload?.data)) {
+        throw new Error(`Manufacturing Directus returned an invalid ${collection} response.`);
+    }
+    return { data: payload.data };
+}
+async function readFinishedGoodsReceipts(jobOrderIds: number[]) {
+    const receipts: Array<Record<string, unknown>> = [];
+    const concurrency = 8;
+    for (let index = 0; index < jobOrderIds.length; index += concurrency) {
+        const chunk = jobOrderIds.slice(index, index + concurrency);
+        const movementRows = await Promise.all(chunk.map((jobOrderId) =>
+            fetchMmInventoryMovements({
+                transactionTypeId: 2,
+                movementDirection: "IN",
+                referenceId: jobOrderId
+            })
+        ));
+        receipts.push(...movementRows.flat());
+    }
+    return receipts;
+}
+
+interface ReplacementLeftoverReservation {
+    id: number;
+    joMaterialId: number;
+    productId: number;
+    branchId: number;
+    mmLotId: number | null;
+    inventoryLotId: number | null;
+    batchNo: string | null;
+    expiryDate: string | null;
+    uomId: number | null;
+    remaining: number;
+}
+
+interface ReplacementPredecessorSnapshot {
+    jobOrderId: number;
+    jobOrderNo: string;
+    productId: number;
+    completedQuantity: number;
+    actualQuantityProduced: number;
+    routes: Array<Record<string, unknown>>;
+    leftoverReservations: ReplacementLeftoverReservation[];
+}
+
+async function directusGetList(collection: string, params: URLSearchParams): Promise<Array<Record<string, unknown>>> {
+    const response = await fetch(`${DIRECTUS_URL}/items/${collection}?${params.toString()}`, {
+        headers,
+        cache: "no-store"
+    });
+    if (!response.ok) return [];
+    const payload = await response.json().catch(() => null);
+    if (Array.isArray(payload?.data)) return payload.data;
+    if (payload?.data && typeof payload.data === "object") return [payload.data as Record<string, unknown>];
+    return [];
+}
+
+/**
+ * Snapshot of a terminated predecessor JO for replacement inheritance:
+ * header progress, route rows (to re-run as Pending), and unconsumed
+ * material reservations (to transfer). History (yield ledger, shift runs,
+ * operator logs) intentionally stays on the predecessor.
+ */
+async function loadReplacementPredecessorSnapshot(predecessorJobOrderId: number): Promise<ReplacementPredecessorSnapshot | null> {
+    const headerParams = new URLSearchParams({
+        fields: "job_order_id,job_order_no,product_id,completed_quantity,actual_quantity_produced,status",
+        limit: "1"
+    });
+    const headerRows = await directusGetList(
+        `manufacturing_job_orders/${predecessorJobOrderId}`,
+        headerParams
+    );
+    const header = headerRows[0];
+    if (!header) return null;
+    const routeParams = new URLSearchParams({
+        [`filter[job_order_id][_eq]`]: String(predecessorJobOrderId),
+        fields: "jo_route_id,job_order_id,sequence_order,work_center_id,operation_id,planned_setup_hours,planned_run_hours,step_batch_size,run_time_hours_factor,estimated_labor_cost,routing_id,qa_template_id,requires_qa,status",
+        sort: "sequence_order",
+        limit: "-1"
+    });
+    const routes = await directusGetList("manufacturing_job_order_routes", routeParams);
+    const materialParams = new URLSearchParams({
+        [`filter[job_order_id][_eq]`]: String(predecessorJobOrderId),
+        fields: "jo_material_id,product_id",
+        limit: "-1"
+    });
+    const materials = await directusGetList("manufacturing_job_order_materials", materialParams);
+    const materialIds = materials
+        .map((row) => Number(row.jo_material_id ?? 0))
+        .filter((id) => Number.isSafeInteger(id) && id > 0);
+    const leftoverReservations: ReplacementLeftoverReservation[] = [];
+    if (materialIds.length > 0) {
+        const reservationParams = new URLSearchParams({
+            [`filter[jo_material_id][_in]`]: materialIds.join(","),
+            fields: "jo_materials_reservation_id,jo_material_id,product_id,branch_id,mm_lot_id,inventory_lot_id,batch_no,expiry_date,uom_id,reserved_quantity,actual_used_quantity,reservation_status",
+            limit: "-1"
+        });
+        const reservations = await directusGetList("manufacturing_job_order_materials_reservations", reservationParams);
+        for (const row of reservations) {
+            const reserved = Number(row.reserved_quantity ?? 0);
+            const used = Number(row.actual_used_quantity ?? 0);
+            const remaining = reserved - used;
+            if (!Number.isFinite(remaining) || remaining <= QUANTITY_EPSILON) continue;
+            const id = Number(row.jo_materials_reservation_id ?? row.id ?? 0);
+            if (!Number.isSafeInteger(id) || id <= 0) continue;
+            leftoverReservations.push({
+                id,
+                joMaterialId: Number(row.jo_material_id ?? 0),
+                productId: Number(row.product_id ?? 0),
+                branchId: Number(row.branch_id ?? 0),
+                mmLotId: row.mm_lot_id != null ? Number(row.mm_lot_id) : null,
+                inventoryLotId: row.inventory_lot_id != null ? Number(row.inventory_lot_id) : null,
+                batchNo: typeof row.batch_no === "string" ? row.batch_no : null,
+                expiryDate: typeof row.expiry_date === "string" ? row.expiry_date : null,
+                uomId: row.uom_id != null ? Number(row.uom_id) : null,
+                remaining
+            });
+        }
+        leftoverReservations.sort((left, right) => left.id - right.id);
+    }
+    return {
+        jobOrderId: predecessorJobOrderId,
+        jobOrderNo: String(header.job_order_no || `JO-${predecessorJobOrderId}`),
+        productId: Number(header.product_id ?? 0),
+        completedQuantity: Number(header.completed_quantity ?? 0),
+        actualQuantityProduced: Number(header.actual_quantity_produced ?? 0),
+        routes,
+        leftoverReservations
+    };
+}
 
 async function loadRouteOperationNames(routes: readonly unknown[]): Promise<Map<number, string>> {
     const operationIds = Array.from(new Set(routes
@@ -143,7 +290,8 @@ async function readActiveAllocationQuantity(detailId: number, excludedJobOrderId
 async function assertFreshAllocationCapacity(
     detailId: number,
     requestedQuantity: number,
-    excludedJobOrderId?: number
+    excludedJobOrderId?: number,
+    replacementCreditQuantity = 0
 ) {
     const detailResponse = await fetch(
         `${DIRECTUS_URL}/items/sales_order_details/${detailId}?fields=detail_id,ordered_quantity,allocated_quantity,served_quantity`,
@@ -154,7 +302,7 @@ async function assertFreshAllocationCapacity(
     const ordered = Number(detail?.ordered_quantity || 0);
     const fulfilled = Math.max(Number(detail?.allocated_quantity || 0), Number(detail?.served_quantity || 0));
     const planned = await readActiveAllocationQuantity(detailId, excludedJobOrderId);
-    const available = Math.max(0, ordered - fulfilled - planned);
+    const available = Math.max(0, ordered - fulfilled - planned - Math.max(0, replacementCreditQuantity));
     if (!Number.isFinite(available) || requestedQuantity > available + QUANTITY_EPSILON) {
         throw new SalesOrderAllocationConflictError(`Sales Order detail ${detailId} no longer has enough remaining quantity for this Job Order. Refresh the demand list and try again.`);
     }
@@ -201,6 +349,8 @@ export async function createJobOrder(
 ): Promise<{ job_order_id?: number | null; jo_id?: string | null; status?: string; shortfalls?: Array<{ name: string; required: number; available: number; shortage: number }> }> {
     let createdJobOrderNo: string | null = null;
     const previousParentStatuses = new Map<number, string>();
+    const createdReplacementCreditIds: number[] = [];
+    const movedReservationRestorations: Array<{ id: number; previousJoMaterialId: number }> = [];
     try {
         const todayStr = await getTodayDateString();
         let productsList = schedulingPlan
@@ -209,6 +359,10 @@ export async function createJobOrder(
                 product_name: joData.product_name,
                 quantity: schedulingPlan.totalQuantity,
                 requested_quantity: schedulingPlan.requestedQuantity ?? schedulingPlan.totalQuantity,
+                material_target_quantity: (joData as any).products?.[0]?.material_target_quantity
+                    ?? (joData as any).products?.[0]?.materialTargetQuantity,
+                timing_target_quantity: (joData as any).products?.[0]?.timing_target_quantity
+                    ?? (joData as any).products?.[0]?.timingTargetQuantity,
                 bom: { version_id: schedulingPlan.bomVersionId }
             }]
             : (joData.products || []);
@@ -478,6 +632,67 @@ export async function createJobOrder(
             forcedDraftRemarks = ` | Saved as Draft due to raw material shortfalls: ${shortfallMsg}`;
         }
 
+        // Replacement inheritance: when this JO replaces terminated
+        // predecessor(s), snapshot their progress, routes, and unconsumed
+        // material reservations up front so the header, route explosion, and
+        // materials worksheet below can inherit instead of starting fresh.
+        // Yield ledger and shift history stay on the predecessor; the
+        // replacement_credits rows remain the audit link.
+        let earlyDetails: Array<Record<string, unknown>> | null = null;
+        let earlyCreditData: Awaited<ReturnType<typeof loadReplacementCreditData>> | null = null;
+        const replacementSnapshots = new Map<number, ReplacementPredecessorSnapshot>();
+        // Same detail-id resolution as the allocation section below so the
+        // predecessor set always matches the allocation math.
+        const requestedDetailIds = schedulingPlan
+            ? schedulingPlan.lines.map((line) => line.detailId)
+            : [...new Set(salesOrderDetailIds.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+        if (requestedDetailIds.length > 0) {
+            // Retry transient lookup failures (e.g. Spring 429s backing the
+            // finished-goods receipt read). If the predecessors cannot be
+            // established, fail loudly: a silently non-inherited replacement
+            // JO would misstate progress, routes, and reservations.
+            let lastInheritanceError: unknown = null;
+            for (let attempt = 1; attempt <= 3; attempt += 1) {
+                try {
+                    const detailRes = await fetch(
+                        `${DIRECTUS_URL}/items/sales_order_details?filter[detail_id][_in]=${requestedDetailIds.join(",")}&fields=detail_id,order_id,ordered_quantity,allocated_quantity,served_quantity&limit=-1`,
+                        { headers, cache: "no-store" }
+                    );
+                    if (!detailRes.ok) {
+                        throw new Error(`Failed to load sales order details for replacement check: ${detailRes.status}`);
+                    }
+                    const loadedDetails: any[] = (await detailRes.json()).data || [];
+                    earlyDetails = loadedDetails;
+                    earlyCreditData = await loadReplacementCreditData(
+                        readReplacementCreditCollection,
+                        loadedDetails,
+                        readFinishedGoodsReceipts
+                    );
+                    const predecessorIds = Array.from(new Set(
+                        (earlyCreditData.attributions || [])
+                            .map((item: { predecessorJobOrderId?: unknown }) => Number(item.predecessorJobOrderId))
+                            .filter((id: number) => Number.isSafeInteger(id) && id > 0)
+                    ));
+                    replacementSnapshots.clear();
+                    for (const predecessorId of predecessorIds) {
+                        const snapshot = await loadReplacementPredecessorSnapshot(predecessorId);
+                        if (snapshot) replacementSnapshots.set(predecessorId, snapshot);
+                    }
+                    lastInheritanceError = null;
+                    break;
+                } catch (inheritanceError) {
+                    lastInheritanceError = inheritanceError;
+                    earlyDetails = null;
+                    earlyCreditData = null;
+                    replacementSnapshots.clear();
+                    if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+                }
+            }
+            if (lastInheritanceError) {
+                throw new Error(`Failed to establish replacement predecessors: ${lastInheritanceError instanceof Error ? lastInheritanceError.message : "unknown error"}`);
+            }
+        }
+
         // 3. Insert header
         const headerPayload = {
             job_order_no: joData.jo_id || `JO-${Math.floor(100000 + Math.random() * 900000)}`,
@@ -548,10 +763,16 @@ export async function createJobOrder(
         const initializationLotsByProduct = new Map<number, Awaited<ReturnType<typeof getAvailableInventoryLots>>>();
         const allocatedStockByLot = new Map<string, number>();
         for (const p of finalProductsList) {
-            const { version, routes } = versionId 
+            const { version, routes } = versionId
                 ? await getBOMDetailsForVersion(p.product_id, versionId)
                 : await getActiveVersionForProduct(p.product_id);
             const routeOperationNames = await loadRouteOperationNames(routes || []);
+            // Replacement inheritance (re-run all): when a terminated
+            // predecessor made the same product, clone its route rows as
+            // Pending instead of exploding the BOM again.
+            const inheritedPredecessor = Array.from(replacementSnapshots.values()).find(
+                (snapshot) => Number(snapshot.productId) === Number(p.product_id) && snapshot.routes.length > 0
+            ) || null;
 
             let productionQty = Number(p.quantity);
             let timingTargetQuantity = Number((p as any).timing_target_quantity ?? productionQty);
@@ -628,7 +849,40 @@ export async function createJobOrder(
                 if (!productionMetrics) {
                     throw new Error(`Unable to calculate production metrics for Product '${p.product_name}'.`);
                 }
-                for (const r of routes) {
+                const effectiveRoutes: Array<Record<string, unknown>> = inheritedPredecessor
+                    ? inheritedPredecessor.routes
+                    : ((routes || []) as unknown as Array<Record<string, unknown>>);
+                for (const r of effectiveRoutes) {
+                    let baseRoutePayload: Record<string, unknown>;
+                    let masterRoutingId = 0;
+                    let qaTemplateId = 0;
+                    let requiresQa = false;
+                    if (inheritedPredecessor) {
+                        // Re-run all: clone the predecessor step as Pending with
+                        // zeroed actuals. Planned hours/labor carry over as-is.
+                        const inheritedQaTemplate = (r as any).qa_template_id;
+                        qaTemplateId = inheritedQaTemplate && typeof inheritedQaTemplate === "object"
+                            ? Number(inheritedQaTemplate.template_id || inheritedQaTemplate.id || 0)
+                            : Number(inheritedQaTemplate || 0);
+                        masterRoutingId = Number((r as any).routing_id || 0);
+                        requiresQa = qaTemplateId > 0
+                            || (r as any).requires_qa === true
+                            || Number((r as any).requires_qa) === 1;
+                        baseRoutePayload = {
+                            job_order_id: joIdInt,
+                            sequence_order: Number(r.sequence_order || 0),
+                            work_center_id: Number(r.work_center_id || 1),
+                            operation_id: Number((r as any).operation_id || 1),
+                            planned_setup_hours: Number(r.planned_setup_hours || 0),
+                            planned_run_hours: Number(r.planned_run_hours || 0),
+                            actual_setup_hours: 0,
+                            actual_run_hours: 0,
+                            step_batch_size: Number(r.step_batch_size || 0),
+                            run_time_hours_factor: Number(r.run_time_hours_factor || 0),
+                            estimated_labor_cost: Number(r.estimated_labor_cost || 0),
+                            status: "Pending"
+                        };
+                    } else {
                     const sequenceOrder = Number(r.sequence_order || 0);
                     const routeMetric = productionMetrics?.routeMetrics.find(
                         (metric) => metric.sequenceOrder === sequenceOrder
@@ -646,19 +900,19 @@ export async function createJobOrder(
                         * productionQty
                         * laborWorkloadShare);
 
-                    const masterRoutingId = Number((r as any).route_id || (r as any).routing_id || (r as any).id || 0);
+                    masterRoutingId = Number((r as any).route_id || (r as any).routing_id || (r as any).id || 0);
                     const rawQaTemplate = (r as any).qa_template_id;
-                    const qaTemplateId = rawQaTemplate && typeof rawQaTemplate === "object"
+                    qaTemplateId = rawQaTemplate && typeof rawQaTemplate === "object"
                         ? Number(rawQaTemplate.template_id || rawQaTemplate.id || 0)
                         : Number(rawQaTemplate || 0);
-                    const requiresQa = qaTemplateId > 0
+                    requiresQa = qaTemplateId > 0
                         || (r as any).requires_qa === true
                         || Number((r as any).requires_qa) === 1;
 
                     // Keep the legacy fields shared by both route collections. The
                     // job-order route receives the master routing/QA metadata when
                     // the Directus schema supports those optional fields.
-                    const baseRoutePayload = {
+                    baseRoutePayload = {
                         job_order_id: joIdInt,
                         sequence_order: Number(r.sequence_order || 0),
                         work_center_id: Number(r.work_center_id || 1),
@@ -672,6 +926,7 @@ export async function createJobOrder(
                         estimated_labor_cost: plannedLabor,
                         status: "Pending"
                     };
+                    }
 
                     const jobOrderRoutePayload = {
                         ...baseRoutePayload,
@@ -749,6 +1004,31 @@ export async function createJobOrder(
                 expiry_date?: string | null;
                 allocated: number;
             }> = [];
+            // Replacement inheritance (transfer leftovers): re-point
+            // unconsumed predecessor reservations at the same branch to this
+            // JO instead of freshly reserving the same stock. Whole rows only;
+            // the fresh reservation loop below is capped by what was moved.
+            let transferredReservationQuantity = 0;
+            const reservationsToTransfer: Array<{
+                id: number;
+                previousJoMaterialId: number;
+            }> = [];
+            if (shouldInitialize && replacementSnapshots.size > 0) {
+                let transferNeed = requiredQuantity;
+                for (const snapshot of replacementSnapshots.values()) {
+                    if (transferNeed <= QUANTITY_EPSILON) break;
+                    for (const leftover of snapshot.leftoverReservations) {
+                        if (transferNeed <= QUANTITY_EPSILON) break;
+                        if (Number(leftover.productId) !== Number(componentProductId)) continue;
+                        if (Number(leftover.branchId) !== Number(numericBranchId)) continue;
+                        if (leftover.remaining <= QUANTITY_EPSILON) continue;
+                        if (leftover.remaining - transferNeed > QUANTITY_EPSILON) continue;
+                        reservationsToTransfer.push({ id: leftover.id, previousJoMaterialId: leftover.joMaterialId });
+                        transferredReservationQuantity += leftover.remaining;
+                        transferNeed -= leftover.remaining;
+                    }
+                }
+            }
             if (shouldInitialize) {
                 if (!joData.branch_id) throw new Error("Cannot allocate raw materials: Job Order is missing branch_id");
                 const branchId = Number(joData.branch_id);
@@ -759,11 +1039,11 @@ export async function createJobOrder(
                 }
 
                 for (const lot of availableLots) {
-                    if (reservedQuantity >= requiredQuantity) break;
+                    if (reservedQuantity >= requiredQuantity - transferredReservationQuantity) break;
                     const lotKey = `${componentProductId}:${lot.inventoryLotId || 0}:${lot.mmLotId || 0}:${String(lot.batchNo || "").trim().toLowerCase()}`;
                     const previouslyAllocated = allocatedStockByLot.get(lotKey) || 0;
                     const availableQuantity = Math.max(0, lot.available - previouslyAllocated);
-                    const allocated = Math.min(availableQuantity, requiredQuantity - reservedQuantity);
+                    const allocated = Math.min(availableQuantity, requiredQuantity - transferredReservationQuantity - reservedQuantity);
                     if (allocated <= 0) continue;
 
                     reservedQuantity += allocated;
@@ -787,7 +1067,7 @@ export async function createJobOrder(
                     product_id: componentProductId,
                     uom_id: uomId || 1,
                     allocated_quantity: requiredQuantity,
-                    reserved_quantity: reservedQuantity,
+                    reserved_quantity: reservedQuantity + transferredReservationQuantity,
                     actual_consumed_quantity: 0,
                     scrap_quantity: 0
                 })
@@ -830,7 +1110,19 @@ export async function createJobOrder(
                 }
             }
 
-            const shortfall = requiredQuantity - reservedQuantity;
+            for (const leftover of reservationsToTransfer) {
+                const repointResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations/${leftover.id}`, {
+                    method: "PATCH",
+                    headers,
+                    body: JSON.stringify({ jo_material_id: joMaterialId })
+                });
+                if (!repointResponse.ok) {
+                    throw new Error(`Failed to transfer predecessor material reservation ${leftover.id}: ${repointResponse.status} - ${await repointResponse.text()}`);
+                }
+                movedReservationRestorations.push({ id: leftover.id, previousJoMaterialId: leftover.previousJoMaterialId });
+            }
+
+            const shortfall = requiredQuantity - reservedQuantity - transferredReservationQuantity;
             if (shouldInitialize && shortfall > QUANTITY_EPSILON) {
                 try {
                     const subAssemblyVersionMap = (joData as any).subAssemblyVersionMap || (joData as any).sub_assembly_version_map || {};
@@ -941,6 +1233,12 @@ export async function createJobOrder(
             if (missingDetailIds.length > 0) {
                 throw new Error(`Selected Sales Order details were not found: ${missingDetailIds.join(", ")}`);
             }
+            const replacementCreditData = await loadReplacementCreditData(
+                readReplacementCreditCollection,
+                details,
+                readFinishedGoodsReceipts
+            );
+            const uncreditedDemandByDetail = new Map<number, number>();
 
             const affectedOrderIds = new Set<number>();
             for (const detailId of detailIds) {
@@ -948,7 +1246,20 @@ export async function createJobOrder(
                 const orderedQuantity = Number(detail.ordered_quantity || 0);
                 const allocatedQuantity = Number(detail.allocated_quantity || 0);
                 const servedQuantity = Number(detail.served_quantity || 0);
-                const currentRemainingQuantity = Math.max(0, orderedQuantity - Math.max(allocatedQuantity, servedQuantity));
+                const plannedQuantity = await readActiveAllocationQuantity(detailId);
+                const baseRemainingQuantity = Math.max(
+                    0,
+                    orderedQuantity - Math.max(allocatedQuantity, servedQuantity) - plannedQuantity
+                );
+                uncreditedDemandByDetail.set(detailId, baseRemainingQuantity);
+                const replacementCreditQuantity = effectiveReplacementCreditQuantity(
+                    orderedQuantity,
+                    allocatedQuantity,
+                    servedQuantity,
+                    plannedQuantity,
+                    replacementCreditData.byDetail.get(detailId) || 0
+                );
+                const currentRemainingQuantity = Math.max(0, baseRemainingQuantity - replacementCreditQuantity);
                 const plannedLine = plannedLinesById.get(detailId);
                 const allocationQuantity = plannedLine?.allocationQuantity ?? currentRemainingQuantity;
                 if (allocationQuantity <= 0) {
@@ -958,7 +1269,7 @@ export async function createJobOrder(
                     throw new SalesOrderAllocationConflictError(`Sales Order detail ${detailId} no longer has enough remaining quantity for this Job Order. Refresh the demand list and try again.`);
                 }
 
-                await assertFreshAllocationCapacity(detailId, allocationQuantity);
+                await assertFreshAllocationCapacity(detailId, allocationQuantity, undefined, replacementCreditQuantity);
 
                 const allocationResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations`, {
                     method: "POST",
@@ -975,7 +1286,7 @@ export async function createJobOrder(
                 if (!allocationResponse.ok) {
                     throw new Error(`Failed to create Sales Order allocation for detail ${detailId}: ${allocationResponse.status}`);
                 }
-                await assertFreshAllocationCapacity(detailId, allocationQuantity, joIdInt);
+                await assertFreshAllocationCapacity(detailId, allocationQuantity, joIdInt, replacementCreditQuantity);
 
                 const parentOrderId = Number(
                     typeof detail.order_id === "object" ? detail.order_id?.order_id || detail.order_id?.id : detail.order_id
@@ -996,6 +1307,68 @@ export async function createJobOrder(
                 }
             }
 
+            for (const detailId of detailIds) {
+                const sourceAttributions = replacementCreditData.attributions.filter((item) => item.detailId === detailId);
+                if (sourceAttributions.length === 0) continue;
+                const cappedAttributions = capReplacementCreditsToRemainingDemand(
+                    sourceAttributions,
+                    detailId,
+                    uncreditedDemandByDetail.get(detailId) || 0
+                );
+                const cappedByPredecessor = new Map(
+                    cappedAttributions.map((item) => [item.predecessorJobOrderId, item.creditedQuantity])
+                );
+                for (const attribution of sourceAttributions) {
+                    const creditKey = `${joIdInt}:${attribution.predecessorJobOrderId}:${detailId}`;
+                    const response = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_replacement_credits`, {
+                        method: "POST",
+                        headers,
+                        body: JSON.stringify({
+                            replacement_job_order_id: joIdInt,
+                            predecessor_job_order_id: attribution.predecessorJobOrderId,
+                            sales_order_detail_id: detailId,
+                            credited_quantity: cappedByPredecessor.get(attribution.predecessorJobOrderId) || 0,
+                            credit_key: creditKey,
+                            created_at: formatPhtDateTime()
+                        })
+                    });
+                    if (!response.ok) {
+                        throw new Error(`Failed to record predecessor credit for Job Order ${attribution.predecessorJobOrderNo}: ${response.status}`);
+                    }
+                    const payload = await response.json().catch(() => null);
+                    const creditId = Number(payload?.data?.replacement_credit_id ?? payload?.data?.id ?? 0);
+                    if (Number.isSafeInteger(creditId) && creditId > 0) createdReplacementCreditIds.push(creditId);
+                }
+            }
+
+            // Replacement inheritance (header progress): seed attained output
+            // from the written credits. Demand was already netted, so this
+            // records progress without double-counting.
+            let inheritedCompletedQuantity = 0;
+            if (replacementSnapshots.size > 0) {
+                const creditRows = await directusGetList(
+                    "manufacturing_job_order_replacement_credits",
+                    new URLSearchParams({
+                        [`filter[replacement_job_order_id][_eq]`]: String(joIdInt),
+                        fields: "credited_quantity",
+                        limit: "-1"
+                    })
+                );
+                for (const row of creditRows) {
+                    inheritedCompletedQuantity += Number(row.credited_quantity ?? 0);
+                }
+                if (inheritedCompletedQuantity > 0) {
+                    await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joIdInt}`, {
+                        method: "PATCH",
+                        headers,
+                        body: JSON.stringify({
+                            completed_quantity: inheritedCompletedQuantity,
+                            actual_quantity_produced: inheritedCompletedQuantity
+                        })
+                    });
+                }
+            }
+
             // A regular JO puts its linked parent orders into production only
             // after every requested allocation has been persisted.
             if (shouldInitialize && !options.deferSalesOrderTransition) {
@@ -1008,6 +1381,19 @@ export async function createJobOrder(
         console.error("[Manufacturing Directus API] Failed to create job order:", e);
         if (createdJobOrderNo) {
             try {
+                for (const creditId of createdReplacementCreditIds) {
+                    await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_replacement_credits/${creditId}`, {
+                        method: "DELETE",
+                        headers
+                    }).catch(() => {});
+                }
+                for (const moved of movedReservationRestorations) {
+                    await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations/${moved.id}`, {
+                        method: "PATCH",
+                        headers,
+                        body: JSON.stringify({ jo_material_id: moved.previousJoMaterialId })
+                    }).catch(() => {});
+                }
                 for (const [parentOrderId, previousStatus] of previousParentStatuses) {
                     if (!previousStatus) continue;
                     await fetch(`${DIRECTUS_URL}/items/sales_order/${parentOrderId}`, {

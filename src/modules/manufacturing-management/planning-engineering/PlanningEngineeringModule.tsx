@@ -851,8 +851,8 @@ export default function PlanningEngineeringModule() {
             `).join("");
 
             return `
-                <div style="border: 2px solid ${color}; border-radius: 10px; padding: 18px; margin-bottom: 25px; page-break-inside: avoid;">
-                    <div style="display: flex; justify-content: space-between; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px; margin-bottom: 15px;">
+                <div style="border: 2px solid ${color}; border-radius: 10px; padding: 18px; margin-bottom: 25px;">
+                    <div style="display: flex; justify-content: space-between; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px; margin-bottom: 15px; break-inside: avoid;">
                         <div>
                             <span style="background: ${color}; color: white; padding: 4px 10px; border-radius: 6px; font-weight: 800; font-size: 11px; text-transform: uppercase;">${title}</span>
                             <h2 style="margin: 8px 0 0 0; font-size: 20px; color: #111827;">${jo.jo_id}</h2>
@@ -959,6 +959,8 @@ export default function PlanningEngineeringModule() {
                         .no-print { display: none !important; }
                         * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
                         table tr, .jo-summary-block { page-break-inside: avoid; }
+                        thead { display: table-header-group; }
+                        h4 { break-after: avoid; }
                     }
                 </style>
             </head>
@@ -1061,7 +1063,7 @@ export default function PlanningEngineeringModule() {
                 <div className="space-y-1">
                     <h1 className="text-2xl font-bold tracking-tight">Job Order Planning & MRP Engine</h1>
                     <p className="text-sm text-muted-foreground">
-                        Schedule unlinked For Production demand by branch, run branch-scoped Net Requirements calculations, and create Job Orders for the shop floor.
+                        Schedule residual For Production and In Production demand by branch, run branch-scoped Net Requirements calculations, and create Job Orders for the shop floor.
                     </p>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
@@ -1158,7 +1160,7 @@ export default function PlanningEngineeringModule() {
                 <TabsList className="grid w-full max-w-6xl grid-cols-2 rounded-xl bg-muted/60 p-1 lg:grid-cols-5">
                     <TabsTrigger value="demand" className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs">
                         <ClipboardList className="h-4 w-4 text-primary" />
-                        <span>For Production Demand</span>
+                        <span>Schedulable SO Demand</span>
                         <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4.5 min-w-4.5 flex items-center justify-center font-mono">
                             {salesOrderGroups.length}
                         </Badge>
@@ -1547,7 +1549,7 @@ export default function PlanningEngineeringModule() {
                                     )}
                                 </div>
                                 <JobOrderJourneyBar
-                                    journey={resolveJobOrderJourney({ status: activeFamilyJo?.status, jobOrderNo: activeFamilyJo?.jo_id })}
+                                    journey={resolveJobOrderJourney({ status: activeFamilyJo?.status })}
                                     compact
                                 />
                             </div>
@@ -1584,8 +1586,8 @@ export default function PlanningEngineeringModule() {
                     {/* Body */}
                     <div className="flex-1 overflow-y-auto p-6 space-y-6 min-h-0 bg-muted/5">
                         <NextStepCallout
-                            action={resolveJobOrderJourney({ status: activeFamilyJo?.status, jobOrderNo: activeFamilyJo?.jo_id }).nextAction}
-                            blockers={resolveJobOrderJourney({ status: activeFamilyJo?.status, jobOrderNo: activeFamilyJo?.jo_id }).blockers}
+                            action={resolveJobOrderJourney({ status: activeFamilyJo?.status }).nextAction}
+                            blockers={resolveJobOrderJourney({ status: activeFamilyJo?.status }).blockers}
                             title="What's next"
                         />
                         {isReadOnlyDetails && (
@@ -1623,6 +1625,45 @@ export default function PlanningEngineeringModule() {
                                     </div>
                                 </div>
                             </div>
+                        )}
+                        {(activeFamilyJo?.replacementCredits || []).length > 0 && (
+                            <section className="rounded-xl border border-sky-500/25 bg-sky-500/5 p-4">
+                                <div className="mb-3">
+                                    <h3 className="text-xs font-bold uppercase tracking-wider text-sky-800 dark:text-sky-300">
+                                        Predecessor Job Orders and QA Credits
+                                    </h3>
+                                    <p className="mt-1 text-xs text-muted-foreground">
+                                        Prior terminated runs considered when this replacement Job Order was planned.
+                                    </p>
+                                </div>
+                                <div className="space-y-2">
+                                    {(activeFamilyJo?.replacementCredits || []).map((credit: any) => (
+                                        <div
+                                            key={`${credit.predecessorJobOrderId}:${credit.salesOrderDetailId}`}
+                                            className="grid gap-2 rounded-lg border border-border/60 bg-background/70 p-3 text-xs sm:grid-cols-4"
+                                        >
+                                            <div>
+                                                <span className="text-muted-foreground">Predecessor JO</span>
+                                                <div className="font-mono font-semibold text-foreground">{credit.predecessorJobOrderNo}</div>
+                                            </div>
+                                            <div>
+                                                <span className="text-muted-foreground">Sales Order</span>
+                                                <div className="font-semibold text-foreground">{credit.salesOrderNo}</div>
+                                            </div>
+                                            <div>
+                                                <span className="text-muted-foreground">SO Detail</span>
+                                                <div className="font-semibold text-foreground">#{credit.salesOrderDetailId}</div>
+                                            </div>
+                                            <div>
+                                                <span className="text-muted-foreground">QA-accepted quantity credited</span>
+                                                <div className="font-bold tabular-nums text-sky-700 dark:text-sky-300">
+                                                    {Number(credit.creditedQuantity || 0).toLocaleString()}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </section>
                         )}
                         <JobOrderStatusHistoryPanel history={activeFamilyJo?.status_history} />
                         {isFamilyOverview ? (

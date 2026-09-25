@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
+import { authorizeJobOrderModuleAccess, JOB_ORDER_MODULE_PATHS } from "@/app/api/manufacturing/job-orders/_module-access";
 import {
     fetchMmInventoryMovements,
     MmInventoryMovementError,
@@ -270,6 +271,8 @@ async function fetchFinalQAQueueRows(request: Request, releases: Array<Record<st
 
 // GET: Retrieves all final batch QA releases
 export async function GET(request: Request) {
+    const accessDenied = await authorizeJobOrderModuleAccess(JOB_ORDER_MODULE_PATHS.qualityAssurance);
+    if (accessDenied) return accessDenied;
     try {
         const { searchParams } = new URL(request.url);
         const joId = searchParams.get("joId");
@@ -303,6 +306,8 @@ export async function GET(request: Request) {
 
 // POST: Creates a final QA release record after validating the authoritative lot relationship.
 export async function POST(request: Request) {
+    const accessDenied = await authorizeJobOrderModuleAccess(JOB_ORDER_MODULE_PATHS.qualityAssurance);
+    if (accessDenied) return accessDenied;
     try {
         const body = await request.json();
         const jobOrderId = positiveSafeInteger(body.jobOrderId, "jobOrderId");

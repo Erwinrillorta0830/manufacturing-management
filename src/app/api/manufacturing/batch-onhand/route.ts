@@ -136,10 +136,27 @@ export async function GET(req: Request) {
     // In-memory filter on the results to ensure 100% accurate filtering
     if (list.length > 0) {
       if (branch) {
-        const targetBranchId = Number(branch);
+        const targetBranchIds = new Set<number>([Number(branch)]);
+        try {
+          const { DIRECTUS_URL, headers } = await import("@/app/api/manufacturing/directus-api");
+          const bRes = await fetch(`${DIRECTUS_URL}/items/branches/${branch}?fields=id,bad_stock_branch_id`, {
+            headers,
+            cache: "no-store",
+          });
+          if (bRes.ok) {
+            const bJson = await bRes.json();
+            const badId = bJson?.data?.bad_stock_branch_id;
+            if (badId && Number(badId) > 0) {
+              targetBranchIds.add(Number(badId));
+            }
+          }
+        } catch {
+          // ignore
+        }
+
         list = list.filter((b) => {
           const bId = Number(b.branchId ?? b.branch_id ?? 0);
-          return bId > 0 ? bId === targetBranchId : true;
+          return bId > 0 ? targetBranchIds.has(bId) : true;
         });
       }
 

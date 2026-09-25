@@ -9,7 +9,9 @@ import {
     Clock,
     Search,
     Building2,
-    Warehouse
+    Warehouse,
+    ChevronLeft,
+    ChevronRight
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -37,7 +39,6 @@ export default function MaterialStagingModule() {
         filteredJobOrders,
         selectedJobOrder,
         setSelectedJobOrderId,
-        workCenters,
         branches,
         stats,
         loading,
@@ -56,18 +57,27 @@ export default function MaterialStagingModule() {
         activeAllocationItem,
         transferring,
         batchStageResult,
-        fullyStagedJobOrderNo,
         stageProgressLabel,
         handleDismissBatchStageResult,
         handleOpenAllocationModal,
         handleCloseAllocationModal,
         handleCommitAllocation,
         handleStageAllAvailable,
-        handleProceedToProduction,
         refreshData
     } = useMaterialStaging();
 
     const showInitialLoadError = Boolean(loadError) && !hasSuccessfulLoad;
+
+    // Left queue pagination: 5 active job orders per page.
+    const QUEUE_PAGE_SIZE = 5;
+    const [queuePage, setQueuePage] = React.useState(0);
+    // Filters change the result set, so always restart from the first page.
+    React.useEffect(() => {
+        setQueuePage(0);
+    }, [searchQuery, selectedBranchId, selectedStatusFilter, onlyShortages]);
+    const queuePageCount = Math.max(1, Math.ceil(filteredJobOrders.length / QUEUE_PAGE_SIZE));
+    const safeQueuePage = Math.min(queuePage, queuePageCount - 1);
+    const visibleJobOrders = filteredJobOrders.slice(safeQueuePage * QUEUE_PAGE_SIZE, safeQueuePage * QUEUE_PAGE_SIZE + QUEUE_PAGE_SIZE);
 
     return (
         <div className="flex flex-col space-y-6 max-w-[1600px] mx-auto p-1 sm:p-2">
@@ -284,7 +294,10 @@ export default function MaterialStagingModule() {
                 </Button>
             </div>
 
-            {/* Main Interactive Dual-Panel Area */}
+            {/* Main Interactive Dual-Panel Area: the right pick list expands
+                fully with no in-card scrolling, and the left queue panel
+                stretches to match that height while its JO list scrolls
+                internally. */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
                 {/* Left Panel: Job Orders Queue */}
                 <div className="lg:col-span-5 flex flex-col space-y-3 lg:min-h-0 lg:rounded-2xl lg:border lg:border-border lg:bg-card lg:p-4">
@@ -312,8 +325,8 @@ export default function MaterialStagingModule() {
                             </p>
                         </div>
                     ) : (
-                        <div className="space-y-3 max-h-[750px] overflow-y-auto pr-1 lg:flex-1 lg:min-h-0">
-                            {filteredJobOrders.map((jo) => {
+                        <div className="space-y-3 max-h-[750px] overflow-y-auto pr-1 lg:flex-1 lg:min-h-0 lg:max-h-none">
+                            {visibleJobOrders.map((jo) => {
                                 const isSelected = selectedJobOrder?.job_order_id === jo.job_order_id;
                                 const cancelled = isCancelledJobOrderStatus(jo.status);
                                 const stagingState = stagingStateInfo(jo.reservation_status);
@@ -321,8 +334,7 @@ export default function MaterialStagingModule() {
                                     status: jo.status,
                                     allMaterialsStaged: jo.all_staged,
                                     hasShortage: jo.has_shortage,
-                                    hasActiveDestination: Boolean(jo.staging_work_center_id),
-                                    jobOrderNo: jo.job_order_no
+                                    hasActiveDestination: Boolean(jo.suggested_staging_bin)
                                 });
 
                                 return (
@@ -417,19 +429,50 @@ export default function MaterialStagingModule() {
                             })}
                         </div>
                     )}
+                    {queuePageCount > 1 && !(loading && !hasSuccessfulLoad) && (
+                        <div className="flex items-center justify-between gap-2 px-1 pt-1 text-xs text-muted-foreground">
+                            <span className="font-medium">
+                                Showing {safeQueuePage * QUEUE_PAGE_SIZE + 1}-{Math.min(filteredJobOrders.length, safeQueuePage * QUEUE_PAGE_SIZE + QUEUE_PAGE_SIZE)} of {filteredJobOrders.length}
+                            </span>
+                            <div className="flex items-center gap-1">
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setQueuePage((page) => Math.max(0, page - 1))}
+                                    disabled={safeQueuePage === 0}
+                                    className="h-7 w-7 p-0"
+                                    aria-label="Previous queue page"
+                                >
+                                    <ChevronLeft className="h-3.5 w-3.5" />
+                                </Button>
+                                <span className="font-mono font-semibold text-foreground px-1">
+                                    {safeQueuePage + 1} / {queuePageCount}
+                                </span>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setQueuePage((page) => Math.min(queuePageCount - 1, page + 1))}
+                                    disabled={safeQueuePage >= queuePageCount - 1}
+                                    className="h-7 w-7 p-0"
+                                    aria-label="Next queue page"
+                                >
+                                    <ChevronRight className="h-3.5 w-3.5" />
+                                </Button>
+                            </div>
+                        </div>
+                    )}
                 </div>
 
-                {/* Right Panel: Detailed Staging Pick List & Workspace */}
-                <div className="lg:col-span-7 lg:h-full">
+                {/* Right Panel: Detailed Staging Pick List & Workspace (fully
+                    expanded — no in-card scrolling; sets the row height). */}
+                <div className="lg:col-span-7 lg:h-full lg:min-h-0">
                     <StagingPickList
                         jobOrder={selectedJobOrder}
                         onOpenTransferModal={handleOpenAllocationModal}
                         onStageAllAvailable={handleStageAllAvailable}
                         batchStageResult={batchStageResult}
-                        fullyStagedJobOrderNo={fullyStagedJobOrderNo}
                         stageProgressLabel={stageProgressLabel}
                         onDismissBatchStageResult={handleDismissBatchStageResult}
-                        onProceedToProduction={handleProceedToProduction}
                         isProcessing={transferring}
                     />
                 </div>
@@ -442,7 +485,6 @@ export default function MaterialStagingModule() {
                 isOpen={isAllocationModalOpen}
                 onClose={handleCloseAllocationModal}
                 activeItem={activeAllocationItem}
-                workCenters={workCenters}
                 onCommit={handleCommitAllocation}
                 isLoading={transferring}
             />

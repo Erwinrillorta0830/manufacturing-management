@@ -1,7 +1,6 @@
 "use client";
 
 import React from "react";
-import Link from "next/link";
 import { motion } from "framer-motion";
 import {
     Dialog,
@@ -20,7 +19,6 @@ import {
     CheckCircle2, 
     ShieldCheck, 
     User, 
-    ExternalLink,
     AlertTriangle,
     Building2,
     Calendar,
@@ -514,19 +512,7 @@ export function WipDetailModal({
                 </Tabs>
 
                 {/* Footer */}
-                <DialogFooter className="p-4 border-t border-border/80 bg-muted/20 flex flex-row items-center justify-between shrink-0">
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        asChild
-                        className="text-xs gap-1.5"
-                    >
-                        <Link href={`/mm/shop-floor-execution-terminal?id=${encodeURIComponent(job.job_order_id)}&jo=${encodeURIComponent(job.job_order_no)}`}>
-                            <ExternalLink className="h-3.5 w-3.5" />
-                            <span>Open Shop Floor Execution</span>
-                        </Link>
-                    </Button>
-
+                <DialogFooter className="p-4 border-t border-border/80 bg-muted/20 flex flex-row items-center justify-end shrink-0">
                     <Button
                         variant="default"
                         size="sm"

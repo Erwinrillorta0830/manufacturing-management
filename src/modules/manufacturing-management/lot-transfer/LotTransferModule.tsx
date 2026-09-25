@@ -529,10 +529,13 @@ function BatchSelect({
         <LotTransferSearchableSelect
             value={value}
             onValueChange={onChange}
-            options={filtered.map((batch) => ({
-                value: String(batch.batchId),
-                label: `${batch.batchNumber} | ${source ? `available ${formatQuantity(batch.quantity)}` : `on hand ${formatQuantity(batch.quantity)}`}`
-            }))}
+            options={filtered.map((batch) => {
+                const qaSuffix = batch.qaStatus && batch.qaStatus.toUpperCase() !== "GOOD" ? ` · QA ${batch.qaStatus.toUpperCase()}` : "";
+                return {
+                    value: String(batch.batchId),
+                    label: `${batch.batchNumber} | ${source ? `available ${formatQuantity(batch.quantity)}` : `on hand ${formatQuantity(batch.quantity)}`}${qaSuffix}`
+                };
+            })}
             placeholder={source ? "Select source batch..." : "Select target batch..."}
             searchPlaceholder={source ? "Search source batches..." : "Search target batches..."}
             disabled={disabled}

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { authorizeJobOrderModuleAccess, JOB_ORDER_MODULE_PATHS } from "@/app/api/manufacturing/job-orders/_module-access";
 import { AuthenticatedActorError, requireManufacturingActorId } from "../_authenticated-actor";
 import {
     cancelJobOrderAndReturnMaterials,
@@ -6,6 +7,7 @@ import {
     returnJobOrderMaterialLeftovers,
     JobOrderCancellationError
 } from "./_cancellation-service";
+import { reconcileSalesOrderAfterJobOrderEnd } from "@/app/api/manufacturing/job-orders/_workflow-service";
 import {
     deleteJobOrderCancellationImage,
     JobOrderCancellationImageError,
@@ -43,6 +45,8 @@ function errorResponse(error: unknown) {
 }
 
 export async function GET(request: Request) {
+    const accessDenied = await authorizeJobOrderModuleAccess(JOB_ORDER_MODULE_PATHS.production);
+    if (accessDenied) return accessDenied;
     try {
         const { searchParams } = new URL(request.url);
         const joId = searchParams.get("joId");
@@ -57,6 +61,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+    const accessDenied = await authorizeJobOrderModuleAccess(JOB_ORDER_MODULE_PATHS.production);
+    if (accessDenied) return accessDenied;
     let uploadedImageId: string | null = null;
     try {
         const contentType = request.headers.get("content-type")?.toLowerCase() || "";
@@ -137,7 +143,15 @@ export async function POST(request: Request) {
                 actorUserId: actor,
                 cancellationImageId: uploadedImageId
             });
-            return NextResponse.json({ success: true, data: execution.response });
+            const warnings = await reconcileSalesOrderAfterJobOrderEnd(
+                Number(execution.response.jobOrderId),
+                "cancel"
+            );
+            return NextResponse.json({
+                success: true,
+                data: execution.response,
+                ...(warnings.length > 0 ? { warnings } : {})
+            });
         }
 
         if (action === "return-materials") {

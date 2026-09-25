@@ -7,10 +7,12 @@ import {
     detailRemainingQuantity,
     enrichSalesOrderReadModel,
     fetchDetailsForOrders,
+    findActiveJobOrderDetailIds,
     findPlannedQuantities,
     isPlanningVisibleDetail,
     SALES_ORDER_FIELDS
 } from "./_read";
+import { loadReplacementCreditData } from "./_replacement-credits";
 import {
     salesOrderPatchSchema,
     salesOrderPostSchema,
@@ -24,6 +26,7 @@ import {
 } from "./_status";
 import { areSalesOrderDetailsFullyFulfilled } from "./_fulfillment";
 import { loadSalesOrderQACoverage } from "../production/_qa-accepted-output";
+import { fetchMmInventoryMovements } from "../services/mm-inventory-movements.service";
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "";
@@ -31,6 +34,31 @@ const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "";
 const headers: Record<string, string> = {
     "Content-Type": "application/json"
 };
+
+function createFinishedGoodsReceiptReader() {
+    const receiptCache = new Map<number, Promise<Array<Record<string, unknown>>>>();
+    return async (jobOrderIds: number[]) => {
+        const receipts: Array<Record<string, unknown>> = [];
+        const concurrency = 8;
+        for (let index = 0; index < jobOrderIds.length; index += concurrency) {
+            const chunk = jobOrderIds.slice(index, index + concurrency);
+            const movementRows = await Promise.all(chunk.map((jobOrderId) => {
+                let pending = receiptCache.get(jobOrderId);
+                if (!pending) {
+                    pending = fetchMmInventoryMovements({
+                        transactionTypeId: 2,
+                        movementDirection: "IN",
+                        referenceId: jobOrderId
+                    }).then((rows) => rows as Array<Record<string, unknown>>);
+                    receiptCache.set(jobOrderId, pending);
+                }
+                return pending;
+            }));
+            receipts.push(...movementRows.flat());
+        }
+        return receipts;
+    };
+}
 if (DIRECTUS_STATIC_TOKEN) {
     headers["Authorization"] = `Bearer ${DIRECTUS_STATIC_TOKEN}`;
 }
@@ -639,10 +667,11 @@ export async function GET(request: Request) {
         const selectedIdsParam = searchParams.get("selectedIds") || "";
         const forProductionQueue = queue === "for-production";
         const inProductionQueue = queue === "in-production";
-        if (queue && !forProductionQueue && !inProductionQueue) {
+        const planningQueue = queue === "planning";
+        if (queue && !forProductionQueue && !inProductionQueue && !planningQueue) {
             return NextResponse.json({ error: `Unsupported Sales Order queue: ${queue}` }, { status: 400 });
         }
-        const excludeHasJo = searchParams.get("excludeHasJo") === "true" || forProductionQueue;
+        const excludeHasJo = searchParams.get("excludeHasJo") === "true" || forProductionQueue || planningQueue;
         const includeAllStatuses = !forProductionQueue && searchParams.get("includeAllStatuses") === "true";
         const customerCode = searchParams.get("customerCode") || "";
         const dateFrom = searchParams.get("dateFrom") || "";
@@ -653,7 +682,9 @@ export async function GET(request: Request) {
             .join(",");
         const filters = {
             search,
-            status: forProductionQueue
+            status: planningQueue
+                ? "For Production,In Production"
+                : forProductionQueue
                 ? "For Production"
                 : inProductionQueue
                 ? "In Production"
@@ -670,6 +701,7 @@ export async function GET(request: Request) {
         let totalCount = 0;
         let countExact = true;
         let hasMore = false;
+        const readFinishedGoodsReceipts = createFinishedGoodsReceiptReader();
 
         if (excludeHasJo) {
             const candidateChunkSize = 100;
@@ -695,7 +727,11 @@ export async function GET(request: Request) {
                 if (candidates.length === 0) break;
 
                 const candidateDetails = await fetchDetailsForOrders(read, candidates.map((order: any) => Number(order.order_id)));
-                const chunkPlannedQuantities = await findPlannedQuantities(read, candidateDetails);
+                const [chunkPlannedQuantities, activeJobOrderDetailIds, replacementCreditData] = await Promise.all([
+                    findPlannedQuantities(read, candidateDetails),
+                    findActiveJobOrderDetailIds(read, candidateDetails),
+                    loadReplacementCreditData(read, candidateDetails, readFinishedGoodsReceipts)
+                ]);
                 for (const [detailId, quantity] of chunkPlannedQuantities) {
                     plannedQuantities.set(detailId, quantity);
                 }
@@ -711,13 +747,23 @@ export async function GET(request: Request) {
                     const eligibleOrderDetails = orderDetails.filter((detail) => {
                         const detailId = Number(detail.detail_id || detail.id);
                         const plannedQuantity = chunkPlannedQuantities.get(detailId) || 0;
-                        const isScheduled = detailRemainingQuantity(detail, plannedQuantity) <= 0;
+                        const replacementCreditQuantity = replacementCreditData.byDetail.get(detailId) || 0;
+                        const remaining = detailRemainingQuantity(detail, plannedQuantity, replacementCreditQuantity);
+                        const isScheduled = remaining <= 0;
+                        if (planningQueue) {
+                            const isSchedulableStatus = candidate.order_status === "For Production"
+                                || candidate.order_status === "In Production";
+                            return isSchedulableStatus
+                                && remaining > 0
+                                && !activeJobOrderDetailIds.has(detailId);
+                        }
                         return isPlanningVisibleDetail(
                             detail,
                             candidate.order_status,
                             isScheduled,
                             plannedQuantity,
-                            includeAllStatuses
+                            includeAllStatuses,
+                            activeJobOrderDetailIds.has(detailId)
                         );
                     });
                     if (eligibleOrderDetails.length > 0) {
@@ -777,29 +823,46 @@ export async function GET(request: Request) {
             ? [...prefetchedDetails, ...(missingSelectedIds.length > 0 ? await fetchDetailsForOrders(read, missingSelectedIds) : [])]
             : await fetchDetailsForOrders(read, [...orderIdsToFetch]);
         if (excludeHasJo) {
-            plannedQuantities = await findPlannedQuantities(read, details);
+            const [resolvedPlannedQuantities, activeJobOrderDetailIds, replacementCreditData] = await Promise.all([
+                findPlannedQuantities(read, details),
+                findActiveJobOrderDetailIds(read, details),
+                loadReplacementCreditData(read, details, readFinishedGoodsReceipts)
+            ]);
+            plannedQuantities = resolvedPlannedQuantities;
             if (!forProductionQueue) {
                 const orderById = new Map(contextOrders.map((order: any) => [Number(order.order_id), order]));
                 details = details.filter((detail: any) => {
                     const order = orderById.get(Number(detail.order_id));
                     const detailId = Number(detail.detail_id || detail.id);
                     const plannedQuantity = plannedQuantities.get(detailId) || 0;
+                    const replacementCreditQuantity = replacementCreditData.byDetail.get(detailId) || 0;
+                    const remaining = detailRemainingQuantity(detail, plannedQuantity, replacementCreditQuantity);
+                    if (planningQueue) {
+                        return (order?.order_status === "For Production" || order?.order_status === "In Production")
+                            && remaining > 0
+                            && !activeJobOrderDetailIds.has(detailId);
+                    }
                     return isPlanningVisibleDetail(
                         detail,
                         order?.order_status,
-                        detailRemainingQuantity(detail, plannedQuantity) <= 0,
+                        remaining <= 0,
                         plannedQuantity,
-                        includeAllStatuses
+                        includeAllStatuses,
+                        activeJobOrderDetailIds.has(detailId)
                     );
                 });
             }
         }
+        const replacementCreditData = excludeHasJo
+            ? await loadReplacementCreditData(read, details, readFinishedGoodsReceipts)
+            : { byDetail: new Map<number, number>(), attributions: [] };
         const detailsMap = await enrichSalesOrderReadModel(
             read,
             contextOrders,
             details,
             excludeHasJo ? plannedQuantities : undefined,
-            excludeHasJo || inProductionQueue
+            excludeHasJo || inProductionQueue,
+            replacementCreditData.byDetail
         );
 
         const totalPages = Math.ceil(totalCount / limit);

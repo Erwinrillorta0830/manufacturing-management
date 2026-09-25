@@ -29,6 +29,7 @@ import { isCancelledJobOrderStatus } from "../../job-order-status";
 import { resolveJobOrderJourney, stagingStateInfo } from "../../shared/job-order-journey";
 import { JobOrderJourneyBar } from "../../shared/components/JobOrderJourneyBar";
 import { downloadStagingSlipPdf } from "../utils/generateStagingSlipPdf";
+import { formatShiftLabel } from "../utils/format-shift-label";
 import { JobOrderStatusBadge } from "../../shared/components/JobOrderStatusBadge";
 import { NextStepCallout } from "../../shared/components/NextStepCallout";
 
@@ -37,10 +38,8 @@ interface StagingPickListProps {
     onOpenTransferModal: (jobOrder: StagingJobOrder, material: MaterialStagingItem, lot?: AllocatedLot) => void;
     onStageAllAvailable: (jobOrder: StagingJobOrder) => Promise<void>;
     batchStageResult?: BatchStageResult | null;
-    fullyStagedJobOrderNo?: string | null;
     stageProgressLabel?: string | null;
     onDismissBatchStageResult?: () => void;
-    onProceedToProduction?: (jobOrderNo: string) => void;
     isProcessing?: boolean;
 }
 
@@ -49,17 +48,15 @@ export function StagingPickList({
     onOpenTransferModal,
     onStageAllAvailable,
     batchStageResult,
-    fullyStagedJobOrderNo = null,
     stageProgressLabel = null,
     onDismissBatchStageResult,
-    onProceedToProduction,
     isProcessing = false
 }: StagingPickListProps) {
     const [expandedMaterials, setExpandedMaterials] = useState<Record<number, boolean>>({});
 
     if (!jobOrder) {
         return (
-            <div className="flex flex-col items-center justify-center min-h-[380px] p-8 text-center bg-card rounded-2xl border border-dashed border-border/80 lg:h-full">
+            <div className="flex flex-col items-center justify-center min-h-[380px] p-8 text-center bg-card rounded-2xl border border-dashed border-border/80 lg:h-full lg:min-h-0">
                 <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-muted text-muted-foreground mb-4 shadow-sm">
                     <Boxes className="h-7 w-7" />
                 </div>
@@ -89,12 +86,11 @@ export function StagingPickList({
         status: jobOrder.status,
         allMaterialsStaged: jobOrder.all_staged,
         hasShortage: jobOrder.has_shortage,
-        hasActiveDestination: Boolean(jobOrder.staging_work_center_id),
-        jobOrderNo: jobOrder.job_order_no
+        hasActiveDestination: Boolean(jobOrder.suggested_staging_bin)
     });
 
     return (
-        <div className="flex flex-col space-y-5 bg-card rounded-2xl border border-border p-5 sm:p-6 shadow-sm lg:h-full">
+        <div className="flex flex-col space-y-5 bg-card rounded-2xl border border-border p-5 sm:p-6 shadow-sm lg:h-full lg:min-h-0">
             {/* Header & Meta Summary */}
             <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 pb-5 border-b border-border">
                 <div className="space-y-1">
@@ -142,11 +138,9 @@ export function StagingPickList({
                         <span>&bull;</span>
                         <span>Branch: <strong className="text-foreground">{jobOrder.branch_name || (jobOrder.branch_id ? `Branch #${jobOrder.branch_id}` : "Unassigned")}</strong></span>
                         <span>&bull;</span>
-                        <span>Work Center: <strong className="text-foreground">{jobOrder.primary_work_center_name}</strong></span>
-                        <span>&bull;</span>
                         <span>Target Bin: <code className="font-mono text-emerald-600 dark:text-emerald-400 font-semibold">{jobOrder.suggested_staging_bin || "No active destination"}</code></span>
                         <span>&bull;</span>
-                        <span>Shift: <strong className="text-foreground">{jobOrder.shift_option || "Shift 1"}</strong></span>
+                        <span>Shift Hours: <strong className="text-foreground">{formatShiftLabel(jobOrder.shift_option)}</strong></span>
                     </div>
                 </div>
 
@@ -172,8 +166,7 @@ export function StagingPickList({
                         : isAllStaged
                             ? {
                                 label: "Open Production Workflow",
-                                description: "All materials are on the floor. Start the shop-floor shift run when production begins.",
-                                href: `/mm/shop-floor-execution-terminal?jo=${encodeURIComponent(jobOrder.job_order_no)}`
+                                description: "All materials are on the floor. Start the shift run from the shop-floor workspace when production begins."
                             }
                             : {
                                 label: "Stage available materials",
@@ -241,17 +234,6 @@ export function StagingPickList({
                             )}
                         </div>
                     </div>
-
-                    {batchStageResult.full_success && fullyStagedJobOrderNo === batchStageResult.job_order_no && onProceedToProduction && (
-                        <Button
-                            type="button"
-                            size="sm"
-                            onClick={() => onProceedToProduction(batchStageResult.job_order_no)}
-                            className="h-8 w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-sm shadow-emerald-500/20"
-                        >
-                            <ArrowRight className="mr-1.5 h-3.5 w-3.5" /> Proceed to Production
-                        </Button>
-                    )}
 
                     <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
                         {batchStageResult.material_results.map((material) => (
@@ -470,9 +452,6 @@ export function StagingPickList({
                                                                         <span className="font-mono font-bold text-foreground">
                                                                             {lot.batch_no}
                                                                         </span>
-                                                                        <Badge variant="outline" className="text-[10px] bg-background">
-                                                                            QA: {lot.qa_status || "Passed"}
-                                                                        </Badge>
                                                                         {lot.expiry_date && (
                                                                             <span className="text-[11px] text-muted-foreground">
                                                                                 Exp: {lot.expiry_date}

@@ -14,12 +14,21 @@ import {
     JOB_ORDER_STATUS
 } from "@/modules/manufacturing-management/job-order-status";
 import { isProductionSchedulingStatus } from "../../sales-order/_status";
+import {
+    effectiveReplacementCreditQuantity,
+    loadReplacementCreditData
+} from "../../sales-order/_replacement-credits";
 import { salesOrderStatusAfterFulfillment } from "../../sales-order/_fulfillment";
 import { SalesOrderAllocationConflictError } from "../helpers/create-helper";
 import type { SalesOrderSchedulingPlan } from "../helpers/create-helper";
 import { executeJobOrderWorkflow, JobOrderWorkflowError } from "../../job-orders/_workflow-service";
 import { resolveProductUnitId } from "../../services/mm-lots.service";
 import { calculateRequiredBatchCount, resolveProductionShiftHours } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
+import {
+    JOB_ORDER_MODULE_PATHS,
+    JobOrderModuleAccessError,
+    requireJobOrderModuleAccess
+} from "@/app/api/manufacturing/job-orders/_module-access";
 
 const RELEASE_DRAFT_FETCH_TIMEOUT_MS = 15000;
 const QUANTITY_EPSILON = 0.000001;
@@ -136,6 +145,32 @@ async function fetchSchedulingAllocations(detailIds: number[]): Promise<any[]> {
         throw new Error(`Unable to validate existing Job Order allocations (${legacyResponse.status}).`);
     }
     return (await legacyResponse.json()).data || [];
+}
+
+async function readReplacementCreditCollection(collection: string, params: URLSearchParams): Promise<{ data: any[] }> {
+    const response = await fetchWithTimeout(
+        `${DIRECTUS_URL}/items/${collection}?${params.toString()}`,
+        { headers, cache: "no-store" }
+    );
+    if (!response.ok) {
+        throw new Error(`Unable to validate replacement credits (${response.status}).`);
+    }
+    return (await response.json()) as { data: any[] };
+}
+
+async function readFinishedGoodsReceipts(jobOrderIds: number[]): Promise<Array<Record<string, unknown>>> {
+    const receipts: Array<Record<string, unknown>> = [];
+    const concurrency = 8;
+    for (let index = 0; index < jobOrderIds.length; index += concurrency) {
+        const chunk = jobOrderIds.slice(index, index + concurrency);
+        const movementRows = await Promise.all(chunk.map((jobOrderId) => fetchMmInventoryMovements({
+            transactionTypeId: 2,
+            movementDirection: "IN",
+            referenceId: jobOrderId
+        }).then((rows) => rows as Array<Record<string, unknown>>)));
+        receipts.push(...movementRows.flat());
+    }
+    return receipts;
 }
 
 async function validateSalesOrderScheduling(
@@ -296,6 +331,16 @@ async function validateSalesOrderScheduling(
         availableQuantity: number;
     }> = [];
     const selectedBranchIds = new Set<number>();
+    // Net terminated-predecessor output credits so a replacement JO is
+    // planned against the still-uncovered demand (mirrors create-helper and
+    // the planning queue). Without this, a partially credited line is
+    // unschedulable: validation demands the gross quantity while creation
+    // caps the allocation at the netted remainder.
+    const replacementCreditData = await loadReplacementCreditData(
+        readReplacementCreditCollection,
+        details,
+        readFinishedGoodsReceipts
+    );
     for (const detailId of detailIds) {
         const detail = detailsById.get(detailId);
         const parentOrderId = relationId(detail.order_id);
@@ -317,7 +362,14 @@ async function validateSalesOrderScheduling(
             throw new PlanningConflictError(`Sales Order detail ${detailId} does not match the consolidated BOM version.`);
         }
         const planned = plannedQuantityByDetail.get(detailId) || 0;
-        const remainingQuantity = Math.max(0, ordered - Math.max(allocated, served) - planned);
+        const replacementCredit = effectiveReplacementCreditQuantity(
+            ordered,
+            allocated,
+            served,
+            planned,
+            replacementCreditData.byDetail.get(detailId) || 0
+        );
+        const remainingQuantity = Math.max(0, ordered - Math.max(allocated, served) - planned - replacementCredit);
         if (!Number.isFinite(ordered) || ordered <= 0 || !Number.isFinite(allocated) || allocated < 0 || !Number.isFinite(served) || served < 0) {
             throw new PlanningConflictError(`Sales Order detail ${detailId} has invalid quantities.`);
         }
@@ -367,25 +419,6 @@ async function validateSalesOrderScheduling(
             lines: schedulingLines
         } satisfies SalesOrderSchedulingPlan
     };
-}
-
-async function resolvePlanningEncoderId(): Promise<number | null> {
-    try {
-        const cookieStore = await cookies();
-        const token = cookieStore.get("vos_access_token")?.value;
-        if (!token) return null;
-        const parts = token.split(".");
-        if (parts.length < 2) return null;
-        let base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-        while (base64.length % 4) base64 += "=";
-        const payload = JSON.parse(Buffer.from(base64, "base64").toString("utf8"));
-        const rawId = payload?.id || payload?.user_id || payload?.sub;
-        const parsed = Number(rawId);
-        return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-    } catch (error) {
-        console.error("Error decoding user token in multi-JO creation:", error);
-        return null;
-    }
 }
 
 async function resolvePlanningOverrideAccess(): Promise<boolean> {
@@ -449,6 +482,11 @@ function buildSchedulingDbPayload(
             product_id: schedulingPlan.productId,
             product_name: jo.product_name,
             quantity: schedulingPlan.totalQuantity,
+            requested_quantity: schedulingPlan.requestedQuantity ?? schedulingPlan.totalQuantity,
+            material_target_quantity: jo.products?.[0]?.material_target_quantity ?? jo.products?.[0]?.materialTargetQuantity,
+            timing_target_quantity: jo.products?.[0]?.timing_target_quantity
+                ?? jo.products?.[0]?.timingTargetQuantity
+                ?? schedulingPlan.totalQuantity,
             bom: { version_id: schedulingPlan.bomVersionId },
             components: jo.components || null,
             routings: jo.routings || null,
@@ -477,7 +515,7 @@ async function deleteJobOrderTree(jobOrderNo: string): Promise<boolean> {
     return deleteJobOrder(String(header.job_order_no || jobOrderNo));
 }
 
-async function handleReleaseMultiple(body: Record<string, any>): Promise<Response> {
+async function handleReleaseMultiple(body: Record<string, any>, encoderId: number): Promise<Response> {
     const baseJoNumber = String(body.baseJoNumber || "").trim();
     const shared = body.shared || {};
     const jobs = Array.isArray(body.jobs) ? body.jobs : [];
@@ -555,7 +593,14 @@ async function handleReleaseMultiple(body: Record<string, any>): Promise<Respons
             bom: { version_id: bomVersionId },
             subAssemblyVersionMap: job?.subAssemblyVersionMap || {},
             assignments: job?.assignments || {},
-            products: [{ product_id: productId, product_name: String(job?.productName || ""), quantity, bom: { version_id: bomVersionId } }]
+            products: [{
+                product_id: productId,
+                product_name: String(job?.productName || ""),
+                quantity,
+                timing_target_quantity: Number(job?.timingTargetQuantity ?? quantity),
+                material_target_quantity: Number(job?.materialTargetQuantity ?? 0) || undefined,
+                bom: { version_id: bomVersionId }
+            }]
         };
         const suppliedSalesOrderIds = Array.isArray(job?.salesOrderIds) ? job.salesOrderIds : [];
         const validation = await validateSalesOrderScheduling(jobConfig, detailIds, suppliedSalesOrderIds, { requireFullQuantity: true });
@@ -573,7 +618,6 @@ async function handleReleaseMultiple(body: Record<string, any>): Promise<Respons
         previousParentStatuses.set(parentOrderId, String(order?.order_status || ""));
     }
 
-    const encoderId = await resolvePlanningEncoderId();
     const createdJobOrderNos: string[] = [];
     const createdResults: any[] = [];
     try {
@@ -599,7 +643,7 @@ async function handleReleaseMultiple(body: Record<string, any>): Promise<Respons
             if (shouldInitialize) {
                 const workflow = await executeJobOrderWorkflow(result.job_order_id || 0, {
                     action: "initialize",
-                    actorUserId: encoderId || 24,
+                    actorUserId: encoderId,
                     idempotencyKey: String(body.idempotencyKey || `planning-initialize:${result.job_order_id}`).trim(),
                     remarks: String(shared.remarks || "Initialize Job Order for material picking").trim(),
                     overrideReason: forceInitialize ? overrideReason : undefined,
@@ -641,9 +685,16 @@ export async function handlePOST(request: Request) {
     try {
         const body = await request.json();
         const { action } = body;
+        const moduleUser = await requireJobOrderModuleAccess(
+            action === "direct-allocate"
+                ? [JOB_ORDER_MODULE_PATHS.planning, JOB_ORDER_MODULE_PATHS.salesOrders]
+                : action === "release-draft"
+                    ? [JOB_ORDER_MODULE_PATHS.planning, JOB_ORDER_MODULE_PATHS.production]
+                    : JOB_ORDER_MODULE_PATHS.planning
+        );
 
         if (action === "release-multiple") {
-            return await handleReleaseMultiple(body);
+            return await handleReleaseMultiple(body, moduleUser.userId);
         }
 
         if (action === "initialize" || action === "release-draft") {
@@ -676,8 +727,7 @@ export async function handlePOST(request: Request) {
 
             const overrideReason = String(body.overrideReason || body.overrideRemarks || "").trim();
             const forceInitialize = body.force === true || body.forceRelease === true;
-            let encoderId = await resolvePlanningEncoderId();
-            if (!encoderId) encoderId = 24;
+            const encoderId = moduleUser.userId;
             if (forceInitialize && !overrideReason) {
                 return NextResponse.json({ error: "An override reason is required when initializing with material shortfalls." }, { status: 400 });
             }
@@ -1519,30 +1569,7 @@ export async function handlePOST(request: Request) {
         }
 
         // Get logged in user ID from secure access token cookie
-        let encoderId: number | null = null;
-        try {
-            const cookieStore = await cookies();
-            const token = cookieStore.get("vos_access_token")?.value;
-            if (token) {
-                const parts = token.split(".");
-                if (parts.length >= 2) {
-                    const base64Url = parts[1];
-                    let base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-                    while (base64.length % 4) base64 += "=";
-                    const jsonPayload = Buffer.from(base64, "base64").toString("utf8");
-                    const payload = JSON.parse(jsonPayload);
-                    const rawId = payload?.id || payload?.user_id || payload?.sub;
-                    if (rawId) {
-                        const parsed = Number(rawId);
-                        if (!isNaN(parsed)) {
-                            encoderId = parsed;
-                        }
-                    }
-                }
-            }
-        } catch (err) {
-            console.error("Error decoding user token in JO creation:", err);
-        }
+        const encoderId = moduleUser.userId;
 
         // Map camelCase from frontend to snake_case for Directus database
         const schedulingPlan = schedulingValidation.schedulingPlan;
@@ -1622,7 +1649,7 @@ export async function handlePOST(request: Request) {
         if (body.initialize === true) {
             const workflow = await executeJobOrderWorkflow(result.job_order_id || 0, {
                 action: "initialize",
-                actorUserId: encoderId || 24,
+                actorUserId: encoderId,
                 idempotencyKey: String(body.idempotencyKey || `planning-initialize:${result.job_order_id}`).trim(),
                 remarks: String(body.remarks || jo.remarks || "Initialize Job Order for material picking").trim(),
                 overrideReason: forceInitialize ? overrideReason : undefined,
@@ -1641,6 +1668,9 @@ export async function handlePOST(request: Request) {
         console.error("API Error in planning-engineering POST:", e);
         if (e instanceof PlanningConflictError || e instanceof SalesOrderAllocationConflictError) {
             return NextResponse.json({ error: e.message }, { status: 409 });
+        }
+        if (e instanceof JobOrderModuleAccessError) {
+            return NextResponse.json({ error: e.message, code: e.code }, { status: e.status });
         }
         return NextResponse.json(
             { error: (e as { message?: string }).message || "Failed to create Job Order", ...(e instanceof JobOrderWorkflowError ? { code: e.code, ...(e.details ? { details: e.details } : {}) } : {}) },

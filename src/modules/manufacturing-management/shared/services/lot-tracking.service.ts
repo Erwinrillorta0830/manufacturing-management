@@ -193,16 +193,34 @@ export async function fetchLotsByBranch(branchId?: number, token?: string): Prom
         };
       });
 
-      if (branchId) {
-        return mapped.filter((l: MMLot) => Number(l.branch_id) === Number(branchId));
-      }
       return mapped;
     }
 
     // Server-side direct Directus call
-    const filterParts: string[] = [];
+    const targetBranchIds = branchId ? [branchId] : [];
     if (branchId) {
-      filterParts.push(`filter[branch_id][_eq]=${branchId}`);
+      try {
+        const bRes = await fetch(`${DIRECTUS_URL}/items/branches/${branchId}?fields=id,bad_stock_branch_id`, {
+          headers: getHeaders(token),
+          cache: "no-store",
+        });
+        if (bRes.ok) {
+          const bData = await bRes.json();
+          const badId = bData?.data?.bad_stock_branch_id;
+          if (badId && Number(badId) > 0) {
+            targetBranchIds.push(Number(badId));
+          }
+        }
+      } catch (bErr) {
+        console.warn("[LotTracking] Failed to resolve twin bad branch server-side:", bErr);
+      }
+    }
+
+    const filterParts: string[] = [];
+    if (targetBranchIds.length === 1) {
+      filterParts.push(`filter[branch_id][_eq]=${targetBranchIds[0]}`);
+    } else if (targetBranchIds.length > 1) {
+      filterParts.push(`filter[branch_id][_in]=${targetBranchIds.join(",")}`);
     }
     const queryStr = filterParts.length > 0 ? `&${filterParts.join("&")}` : "";
     
@@ -890,23 +908,23 @@ export function resolveProductClassification(
   }
 
   // 1. Direct Product Type ID check
-  if (typeId === 389) return { code: "RM", label: "Raw Material" };
-  if (typeId === 390) return { code: "PKG", label: "Packaging" };
-  if (typeId === 388) return { code: "FG", label: "Finished Good" };
+  if (typeId === 389) return { code: "RM", label: "Raw Materials" };
+  if (typeId === 390) return { code: "PKG", label: "Packaging Items" };
+  if (typeId === 388) return { code: "FG", label: "Finished Goods" };
 
   // 2. Direct Product Type Name check
   if (typeName) {
     if (typeName.includes("raw") || typeName.includes("ingredient") || typeName === "rm" || typeName.includes("bulk")) {
-      return { code: "RM", label: "Raw Material" };
+      return { code: "RM", label: "Raw Materials" };
     }
     if (typeName.includes("packag") || typeName.includes("container") || typeName.includes("bottle") || typeName === "pkg" || typeName.includes("wrapper") || typeName.includes("cap") || typeName.includes("box")) {
-      return { code: "PKG", label: "Packaging" };
+      return { code: "PKG", label: "Packaging Items" };
     }
     if (typeName.includes("trade") || typeName.includes("merchandise") || typeName === "tg") {
       return { code: "OTHER", label: "Traded Good" };
     }
     if (typeName.includes("finish") || typeName.includes("commercial") || typeName === "fg") {
-      return { code: "FG", label: "Finished Good" };
+      return { code: "FG", label: "Finished Goods" };
     }
   }
 
@@ -920,13 +938,13 @@ export function resolveProductClassification(
       return { code: "OTHER", label: "Traded Good" };
     }
     if (catLower.includes("bihon") || catLower.includes("canton") || catLower.includes("noodle") || catLower.includes("pasta") || catLower.includes("finish") || catLower.includes("commercial") || catLower.includes("fg")) {
-      return { code: "FG", label: "Finished Good" };
+      return { code: "FG", label: "Finished Goods" };
     }
     if (catLower.includes("raw") || catLower.includes("ingredient") || catLower.includes("flour") || catLower.includes("bulk") || catLower.includes("chemical") || catLower.includes("spice") || catLower.includes("seasoning") || catLower.includes("rm")) {
-      return { code: "RM", label: "Raw Material" };
+      return { code: "RM", label: "Raw Materials" };
     }
     if (catLower.includes("packag") || catLower.includes("bottle") || catLower.includes("cap") || catLower.includes("container") || catLower.includes("wrapping") || catLower.includes("label") || catLower.includes("film") || catLower.includes("box") || catLower.includes("pouch") || catLower.includes("pm") || catLower.includes("pkg")) {
-      return { code: "PKG", label: "Packaging" };
+      return { code: "PKG", label: "Packaging Items" };
     }
   }
 
@@ -936,13 +954,13 @@ export function resolveProductClassification(
     return { code: "OTHER", label: "Traded Good" };
   }
   if (codeLower.startsWith("rm-") || codeLower.startsWith("rm_") || codeLower.startsWith("raw-") || codeLower.startsWith("raw_")) {
-    return { code: "RM", label: "Raw Material" };
+    return { code: "RM", label: "Raw Materials" };
   }
   if (codeLower.startsWith("pkg-") || codeLower.startsWith("pkg_") || codeLower.startsWith("pack-") || codeLower.startsWith("pm-") || codeLower.startsWith("pm_")) {
-    return { code: "PKG", label: "Packaging" };
+    return { code: "PKG", label: "Packaging Items" };
   }
   if (codeLower.startsWith("fg-") || codeLower.startsWith("fg_") || codeLower.startsWith("fin-") || codeLower.startsWith("test-pgb") || codeLower.startsWith("pgb") || codeLower.includes("-pgb-")) {
-    return { code: "FG", label: "Finished Good" };
+    return { code: "FG", label: "Finished Goods" };
   }
 
   // 5. Product Name Keyword check
@@ -951,13 +969,13 @@ export function resolveProductClassification(
     return { code: "OTHER", label: "Traded Good" };
   }
   if (nameLower.includes("bihon") || nameLower.includes("canton") || nameLower.includes("noodle") || nameLower.includes("pasta") || nameLower.includes("finished") || nameLower.includes("commercial") || nameLower.includes("premium golden") || nameLower.includes("golden bihon")) {
-    return { code: "FG", label: "Finished Good" };
+    return { code: "FG", label: "Finished Goods" };
   }
   if (nameLower.includes("raw") || nameLower.includes("ingredient") || nameLower.includes("flour") || nameLower.includes("sugar") || nameLower.includes("salt") || nameLower.includes("oil") || nameLower.includes("starch") || nameLower.includes("cassava") || nameLower.includes("cornstarch") || nameLower.includes("flavor") || nameLower.includes("chemical") || nameLower.includes("water")) {
-    return { code: "RM", label: "Raw Material" };
+    return { code: "RM", label: "Raw Materials" };
   }
   if (nameLower.includes("box") || nameLower.includes("pouch") || nameLower.includes("bottle") || nameLower.includes("carton") || nameLower.includes("film") || nameLower.includes("label") || nameLower.includes("cap") || nameLower.includes("wrapper") || nameLower.includes("packag") || nameLower.includes("container")) {
-    return { code: "PKG", label: "Packaging" };
+    return { code: "PKG", label: "Packaging Items" };
   }
 
   return { code: "OTHER", label: "Unclassified" };
