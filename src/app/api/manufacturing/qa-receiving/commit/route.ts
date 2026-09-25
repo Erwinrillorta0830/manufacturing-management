@@ -185,7 +185,7 @@ async function persistedResult(
     const receiptNumbers = input.lines.map(line => receiptNumberForLine(receivingTicketNumber, line.lineId));
     const receiptParams = new URLSearchParams({
         "filter[receipt_no][_in]": receiptNumbers.join(","),
-        fields: "purchase_order_product_id,purchase_order_id,receipt_no,product_id,branch_id,mm_lot_id,lot_id,batch_no,received_quantity,quantity_rejected,is_over_received,over_delivery_quantity,unit_price,final_landed_unit_cost,qa_status,expiry_date,received_date,is_replacement,quarantine_disposition_id,receipt_type",
+        fields: "purchase_order_product_id,purchase_order_id,receipt_no,product_id,branch_id,mm_lot_id,lot_id,batch_no,received_quantity,quantity_rejected,rejected_lot_id,rejected_batch_id,is_over_received,over_delivery_quantity,unit_price,final_landed_unit_cost,qa_status,expiry_date,received_date,is_replacement,quarantine_disposition_id,receipt_type",
         limit: "-1"
     });
     const [headerRows, receivingRows] = await Promise.all([
@@ -448,6 +448,8 @@ async function persistedResult(
             batchNumber: String(receiving.batch_no || primaryAllocation?.batchNumber || ""),
             receivedQuantity: Number(receiving.received_quantity || 0),
             rejectedQuantity: Number(receiving.quantity_rejected || 0),
+            rejectedLotId: receiving.rejected_lot_id != null ? Number(receiving.rejected_lot_id) : null,
+            rejectedBatchId: receiving.rejected_batch_id != null ? String(receiving.rejected_batch_id) : null,
             isOverReceived,
             overDeliveryQuantity: Number(receiving.over_delivery_quantity || 0),
             unitPrice: Number(receiving.unit_price || 0),
