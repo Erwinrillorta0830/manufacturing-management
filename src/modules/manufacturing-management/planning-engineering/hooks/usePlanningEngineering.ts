@@ -647,32 +647,15 @@ export function usePlanningEngineering() {
         }
     };
 
-    // Open Release Modal & initialize parameters
-    const handleInitiateRelease = (replacementDetailId?: number) => {
+    const validateReleaseBranch = () => {
         if (parseValidBranchId(selectedBranchId) === null) {
             toast.error("Please select a target branch before releasing a Job Order.");
-            return;
+            return false;
         }
+        return true;
+    };
 
-        let linesToRelease = selectedLines;
-        if (replacementDetailId !== undefined) {
-            const line = selectableLinesByDetailId.get(replacementDetailId);
-            if (!line || !canCreateReplacementJobOrder(line)) {
-                toast.error("This Sales Order line no longer has eligible residual demand. Refresh the In Production list and try again.");
-                return;
-            }
-            const productId = Number(line.product_id?.product_id);
-            const bomVersionId = Number(line.bom_version_id);
-            if (!Number.isInteger(productId) || productId <= 0 || !Number.isInteger(bomVersionId) || bomVersionId <= 0) {
-                toast.error("Cannot release: the selected line must have a valid product and active recipe version.");
-                return;
-            }
-            linesToRelease = [line];
-            setSelectedDetailIds([replacementDetailId]);
-        } else if (!mergeValidation.isValid) {
-            return;
-        }
-
+    const openReleaseDialog = (linesToRelease: SalesOrderDetail[], isReplacement: boolean) => {
         // Sum total demand
         // Sales-Order-linked JO quantity is authoritative: it is the sum of
         // each selected line's remaining unfulfilled quantity. Net
@@ -692,8 +675,34 @@ export function usePlanningEngineering() {
         setDueDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);
         setShiftOption(String(DEFAULT_PRODUCTION_SHIFT_HOURS));
         setPriority(0);
-        setRemarks(`${replacementDetailId === undefined ? "Production run" : "Replacement production run"} for: ${linesToRelease.map(l => l.order_no).join(", ")}`);
+        setRemarks(`${isReplacement ? "Replacement production run" : "Production run"} for: ${linesToRelease.map(l => l.order_no).join(", ")}`);
         setIsConfirmOpen(true);
+    };
+
+    // Open the standard release flow for selected schedulable demand.
+    const handleInitiateRelease = () => {
+        if (!validateReleaseBranch() || !mergeValidation.isValid) return;
+        openReleaseDialog(selectedLines, false);
+    };
+
+    // Replacement releases must identify and revalidate a single eligible line.
+    const handleInitiateReplacementRelease = (replacementDetailId: number) => {
+        if (!validateReleaseBranch()) return;
+
+        const line = selectableLinesByDetailId.get(replacementDetailId);
+        if (!line || !canCreateReplacementJobOrder(line)) {
+            toast.error("This Sales Order line no longer has eligible residual demand. Refresh the In Production list and try again.");
+            return;
+        }
+        const productId = Number(line.product_id?.product_id);
+        const bomVersionId = Number(line.bom_version_id);
+        if (!Number.isInteger(productId) || productId <= 0 || !Number.isInteger(bomVersionId) || bomVersionId <= 0) {
+            toast.error("Cannot release: the selected line must have a valid product and active recipe version.");
+            return;
+        }
+
+        setSelectedDetailIds([replacementDetailId]);
+        openReleaseDialog([line], true);
     };
 
     // Release JO Submit
@@ -987,6 +996,7 @@ export function usePlanningEngineering() {
         handleSelectAll,
         handleSelectLine,
         handleInitiateRelease,
+        handleInitiateReplacementRelease,
         handleConfirmRelease,
         assignments,
         setAssignments,
