@@ -197,7 +197,7 @@ export async function fetchLotsByBranch(branchId?: number, token?: string): Prom
     }
 
     // Server-side direct Directus call
-    let targetBranchIds = branchId ? [branchId] : [];
+    const targetBranchIds = branchId ? [branchId] : [];
     if (branchId) {
       try {
         const bRes = await fetch(`${DIRECTUS_URL}/items/branches/${branchId}?fields=id,bad_stock_branch_id`, {

@@ -1025,7 +1025,7 @@ export function SalesReturnLotBatchModal({
     return () => {
       isMounted = false;
     };
-  }, [open, branchId, productId, requestedQuantity, productUomId, productType, productCategory, categoryName, productCode, productName, initialLotAllocations, initialValues, existingFormAllocations, isLotMatchingUom]);
+  }, [open, branchId, productId, requestedQuantity, productUomId, productType, productCategory, categoryName, productCode, productName, initialLotAllocations, initialValues, existingFormAllocations, isLotMatchingUom, isBadOrder, isGoodReturn]);
 
   // Compute total allocated quantity across all lots & batches
   const totalAllocated = useMemo(() => {
@@ -1101,8 +1101,6 @@ export function SalesReturnLotBatchModal({
         initialValues?.total_quantity ??
         0);
     const unallocatedRemainder = Math.max(0, targetTotal - totalAllocated);
-
-    const newGroupIndex = lotGroups.length;
 
     setLotGroups((prev) => [
       ...prev,
@@ -1341,25 +1339,6 @@ export function SalesReturnLotBatchModal({
             return b;
           });
           return { ...g, batches: updatedBatches };
-        }
-        return g;
-      })
-    );
-  };
-
-  // Atomically Apply Mfg Date and Expiry Date to all batches across this lot group
-  const handleApplyDatesToAll = (groupIndex: number, mfgDate?: string, expDate?: string) => {
-    setLotGroups((prevGroups) =>
-      prevGroups.map((g, i) => {
-        if (i === groupIndex) {
-          return {
-            ...g,
-            batches: (g.batches || []).map((b) => ({
-              ...b,
-              ...(mfgDate ? { manufacturing_date: mfgDate } : {}),
-              ...(expDate ? { expiry_date: expDate } : {}),
-            })),
-          };
         }
         return g;
       })
