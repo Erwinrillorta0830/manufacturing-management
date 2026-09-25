@@ -8,6 +8,7 @@ import {
     DIRECTUS_URL,
     headers
 } from "@/app/api/manufacturing/directus-api";
+import { committedGoodOutputOrAggregate, goodOutputAggregateFallback } from "@/modules/manufacturing-management/production-workflow/utils/production-output";
 import { getBOMDetailsForVersion, getActiveVersionForProduct, selectPreferredActiveVersion } from "../../finished-goods/versions/versions-helper";
 import { movementMmLotReference, movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
 import { loadYieldMaterials, YieldMaterialsError } from "../../production/_yield-materials";
@@ -750,6 +751,7 @@ export async function handleGET(request: Request) {
                     availableLotsByProduct.set(
                         productId,
                         await getAvailableInventoryLots(productId, branchId, {
+                            requireGoodQa: true,
                             movementRows: movements.filter((movement) => Number(movement.product_id || movement.productId || 0) === productId)
                         })
                     );
@@ -907,6 +909,8 @@ export async function handleGET(request: Request) {
                             available: Number(lot.available || 0),
                             expiry_date: lot.expiryDate || null,
                             manufacturing_date: lot.manufacturingDate || null,
+                            qa_status: lot.qaStatus || null,
+                            status: "ACTIVE",
                             reservation_id: reservationId,
                             reserved_qty_for_this_lot: reservedQtyForThisLot
                         };
@@ -969,21 +973,14 @@ export async function handleGET(request: Request) {
 
             const targetQuantity = Math.max(0, Number(jobOrder.target_quantity || 0));
             const yieldLedgerRes = await fetch(
-                `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(numericJoId))}&fields=yield_quantity,rejected_quantity&limit=-1`,
+                `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(numericJoId))}&fields=yield_quantity,commit_status&limit=-1`,
                 { headers, cache: "no-store" }
             );
             const yieldLedgerRows: any[] = yieldLedgerRes.ok ? ((await yieldLedgerRes.json()).data || []) : [];
-            const ledgerProductionOutput = yieldLedgerRows.reduce(
-                (sum: number, row: any) => sum
-                    + Math.max(0, Number(row.yield_quantity || 0))
-                    + Math.max(0, Number(row.rejected_quantity || 0)),
-                0
+            const producedQuantity = committedGoodOutputOrAggregate(
+                yieldLedgerRows,
+                goodOutputAggregateFallback(jobOrder.actual_quantity_produced, jobOrder.completed_quantity)
             );
-            const producedQuantity = yieldLedgerRows.length > 0
-                ? ledgerProductionOutput
-                : Number(jobOrder.actual_quantity_produced || 0) > 0
-                    ? Number(jobOrder.actual_quantity_produced)
-                    : Math.max(0, Number(jobOrder.completed_quantity || 0));
 
             // Raw materials and their WIP reservations.
             const materialsRes = await fetch(

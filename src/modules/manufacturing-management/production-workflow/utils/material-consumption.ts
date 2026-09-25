@@ -18,6 +18,10 @@ export interface MaterialConsumptionDefault {
 
 type EditableReservation = Pick<ProductionMaterialReservation, "jo_material_id" | "reservation_id" | "actual_qty">;
 
+export function materialConsumptionReservationKey(material: EditableReservation): string {
+    return `${material.jo_material_id}:${material.reservation_id ?? "unreserved"}`;
+}
+
 const QUANTITY_SCALE = 1_000_000;
 
 export function sumProductionOutputQuantities(good: unknown, rejected: unknown, scrap: unknown): number {
@@ -29,16 +33,18 @@ export function sumProductionOutputQuantities(good: unknown, rejected: unknown, 
 
 export function preserveExistingActualQuantities<T extends EditableReservation>(
     refreshedMaterials: T[],
-    previousMaterials: T[]
+    previousMaterials: T[],
+    manuallyEditedReservationKeys?: ReadonlySet<string>
 ): T[] {
     const previousActuals = new Map(previousMaterials.map((material) => [
-        `${material.jo_material_id}:${material.reservation_id ?? "unreserved"}`,
+        materialConsumptionReservationKey(material),
         material.actual_qty
     ]));
 
     return refreshedMaterials.map((material) => {
-        const key = `${material.jo_material_id}:${material.reservation_id ?? "unreserved"}`;
+        const key = materialConsumptionReservationKey(material);
         const previousActual = previousActuals.get(key);
+        if (manuallyEditedReservationKeys && !manuallyEditedReservationKeys.has(key)) return material;
         return previousActual === undefined ? material : { ...material, actual_qty: previousActual };
     });
 }

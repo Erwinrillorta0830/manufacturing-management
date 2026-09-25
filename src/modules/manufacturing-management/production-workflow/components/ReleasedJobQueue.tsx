@@ -223,7 +223,7 @@ export function ReleasedJobQueue({
                                     const isOnHold = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD);
                                     const canOpenTerminal = isForPicking || isPicked || isInProduction || isOnHold;
                                     const parent = parentByChildId.get(jo.jo_id);
-                                    const producedQty = jo.productionOutputQuantity ?? jo.producedQty ?? jo.completed_quantity ?? 0;
+                                    const producedQty = jo.producedQty ?? jo.completed_quantity ?? jo.productionOutputQuantity ?? 0;
                                     const workstationLabel = jo.primary_work_center_name
                                         || (jo.primary_work_center_id ? `WC #${jo.primary_work_center_id}` : "Unassigned");
                                     const journey = resolveJobOrderJourney({

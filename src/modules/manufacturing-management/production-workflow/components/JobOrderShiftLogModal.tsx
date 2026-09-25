@@ -34,11 +34,13 @@ import { calculatePipelinedLineDurationHours } from "../../planning-engineering/
 import { exceedsAvailableStock, formatProductionQuantity, resolveJobOrderTargetQuantity, roundToInputStep } from "../utils/production-quantity";
 import {
     calculateMaterialConsumptionDefaults,
+    materialConsumptionReservationKey,
     preserveExistingActualQuantities,
     sumProductionOutputQuantities
 } from "../utils/material-consumption";
 import { getProductionCameraErrorMessage } from "../utils/production-camera";
 import { hasCompletedTimer } from "../operator-time";
+import { hasReachedProductionTarget } from "../utils/production-output";
 
 interface JobOrderShiftLogModalProps {
     open: boolean;
@@ -56,6 +58,10 @@ interface OutputQuantities {
     good: string;
     rejected: string;
     scrap: string;
+}
+
+function formatExactMaterialQuantity(value: number): string {
+    return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 6 });
 }
 
 function applyConsumptionDefaults(
@@ -106,6 +112,7 @@ export function JobOrderShiftLogModal({
     const [evidenceImageError, setEvidenceImageError] = useState<string | null>(null);
     const [evidenceImagePreview, setEvidenceImagePreview] = useState<string | null>(null);
     const outputQuantitiesRef = useRef<OutputQuantities>({ good: "", rejected: "0", scrap: "0" });
+    const manuallyEditedMaterialKeysRef = useRef<Set<string>>(new Set());
     const [cameraError, setCameraError] = useState<string | null>(null);
     const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
     const [isCameraStarting, setIsCameraStarting] = useState(false);
@@ -370,7 +377,8 @@ export function JobOrderShiftLogModal({
                         outputQuantitiesRef.current.scrap
                     )
                 ),
-                previous
+                previous,
+                manuallyEditedMaterialKeysRef.current
             ));
         } catch (err) {
             const message = err instanceof Error ? err.message : "Failed to load Job Order materials";
@@ -399,6 +407,7 @@ export function JobOrderShiftLogModal({
             setEvidenceImage(null);
             setEvidenceImageError(null);
             setShiftMaterials([]);
+            manuallyEditedMaterialKeysRef.current.clear();
             setMaterialsLoadError(null);
             setProductionDay("1");
             const todayStr = new Date().toISOString().split("T")[0];
@@ -481,11 +490,14 @@ export function JobOrderShiftLogModal({
         if (field === "rejected") setRejectedQty(value);
         if (field === "scrap") setScrapQty(value);
 
-        setShiftMaterials((previous) => applyConsumptionDefaults(
-            previous,
-            targetQuantity,
-            sumProductionOutputQuantities(nextQuantities.good, nextQuantities.rejected, nextQuantities.scrap)
-        ));
+        setShiftMaterials((previous) => {
+            const recalculated = applyConsumptionDefaults(
+                previous,
+                targetQuantity,
+                sumProductionOutputQuantities(nextQuantities.good, nextQuantities.rejected, nextQuantities.scrap)
+            );
+            return preserveExistingActualQuantities(recalculated, previous, manuallyEditedMaterialKeysRef.current);
+        });
     };
 
     const totalOutputQuantity = (Number(shiftYieldQty) || 0)
@@ -569,7 +581,7 @@ export function JobOrderShiftLogModal({
         if (validateShiftLog()) setIsConfirmationOpen(true);
     };
 
-    const handleConfirmShiftLog = async () => {
+    const handleConfirmShiftLog = async (completeProductionAfterLog = false) => {
         if (!validateShiftLog()) {
             setIsConfirmationOpen(false);
             return;
@@ -603,6 +615,7 @@ export function JobOrderShiftLogModal({
                 rejectionRemarks: rejectionRemarks || undefined,
                 varianceReason: varianceReason || undefined,
                 approveVariance,
+                completeProductionAfterLog,
                 qaParameters: [],
                 remarks: remarks || undefined,
                 evidenceImage: evidenceImageToSubmit,
@@ -621,11 +634,19 @@ export function JobOrderShiftLogModal({
             const res = await submitShiftRunLog(payload);
             if (res.success) {
                 const targetQty = targetQuantity;
-                const producedAfter = Number(selectedJobOrder.producedQty || selectedJobOrder.completed_quantity || 0) + newYield;
-                const reachedTarget = targetQty > 0 && producedAfter >= targetQty;
+                const producedBefore = Number(selectedJobOrder.producedQty
+                    ?? selectedJobOrder.completed_quantity
+                    ?? selectedJobOrder.productionOutputQuantity
+                    ?? 0);
+                const producedAfter = producedBefore + newYield;
+                const reachedTarget = hasReachedProductionTarget(targetQty, producedAfter);
 
-                if (reachedTarget) {
-                    toast.success(`Shift closed for ${fullShiftName}. Output target reached (${formatProductionQuantity(producedAfter)}/${formatProductionQuantity(targetQty)} pcs) — route this Job Order to QA.`);
+                if (completeProductionAfterLog && res.jobOrderCompletion?.success) {
+                    toast.success(`Shift saved. Production completed and ${selectedJobOrder.order_no || selectedJobOrder.jo_id} was sent to QA and reconciliation.`);
+                } else if (completeProductionAfterLog) {
+                    toast.warning(`Shift saved and output target reached (${formatProductionQuantity(producedAfter)}/${formatProductionQuantity(targetQty)} pcs), but the QA handoff did not complete: ${res.jobOrderCompletion?.error || "Retry Complete & Close JO after resolving the blockers."}`);
+                } else if (reachedTarget) {
+                    toast.success(`Shift saved for ${fullShiftName}. Good-output target reached (${formatProductionQuantity(producedAfter)}/${formatProductionQuantity(targetQty)} pcs); finalize the Job Order for QA.`);
                 } else {
                     toast.success(`Shift closed for ${fullShiftName} across ${sortedTasks.length || "all"} routing steps; staging materials backflushed.`);
                 }
@@ -750,6 +771,11 @@ export function JobOrderShiftLogModal({
             theoretical,
             shortfall: Math.max(0, theoretical - available),
             candidateLots: material.candidate_lots || [],
+            preferredLot: {
+                mmLotId: material.mm_lot_id,
+                inventoryLotId: material.inventory_lot_id,
+                batchNo: material.inventory_lot_batch_no || material.batch_no
+            },
             isSubAssembly: Boolean(material.is_sub_assembly)
         });
         setIsTopUpOpen(true);
@@ -812,6 +838,16 @@ export function JobOrderShiftLogModal({
         || !productionDate
         || !shiftName.trim();
     const isPrintDisabled = loadingShiftMaterials || Boolean(materialsLoadError) || hasInsufficiency || !hasOutput || !shiftName.trim();
+    const goodOutputBeforeShift = Number(selectedJobOrder.producedQty
+        ?? selectedJobOrder.completed_quantity
+        ?? selectedJobOrder.productionOutputQuantity
+        ?? 0);
+    const projectedGoodOutput = goodOutputBeforeShift + (Number(shiftYieldQty) || 0);
+    const finalShiftReachesTarget = hasReachedProductionTarget(targetQuantity, projectedGoodOutput);
+    const hasActiveJobOrderTimer = allJobOperators.some((operator) => Boolean(operator.started_at) && !operator.stopped_at);
+    const allRoutesReadyForCompletion = !hasActiveJobOrderTimer
+        && sortedTasks.length > 0
+        && sortedTasks.every((task) => ["completed", "done", "closed"].includes(String(task.status || "").trim().toLowerCase()));
 
     return (
         <>
@@ -1254,7 +1290,7 @@ export function JobOrderShiftLogModal({
                                                              )}
                                                              <span>UOM: <strong className="font-mono text-foreground">{m.unit_shortcut || `#${m.uom_id || "—"}`}</strong></span>
                                                              <span>Status: <strong className="text-foreground">{m.reservation_status || "Not staged"}</strong></span>
-                                                             <span>Remaining WIP: <strong className="font-mono text-foreground">{Number(m.available_stock || 0).toLocaleString()}</strong></span>
+                                                             <span>Remaining WIP: <strong className="font-mono text-foreground">{formatExactMaterialQuantity(Number(m.available_stock || 0))}</strong></span>
                                                          </div>
 
                                                         {/* Progress bar */}
@@ -1275,13 +1311,13 @@ export function JobOrderShiftLogModal({
                                                                 <div className="flex items-center gap-1">
                                                                     <span className="text-muted-foreground">Theoretical:</span>
                                                                     <span className="font-bold text-foreground/80 font-mono">
-                                                                        {theoretical.toFixed(2)} {m.unit_shortcut}
+                                                                        {formatExactMaterialQuantity(theoretical)} {m.unit_shortcut}
                                                                     </span>
                                                                 </div>
                                                                 <div className="flex items-center gap-1.5">
                                                                      <span className="text-muted-foreground">Remaining WIP:</span>
                                                                     <span className={`font-mono font-bold ${isInsufficient ? "text-red-500" : "text-foreground/85"}`}>
-                                                                         {Number(m.available_stock || 0).toLocaleString()} {m.unit_shortcut}
+                                                                         {formatExactMaterialQuantity(Number(m.available_stock || 0))} {m.unit_shortcut}
                                                                     </span>
                                                                 </div>
                                                                 <div className="flex items-center gap-1.5">
@@ -1307,6 +1343,7 @@ export function JobOrderShiftLogModal({
                                                                              value={m.actual_qty}
                                                                             onChange={(e) => {
                                                                                 const raw = e.target.value;
+                                                                                manuallyEditedMaterialKeysRef.current.add(materialConsumptionReservationKey(m));
                                                                                 if (raw === "") {
                                                                                     setShiftMaterials((prev) =>
                                                                                         prev.map((item, idx) => idx === materialIndex ? { ...item, actual_qty: "" } : item)
@@ -1319,9 +1356,9 @@ export function JobOrderShiftLogModal({
                                                                                 setShiftMaterials((prev) =>
                                                                                     prev.map((item, idx) => idx === materialIndex ? { ...item, actual_qty: String(clamped) } : item)
                                                                                 );
-                                                                            }}
+                                                                             }}
                                                                              onBlur={(e) => {
-                                                                                 const parsed = Number(e.target.value);
+                                                                                const parsed = Number(e.target.value);
                                                                                  if (e.target.value === "" || !Number.isFinite(parsed)) return;
                                                                                  const clamped = Math.min(Math.max(0, parsed), availableStock);
                                                                                  setShiftMaterials((prev) =>
@@ -1463,9 +1500,23 @@ export function JobOrderShiftLogModal({
                             <p className="text-xs text-muted-foreground">Scrap Units</p>
                             <p className="font-semibold">{formatProductionQuantity(Number(scrapQty) || 0)}</p>
                         </div>
+                        <div className="col-span-2 rounded-md border border-border/60 bg-background/70 px-3 py-2">
+                            <p className="text-xs text-muted-foreground">Projected Good Output / Target</p>
+                            <p className="font-semibold">
+                                {formatProductionQuantity(projectedGoodOutput)} / {formatProductionQuantity(targetQuantity)} pcs
+                            </p>
+                        </div>
                     </div>
+                    {finalShiftReachesTarget && (
+                        <p className="mt-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-800 dark:text-emerald-300">
+                            This shift reaches the good-output target. Completing the Job Order sends production to QA and locks new floor activity.
+                            {!allRoutesReadyForCompletion && (hasActiveJobOrderTimer
+                                ? " Stop active timers and complete every route step before finalizing."
+                                : " Complete every route step before finalizing.")}
+                        </p>
+                    )}
 
-                    <DialogFooter>
+                    <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
                         <Button
                             type="button"
                             variant="outline"
@@ -1474,13 +1525,35 @@ export function JobOrderShiftLogModal({
                         >
                             Back to Edit
                         </Button>
-                        <Button
-                            type="button"
-                            disabled={submittingShiftLog}
-                            onClick={() => void handleConfirmShiftLog()}
-                        >
-                            {submittingShiftLog ? "Saving Session..." : "Confirm & Save"}
-                        </Button>
+                        {finalShiftReachesTarget ? (
+                            <>
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    disabled={submittingShiftLog}
+                                    onClick={() => void handleConfirmShiftLog(false)}
+                                >
+                                    {submittingShiftLog ? "Saving Session..." : "Save Shift Only"}
+                                </Button>
+                                <Button
+                                    type="button"
+                                    disabled={submittingShiftLog || !allRoutesReadyForCompletion}
+                                    title={!allRoutesReadyForCompletion ? "Complete every route step before finalizing production." : undefined}
+                                    onClick={() => void handleConfirmShiftLog(true)}
+                                    className="bg-emerald-600 text-white hover:bg-emerald-500"
+                                >
+                                    {submittingShiftLog ? "Saving & Completing..." : "Complete & Close JO"}
+                                </Button>
+                            </>
+                        ) : (
+                            <Button
+                                type="button"
+                                disabled={submittingShiftLog}
+                                onClick={() => void handleConfirmShiftLog(false)}
+                            >
+                                {submittingShiftLog ? "Saving Session..." : "Confirm & Save"}
+                            </Button>
+                        )}
                     </DialogFooter>
                 </DialogContent>
             </Dialog>

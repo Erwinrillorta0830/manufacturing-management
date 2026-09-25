@@ -135,7 +135,7 @@ export async function fetchRouteOperators(taskId: number): Promise<RouteOperator
 }
 
 export interface RouteOperatorPayload {
-    action: "start-timer" | "stop-timer" | "log-hours" | "remove-operator" | "swap-operator" | "edit-hours" | "edit-times" | string;
+    action: "assign-operator" | "start-timer" | "stop-timer" | "log-hours" | "remove-operator" | "swap-operator" | "edit-hours" | "edit-times";
     taskId: number;
     userId: number;
     joId: string;

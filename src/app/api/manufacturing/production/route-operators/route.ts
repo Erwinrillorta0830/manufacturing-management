@@ -2,7 +2,14 @@
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { authorizeJobOrderModuleAccess, JOB_ORDER_MODULE_PATHS } from "@/app/api/manufacturing/job-orders/_module-access";
-import { isCancelledJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
+import {
+    canChangeJobOrderOperatorRoster,
+    isCancelledJobOrderStatus,
+    isJobOrderStatus,
+    JOB_ORDER_STATUS,
+    normalizeJobOrderStatus
+} from "@/modules/manufacturing-management/job-order-status";
+import { committedGoodOutputOrAggregate, goodOutputAggregateFallback, hasReachedProductionTarget } from "@/modules/manufacturing-management/production-workflow/utils/production-output";
 import { formatPhtDateTime, parsePhtDateTime } from "../../directus-api";
 import { getSessionUserId } from "../../lot-transfers/_session";
 import {
@@ -284,7 +291,37 @@ async function getRouteJobOrderContext(taskId: number): Promise<RouteJobOrderCon
     };
 }
 
-async function assertProductionMutationAllowed(taskId: number, action: string): Promise<RouteJobOrderContext> {
+async function assertProductionTargetNotReached(jobOrderId: number, jobOrderNo: string): Promise<void> {
+    const [jobOrderPayload, yieldPayload] = await Promise.all([
+        directusRequest<{ data?: { target_quantity?: unknown; quantity?: unknown; actual_quantity_produced?: unknown; completed_quantity?: unknown } }>(
+            `/items/manufacturing_job_orders/${jobOrderId}?fields=job_order_id,target_quantity,quantity,actual_quantity_produced,completed_quantity`
+        ),
+        directusRequest<{ data?: Array<{ yield_quantity?: unknown; commit_status?: unknown }> }>(
+            `/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${jobOrderId}&fields=yield_quantity,commit_status&limit=-1`
+        )
+    ]);
+    const target = Number(jobOrderPayload?.data?.target_quantity ?? jobOrderPayload?.data?.quantity ?? 0);
+    if (!jobOrderPayload?.data || !Array.isArray(yieldPayload?.data)) {
+        throw new DirectusRouteOperatorError(502, "The Job Order production target could not be verified.", "PRODUCTION_TARGET_UNAVAILABLE");
+    }
+    const yields = yieldPayload.data;
+    if (hasReachedProductionTarget(target, committedGoodOutputOrAggregate(
+        yields,
+        goodOutputAggregateFallback(jobOrderPayload.data.actual_quantity_produced, jobOrderPayload.data.completed_quantity)
+    ))) {
+        throw new DirectusRouteOperatorError(
+            409,
+            `Job Order ${jobOrderNo} has reached its good-output target. Only stopping active timers and completing open route steps are allowed.`,
+            "PRODUCTION_TARGET_REACHED"
+        );
+    }
+}
+
+async function assertProductionMutationAllowed(
+    taskId: number,
+    action: string,
+    allowPreProductionRosterChanges = false
+): Promise<RouteJobOrderContext> {
     const context = await getRouteJobOrderContext(taskId);
     const jobOrderId = context.jobOrderId;
     const jobOrderNo = context.jobOrderNo;
@@ -303,6 +340,8 @@ async function assertProductionMutationAllowed(taskId: number, action: string): 
     if (isJobOrderStatus(status, JOB_ORDER_STATUS.PRODUCTION_COMPLETED, JOB_ORDER_STATUS.FOR_QA_RECONCILIATION, JOB_ORDER_STATUS.CLOSED)) {
         throw new DirectusRouteOperatorError(409, `Job Order ${jobOrder?.job_order_no || jobOrderId} has completed production and cannot be changed.`, "PRODUCTION_COMPLETED");
     }
+    await assertProductionTargetNotReached(jobOrderId, jobOrderNo);
+    if (allowPreProductionRosterChanges && canChangeJobOrderOperatorRoster(status)) return context;
     if (!isJobOrderStatus(status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
         throw new DirectusRouteOperatorError(409, `Job Order ${jobOrder?.job_order_no || jobOrderId} must be In Production before operator activity can be changed.`, "JOB_ORDER_NOT_IN_PRODUCTION");
     }
@@ -488,7 +527,7 @@ export async function POST(request: Request) {
         if (rosterAction) {
             context = await getRouteJobOrderContext(taskId);
         } else {
-            context = await assertProductionMutationAllowed(taskId, action);
+            context = await assertProductionMutationAllowed(taskId, action, action === "assign-operator");
         }
 
         if (joId !== String(context.jobOrderId) && joId !== context.jobOrderNo) {
@@ -513,7 +552,8 @@ export async function POST(request: Request) {
                     auditId: positiveInteger(existingAudit.history_id ?? existingAudit.id) || null
                 });
             }
-            context = await assertProductionMutationAllowed(taskId, action);
+            const isRosterAssignmentChange = action === "remove-operator" || action === "swap-operator";
+            context = await assertProductionMutationAllowed(taskId, action, isRosterAssignmentChange);
         }
 
         const usersMap = await fetchUsersMap();
@@ -545,6 +585,20 @@ export async function POST(request: Request) {
         };
 
         let assignmentState: ReturnType<typeof normalizeOperatorAssignments> | null = null;
+        if (action === "assign-operator") {
+            assignmentState = (await updateJobOrderOperatorAssignment(
+                context.jobOrderId,
+                context.sequenceOrder,
+                userId,
+                true
+            )).assignments;
+            return NextResponse.json({
+                success: true,
+                message: "Operator assigned to route without starting a timer.",
+                assignedPersonnel: assignmentState
+            });
+        }
+
         if (action === "start-timer" || action === "log-hours") {
             assignmentState = (await updateJobOrderOperatorAssignment(
                 context.jobOrderId,

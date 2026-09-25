@@ -19,6 +19,8 @@ import {
     validateProductionYieldImage
 } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
 import { hasCompletedTimer } from "@/modules/manufacturing-management/production-workflow/operator-time";
+import { committedGoodOutputOrAggregate, goodOutputAggregateFallback, hasReachedProductionTarget, sumCommittedGoodOutput } from "@/modules/manufacturing-management/production-workflow/utils/production-output";
+import { executeJobOrderWorkflow, JobOrderWorkflowError } from "@/app/api/manufacturing/job-orders/_workflow-service";
 
 const EPSILON = 0.000001;
 
@@ -76,6 +78,7 @@ interface SessionInput {
     remarks: string | null;
     varianceReason: string | null;
     varianceApprovalRequested: boolean;
+    completeProductionAfterLog: boolean;
     materials: MaterialLine[];
 }
 
@@ -294,6 +297,7 @@ function normalizeSessionInput(body: any): SessionInput {
         remarks,
         varianceReason: varianceReason || null,
         varianceApprovalRequested: body?.approveVariance === true || body?.varianceApprovalRequested === true,
+        completeProductionAfterLog: isTrue(body?.completeProductionAfterLog),
         materials
     };
 }
@@ -1135,14 +1139,48 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
 
         const targetQuantity = Math.max(0, finiteNumber(jobOrder.target_quantity ?? jobOrder.quantity));
         const existingYieldRows = await directusRows<any>(
-            `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(input.joId))}&fields=ledger_id,yield_quantity,session_key&limit=-1`,
+            `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(input.joId))}&fields=ledger_id,yield_quantity,session_key,commit_status&limit=-1`,
             `Load existing production output for Job Order ${input.joId}`
         );
-        const existingGoodQuantity = existingYieldRows
-            .filter((row) => !existingLedger || numberId(row.ledger_id) !== numberId(existingLedger.ledger_id))
-            .reduce((sum, row) => sum + Math.max(0, finiteNumber(row.yield_quantity)), 0);
+        const priorYieldRows = existingYieldRows
+            .filter((row) => !existingLedger || numberId(row.ledger_id) !== numberId(existingLedger.ledger_id));
+        const existingGoodQuantity = priorYieldRows.length > 0 || existingLedger
+            ? sumCommittedGoodOutput(priorYieldRows)
+            : committedGoodOutputOrAggregate([], goodOutputAggregateFallback(jobOrder.actual_quantity_produced, jobOrder.completed_quantity));
+        const projectedGoodQuantity = existingGoodQuantity + input.goodQty;
+        if (!existingLedger && hasReachedProductionTarget(targetQuantity, existingGoodQuantity)) {
+            throw new ProductionSessionError(
+                409,
+                "PRODUCTION_TARGET_REACHED",
+                "The Job Order good-output target has been reached. No additional production sessions can be recorded."
+            );
+        }
         if (!existingLedger && targetQuantity > EPSILON && existingGoodQuantity + input.goodQty > targetQuantity * 1.05 + EPSILON) {
             throw new ProductionSessionError(422, "OUTPUT_OVER_TARGET", "This production session would exceed the Job Order target by more than the configured tolerance.");
+        }
+        if (input.completeProductionAfterLog && !hasReachedProductionTarget(targetQuantity, projectedGoodQuantity)) {
+            throw new ProductionSessionError(
+                422,
+                "OUTPUT_TARGET_NOT_REACHED",
+                "Complete & Close JO is available after good output reaches the Job Order target."
+            );
+        }
+        if (input.completeProductionAfterLog) {
+            const routes = await directusRows<any>(
+                `${DIRECTUS_URL}/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${encodeURIComponent(String(input.joId))}&fields=jo_route_id,status&limit=-1`,
+                `Check route readiness before finalizing Job Order ${input.joId}`
+            );
+            const incompleteRoutes = routes.filter((route) => !["completed", "done", "closed"].includes(textValue(route.status).toLowerCase()));
+            if (routes.length === 0 || incompleteRoutes.length > 0) {
+                throw new ProductionSessionError(
+                    409,
+                    "PRODUCTION_OPERATIONS_INCOMPLETE",
+                    routes.length === 0
+                        ? "Production cannot be completed until routing operations are configured."
+                        : "Complete the remaining route steps before using Complete & Close JO.",
+                    { routeIds: incompleteRoutes.map((route) => numberId(route.jo_route_id ?? route.id)) }
+                );
+            }
         }
 
         const materials = await directusRows<any>(
@@ -1405,7 +1443,7 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
         );
 
         const finalChildren = await loadSessionChildren(ledgerId, input.joId);
-        return NextResponse.json(responsePayload(
+        const payload = responsePayload(
             input,
             { ...ledger, logged_by: actorId, source_event_key: sourceEventKey },
             finalChildren.consumptionRows,
@@ -1414,7 +1452,35 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
             workCenterId,
             Boolean(existingLedger),
             variancePolicy.tolerancePct
-        ));
+        );
+        if (!input.completeProductionAfterLog) return NextResponse.json(payload);
+
+        try {
+            const completion = await executeJobOrderWorkflow(input.joId, {
+                action: "complete-production",
+                actorUserId: actorId,
+                idempotencyKey: `shift-finalize:${input.joId}:${createHash("sha256").update(input.sessionKey).digest("hex").slice(0, 32)}`
+            });
+            return NextResponse.json({
+                ...payload,
+                jobOrderCompletion: {
+                    success: true,
+                    status: completion.status,
+                    idempotent: completion.idempotent
+                }
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Production was recorded, but the Job Order could not be sent to QA.";
+            console.error(`Shift session ${input.sessionKey} was saved, but Job Order ${input.joId} completion failed:`, error);
+            return NextResponse.json({
+                ...payload,
+                jobOrderCompletion: {
+                    success: false,
+                    error: message,
+                    code: error instanceof JobOrderWorkflowError ? error.code : "JOB_ORDER_COMPLETION_FAILED"
+                }
+            });
+        }
     } catch (error) {
         if (uploadedImageId && !imageAttached) {
             await deleteProductionYieldImage(uploadedImageId);
