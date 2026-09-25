@@ -106,6 +106,26 @@ export function normalizeStatus(value: unknown): string {
     return stringValue(value).toUpperCase().replace(/[_-]+/g, " ");
 }
 
+export const RELEASABLE_QA_STATUSES = ["GOOD", "PASSED", "PASS", "APPROVED"];
+
+export function isReleasableQaStatus(value: unknown): boolean {
+    return RELEASABLE_QA_STATUSES.includes(normalizeStatus(value));
+}
+
+/**
+ * BAD-to-BAD transfer allowance. Non-releasable source stock (e.g. DAMAGED)
+ * may move only into a destination lot that already holds same-product
+ * stock with no releasable band present, and every band present must match
+ * the source band (DAMAGED into an all-DAMAGED lot). Mixed, good, or empty
+ * destinations stay blocked so bad stock cannot leak into clean lots.
+ */
+export function isBadToBadTransferAllowed(sourceQaStatus: unknown, targetQaStatuses: unknown[]): boolean {
+    const sourceBand = normalizeStatus(sourceQaStatus);
+    if (!sourceBand || isReleasableQaStatus(sourceBand)) return false;
+    if (!Array.isArray(targetQaStatuses) || targetQaStatuses.length === 0) return false;
+    return targetQaStatuses.every((status) => normalizeStatus(status) === sourceBand);
+}
+
 export function dateValue(row: RecordValue, keys: string[]): string | null {
     return nullableString(firstValue(row, keys));
 }

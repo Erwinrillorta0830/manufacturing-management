@@ -41,6 +41,8 @@ import {
     firstValue,
     formatProtectedAllocationQuantity,
     inventoryLotId,
+    isBadToBadTransferAllowed,
+    isReleasableQaStatus,
     lotId,
     manilaCalendarDate,
     normalizeStatus,
@@ -206,6 +208,24 @@ export function snapshot(input: {
 
 export async function buildSingleLinePreview(record: LotTransferRecord, options: { excludeTransferMovements?: boolean } = {}): Promise<LotTransferPreview> {
     const context = await loadTransferContext(record, options.excludeTransferMovements === true);
+    // BAD-to-BAD support: read the QA bands of the same-product stock
+    // already sitting in the destination lot. A non-releasable source may
+    // move only into a lot that holds nothing but the same QA band.
+    const targetSameProductStock = await directusRows(
+        `/items/${MM_INVENTORY_LOT_COLLECTION}?filter[lot_id][_eq]=${record.targetLotId}&filter[product_id][_eq]=${record.productId}&fields=inventory_lot_id,qa_status,status&limit=-1`,
+        "Target lot same-product QA lookup"
+    );
+    const targetActiveBands = targetSameProductStock
+        .filter((row) => normalizeStatus(row.status) === "ACTIVE")
+        .map((row) => row.qa_status);
+    const sourceQaBand = normalizeStatus(context.sourceInventoryLot.qa_status);
+    const qaEligible = isReleasableQaStatus(sourceQaBand)
+        || isBadToBadTransferAllowed(sourceQaBand, targetActiveBands);
+    const qaMessage = qaEligible
+        ? "Source stock has a releasable QA status or qualifies for a BAD-to-BAD transfer."
+        : sourceQaBand && !isReleasableQaStatus(sourceQaBand)
+            ? `Source stock is ${sourceQaBand}: BAD-to-BAD transfer requires the destination lot to already hold only ${sourceQaBand} stock of the same product.`
+            : "Source stock must have a releasable QA status.";
     const destinationBatchResolution = resolveDestinationBatch(record, context);
     const sourceInventoryLotIdValue = inventoryLotId(context.sourceInventoryLot);
     const targetInventoryLotIdValue = destinationBatchResolution.inventoryLotId;
@@ -249,7 +269,7 @@ export async function buildSingleLinePreview(record: LotTransferRecord, options:
         check("identity", "Canonical lot and batch identity", sourceInventoryLotIdValue === record.sourceInventoryLotId && sourceLotIdValue === record.sourceLotId && targetReferenceMatches && destinationBatchResolution.valid, destinationBatchResolution.message),
         check("destination-batch", "Destination batch resolution", destinationBatchResolution.valid, destinationBatchResolution.message),
         check("active", "Active stock records", normalizeStatus(context.sourceLot.status) === "ACTIVE" && normalizeStatus(context.targetLot.status) === "ACTIVE" && normalizeStatus(context.sourceInventoryLot.status) === "ACTIVE" && targetRecordIsActive, "Source and destination lots/batches must be active."),
-        check("qa", "QA-eligible source", ["GOOD", "PASSED", "PASS", "APPROVED"].includes(normalizeStatus(context.sourceInventoryLot.qa_status)), "Source stock must have a releasable QA status."),
+        check("qa", "QA-eligible source", qaEligible, qaMessage),
         check("quantity", "Positive quantity", Number.isFinite(record.quantity) && record.quantity > 0, "Transfer quantity must be greater than zero."),
         check(
             "protected-allocations",
