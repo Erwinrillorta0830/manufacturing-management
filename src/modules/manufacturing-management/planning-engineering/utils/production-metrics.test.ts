@@ -428,6 +428,15 @@ const releaseSummaryHtml = buildReleaseSummaryHtml({
 assert.match(releaseSummaryHtml, /2\.4575 hrs/);
 assert.match(releaseSummaryHtml, /₱25\.8189/);
 assert.match(releaseSummaryHtml, /₱26\.2120/);
+// Print pagination guards: no trailing blank page. The last table must not
+// carry bottom margin, the footer must not orphan, and the document must
+// have no stray whitespace outside <html>.
+assert.match(releaseSummaryHtml, /@page\s*\{\s*size:\s*portrait;\s*margin:\s*10mm;\s*\}/);
+assert.match(releaseSummaryHtml, /table:last-of-type\s*\{\s*margin-bottom:\s*0;\s*\}/);
+assert.match(releaseSummaryHtml, /thead\s*\{\s*display:\s*table-header-group;\s*\}/);
+assert.match(releaseSummaryHtml, /\.header,\s*\.jo-summary,\s*\.footer\s*\{\s*break-inside:\s*avoid;\s*\}/);
+assert.ok(releaseSummaryHtml.startsWith("<html>"));
+assert.ok(releaseSummaryHtml.endsWith("</html>"));
 assert.equal(resolveProductionShiftHours(9), 9);
 assert.equal(resolveProductionShiftHours(0, 10), 10);
 assert.equal(resolveProductionShiftHours(0), 6.5);

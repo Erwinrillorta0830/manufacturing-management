@@ -55,7 +55,7 @@ export function StagingPickList({
 
     if (!jobOrder) {
         return (
-            <div className="flex flex-col items-center justify-center min-h-[380px] p-8 text-center bg-card rounded-2xl border border-dashed border-border/80 lg:h-full">
+            <div className="flex flex-col items-center justify-center min-h-[380px] p-8 text-center bg-card rounded-2xl border border-dashed border-border/80 lg:h-full lg:min-h-0">
                 <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-muted text-muted-foreground mb-4 shadow-sm">
                     <Boxes className="h-7 w-7" />
                 </div>
@@ -89,7 +89,7 @@ export function StagingPickList({
     });
 
     return (
-        <div className="flex flex-col space-y-5 bg-card rounded-2xl border border-border p-5 sm:p-6 shadow-sm lg:h-full">
+        <div className="flex flex-col space-y-5 bg-card rounded-2xl border border-border p-5 sm:p-6 shadow-sm lg:h-full lg:min-h-0">
             {/* Header & Meta Summary */}
             <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 pb-5 border-b border-border">
                 <div className="space-y-1">

@@ -136,7 +136,7 @@ async function loadReplacementPredecessorSnapshot(predecessorJobOrderId: number)
     if (materialIds.length > 0) {
         const reservationParams = new URLSearchParams({
             [`filter[jo_material_id][_in]`]: materialIds.join(","),
-            fields: "jo_materials_reservation_id,id,jo_material_id,product_id,branch_id,mm_lot_id,inventory_lot_id,batch_no,expiry_date,uom_id,reserved_quantity,actual_used_quantity,reservation_status",
+            fields: "jo_materials_reservation_id,jo_material_id,product_id,branch_id,mm_lot_id,inventory_lot_id,batch_no,expiry_date,uom_id,reserved_quantity,actual_used_quantity,reservation_status",
             limit: "-1"
         });
         const reservations = await directusGetList("manufacturing_job_order_materials_reservations", reservationParams);
@@ -647,12 +647,20 @@ export async function createJobOrder(
             ? schedulingPlan.lines.map((line) => line.detailId)
             : [...new Set(salesOrderDetailIds.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
         if (requestedDetailIds.length > 0) {
-            try {
-                const detailRes = await fetch(
-                    `${DIRECTUS_URL}/items/sales_order_details?filter[detail_id][_in]=${requestedDetailIds.join(",")}&fields=detail_id,order_id,ordered_quantity,allocated_quantity,served_quantity&limit=-1`,
-                    { headers, cache: "no-store" }
-                );
-                if (detailRes.ok) {
+            // Retry transient lookup failures (e.g. Spring 429s backing the
+            // finished-goods receipt read). If the predecessors cannot be
+            // established, fail loudly: a silently non-inherited replacement
+            // JO would misstate progress, routes, and reservations.
+            let lastInheritanceError: unknown = null;
+            for (let attempt = 1; attempt <= 3; attempt += 1) {
+                try {
+                    const detailRes = await fetch(
+                        `${DIRECTUS_URL}/items/sales_order_details?filter[detail_id][_in]=${requestedDetailIds.join(",")}&fields=detail_id,order_id,ordered_quantity,allocated_quantity,served_quantity&limit=-1`,
+                        { headers, cache: "no-store" }
+                    );
+                    if (!detailRes.ok) {
+                        throw new Error(`Failed to load sales order details for replacement check: ${detailRes.status}`);
+                    }
                     const loadedDetails: any[] = (await detailRes.json()).data || [];
                     earlyDetails = loadedDetails;
                     earlyCreditData = await loadReplacementCreditData(
@@ -665,16 +673,23 @@ export async function createJobOrder(
                             .map((item: { predecessorJobOrderId?: unknown }) => Number(item.predecessorJobOrderId))
                             .filter((id: number) => Number.isSafeInteger(id) && id > 0)
                     ));
+                    replacementSnapshots.clear();
                     for (const predecessorId of predecessorIds) {
                         const snapshot = await loadReplacementPredecessorSnapshot(predecessorId);
                         if (snapshot) replacementSnapshots.set(predecessorId, snapshot);
                     }
+                    lastInheritanceError = null;
+                    break;
+                } catch (inheritanceError) {
+                    lastInheritanceError = inheritanceError;
+                    earlyDetails = null;
+                    earlyCreditData = null;
+                    replacementSnapshots.clear();
+                    if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
                 }
-            } catch (inheritanceError) {
-                console.error("[createJobOrder] Replacement predecessor snapshot failed; continuing without inheritance.", inheritanceError);
-                earlyDetails = null;
-                earlyCreditData = null;
-                replacementSnapshots.clear();
+            }
+            if (lastInheritanceError) {
+                throw new Error(`Failed to establish replacement predecessors: ${lastInheritanceError instanceof Error ? lastInheritanceError.message : "unknown error"}`);
             }
         }
 
