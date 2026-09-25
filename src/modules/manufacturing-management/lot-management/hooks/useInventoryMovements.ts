@@ -106,7 +106,8 @@ export function useInventoryMovements(
             .filter((m) => {
                 // Branch filter
                 if (selectedBranchId !== "ALL") {
-                    if (m.branchId !== undefined && Number(m.branchId) !== Number(selectedBranchId)) return false;
+                    const mBranch = m.branchId ?? (m as { branch_id?: unknown }).branch_id;
+                    if (mBranch !== undefined && mBranch !== null && Number(mBranch) !== Number(selectedBranchId)) return false;
                 }
 
                 // Product Type filter
