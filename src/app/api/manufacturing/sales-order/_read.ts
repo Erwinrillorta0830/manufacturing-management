@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { selectPreferredActiveVersion } from "../finished-goods/versions/versions-helper";
+import { acceptedQuantityByJobOrder, buildQAYieldAssessments } from "../production/_qa-accepted-output";
 import { isProductionSchedulingStatus } from "./_status";
 import { isCancelledJobOrderStatus, isTerminalJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 import {
@@ -116,16 +117,19 @@ export interface LinkedJobOrder {
     jobOrderNo: string;
     status: string;
     allocatedQuantity: number;
+    producedQuantity: number;
+    isTerminated: boolean;
 }
 
 type JobOrderAssociationData = {
+    allocations: Row[];
     activeAllocations: Row[];
     jobOrders: Row[];
 };
 
 async function fetchJobOrderAssociations(read: DirectusReader, details: Row[]): Promise<JobOrderAssociationData> {
     const detailIds = details.map((detail) => relationId(detail.detail_id || detail.id)).filter(Boolean);
-    if (detailIds.length === 0) return { activeAllocations: [], jobOrders: [] };
+    if (detailIds.length === 0) return { allocations: [], activeAllocations: [], jobOrders: [] };
 
     const allocationParams = new URLSearchParams({
         "filter[sales_order_detail_id][_in]": detailIds.join(","),
@@ -145,8 +149,8 @@ async function fetchJobOrderAssociations(read: DirectusReader, details: Row[]): 
     }
 
     const activeAllocations = allocations.filter((allocation) => !isCancelledJobOrderStatus(allocation.status));
-    const jobOrderIds = [...new Set(activeAllocations.map((allocation) => relationId(allocation.job_order_id)).filter(Boolean))];
-    if (jobOrderIds.length === 0) return { activeAllocations, jobOrders: [] };
+    const jobOrderIds = [...new Set(allocations.map((allocation) => relationId(allocation.job_order_id)).filter(Boolean))];
+    if (jobOrderIds.length === 0) return { allocations, activeAllocations, jobOrders: [] };
 
     const jobOrderParams = new URLSearchParams({
         "filter[job_order_id][_in]": jobOrderIds.join(","),
@@ -154,7 +158,7 @@ async function fetchJobOrderAssociations(read: DirectusReader, details: Row[]): 
         limit: "-1"
     });
     const jobOrders = (await read("manufacturing_job_orders", jobOrderParams)).data;
-    return { activeAllocations, jobOrders };
+    return { allocations, activeAllocations, jobOrders };
 }
 
 /** Detail lines with any active (or unresolved) JO allocation cannot be replaced. */
@@ -198,17 +202,40 @@ export async function findPlannedQuantities(read: DirectusReader, details: Row[]
 }
 
 export async function findLinkedJobOrders(read: DirectusReader, details: Row[]) {
-    const { activeAllocations, jobOrders } = await fetchJobOrderAssociations(read, details);
+    const { allocations, jobOrders } = await fetchJobOrderAssociations(read, details);
     const jobOrdersById = new Map(
         jobOrders.map((jobOrder) => [relationId(jobOrder.job_order_id), jobOrder])
     );
+    const cancelledJobOrderIds = [...new Set(jobOrders
+        .filter((jobOrder) => isCancelledJobOrderStatus(jobOrder.status))
+        .map((jobOrder) => relationId(jobOrder.job_order_id))
+        .filter(Boolean))];
+    const terminatedJobOrderIds = new Set<number>();
+    if (cancelledJobOrderIds.length > 0) {
+        const historyParams = new URLSearchParams({
+            "filter[job_order_id][_in]": cancelledJobOrderIds.join(","),
+            "filter[workflow_action][_eq]": "terminate-production",
+            "filter[new_status][_eq]": "Cancelled",
+            fields: "job_order_id,workflow_action,new_status",
+            limit: "-1"
+        });
+        const terminationHistory = (await read("manufacturing_job_order_status_history", historyParams)).data;
+        for (const history of terminationHistory) {
+            const jobOrderId = relationId(history.job_order_id);
+            if (jobOrderId) terminatedJobOrderIds.add(jobOrderId);
+        }
+    }
+
     const linkedByKey = new Map<string, LinkedJobOrder>();
 
-    for (const allocation of activeAllocations) {
+    for (const allocation of allocations) {
         const detailId = relationId(allocation.sales_order_detail_id);
         const jobOrderId = relationId(allocation.job_order_id);
         const jobOrder = jobOrdersById.get(jobOrderId);
-        if (!detailId || !jobOrderId || !jobOrder || isCancelledJobOrderStatus(jobOrder.status)) continue;
+        const isTerminated = terminatedJobOrderIds.has(jobOrderId);
+        if (!detailId || !jobOrderId || !jobOrder) continue;
+        if (isCancelledJobOrderStatus(allocation.status) && !isTerminated) continue;
+        if (isCancelledJobOrderStatus(jobOrder.status) && !isTerminated) continue;
 
         const allocatedQuantity = Number(allocation.allocated_quantity ?? allocation.quantity ?? 0);
         const safeQuantity = Number.isFinite(allocatedQuantity) ? Math.max(0, allocatedQuantity) : 0;
@@ -223,8 +250,30 @@ export async function findLinkedJobOrders(read: DirectusReader, details: Row[]) 
             jobOrderId,
             jobOrderNo: String(jobOrder.job_order_no || `JO-${jobOrderId}`),
             status: String(jobOrder.status || "Unknown"),
-            allocatedQuantity: safeQuantity
+            allocatedQuantity: safeQuantity,
+            producedQuantity: 0,
+            isTerminated
         });
+    }
+
+    const linkedJobOrderIds = [...new Set([...linkedByKey.values()].map((jobOrder) => jobOrder.jobOrderId))];
+    if (linkedJobOrderIds.length > 0) {
+        const productionParams = new URLSearchParams({
+            "filter[job_order_id][_in]": linkedJobOrderIds.join(","),
+            fields: "*",
+            limit: "-1"
+        });
+        const [yieldRows, inspectionRows, routeRows] = await Promise.all([
+            read("manufacturing_job_order_yield_ledger", productionParams),
+            read("manufacturing_daily_qa_inspections", productionParams),
+            read("manufacturing_job_order_routes", productionParams)
+        ]);
+        const producedByJobOrder = acceptedQuantityByJobOrder(
+            buildQAYieldAssessments(yieldRows.data, inspectionRows.data, routeRows.data)
+        );
+        for (const linkedJobOrder of linkedByKey.values()) {
+            linkedJobOrder.producedQuantity = producedByJobOrder.get(linkedJobOrder.jobOrderId) || 0;
+        }
     }
 
     const linkedByDetail = new Map<number, LinkedJobOrder[]>();

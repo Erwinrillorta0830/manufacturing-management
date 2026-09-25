@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { Activity, RefreshCw, Search } from "lucide-react";
+import { Activity, Plus, RefreshCw, Search } from "lucide-react";
 import {
     Card,
     CardContent,
@@ -20,13 +20,14 @@ import {
 } from "@/components/ui/table";
 import { SalesOrderDemandGroup, SalesOrderDetail } from "../types";
 import { displayJobOrderStatus } from "../../job-order-status";
-import { remainingQuantity } from "../utils/demand-groups";
+import { canCreateReplacementJobOrder, remainingQuantity } from "../utils/demand-groups";
 
 interface InProductionSalesOrdersTableProps {
     loadingOrders: boolean;
     error?: string | null;
     salesOrderGroups: SalesOrderDemandGroup[];
     onRetry: () => void;
+    onCreateJobOrder: (detailId: number) => void;
 }
 
 function lineSearchText(line: SalesOrderDetail): string {
@@ -62,7 +63,8 @@ export function InProductionSalesOrdersTable({
     loadingOrders,
     error,
     salesOrderGroups,
-    onRetry
+    onRetry,
+    onCreateJobOrder
 }: InProductionSalesOrdersTableProps) {
     const [searchQuery, setSearchQuery] = useState("");
 
@@ -89,7 +91,7 @@ export function InProductionSalesOrdersTable({
                         Sales Orders in Production
                     </CardTitle>
                     <CardDescription className="text-xs">
-                        Read-only monitoring for Sales Orders currently marked In Production and their connected Job Orders.
+                        Monitor Sales Orders in production and create replacement Job Orders for eligible terminated runs.
                     </CardDescription>
                 </div>
                 <div className="relative w-full md:w-72">
@@ -130,6 +132,7 @@ export function InProductionSalesOrdersTable({
                                     <TableHead className="min-w-[110px] text-right font-bold text-xs">Ordered</TableHead>
                                     <TableHead className="min-w-[110px] text-right font-bold text-xs">Planned</TableHead>
                                     <TableHead className="min-w-[115px] text-right font-bold text-xs">Remaining</TableHead>
+                                    <TableHead className="min-w-[155px] font-bold text-xs">Actions</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody className="divide-y divide-border">
@@ -162,10 +165,18 @@ export function InProductionSalesOrdersTable({
                                                 <div className="space-y-1">
                                                     {line.linkedJobOrders.map((jobOrder) => (
                                                         <div key={jobOrder.jobOrderId}>
-                                                            <div className="font-mono font-semibold text-foreground">{jobOrder.jobOrderNo}</div>
-                                                            <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                                                            <div className="flex flex-wrap items-center gap-1.5">
+                                                                <span className="font-mono font-semibold text-foreground">{jobOrder.jobOrderNo}</span>
+                                                                {jobOrder.isTerminated && (
+                                                                    <Badge variant="outline" className="border-orange-500/30 bg-orange-500/10 px-1.5 py-0 text-[9px] text-orange-700 dark:text-orange-300">
+                                                                        Terminated
+                                                                    </Badge>
+                                                                )}
+                                                            </div>
+                                                            <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
                                                                 <span>{displayJobOrderStatus(jobOrder.status)}</span>
                                                                 <span>· {jobOrder.allocatedQuantity.toLocaleString()} allocated</span>
+                                                                <span>· {jobOrder.producedQuantity.toLocaleString()} produced</span>
                                                             </div>
                                                         </div>
                                                     ))}
@@ -189,6 +200,21 @@ export function InProductionSalesOrdersTable({
                                             <LineStack lines={group.lines} render={(line) => (
                                                 <span>{remainingQuantity(line).toLocaleString()} <span className="text-[10px] font-normal lowercase text-muted-foreground">{line.product_id?.uom || "pcs"}</span></span>
                                             )} />
+                                        </TableCell>
+                                        <TableCell className="min-w-[155px] py-3 text-xs">
+                                            <LineStack lines={group.lines} render={(line) => canCreateReplacementJobOrder(line) ? (
+                                                <Button
+                                                    type="button"
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="h-8 gap-1.5 whitespace-nowrap"
+                                                    onClick={() => onCreateJobOrder(line.detail_id)}
+                                                    aria-label={`Create replacement Job Order for ${group.order.order_no}, ${line.product_id?.product_name || "product"}`}
+                                                >
+                                                    <Plus className="h-3.5 w-3.5" />
+                                                    Create JO
+                                                </Button>
+                                            ) : <span className="text-muted-foreground">—</span>} />
                                         </TableCell>
                                     </TableRow>
                                 ))}

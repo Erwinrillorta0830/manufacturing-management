@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "../../job-order-status";
 import { Branch, SalesOrder, SalesOrderDetail, NetRequirementItem } from "../types";
 import { fetchBranches, fetchSalesOrders, fetchNetRequirementsRaw, releaseJobOrder, releaseMultipleJobOrders, directAllocate } from "../services/planning-api";
-import { buildSalesOrderDemandGroups, buildSalesOrderReleaseGroups, isSchedulableSalesOrderLine, remainingQuantity } from "../utils/demand-groups";
+import { buildSalesOrderDemandGroups, buildSalesOrderReleaseGroups, canCreateReplacementJobOrder, isSchedulableSalesOrderLine, remainingQuantity } from "../utils/demand-groups";
 import { DEFAULT_PRODUCTION_SHIFT_HOURS, normalizeProductionOutputQuantity } from "../utils/production-timing";
 
 function salesOrderDateValue(value: string | undefined): number {
@@ -580,10 +580,25 @@ export function usePlanningEngineering() {
         runFetchNetRequirements();
     }, [selectedBranchId, demandProductIds, planningLines, subAssemblyMapping]);
 
-    // Helper: Currently selected details
+    const selectableLinesByDetailId = useMemo(() => {
+        const linesByDetailId = new Map<number, SalesOrderDetail>();
+        Object.values(productionDetailsMap).flat().forEach((line) => linesByDetailId.set(line.detail_id, line));
+        salesOrderLines.forEach((line) => linesByDetailId.set(line.detail_id, line));
+        return linesByDetailId;
+    }, [productionDetailsMap, salesOrderLines]);
+
+    // Helper: currently selected details, including lines launched from the In Production tab.
     const selectedLines = useMemo(() => {
-        return salesOrderLines.filter((l) => selectedDetailIds.includes(l.detail_id) && isSchedulableSalesOrderLine(l));
-    }, [salesOrderLines, selectedDetailIds]);
+        const selectedIds = new Set(selectedDetailIds);
+        const lines = salesOrderLines.filter((line) => selectedIds.has(line.detail_id) && isSchedulableSalesOrderLine(line));
+        const resolvedIds = new Set(lines.map((line) => line.detail_id));
+        selectedDetailIds.forEach((detailId) => {
+            if (resolvedIds.has(detailId)) return;
+            const line = selectableLinesByDetailId.get(detailId);
+            if (line && isSchedulableSalesOrderLine(line)) lines.push(line);
+        });
+        return lines;
+    }, [salesOrderLines, selectedDetailIds, selectableLinesByDetailId]);
 
     const releaseGroups = useMemo(
         () => buildSalesOrderReleaseGroups(selectedLines),
@@ -633,18 +648,36 @@ export function usePlanningEngineering() {
     };
 
     // Open Release Modal & initialize parameters
-    const handleInitiateRelease = () => {
+    const handleInitiateRelease = (replacementDetailId?: number) => {
         if (parseValidBranchId(selectedBranchId) === null) {
             toast.error("Please select a target branch before releasing a Job Order.");
             return;
         }
-        if (!mergeValidation.isValid) return;
+
+        let linesToRelease = selectedLines;
+        if (replacementDetailId !== undefined) {
+            const line = selectableLinesByDetailId.get(replacementDetailId);
+            if (!line || !canCreateReplacementJobOrder(line)) {
+                toast.error("This Sales Order line no longer has eligible residual demand. Refresh the In Production list and try again.");
+                return;
+            }
+            const productId = Number(line.product_id?.product_id);
+            const bomVersionId = Number(line.bom_version_id);
+            if (!Number.isInteger(productId) || productId <= 0 || !Number.isInteger(bomVersionId) || bomVersionId <= 0) {
+                toast.error("Cannot release: the selected line must have a valid product and active recipe version.");
+                return;
+            }
+            linesToRelease = [line];
+            setSelectedDetailIds([replacementDetailId]);
+        } else if (!mergeValidation.isValid) {
+            return;
+        }
 
         // Sum total demand
         // Sales-Order-linked JO quantity is authoritative: it is the sum of
         // each selected line's remaining unfulfilled quantity. Net
         // requirements may inform planning, but must not change this link.
-        const totalRemaining = selectedLines.reduce((sum, line) => sum + remainingQuantity(line), 0);
+        const totalRemaining = linesToRelease.reduce((sum, line) => sum + remainingQuantity(line), 0);
         if (totalRemaining <= 0) {
             toast.error("The selected Sales Order lines have no remaining quantity to schedule.");
             return;
@@ -659,7 +692,7 @@ export function usePlanningEngineering() {
         setDueDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);
         setShiftOption(String(DEFAULT_PRODUCTION_SHIFT_HOURS));
         setPriority(0);
-        setRemarks(`Production run for: ${selectedLines.map(l => l.order_no).join(", ")}`);
+        setRemarks(`${replacementDetailId === undefined ? "Production run" : "Replacement production run"} for: ${linesToRelease.map(l => l.order_no).join(", ")}`);
         setIsConfirmOpen(true);
     };
 
