@@ -113,8 +113,11 @@ function AllocationForm({
     const [loadingPreview, setLoadingPreview] = useState(false);
     const [formError, setFormError] = useState<string | null>(null);
 
-    const selectedMaterialPreviews = preview?.materials.filter(item => sourceMaterialIds.includes(item.jo_material_id)) || [];
-    const selectedMaterialPreview: MaterialAllocationPreview | null = selectedMaterialPreviews.length > 0
+    const selectedMaterialPreviews = useMemo(
+        () => preview?.materials.filter(item => sourceMaterialIds.includes(item.jo_material_id)) || [],
+        [preview, sourceMaterialIds]
+    );
+    const selectedMaterialPreview: MaterialAllocationPreview | null = useMemo(() => selectedMaterialPreviews.length > 0
         ? {
             ...selectedMaterialPreviews[0],
             required_quantity: selectedMaterialPreviews.reduce((total, item) => total + item.required_quantity, 0),
@@ -132,10 +135,12 @@ function AllocationForm({
             proposed_allocations: selectedMaterialPreviews.flatMap(item => item.proposed_allocations),
             message: selectedMaterialPreviews.find(item => item.message)?.message
         }
-        : null;
-    const selectedLines = mode === "auto"
+        : null,
+    [selectedMaterialPreviews]);
+    const selectedLines = useMemo(() => mode === "auto"
         ? selectedMaterialPreview?.proposed_allocations || []
-        : manualLines.filter(line => line.quantity > 0);
+        : manualLines.filter(line => line.quantity > 0),
+    [mode, selectedMaterialPreview, manualLines]);
     const selectedQuantity = roundQuantity(selectedLines.reduce((total, line) => total + line.quantity, 0));
     const remainingQuantity = selectedMaterialPreview?.remaining_quantity ?? Math.max(0, material.required_quantity - material.staged_quantity);
     // Staging is raw-material level: everything stages to the generic floor bin.
