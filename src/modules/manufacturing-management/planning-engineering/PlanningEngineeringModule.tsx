@@ -159,6 +159,7 @@ export default function PlanningEngineeringModule() {
         mergeValidation,
         handleSelectLine,
         handleInitiateRelease,
+        handleInitiateReplacementRelease,
         handleConfirmRelease,
         assignments,
         setAssignments,
@@ -1217,7 +1218,7 @@ export default function PlanningEngineeringModule() {
                                 releaseGroups={releaseGroups}
                                 mergeValidation={mergeValidation}
                                 hasValidTargetBranch={hasValidTargetBranch}
-                                handleInitiateRelease={handleInitiateRelease}
+                                handleInitiateRelease={() => handleInitiateRelease()}
                                 versionStock={versionStock}
                                 loadingVersionStock={loadingVersionStock}
                                 canDirectAllocate={releaseGroups.length === 1}
@@ -1234,7 +1235,7 @@ export default function PlanningEngineeringModule() {
                         error={productionOrdersError}
                         salesOrderGroups={productionSalesOrderGroups}
                         onRetry={() => { void loadInProductionSalesOrders(); }}
-                        onCreateJobOrder={handleInitiateRelease}
+                        onCreateJobOrder={handleInitiateReplacementRelease}
                     />
                 </TabsContent>
 
