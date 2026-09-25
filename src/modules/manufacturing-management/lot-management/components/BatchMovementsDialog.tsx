@@ -44,7 +44,14 @@ export default function BatchMovementsDialog({
     branches = [],
     loading = false
 }: BatchMovementsDialogProps) {
-    // Filter movements specifically for this batch
+    const matchedLot = React.useMemo(() => {
+        if (!batch) return undefined;
+        return lots.find((l) => Number(l.lotId) === Number(batch.lotId));
+    }, [batch, lots]);
+
+    const targetBranchId = Number(batch?.branchId || matchedLot?.branchId || 0);
+
+    // Filter movements specifically for this batch and branch
     const batchMovements = React.useMemo(() => {
         if (!batch) return [];
 
@@ -64,13 +71,20 @@ export default function BatchMovementsDialog({
         const lId = Number(batch.lotId || 0);
         const bMfgNorm = normalizeDate(batch.manufacturingDate);
         const bExpNorm = normalizeDate(batch.expirationDate);
+        const targetInvId = Number(batch.inventoryLotId || (batch.batchId > 0 ? batch.batchId : 0));
 
         return movements.filter((m) => {
+            // Strictly isolate movements to the batch's designated branch
+            const mBranchId = Number(m.branchId ?? m.branch_id ?? 0);
+            if (targetBranchId > 0 && mBranchId > 0 && mBranchId !== targetBranchId) {
+                return false;
+            }
+
             const mInvId = Number(m.inventoryLotId ?? m.inventory_lot_id ?? m.batchId ?? m.batch_id ?? 0);
             const mBNo = String(m.batchNo ?? m.batch_no ?? "").toLowerCase().trim();
             const matchesBatchNo = mBNo === bNo || mBNo === rawBNo;
 
-            const matchesInvId = batch.batchId > 0 && mInvId > 0 && mInvId === batch.batchId && (!mBNo || matchesBatchNo);
+            const matchesInvId = targetInvId > 0 && mInvId > 0 && mInvId === targetInvId && (!mBNo || matchesBatchNo);
 
             const mPId = Number(m.productId ?? m.product_id ?? 0);
             const mLId = Number(m.mmLotId ?? m.mm_lot_id ?? m.lotId ?? m.lot_id ?? 0);
@@ -93,7 +107,7 @@ export default function BatchMovementsDialog({
             const timeB = new Date(dateB).getTime();
             return timeB - timeA;
         });
-    }, [batch, movements]);
+    }, [batch, movements, targetBranchId]);
 
     const classification = React.useMemo(() => {
         if (!batch) return { code: "OTHER", label: "General", className: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20" };
@@ -107,7 +121,6 @@ export default function BatchMovementsDialog({
 
     if (!batch) return null;
 
-    const matchedLot = lots.find((l) => Number(l.lotId) === Number(batch.lotId));
     const matchedBranch = branches.find((br) => Number(br.id) === Number(batch.branchId || matchedLot?.branchId));
 
     const branchName = matchedLot?.branchName || matchedBranch?.branchName || (batch.branchId ? `Branch #${batch.branchId}` : "");
