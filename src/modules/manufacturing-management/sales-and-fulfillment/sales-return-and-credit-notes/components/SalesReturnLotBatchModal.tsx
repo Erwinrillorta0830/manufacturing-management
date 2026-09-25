@@ -118,6 +118,7 @@ export interface SalesReturnLotBatchModalProps {
   productCategory?: unknown;
   categoryName?: string;
   requestedQuantity?: number;
+  returnType?: string;
   adjustmentType?: 'IN' | 'OUT';
   mode?: 'SELECT_EXISTING' | 'CREATE_OR_ASSIGN';
   initialValues?: Partial<LotBatchSelectionResult>;
@@ -138,6 +139,7 @@ export function SalesReturnLotBatchModal({
   productType,
   productCategory,
   categoryName,
+  returnType,
   requestedQuantity = 0,
   adjustmentType = 'IN',
   initialValues,
@@ -147,6 +149,32 @@ export function SalesReturnLotBatchModal({
 }: SalesReturnLotBatchModalProps) {
   const [lots, setLots] = useState<MMLot[]>([]);
   const [loading, setLoading] = useState(false);
+
+  // Return Type driven QA options
+  const cleanReturnType = String(returnType || '').trim().toLowerCase();
+  const isGoodReturn = cleanReturnType === 'good return' || cleanReturnType === 'good order';
+  const isBadOrder = cleanReturnType === 'bad order';
+
+  const availableQAOptions = useMemo(() => {
+    if (isGoodReturn) {
+      return [
+        { value: 'GOOD' as QAStatus, label: 'GOOD', dotColor: 'bg-emerald-500', textColor: 'text-emerald-600 dark:text-emerald-400' },
+      ];
+    }
+    if (isBadOrder) {
+      return [
+        { value: 'DAMAGED' as QAStatus, label: 'DAMAGED', dotColor: 'bg-rose-500', textColor: 'text-rose-600 dark:text-rose-400' },
+        { value: 'QUARANTINED' as QAStatus, label: 'QUARANTINED', dotColor: 'bg-amber-500', textColor: 'text-amber-600 dark:text-amber-400' },
+        { value: 'EXPIRED' as QAStatus, label: 'EXPIRED', dotColor: 'bg-purple-500', textColor: 'text-purple-600 dark:text-purple-400' },
+      ];
+    }
+    return [
+      { value: 'GOOD' as QAStatus, label: 'GOOD', dotColor: 'bg-emerald-500', textColor: 'text-emerald-600 dark:text-emerald-400' },
+      { value: 'DAMAGED' as QAStatus, label: 'DAMAGED', dotColor: 'bg-rose-500', textColor: 'text-rose-600 dark:text-rose-400' },
+      { value: 'QUARANTINED' as QAStatus, label: 'QUARANTINED', dotColor: 'bg-amber-500', textColor: 'text-amber-600 dark:text-amber-400' },
+      { value: 'EXPIRED' as QAStatus, label: 'EXPIRED', dotColor: 'bg-purple-500', textColor: 'text-purple-600 dark:text-purple-400' },
+    ];
+  }, [isGoodReturn, isBadOrder]);
 
   // Maps for tracking lot capacities and available onhand quantities across entire branch
   const [lotBatchCountMap, setLotBatchCountMap] = useState<Map<number, number>>(new Map());
@@ -963,9 +991,16 @@ export function SalesReturnLotBatchModal({
         if (compatibleLot) {
           const lId = Number(compatibleLot.lot_id);
           const isLotBad = isBadStockLot(compatibleLot);
-          const defaultQA: QAStatus = isLotBad
-            ? (initialValues?.qa_status && initialValues.qa_status !== 'GOOD' ? initialValues.qa_status : 'EXPIRED')
-            : (initialValues?.qa_status || 'GOOD');
+          let defaultQA: QAStatus = 'GOOD';
+          if (isBadOrder) {
+            defaultQA = isLotBad ? 'EXPIRED' : 'DAMAGED';
+          } else if (isGoodReturn) {
+            defaultQA = 'GOOD';
+          } else {
+            defaultQA = isLotBad
+              ? (initialValues?.qa_status && initialValues.qa_status !== 'GOOD' ? initialValues.qa_status : 'EXPIRED')
+              : (initialValues?.qa_status || 'GOOD');
+          }
           const initialQty = (initialValues as { quantity?: number; total_quantity?: number })?.quantity ?? initialValues?.total_quantity ?? (requestedQuantity || 0);
           const cleanKey = String(initialValues?.batch_no || '').trim().toLowerCase();
           const cleanLookedUp = cleanKey ? batchMetaMap.get(cleanKey) : undefined;
@@ -986,6 +1021,10 @@ export function SalesReturnLotBatchModal({
             const lookedUp = bKey ? batchMetaMap.get(bKey) : undefined;
             const isLast = idx === (splitBatches.length > 1 ? splitBatches.length - 1 : 0);
             const bQty = isLast ? Math.max(0, initialQty - perBatchQty * (batchCount - 1)) : perBatchQty;
+            let rowQA: QAStatus = lookedUp?.qaStatus || defaultQA;
+            if (isGoodReturn) rowQA = 'GOOD';
+            else if (isBadOrder && rowQA === 'GOOD') rowQA = 'DAMAGED';
+
             return {
               inventory_lot_id: initialValues?.inventory_lot_id ?? lookedUp?.inventoryLotId,
               batch_no: bName,
@@ -993,7 +1032,7 @@ export function SalesReturnLotBatchModal({
               expiry_date: lookedUp?.expDate || cleanExp,
               quantity: bQty,
               unit_cost: initialValues?.unit_cost ?? lookedUp?.unitCost,
-              qa_status: lookedUp?.qaStatus || defaultQA,
+              qa_status: rowQA,
             };
           });
 
@@ -1084,9 +1123,16 @@ export function SalesReturnLotBatchModal({
 
     const nextId = Number(nextLot.lot_id);
     const lotIsBad = isBadStockLot(nextLot);
-    const defaultQA: QAStatus = lotIsBad
-      ? (currentIsBad ? 'EXPIRED' : 'DAMAGED')
-      : 'GOOD';
+    let defaultQA: QAStatus = 'GOOD';
+    if (isBadOrder) {
+      defaultQA = lotIsBad ? 'EXPIRED' : 'DAMAGED';
+    } else if (isGoodReturn) {
+      defaultQA = 'GOOD';
+    } else {
+      defaultQA = lotIsBad
+        ? (currentIsBad ? 'EXPIRED' : 'DAMAGED')
+        : 'GOOD';
+    }
 
     // Autofill with the first batch details from previous groups if available
     const firstGroup = lotGroups[0];
@@ -1195,7 +1241,14 @@ export function SalesReturnLotBatchModal({
     const targetGroup = lotGroups[groupIndex];
     const targetLot = lots.find((l) => Number(l.lot_id) === Number(targetGroup?.lot_id));
     const isLotBad = targetLot ? isBadStockLot(targetLot) : false;
-    const defaultQA: QAStatus = isLotBad ? 'EXPIRED' : 'GOOD';
+    let defaultQA: QAStatus = 'GOOD';
+    if (isBadOrder) {
+      defaultQA = isLotBad ? 'EXPIRED' : 'DAMAGED';
+    } else if (isGoodReturn) {
+      defaultQA = 'GOOD';
+    } else {
+      defaultQA = isLotBad ? 'EXPIRED' : 'GOOD';
+    }
 
     // Auto-fill dates from toolbar state or the first batch in this lot group
     const fallbackMfg = targetGroup?.batches?.[0]?.manufacturing_date || (initialValues?.manufacturing_date ? String(initialValues.manufacturing_date).substring(0, 10) : '');
@@ -1909,13 +1962,9 @@ export function SalesReturnLotBatchModal({
                           </span>
                           <div className="w-80">
                             {(() => {
-                              const groupIsBad = (group.batches || []).some((b) => b.qa_status && b.qa_status !== 'GOOD');
                               const optionsLots = lots.filter((l) => {
                                 if (l.status && l.status !== 'ACTIVE') return false;
                                 if (!isLotMatchingUom(l)) return false;
-                                const lotIsBad = isBadStockLot(l);
-                                if (groupIsBad && !lotIsBad) return false;
-                                if (!groupIsBad && lotIsBad) return false;
                                 return true;
                               });
 
@@ -1959,11 +2008,13 @@ export function SalesReturnLotBatchModal({
                                       tagClassName = 'text-emerald-600 dark:text-emerald-400 font-semibold';
                                     }
 
+                                    const isTwinBranchLot = branchId && Number(l.branch_id) !== Number(branchId);
+                                    const branchTag = isTwinBranchLot ? ` [${l.branch_name || 'Bad Branch'}]` : '';
                                     const lotCapStr = l.max_batch_capacity ? ` (Cap: ${l.max_batch_capacity.toLocaleString()} ${l.unit_name || productUomName})` : '';
                                     return {
                                       value: String(l.lot_id),
-                                      label: `${l.lot_name}${lotCapStr}`,
-                                      title: `${l.lot_name}${lotCapStr}${tag ? ` ${tag}` : ''}`,
+                                      label: `${l.lot_name}${branchTag}${lotCapStr}`,
+                                      title: `${l.lot_name}${branchTag}${lotCapStr}${tag ? ` ${tag}` : ''}`,
                                       tag,
                                       tagClassName,
                                     };
@@ -2583,26 +2634,13 @@ export function SalesReturnLotBatchModal({
                                     <SelectValue placeholder="Status" />
                                   </SelectTrigger>
                                   <SelectContent>
-                                    <SelectItem value="GOOD" className="text-xs">
-                                      <span className="flex items-center gap-1.5 font-bold text-emerald-600 dark:text-emerald-400">
-                                        <span className="w-2 h-2 rounded-full bg-emerald-500" /> GOOD
-                                      </span>
-                                    </SelectItem>
-                                    <SelectItem value="DAMAGED" className="text-xs">
-                                      <span className="flex items-center gap-1.5 font-bold text-rose-600 dark:text-rose-400">
-                                        <span className="w-2 h-2 rounded-full bg-rose-500" /> DAMAGED
-                                      </span>
-                                    </SelectItem>
-                                    <SelectItem value="QUARANTINED" className="text-xs">
-                                      <span className="flex items-center gap-1.5 font-bold text-amber-600 dark:text-amber-400">
-                                        <span className="w-2 h-2 rounded-full bg-amber-500" /> QUARANTINED
-                                      </span>
-                                    </SelectItem>
-                                    <SelectItem value="EXPIRED" className="text-xs">
-                                      <span className="flex items-center gap-1.5 font-bold text-purple-600 dark:text-purple-400">
-                                        <span className="w-2 h-2 rounded-full bg-purple-500" /> EXPIRED
-                                      </span>
-                                    </SelectItem>
+                                    {availableQAOptions.map((opt) => (
+                                      <SelectItem key={opt.value} value={opt.value} className="text-xs">
+                                        <span className={`flex items-center gap-1.5 font-bold ${opt.textColor}`}>
+                                          <span className={`w-2 h-2 rounded-full ${opt.dotColor}`} /> {opt.label}
+                                        </span>
+                                      </SelectItem>
+                                    ))}
                                   </SelectContent>
                                 </Select>
                                 {!isGroupBadStock && batch.qa_status !== 'GOOD' && (

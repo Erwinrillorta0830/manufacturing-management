@@ -2528,6 +2528,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
           productType={items[activeLotBatchIndex].product_type || items[activeLotBatchIndex].product_type_name}
           productCategory={items[activeLotBatchIndex].product_category}
           categoryName={items[activeLotBatchIndex].category_name as string | undefined}
+          returnType={items[activeLotBatchIndex].returnType}
           requestedQuantity={items[activeLotBatchIndex].quantity}
           adjustmentType="IN"
           initialValues={{

@@ -14,8 +14,32 @@ export async function GET(req: Request) {
     const qaStatus = searchParams.get("qa_status");
     const status = searchParams.get("status");
 
+    const targetBranchIds: number[] = [];
+    if (branchId) {
+      targetBranchIds.push(Number(branchId));
+      try {
+        const bRes = await fetch(`${DIRECTUS_URL}/items/branches/${branchId}?fields=id,bad_stock_branch_id`, {
+          headers,
+          cache: "no-store",
+        });
+        if (bRes.ok) {
+          const bJson = await bRes.json();
+          const badId = bJson?.data?.bad_stock_branch_id;
+          if (badId && Number(badId) > 0) {
+            targetBranchIds.push(Number(badId));
+          }
+        }
+      } catch (bErr) {
+        console.warn("[InventoryLots API] Failed to resolve twin bad branch:", bErr);
+      }
+    }
+
     const filters: Record<string, unknown> = {};
-    if (branchId) filters.branch_id = { _eq: Number(branchId) };
+    if (targetBranchIds.length === 1) {
+      filters.branch_id = { _eq: targetBranchIds[0] };
+    } else if (targetBranchIds.length > 1) {
+      filters.branch_id = { _in: targetBranchIds };
+    }
     if (productId) filters.product_id = { _eq: Number(productId) };
     if (lotId) filters.lot_id = { _eq: Number(lotId) };
     if (qaStatus) filters.qa_status = { _eq: qaStatus };

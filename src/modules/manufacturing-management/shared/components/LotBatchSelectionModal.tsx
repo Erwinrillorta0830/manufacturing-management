@@ -2057,10 +2057,12 @@ export function LotBatchSelectionModal({
                                       }
 
                                       const lotCapStr = l.max_batch_capacity ? ` (Cap: ${l.max_batch_capacity.toLocaleString()} ${l.unit_name || productUomName})` : '';
+                                      const isTwinBranch = Boolean(l.branch_id && branchId && Number(l.branch_id) !== Number(branchId));
+                                      const branchPrefix = isTwinBranch && l.branch_name ? `[${l.branch_name}] ` : '';
                                       return {
                                         value: String(l.lot_id),
-                                        label: `${l.lot_name}${lotCapStr}`,
-                                        title: `${l.lot_name}${lotCapStr}${tag ? ` ${tag}` : ''}`,
+                                        label: `${branchPrefix}${l.lot_name}${lotCapStr}`,
+                                        title: `${branchPrefix}${l.lot_name}${lotCapStr}${tag ? ` ${tag}` : ''}`,
                                         tag,
                                         tagClassName,
                                       };

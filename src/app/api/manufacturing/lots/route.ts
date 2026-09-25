@@ -86,7 +86,33 @@ export async function GET(request: Request) {
                 : Promise.resolve(null)
         ]);
 
-        const branchFilter = filterBranchId ? `&filter[branch_id][_eq]=${filterBranchId}` : "";
+        let branchesList: { id: number; branch_name?: string; branch_code?: string; isBadStock?: number | boolean | string | null; bad_stock_branch_id?: number | null }[] = [];
+        if (branchesRes && branchesRes.ok) {
+            try {
+                const bJson = await branchesRes.json();
+                branchesList = bJson.data || [];
+            } catch (err) {
+                console.error("Error parsing branches in GET lots:", err);
+            }
+        }
+
+        const targetBranchIds = new Set<number>();
+        if (filterBranchId) {
+            const numBId = Number(filterBranchId);
+            targetBranchIds.add(numBId);
+            const primaryBranch = branchesList.find((b) => Number(b.id) === numBId);
+            if (primaryBranch?.bad_stock_branch_id) {
+                targetBranchIds.add(Number(primaryBranch.bad_stock_branch_id));
+            }
+        }
+
+        let branchFilter = "";
+        if (targetBranchIds.size === 1) {
+            branchFilter = `&filter[branch_id][_eq]=${Array.from(targetBranchIds)[0]}`;
+        } else if (targetBranchIds.size > 1) {
+            branchFilter = `&filter[branch_id][_in]=${Array.from(targetBranchIds).join(",")}`;
+        }
+
         const res = await fetch(
             `${DIRECTUS_URL}/items/mm_lots?limit=-1&sort=-updated_at,-created_at,-lot_id&fields=${fields}${branchFilter}&_t=${timestamp}`,
             { headers, cache: "no-store" }
@@ -116,16 +142,6 @@ export async function GET(request: Request) {
                 unitsList = unitsJson.data || [];
             } catch (err) {
                 console.error("Error parsing units in GET lots:", err);
-            }
-        }
-
-        let branchesList: { id: number; branch_name?: string; branch_code?: string; isBadStock?: number | boolean | string | null; bad_stock_branch_id?: number | null }[] = [];
-        if (branchesRes && branchesRes.ok) {
-            try {
-                const bJson = await branchesRes.json();
-                branchesList = bJson.data || [];
-            } catch (err) {
-                console.error("Error parsing branches in GET lots:", err);
             }
         }
 
@@ -263,8 +279,8 @@ export async function GET(request: Request) {
         });
 
         const includeAll = searchParams.get("include_all") === "true";
-        let filteredLots = filterBranchId
-            ? mappedLots.filter(l => Number(l.branchId) === Number(filterBranchId))
+        let filteredLots = targetBranchIds.size > 0
+            ? mappedLots.filter(l => targetBranchIds.has(Number(l.branchId)))
             : mappedLots;
 
         if (!includeAll) {

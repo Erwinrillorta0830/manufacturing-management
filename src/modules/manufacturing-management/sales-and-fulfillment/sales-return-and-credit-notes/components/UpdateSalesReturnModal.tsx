@@ -2344,6 +2344,7 @@ export function UpdateSalesReturnModal({
           productType={details[activeLotBatchIndex].product_type || details[activeLotBatchIndex].product_type_name}
           productCategory={details[activeLotBatchIndex].product_category}
           categoryName={details[activeLotBatchIndex].category_name as string | undefined}
+          returnType={details[activeLotBatchIndex].returnType}
           requestedQuantity={details[activeLotBatchIndex].quantity}
           adjustmentType="IN"
           initialValues={{
