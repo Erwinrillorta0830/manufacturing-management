@@ -114,8 +114,8 @@ const STAGE_LABELS: Record<JobOrderJourneyStage, string> = {
 
 export const JOB_ORDER_STATUS_DESCRIPTIONS: Partial<Record<CanonicalJobOrderStatus, string>> = {
     Draft: "Created but not yet initialized for material picking.",
-    "For Picking": "Initialized and waiting for all required materials to be staged.",
-    Picked: "All required materials are staged on the floor; ready for production.",
+    "For Picking": "Open for material staging and adjustments. Production starts only when an operator starts the run.",
+    Picked: "Materials are staged on the floor; verify staging and start production when the floor operator is ready.",
     "In Production": "Production is running on the shop floor.",
     "Production Completed": "Production finished; waiting for QA and reconciliation.",
     "For QA and Reconciliation": "Production output is ready for QA and material reconciliation.",
@@ -194,8 +194,12 @@ function resolveStage(input: JobOrderJourneyInput): JobOrderJourneyStage {
     if (isJobOrderStatus(status, JOB_ORDER_STATUS.FOR_QA_RECONCILIATION, JOB_ORDER_STATUS.QA_HOLD)) return "qa";
     if (isJobOrderStatus(status, JOB_ORDER_STATUS.PRODUCTION_COMPLETED)) return "qa";
     if (isJobOrderStatus(status, JOB_ORDER_STATUS.IN_PRODUCTION, JOB_ORDER_STATUS.ON_HOLD)) return "production";
-    if (isJobOrderStatus(status, JOB_ORDER_STATUS.PICKED)) return "ready";
-    if (isJobOrderStatus(status, JOB_ORDER_STATUS.FOR_PICKING)) return "materials";
+    if (isJobOrderStatus(status, JOB_ORDER_STATUS.PICKED)) {
+        return input.allMaterialsStaged === false ? "materials" : "ready";
+    }
+    if (isJobOrderStatus(status, JOB_ORDER_STATUS.FOR_PICKING)) {
+        return input.allMaterialsStaged === true ? "ready" : "materials";
+    }
     return "scheduled";
 }
 
@@ -227,8 +231,8 @@ function buildNextAction(
             };
         case "ready":
             return {
-                label: "Ready for production",
-                description: "All materials are on the floor. Start the shift run from the shop-floor workspace when production begins."
+                label: "Start Production",
+                description: "All materials are on the floor. An operator must start the production run before staging is locked."
             };
         case "production":
             return {
@@ -269,11 +273,17 @@ export function resolveJobOrderJourney(input: JobOrderJourneyInput): JobOrderJou
     const stage = resolveStage(input);
     const statusLabel = displayJobOrderStatus(input.status);
     const steps = stepStates(stage === "cancelled" ? 0 : STAGE_INDEX[stage], stage);
+    const status = normalizeJobOrderStatus(input.status);
+    const statusDescription = status === JOB_ORDER_STATUS.FOR_PICKING && input.allMaterialsStaged === true
+        ? "All required materials are staged. Production remains unstarted until an operator starts the run."
+        : status === JOB_ORDER_STATUS.PICKED && input.allMaterialsStaged === false
+            ? "One or more required materials are no longer fully staged. Complete staging before starting production."
+            : jobOrderStatusDescription(input.status);
     return {
         stage,
         stageLabel: STAGE_LABELS[stage],
         statusLabel,
-        statusDescription: jobOrderStatusDescription(input.status),
+        statusDescription,
         steps,
         nextAction: buildNextAction(input, stage),
         blockers: buildBlockers(input, stage),

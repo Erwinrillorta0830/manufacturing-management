@@ -252,7 +252,7 @@ export default function MaterialStagingModule() {
                                     For Picking (Default)
                                 </SelectItem>
                                 <SelectItem value="all" className="text-xs">
-                                    All Stageable JOs
+                                    All Stageable JOs (For Picking & Picked)
                                 </SelectItem>
                             </SelectContent>
                         </Select>

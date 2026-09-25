@@ -109,7 +109,7 @@ export function ReleasedJobQueue({
                     </Badge>
                 </CardTitle>
                 <CardDescription className="text-sm">
-                    Start production for Picked orders, continue In Production orders, or review held Job Orders.
+                    Review staged materials and start production when ready, continue active runs, or review held Job Orders.
                 </CardDescription>
             </CardHeader>
 
@@ -217,17 +217,18 @@ export function ReleasedJobQueue({
                             <tbody className="divide-y divide-border/50">
                                 {filteredJobOrders.map((jo) => {
                                     const isSelected = jo.jo_id === selectedJobOrderId;
+                                    const isForPicking = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.FOR_PICKING);
                                     const isPicked = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.PICKED);
                                     const isInProduction = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.IN_PRODUCTION);
                                     const isOnHold = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD);
-                                    const canOpenTerminal = isPicked || isInProduction || isOnHold;
+                                    const canOpenTerminal = isForPicking || isPicked || isInProduction || isOnHold;
                                     const parent = parentByChildId.get(jo.jo_id);
                                     const producedQty = jo.productionOutputQuantity ?? jo.producedQty ?? jo.completed_quantity ?? 0;
                                     const workstationLabel = jo.primary_work_center_name
                                         || (jo.primary_work_center_id ? `WC #${jo.primary_work_center_id}` : "Unassigned");
                                     const journey = resolveJobOrderJourney({
                                         status: jo.status,
-                                        allMaterialsStaged: isJobOrderStatus(jo.status, JOB_ORDER_STATUS.RESERVED)
+                                        allMaterialsStaged: isPicked ? undefined : false
                                     });
                                     const routingTasks = jo.routing_tasks || jo.routingTasks || [];
                                     const totalSteps = routingTasks.length;
@@ -297,7 +298,7 @@ export function ReleasedJobQueue({
                                                         : "h-9 px-3 text-xs font-bold"}
                                                 >
                                                     {isPicked ? <Play className="mr-1.5 h-3.5 w-3.5" /> : <ExternalLink className="mr-1.5 h-3.5 w-3.5" />}
-                                                    {isPicked ? "Start Production" : isInProduction ? "Open Terminal" : isOnHold ? "Review Hold" : "Unavailable"}
+                                                    {isForPicking ? "Review Materials" : isPicked ? "Start Production" : isInProduction ? "Open Terminal" : isOnHold ? "Review Hold" : "Unavailable"}
                                                 </Button>
                                             </td>
                                         </tr>

@@ -30,13 +30,16 @@ import type {
 } from "@/modules/manufacturing-management/material-staging/types";
 import { resolveStagingTargetBin } from "@/modules/manufacturing-management/material-staging/types";
 import {
-    isJobOrderStatus,
-    normalizeJobOrderStatus,
-    JOB_ORDER_STATUS
+    canStageJobOrderMaterials,
+    normalizeJobOrderStatus
 } from "@/modules/manufacturing-management/job-order-status";
-import { executeJobOrderWorkflow } from "../job-orders/_workflow-service";
+import {
+    ALLOCATION_QUANTITY_EPSILON,
+    exceedsAvailableQuantity,
+    getAllocationShortage
+} from "@/modules/manufacturing-management/material-staging/utils/allocation-quantity";
 
-const QUANTITY_EPSILON = 0.000001;
+const QUANTITY_EPSILON = ALLOCATION_QUANTITY_EPSILON;
 const PREVIEW_TOKEN_VERSION = 2;
 const SOURCE_BIN = "MAIN-STORE";
 
@@ -115,9 +118,6 @@ interface MutationState {
     createdMovementIds: number[];
     createdReservationIds: number[];
     patchedReservations: Array<{ id: number; snapshot: DirectusRecord }>;
-    previousJobOrderStatus: unknown;
-    jobOrderId: number;
-    jobOrderPatched: boolean;
 }
 
 const operationClaims = new Map<string, string>();
@@ -289,7 +289,9 @@ function normalizeLine(line: AllocationLine): AllocationLine {
         inventory_lot_id: numericId(line.inventory_lot_id),
         lot_name: text(line.lot_name),
         batch_no: text(line.batch_no),
-        quantity: roundQuantity(quantity(line.quantity)),
+        // Keep the submitted precision until stock validation so a value even
+        // fractionally above the available balance cannot round down first.
+        quantity: quantity(line.quantity),
         available_quantity: line.available_quantity == null ? undefined : roundQuantity(quantity(line.available_quantity)),
         override_negative: Boolean(line.override_negative)
     };
@@ -392,7 +394,7 @@ async function loadAllocationContext(payload: AllocationPreviewPayload): Promise
         throw new MaterialStagingAllocationError("The Job Order has incomplete identity or branch data.", 409, "JOB_ORDER_INVALID");
     }
     const status = normalizeJobOrderStatus(jobOrder.status);
-    if (!isJobOrderStatus(status, JOB_ORDER_STATUS.FOR_PICKING)) {
+    if (!canStageJobOrderMaterials(status)) {
         throw new MaterialStagingAllocationError("This Job Order cannot accept staged material in its current status.", 409, "JOB_ORDER_NOT_STAGEABLE");
     }
 
@@ -652,8 +654,7 @@ function buildAutoLines(material: MaterialContext, candidates: AllocationCandida
 function validateManualLines(
     material: MaterialContext,
     candidates: AllocationCandidate[],
-    lines: AllocationLine[],
-    allowOverride: boolean
+    lines: AllocationLine[]
 ): AllocationLine[] {
     const candidateMap = new Map(candidates.map(candidate => [
         `${candidate.mm_lot_id}:${candidate.inventory_lot_id}:${normalizeBatchNo(candidate.batch_no)}`,
@@ -672,7 +673,7 @@ function validateManualLines(
         seen.add(key);
         const candidate = candidateMap.get(key);
         if (!candidate) throw new MaterialStagingAllocationError(`The selected lot/batch for ${material.productName} is no longer eligible. Refresh the allocation preview.`, 409, "ALLOCATION_CANDIDATE_STALE");
-        if (!allowOverride && line.quantity > candidate.available_quantity + QUANTITY_EPSILON) {
+        if (exceedsAvailableQuantity(line.quantity, candidate.available_quantity)) {
             throw new MaterialStagingAllocationError(`The selected batch has only ${candidate.available_quantity} ${material.uom} available.`, 409, "INSUFFICIENT_LOT_STOCK");
         }
         return {
@@ -720,7 +721,7 @@ export async function prepareAllocationPreview(payload: AllocationPreviewPayload
             : [];
         const proposed = payload.mode === "auto"
             ? buildAutoLines(material, candidates)
-            : validateManualLines(material, candidates, requestedLines, overrideRequested);
+            : validateManualLines(material, candidates, requestedLines);
         proposedAllocations.push(...proposed);
         for (const line of proposed) {
             const candidate = candidates.find(item =>
@@ -734,13 +735,6 @@ export async function prepareAllocationPreview(payload: AllocationPreviewPayload
         }
         const remainingQuantity = roundQuantity(material.requiredQuantity - material.stagedQuantity);
         const proposedQuantity = roundQuantity(proposed.reduce((total, line) => total + line.quantity, 0));
-        if (payload.mode === "manual" && proposedQuantity > remainingQuantity + QUANTITY_EPSILON) {
-            throw new MaterialStagingAllocationError(
-                `Manual allocation for ${material.productName} exceeds the remaining ${material.uom} requirement.`,
-                400,
-                "MANUAL_ALLOCATION_EXCEEDS_REQUIRED"
-            );
-        }
         const availableQuantity = roundQuantity(candidates.reduce((total, candidate) => total + candidate.available_quantity, 0));
         return {
             jo_material_id: material.id,
@@ -753,7 +747,7 @@ export async function prepareAllocationPreview(payload: AllocationPreviewPayload
             remaining_quantity: remainingQuantity,
             candidates,
             proposed_allocations: proposed,
-            shortage_quantity: roundQuantity(Math.max(0, remainingQuantity - proposedQuantity)),
+            shortage_quantity: getAllocationShortage(remainingQuantity, proposedQuantity),
             message: availableQuantity < remainingQuantity
                 ? `Only ${availableQuantity} ${material.uom} is currently available after protected allocations.`
                 : undefined
@@ -896,17 +890,6 @@ async function rollbackMutations(state: MutationState): Promise<string[]> {
             failures.push(error instanceof Error ? error.message : `Rollback staging reservation ${patched.id} failed.`);
         }
     }
-    if (state.jobOrderPatched && state.jobOrderId > 0) {
-        try {
-            await directusRequest(`/items/manufacturing_job_orders/${state.jobOrderId}`, {
-                method: "PATCH",
-                headers,
-                body: JSON.stringify({ status: state.previousJobOrderStatus })
-            }, `Rollback Job Order staging status ${state.jobOrderId}`);
-        } catch (error) {
-            failures.push(error instanceof Error ? error.message : `Rollback Job Order staging status ${state.jobOrderId} failed.`);
-        }
-    }
     return failures;
 }
 
@@ -1005,10 +988,7 @@ export async function commitAllocation(
     const state: MutationState = {
         createdMovementIds: [],
         createdReservationIds: [],
-        patchedReservations: [],
-        previousJobOrderStatus: null,
-        jobOrderId: 0,
-        jobOrderPatched: false
+        patchedReservations: []
     };
     try {
         const prepared = await prepareAllocationPreview(payload);
@@ -1118,20 +1098,13 @@ export async function commitAllocation(
             movementIds.push(movementId);
         }
 
+        // Staging completion is derived from material reservations. Keep the
+        // Job Order in For Picking until the operator explicitly starts production.
         const allMaterialsStaged = prepared.context.materials.every(material => {
             const previewMaterial = prepared.preview.materials.find(item => item.jo_material_id === material.id);
             if (previewMaterial) return previewMaterial.shortage_quantity <= QUANTITY_EPSILON;
             return material.requiredQuantity - material.stagedQuantity <= QUANTITY_EPSILON;
         });
-        if (allMaterialsStaged) {
-            await executeJobOrderWorkflow(prepared.context.jobOrderId, {
-                action: "complete-staging",
-                actorUserId,
-                idempotencyKey: `staging:${operationId}`,
-                remarks: "All required materials were staged to the production floor."
-            });
-        }
-
         const materialResults: BatchStageMaterialResult[] = prepared.preview.materials.map(material => ({
             jo_material_id: material.jo_material_id,
             product_id: material.product_id,
@@ -1173,9 +1146,6 @@ export async function commitAllocation(
         };
     } catch (error) {
         const rollbackFailures = await rollbackMutations(state);
-        if (rollbackFailures.length > 0 && state.jobOrderPatched) {
-            rollbackFailures.push("Job Order status rollback requires reconciliation.");
-        }
         if (rollbackFailures.length > 0) {
             throw new MaterialStagingAllocationError(
                 `${error instanceof Error ? error.message : "Material staging failed."} Reconciliation is required because rollback was incomplete.`,

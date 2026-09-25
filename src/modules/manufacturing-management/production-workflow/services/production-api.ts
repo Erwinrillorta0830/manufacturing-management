@@ -36,22 +36,28 @@ export async function fetchJobOrderMaterials(jobOrderId: number | string): Promi
         throw new Error(data?.error || "Failed to load Job Order material batches.");
     }
     return Array.isArray(data)
-        ? data.map((line: any) => ({
-            jo_material_id: Number(line.jo_material_id || line.id || 0) || undefined,
-            product_id: Number(line.product_id?.product_id || line.product_id || 0),
-            product_name: String(line.product_name || `Product #${line.product_id || ""}`),
-            reservations: Array.isArray(line.reservations)
-                ? line.reservations.map((reservation: any) => ({
-                    reservation_id: Number(reservation.reservation_id || reservation.jo_materials_reservation_id || reservation.id || 0) || null,
-                    batch_no: reservation.batch_no ? String(reservation.batch_no) : null,
-                    reservation_status: reservation.reservation_status || null,
-                    reserved_quantity: Number(reservation.reserved_quantity || 0),
-                    staged_quantity: Number(reservation.staged_quantity || 0),
-                    issued_to_wip_quantity: Number(reservation.issued_to_wip_quantity || 0),
-                    remaining_wip_quantity: Number(reservation.remaining_wip_quantity || 0)
-                }))
-                : []
-        }))
+        ? data.map((line: any) => {
+            const requiredQuantity = line.allocated_quantity ?? line.required_quantity ?? line.quantity_required;
+            return {
+                jo_material_id: Number(line.jo_material_id || line.id || 0) || undefined,
+                product_id: Number(line.product_id?.product_id || line.product_id || 0),
+                product_name: String(line.product_name || `Product #${line.product_id || ""}`),
+                required_quantity: requiredQuantity === undefined || requiredQuantity === null || requiredQuantity === ""
+                    ? undefined
+                    : Number(requiredQuantity),
+                reservations: Array.isArray(line.reservations)
+                    ? line.reservations.map((reservation: any) => ({
+                        reservation_id: Number(reservation.reservation_id || reservation.jo_materials_reservation_id || reservation.id || 0) || null,
+                        batch_no: reservation.batch_no ? String(reservation.batch_no) : null,
+                        reservation_status: reservation.reservation_status || null,
+                        reserved_quantity: Number(reservation.reserved_quantity || 0),
+                        staged_quantity: Number(reservation.staged_quantity || 0),
+                        issued_to_wip_quantity: Number(reservation.issued_to_wip_quantity || 0),
+                        remaining_wip_quantity: Number(reservation.remaining_wip_quantity || 0)
+                    }))
+                    : []
+            };
+        })
         : [];
 }
 
@@ -373,10 +379,10 @@ export async function fetchGenealogyAndMovements(joId: string | number, batchNo?
     };
 }
 
-export async function fetchJobOrderCancellationPreview(joId: string | number): Promise<JobOrderCancellationPreview> {
+export async function fetchJobOrderCancellationPreview(joId: string | number, signal?: AbortSignal): Promise<JobOrderCancellationPreview> {
     const res = await fetch(
         `/api/manufacturing/production/job-order-cancellation?joId=${encodeURIComponent(String(joId))}`,
-        { cache: "no-store" }
+        { cache: "no-store", signal }
     );
     const json = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(json.error || "Failed to load the Job Order cancellation preview.");

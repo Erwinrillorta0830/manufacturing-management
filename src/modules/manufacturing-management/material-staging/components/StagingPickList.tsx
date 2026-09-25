@@ -25,7 +25,7 @@ import {
     X
 } from "lucide-react";
 import { StagingJobOrder, MaterialStagingItem, AllocatedLot, BatchStageResult } from "../types";
-import { isCancelledJobOrderStatus } from "../../job-order-status";
+import { canStageJobOrderMaterials, isCancelledJobOrderStatus } from "../../job-order-status";
 import { resolveJobOrderJourney, stagingStateInfo } from "../../shared/job-order-journey";
 import { JobOrderJourneyBar } from "../../shared/components/JobOrderJourneyBar";
 import { downloadStagingSlipPdf } from "../utils/generateStagingSlipPdf";
@@ -62,7 +62,7 @@ export function StagingPickList({
                 </div>
                 <h3 className="text-base font-bold text-foreground">No Job Order Selected</h3>
                 <p className="text-xs text-muted-foreground max-w-sm mt-1">
-                    Select an initialized For Picking Job Order from the left queue to review required materials and execute floor bin transfers.
+                    Select a For Picking or Picked Job Order to review requirements and stage or re-stage materials. Staging locks when production starts.
                 </p>
             </div>
         );
@@ -81,6 +81,7 @@ export function StagingPickList({
 
     const isAllStaged = jobOrder.all_staged;
     const isCancelled = isCancelledJobOrderStatus(jobOrder.status);
+    const canStageMaterials = canStageJobOrderMaterials(jobOrder.status);
     const stagingState = stagingStateInfo(jobOrder.reservation_status);
     const journey = resolveJobOrderJourney({
         status: jobOrder.status,
@@ -417,7 +418,8 @@ export function StagingPickList({
                                                     variant={mat.is_staged ? "outline" : "default"}
                                                     size="sm"
                                                     onClick={() => onOpenTransferModal(jobOrder, mat)}
-                                                    disabled={isProcessing}
+                                                    disabled={isProcessing || !canStageMaterials}
+                                                    title={!canStageMaterials ? "Staging is locked after production starts." : undefined}
                                                     className="text-xs h-7 px-2.5 shadow-none"
                                                 >
                                                     {mat.is_staged ? (
@@ -484,7 +486,8 @@ export function StagingPickList({
                                                                             variant="ghost"
                                                                             size="sm"
                                                                             onClick={() => onOpenTransferModal(jobOrder, mat, lot)}
-                                                                            disabled={isProcessing}
+                                                                            disabled={isProcessing || !canStageMaterials}
+                                                                            title={!canStageMaterials ? "Staging is locked after production starts." : undefined}
                                                                             className="h-6 text-[11px] px-2 text-primary hover:bg-primary/10"
                                                                         >
                                                                             Stage Lot

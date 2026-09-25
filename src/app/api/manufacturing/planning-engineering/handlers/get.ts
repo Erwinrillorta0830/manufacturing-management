@@ -2029,7 +2029,7 @@ export async function handleGET(request: Request) {
             const list = await fetchJobOrders();
 
             // Resolve the assigned station names once so the queue can show the
-            // workstation and detect unassigned Picked Job Orders.
+            // workstation and detect Job Orders without a primary workstation.
             const primaryWorkCenterIds = Array.from(new Set(
                 list
                     .map((item: any) => Number(item.primary_work_center_id))

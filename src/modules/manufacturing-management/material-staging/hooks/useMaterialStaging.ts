@@ -14,7 +14,7 @@ import {
 } from "../types";
 import { commitMaterialStaging, fetchAllocationPreview, fetchStagingJobOrders } from "../services/staging-api";
 import { createMaterialStagingOperationId } from "../utils/operation-id";
-import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
+import { canStageJobOrderMaterials, isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 
 export function useMaterialStaging() {
     const [jobOrders, setJobOrders] = useState<StagingJobOrder[]>([]);
@@ -100,6 +100,7 @@ export function useMaterialStaging() {
 
     const filteredJobOrders = useMemo(() => jobOrders.filter(jobOrder => {
         if (selectedStatusFilter !== "all" && !isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.FOR_PICKING)) return false;
+        if (selectedStatusFilter === "all" && !canStageJobOrderMaterials(jobOrder.status)) return false;
         if (onlyShortages && !jobOrder.has_shortage) return false;
         const query = searchQuery.trim().toLowerCase();
         if (!query) return true;
@@ -157,26 +158,10 @@ export function useMaterialStaging() {
             });
             toast.success(result.message || "Material staged successfully.");
             handleCloseAllocationModal();
-            const stagedJobOrderSnapshot = jobOrders.find(candidate => candidate.job_order_id === result.data.job_order_id) || null;
             const refreshed = await loadData();
             const refreshedJobOrder = refreshed?.find(candidate => candidate.job_order_id === result.data.job_order_id);
             const isFullyStaged = result.data.all_materials_staged === true || refreshedJobOrder?.all_staged === true;
             if (isFullyStaged) {
-                const stillListed = (refreshed || []).some(candidate => candidate.job_order_id === result.data.job_order_id);
-                if (!stillListed && stagedJobOrderSnapshot) {
-                    setJobOrders((current) => {
-                        if (current.some(candidate => candidate.job_order_id === stagedJobOrderSnapshot.job_order_id)) return current;
-                        return [
-                            {
-                                ...stagedJobOrderSnapshot,
-                                status: "Picked",
-                                all_staged: true,
-                                staged_materials_count: stagedJobOrderSnapshot.total_materials_count
-                            },
-                            ...current
-                        ];
-                    });
-                }
                 setSelectedStatusFilter("all");
                 setSelectedJobOrderId(result.data.job_order_id);
             }
@@ -187,7 +172,7 @@ export function useMaterialStaging() {
             setTransferring(false);
             setStageProgressLabel(null);
         }
-    }, [handleCloseAllocationModal, jobOrders, loadData]);
+    }, [handleCloseAllocationModal, loadData]);
 
     const handleStageAllAvailable = useCallback(async (jobOrder: StagingJobOrder) => {
         if (isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.CANCELLED)) {
@@ -253,21 +238,6 @@ export function useMaterialStaging() {
             const refreshedJobOrder = refreshed?.find(candidate => candidate.job_order_id === jobOrder.job_order_id);
             const isFullyStaged = result.data.all_materials_staged === true || refreshedJobOrder?.all_staged === true;
             if (isFullyStaged) {
-                const stillListed = (refreshed || []).some(candidate => candidate.job_order_id === jobOrder.job_order_id);
-                if (!stillListed) {
-                    setJobOrders((current) => {
-                        if (current.some(candidate => candidate.job_order_id === jobOrder.job_order_id)) return current;
-                        return [
-                            {
-                                ...jobOrder,
-                                status: "Picked",
-                                all_staged: true,
-                                staged_materials_count: jobOrder.total_materials_count
-                            },
-                            ...current
-                        ];
-                    });
-                }
                 setSelectedStatusFilter("all");
                 setSelectedJobOrderId(jobOrder.job_order_id);
             }
