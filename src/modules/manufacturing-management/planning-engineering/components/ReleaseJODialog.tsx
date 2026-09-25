@@ -31,7 +31,7 @@ import {
     getFactoryOverheadBasisLabel
 } from "../utils/cogs-helper";
 import { calculateProductionMetrics } from "../utils/production-metrics";
-import { calculateAggregateRunHours, calculateFullBatchTarget, calculatePerUnitMaterialRequirement, calculateReleaseMaterialRequirementPlan, calculateRequiredBatchCount, DEFAULT_PRODUCTION_SHIFT_HOURS, formatProductionValue, isPieceProductionUom, normalizeProductionOutputQuantity, readUomId, resolveProductionShiftHours, resolveRecipeBatchSizeDisplay } from "../utils/production-timing";
+import { calculateAggregateRunHours, calculateFullBatchTarget, calculatePerUnitMaterialRequirement, calculateReleaseMaterialRequirementPlan, calculateRequiredBatchCount, convergeToFullBatch, DEFAULT_PRODUCTION_SHIFT_HOURS, formatProductionValue, isPieceProductionUom, normalizeProductionOutputQuantity, readUomId, resolveProductionShiftHours, resolveRecipeBatchSizeDisplay, sanitizeQuantityDraft } from "../utils/production-timing";
 import { buildReleaseSummaryHtml, type ReleaseSummaryComponent, type ReleaseSummaryFinancials, type ReleaseSummaryRoutingStep } from "../utils/release-summary-print";
 
 interface ReleaseJODialogProps {
@@ -117,6 +117,11 @@ export function ReleaseJODialog({
     const [groupSubAssemblyVersions, setGroupSubAssemblyVersions] = useState<Record<string, Record<number, number>>>({});
     const [loadingSubVersion, setLoadingSubVersion] = useState<Record<number, boolean>>({});
     const [printSelection, setPrintSelection] = useState<Record<string, boolean>>({});
+    // Free-typed requested quantity draft. Null means "no manual override":
+    // the field mirrors the committed target. Decoupling keystrokes from the
+    // shared numeric state keeps Backspace/Delete/clear-to-retype working;
+    // convergence to full batches happens on blur via convergeToFullBatch.
+    const [requestedDraft, setRequestedDraft] = useState<string | null>(null);
 
     const parseValidBranchId = (value: unknown): number | null => {
         const branchId = Number(value);
@@ -251,6 +256,7 @@ export function ReleaseJODialog({
             setActiveGroupIndex(0);
             setLoadingSubVersion({});
             setPrintSelection({});
+            setRequestedDraft(null);
             setGroupBaseQuantities({});
             setGroupDetailsByKey({});
             setDetailsLoadError("");
@@ -404,6 +410,16 @@ export function ReleaseJODialog({
             return null;
         }
     }, [hasLoadedDetails, bomBaseQty, bomData]);
+
+    const isPieceTargetUom = isPieceProductionUom(releaseSummaryUom);
+    // Live full-batch convergence of the free-typed request. Sub-batch and
+    // below-demand requests floor up; empty drafts fall back to SO demand.
+    const convergedTarget = useMemo(() => convergeToFullBatch(
+        requestedDraft === null ? null : Number(requestedDraft),
+        isMultiRelease ? activeReleaseGroup.totalRemainingQuantity : requestedTargetQuantity,
+        activeGroupBaseQuantity,
+        releaseSummaryUom
+    ), [requestedDraft, isMultiRelease, activeReleaseGroup, requestedTargetQuantity, activeGroupBaseQuantity, releaseSummaryUom]);
 
     // Version drift is advisory: the pinned SO recipe stays authoritative for
     // batch math, but a stale pin (e.g. a net-stored v1.0 row) understates
@@ -915,6 +931,7 @@ export function ReleaseJODialog({
                                 onClick={() => {
                                     setActiveGroupIndex(index);
                                     setHasLoadedDetails(false);
+                                    setRequestedDraft(null);
                                     setBomBaseQty(0);
                                     setRoutings([]);
                                     setComponents([]);
@@ -1024,8 +1041,8 @@ export function ReleaseJODialog({
                                         </div>
 
                                         <div className="space-y-1">
-                                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide flex items-center justify-between">
-                                                <span>Target Production Quantity</span>
+                                            <label htmlFor="target-requested-input" className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide flex items-center justify-between">
+                                                <span>Requested Quantity</span>
                                                 {loadingDetails && (
                                                     <span className="text-[9px] text-muted-foreground font-normal flex items-center gap-1 lowercase">
                                                         <Loader2 className="h-2.5 w-2.5 animate-spin text-primary" />
@@ -1035,19 +1052,30 @@ export function ReleaseJODialog({
                                             </label>
                                             <div className="relative">
                                                 <Input
-                                                    type="number"
-                                                    value={loadingDetails || !hasLoadedDetails ? "" : ((isMultiRelease ? targetQuantity : targetQuantityProp) || "")}
-                                                    min={1}
-                                                    step={isPieceProductionUom(releaseSummaryUom) ? 1 : "any"}
+                                                    id="target-requested-input"
+                                                    type="text"
+                                                    inputMode={isPieceTargetUom ? "numeric" : "decimal"}
+                                                    autoComplete="off"
+                                                    spellCheck={false}
+                                                    value={requestedDraft ?? (loadingDetails || !hasLoadedDetails ? "" : (String(isMultiRelease ? targetQuantity : targetQuantityProp) || ""))}
                                                     onChange={(e) => {
-                                                        const next = Number(e.target.value);
-                                                        setTargetQuantity(Number.isFinite(next) && next > 0 ? next : 0);
+                                                        setRequestedDraft(sanitizeQuantityDraft(e.target.value, isPieceTargetUom));
+                                                    }}
+                                                    onKeyDown={(e) => {
+                                                        // Piece UOMs reject decimal/exponent keystrokes outright.
+                                                        // Edit keys (Backspace, Delete, arrows, Tab, …) are never
+                                                        // intercepted so deletion always works keystroke by keystroke.
+                                                        if (!isPieceTargetUom || e.ctrlKey || e.metaKey || e.altKey) return;
+                                                        if ([".", "e", "E", "+", "-"].includes(e.key)) e.preventDefault();
                                                     }}
                                                     onBlur={() => {
-                                                        if (!isMultiRelease && targetQuantity > 0) setTargetQuantity(targetQuantity);
+                                                        if (!isMultiRelease && hasLoadedDetails && convergedTarget.effective > 0) {
+                                                            setTargetQuantity(convergedTarget.effective);
+                                                        }
+                                                        setRequestedDraft(null);
                                                     }}
                                                     disabled={isMultiRelease || loadingDetails || !hasLoadedDetails}
-                                                    placeholder={loadingDetails || !hasLoadedDetails ? "Calculating batch size..." : "Enter target quantity"}
+                                                    placeholder={loadingDetails || !hasLoadedDetails ? "Calculating batch size..." : "Enter requested quantity"}
                                                     className="h-9 font-semibold bg-card border-input text-foreground font-mono"
                                                 />
                                                 {loadingDetails && (
@@ -1056,7 +1084,23 @@ export function ReleaseJODialog({
                                                     </div>
                                                 )}
                                             </div>
+                                            {requestedDraft !== null && convergedTarget.note && hasLoadedDetails && !loadingDetails ? (
+                                                <p className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">{convergedTarget.note}</p>
+                                            ) : null}
                                         </div>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label htmlFor="target-effective-input" className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
+                                            Effective Production Target (Full-Batch)
+                                        </label>
+                                        <Input
+                                            id="target-effective-input"
+                                            type="text"
+                                            value={loadingDetails || !hasLoadedDetails ? "" : `${convergedTarget.effective.toLocaleString()} ${releaseSummaryUom}`}
+                                            readOnly
+                                            disabled
+                                            className="h-9 font-semibold bg-muted text-muted-foreground border-input font-mono"
+                                        />
                                     </div>
                                     <p className="text-[10px] text-muted-foreground">
                                         {detailsLoadError

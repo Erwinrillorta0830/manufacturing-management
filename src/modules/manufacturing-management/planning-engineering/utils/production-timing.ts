@@ -479,3 +479,68 @@ export function normalizeProductionOutputQuantity(quantity: number, uom: unknown
 export function formatProductionValue(value: number | null | undefined): string {
     return DecimalValue.from(Number.isFinite(Number(value)) ? Number(value) : 0).toFixed(PRODUCTION_DECIMAL_SCALE);
 }
+
+/**
+ * Sanitizes a free-typed quantity draft without collapsing it to a number.
+ * Empty and partial drafts ("", ".", "-") are preserved so Backspace/Delete
+ * never appear blocked while retyping. Piece UOMs accept digits only;
+ * other UOMs accept digits with a single decimal point.
+ */
+export function sanitizeQuantityDraft(draft: string, isPieceUom: boolean): string {
+    const text = String(draft ?? "");
+    if (isPieceUom) return text.replace(/[^0-9]/g, "");
+    const cleaned = text.replace(/[^0-9.]/g, "");
+    const dotIndex = cleaned.indexOf(".");
+    if (dotIndex < 0) return cleaned;
+    return cleaned.slice(0, dotIndex + 1) + cleaned.slice(dotIndex + 1).replace(/\./g, "");
+}
+
+export interface ConvergedProductionTarget {
+    /** Demand basis after the SO floor (requested, or SO demand as fallback). */
+    basis: number;
+    /** Full-batch effective target in output UOM (PCS normalized to whole units). */
+    effective: number;
+    batchCount: number;
+    wasAdjusted: boolean;
+    note: string | null;
+}
+
+/**
+ * Converges a free-typed requested quantity to the forced full-batch
+ * effective target. Sub-batch requests and values below SO demand floor up;
+ * empty/unparseable drafts fall back to the SO demand basis. Never throws
+ * for user input — invalid drafts converge to the SO-based full batch.
+ */
+export function convergeToFullBatch(
+    requested: number | null,
+    soDemand: number,
+    baseQuantity: number,
+    uom: unknown
+): ConvergedProductionTarget {
+    const demand = Math.max(0, Number(soDemand) || 0);
+    const parsed = Number(requested);
+    const hasRequested = Number.isFinite(parsed) && parsed > 0;
+    const basis = hasRequested ? Math.max(demand, parsed) : demand;
+    const base = Number(baseQuantity);
+    if (!Number.isFinite(base) || base <= 0 || basis <= 0) {
+        return {
+            basis,
+            effective: normalizeProductionOutputQuantity(basis, uom),
+            batchCount: 0,
+            wasAdjusted: hasRequested && parsed !== basis,
+            note: !hasRequested ? "Enter a quantity, or the SO demand basis applies." : null
+        };
+    }
+    const batchCount = calculateRequiredBatchCount(basis, base);
+    const effective = normalizeProductionOutputQuantity(calculateFullBatchTarget(basis, base), uom);
+    const wasAdjusted = !hasRequested || effective !== normalizeProductionOutputQuantity(parsed, uom);
+    let note: string | null = null;
+    if (!hasRequested) {
+        note = "Enter a quantity, or the SO demand basis applies.";
+    } else if (parsed < demand) {
+        note = `Below SO demand — floors at ${demand.toLocaleString()} before batch rounding.`;
+    } else if (wasAdjusted) {
+        note = `Adjusted to ${batchCount} full batch${batchCount === 1 ? "" : "es"}: ${effective.toLocaleString()} ${String(uom ?? "").trim() || "units"}.`;
+    }
+    return { basis, effective, batchCount, wasAdjusted, note };
+}
