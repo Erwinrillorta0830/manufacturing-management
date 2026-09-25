@@ -56,14 +56,12 @@ export default function MaterialStagingModule() {
         activeAllocationItem,
         transferring,
         batchStageResult,
-        fullyStagedJobOrderNo,
         stageProgressLabel,
         handleDismissBatchStageResult,
         handleOpenAllocationModal,
         handleCloseAllocationModal,
         handleCommitAllocation,
         handleStageAllAvailable,
-        handleProceedToProduction,
         refreshData
     } = useMaterialStaging();
 
@@ -321,8 +319,7 @@ export default function MaterialStagingModule() {
                                     status: jo.status,
                                     allMaterialsStaged: jo.all_staged,
                                     hasShortage: jo.has_shortage,
-                                    hasActiveDestination: Boolean(jo.staging_work_center_id),
-                                    jobOrderNo: jo.job_order_no
+                                    hasActiveDestination: Boolean(jo.staging_work_center_id)
                                 });
 
                                 return (
@@ -426,10 +423,8 @@ export default function MaterialStagingModule() {
                         onOpenTransferModal={handleOpenAllocationModal}
                         onStageAllAvailable={handleStageAllAvailable}
                         batchStageResult={batchStageResult}
-                        fullyStagedJobOrderNo={fullyStagedJobOrderNo}
                         stageProgressLabel={stageProgressLabel}
                         onDismissBatchStageResult={handleDismissBatchStageResult}
-                        onProceedToProduction={handleProceedToProduction}
                         isProcessing={transferring}
                     />
                 </div>

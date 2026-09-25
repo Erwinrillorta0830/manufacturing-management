@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from "next/server";
+import { authorizeJobOrderModuleAccess, JOB_ORDER_MODULE_PATHS } from "@/app/api/manufacturing/job-orders/_module-access";
 import {
     acceptedQuantityByJobOrder,
     buildQAYieldAssessments,
@@ -416,6 +417,8 @@ async function loadJobOrderDetails(id: number) {
 }
 
 export async function GET(request: Request) {
+    const accessDenied = await authorizeJobOrderModuleAccess(JOB_ORDER_MODULE_PATHS.inspectionQa);
+    if (accessDenied) return accessDenied;
     try {
         const { searchParams } = new URL(request.url);
         const rawJoId = textValue(searchParams.get("joId"));

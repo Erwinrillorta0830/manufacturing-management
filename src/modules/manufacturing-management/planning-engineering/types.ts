@@ -42,6 +42,7 @@ export interface SalesOrderDetail {
     allocated_amount?: number;
     served_quantity?: number;
     planned_quantity?: number;
+    replacement_credit_quantity?: number;
     remaining_quantity?: number;
     parent_order_status?: string | null;
     is_scheduled?: boolean;

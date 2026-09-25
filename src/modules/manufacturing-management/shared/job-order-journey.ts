@@ -39,8 +39,6 @@ export interface JobOrderJourneyStep {
 export interface JobOrderNextAction {
     label: string;
     description: string;
-    /** Deep link with Job Order context when the next step lives on another page. */
-    href?: string;
     /** Populated when the action exists but is currently blocked. */
     blockedReason?: string;
 }
@@ -54,8 +52,6 @@ export interface JobOrderJourneyInput {
     hasActiveDestination?: boolean;
     /** Buffer JOs have no linked Sales Order demand stage to explain. */
     isBuffer?: boolean;
-    /** Used to build deep links that preselect this Job Order. */
-    jobOrderNo?: string | null;
 }
 
 export interface JobOrderJourney {
@@ -207,7 +203,6 @@ function buildNextAction(
     input: JobOrderJourneyInput,
     stage: JobOrderJourneyStage
 ): JobOrderNextAction | null {
-    const joParam = input.jobOrderNo ? `?jo=${encodeURIComponent(String(input.jobOrderNo))}` : "";
     const destinationBlocked = input.hasActiveDestination === false;
 
     switch (stage) {
@@ -226,28 +221,24 @@ function buildNextAction(
             return {
                 label: "Stage materials",
                 description: "Move the reserved materials from the Main Store to the work-center floor bin.",
-                href: `/mm/material-staging${joParam}`,
                 ...(destinationBlocked
                     ? { blockedReason: "No active work-center destination is configured for this Job Order." }
                     : {})
             };
         case "ready":
             return {
-                label: "Open Production Workflow",
-                description: "All materials are on the floor. Start the shift run when production begins.",
-                href: `/mm/shop-floor-execution-terminal${joParam}`
+                label: "Ready for production",
+                description: "All materials are on the floor. Start the shift run from the shop-floor workspace when production begins."
             };
         case "production":
             return {
-                label: "Continue production",
-                description: "Log shift runs and completion progress in the shop-floor terminal.",
-                href: `/mm/shop-floor-execution-terminal${joParam}`
+                label: "Production in progress",
+                description: "Log shift runs and completion progress from the shop-floor workspace."
             };
         case "qa":
             return {
-                label: "Open QA & Yield Closing",
-                description: "Resolve the QA hold or close the final yield to post finished goods.",
-                href: `/mm/manufacturing-qa${joParam}`
+                label: "QA & yield closing",
+                description: "Resolve the QA hold or close the final yield from the QA workspace to post finished goods."
             };
         case "done":
         case "cancelled":

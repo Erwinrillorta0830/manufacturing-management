@@ -1,6 +1,7 @@
 /* eslint-disable */
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
+import { authorizeJobOrderModuleAccess, JOB_ORDER_MODULE_PATHS } from "@/app/api/manufacturing/job-orders/_module-access";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
 
@@ -58,6 +59,8 @@ function normalizeGenealogyRecord(row: any): any {
 }
 
 export async function GET(request: Request) {
+    const accessDenied = await authorizeJobOrderModuleAccess(JOB_ORDER_MODULE_PATHS.production);
+    if (accessDenied) return accessDenied;
     try {
         const { searchParams } = new URL(request.url);
         const joId = searchParams.get("joId");

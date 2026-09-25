@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { DIRECTUS_URL, headers, formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 import {
     CANCELLABLE_JOB_ORDER_STATUSES,
+    isTerminalJobOrderStatus,
     normalizeJobOrderStatus,
     JOB_ORDER_STATUS,
     type CanonicalJobOrderStatus
@@ -16,6 +17,10 @@ import {
     type JobOrderWorkflowAction
 } from "@/modules/manufacturing-management/job-order-workflow";
 import { synchronizeJobOrderOperatorAssignments } from "./_operator-assignment-service";
+import {
+    salesOrderStatusAfterJobOrderEnd,
+    shouldReturnSalesOrderToForProduction
+} from "@/modules/manufacturing-management/job-order-end";
 
 const QUANTITY_EPSILON = 0.000001;
 
@@ -57,6 +62,7 @@ export interface JobOrderWorkflowResult {
     changed: boolean;
     idempotent: boolean;
     historyId?: number | null;
+    warnings?: string[];
 }
 
 type DirectusRecord = Record<string, unknown>;
@@ -246,6 +252,150 @@ async function loadMaterials(jobOrderId: number): Promise<DirectusRecord[]> {
         `/items/manufacturing_job_order_materials?filter[job_order_id][_eq]=${jobOrderId}&fields=*&limit=-1`,
         "Load Job Order material requirements"
     );
+}
+
+async function hasEndOfShiftProgress(jobOrderId: number): Promise<boolean> {
+    const ledgers = await directusRows(
+        `/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${jobOrderId}&fields=ledger_id&limit=1`,
+        `Check end-of-shift reports for Job Order ${jobOrderId}`
+    );
+    return ledgers.length > 0;
+}
+
+async function persistedMaterialConsumption(jobOrderId: number): Promise<number> {
+    const materials = await directusRows(
+        `/items/manufacturing_job_order_materials?filter[job_order_id][_eq]=${jobOrderId}&fields=jo_material_id,actual_consumed_quantity&limit=-1`,
+        `Check actual material consumption for Job Order ${jobOrderId}`
+    );
+    const materialIds = materials
+        .map((material) => numberValue(material.jo_material_id ?? material.id))
+        .filter((id) => id > 0);
+    const materialAggregate = materials.reduce(
+        (sum, material) => sum + reservationQuantity(material, "actual_consumed_quantity"),
+        0
+    );
+    const reservations = materialIds.length > 0
+        ? await directusRows(
+            `/items/manufacturing_job_order_materials_reservations?filter[jo_material_id][_in]=${materialIds.join(",")}&fields=jo_material_id,actual_used_quantity&limit=-1`,
+            `Check material reservation consumption for Job Order ${jobOrderId}`
+        )
+        : [];
+    const reservationAggregate = reservations.reduce(
+        (sum, reservation) => sum + reservationQuantity(reservation, "actual_used_quantity"),
+        0
+    );
+    // The material field is an aggregate of its reservation rows in current
+    // workflows. Taking the larger total avoids counting the same consumption twice.
+    return Math.max(materialAggregate, reservationAggregate);
+}
+
+export async function reconcileSalesOrderAfterJobOrderEnd(
+    jobOrderId: number,
+    action: Extract<JobOrderWorkflowAction, "cancel" | "terminate-production">
+): Promise<string[]> {
+    try {
+        const [hasProgress, actualMaterialConsumption] = await Promise.all([
+            action === "cancel" ? hasEndOfShiftProgress(jobOrderId) : Promise.resolve(false),
+            action === "terminate-production" ? persistedMaterialConsumption(jobOrderId) : Promise.resolve(0)
+        ]);
+        const shouldRollback = shouldReturnSalesOrderToForProduction(
+            action,
+            hasProgress,
+            actualMaterialConsumption
+        );
+        if (!shouldRollback) return [];
+
+        const allocations = await directusRows(
+            `/items/manufacturing_job_order_allocations?filter[job_order_id][_eq]=${jobOrderId}&fields=job_order_id,sales_order_detail_id&limit=-1`,
+            `Load Sales Order allocations for Job Order ${jobOrderId}`
+        );
+        const detailIds = [...new Set(allocations.map((allocation) => numberValue(
+            allocation.sales_order_detail_id && typeof allocation.sales_order_detail_id === "object"
+                ? (allocation.sales_order_detail_id as DirectusRecord).detail_id ?? (allocation.sales_order_detail_id as DirectusRecord).id
+                : allocation.sales_order_detail_id
+        )).filter((id) => id > 0))];
+        if (detailIds.length === 0) return [];
+
+        const details = await directusRows(
+            `/items/sales_order_details?filter[detail_id][_in]=${detailIds.join(",")}&fields=detail_id,order_id&limit=-1`,
+            `Load Sales Orders for Job Order ${jobOrderId}`
+        );
+        const orderDetails = new Map<number, number[]>();
+        for (const detail of details) {
+            const orderId = numberValue(detail.order_id && typeof detail.order_id === "object"
+                ? (detail.order_id as DirectusRecord).order_id ?? (detail.order_id as DirectusRecord).id
+                : detail.order_id);
+            const currentDetailId = numberValue(detail.detail_id ?? detail.id);
+            if (!orderId || !currentDetailId) continue;
+            const ids = orderDetails.get(orderId) || [];
+            ids.push(currentDetailId);
+            orderDetails.set(orderId, ids);
+        }
+        if (orderDetails.size === 0) return [];
+
+        const allDetailIds = [...new Set([...orderDetails.values()].flat())];
+        const otherAllocations = await directusRows(
+            `/items/manufacturing_job_order_allocations?filter[sales_order_detail_id][_in]=${allDetailIds.join(",")}&fields=job_order_id,sales_order_detail_id&limit=-1`,
+            `Check active Job Orders for Sales Order rollback after Job Order ${jobOrderId}`
+        );
+        const otherJobOrderIds = [...new Set(otherAllocations.map((allocation) => numberValue(
+            allocation.job_order_id && typeof allocation.job_order_id === "object"
+                ? (allocation.job_order_id as DirectusRecord).job_order_id ?? (allocation.job_order_id as DirectusRecord).id
+                : allocation.job_order_id
+        )).filter((id) => id > 0 && id !== jobOrderId))];
+        const otherJobOrders = otherJobOrderIds.length > 0
+            ? await directusRows(
+                `/items/manufacturing_job_orders?filter[job_order_id][_in]=${otherJobOrderIds.join(",")}&fields=job_order_id,status&limit=-1`,
+                `Check linked Job Order statuses for Job Order ${jobOrderId}`
+            )
+            : [];
+        const statusByJobOrder = new Map(otherJobOrders.map((jobOrder) => [
+            numberValue(jobOrder.job_order_id ?? jobOrder.id),
+            jobOrder.status
+        ]));
+
+        for (const [orderId, linkedDetailIds] of orderDetails) {
+            const linkedDetailSet = new Set(linkedDetailIds);
+            const hasOtherActiveJobOrder = otherAllocations.some((allocation) => {
+                const allocationDetailId = numberValue(
+                    allocation.sales_order_detail_id && typeof allocation.sales_order_detail_id === "object"
+                        ? (allocation.sales_order_detail_id as DirectusRecord).detail_id ?? (allocation.sales_order_detail_id as DirectusRecord).id
+                        : allocation.sales_order_detail_id
+                );
+                const linkedJobOrderId = numberValue(
+                    allocation.job_order_id && typeof allocation.job_order_id === "object"
+                        ? (allocation.job_order_id as DirectusRecord).job_order_id ?? (allocation.job_order_id as DirectusRecord).id
+                        : allocation.job_order_id
+                );
+                if (!linkedDetailSet.has(allocationDetailId) || linkedJobOrderId === jobOrderId) return false;
+                const linkedStatus = statusByJobOrder.get(linkedJobOrderId);
+                // Unknown/orphaned links are conservatively treated as active.
+                return linkedStatus === undefined || !isTerminalJobOrderStatus(linkedStatus);
+            });
+            if (hasOtherActiveJobOrder) continue;
+
+            const order = (await directusRequest<DirectusRecord>(
+                `/items/sales_order/${orderId}?fields=order_id,order_status`,
+                `Re-read Sales Order ${orderId} before status rollback`
+            ));
+            const nextStatus = salesOrderStatusAfterJobOrderEnd(
+                order.order_status,
+                shouldRollback,
+                hasOtherActiveJobOrder
+            );
+            if (nextStatus === text(order.order_status)) continue;
+
+            await directusRequest(
+                `/items/sales_order/${orderId}`,
+                `Recalculate Sales Order ${orderId} after Job Order end`,
+                { method: "PATCH", body: JSON.stringify({ order_status: nextStatus }) }
+            );
+        }
+        return [];
+    } catch (error) {
+        console.error(`[Job Order workflow] Sales Order recalculation failed after ${action}:`, error);
+        return ["The Job Order ended, but one or more linked Sales Order statuses could not be recalculated. Retry the workflow request or update the Sales Order manually."];
+    }
 }
 
 async function loadReservations(materialIds: number[]): Promise<DirectusRecord[]> {
@@ -870,6 +1020,9 @@ export async function executeJobOrderWorkflow(
             );
         }
         const existingStatus = normalizeJobOrderStatus(existing.new_status) || previousStatus;
+        const warnings = command.action === "cancel" || command.action === "terminate-production"
+            ? await reconcileSalesOrderAfterJobOrderEnd(jobOrderId, command.action)
+            : [];
         return {
             jobOrderId,
             jobOrderNo: text(jobOrder.job_order_no) || `JO-${jobOrderId}`,
@@ -880,7 +1033,8 @@ export async function executeJobOrderWorkflow(
             newStatus: existingStatus,
             changed: false,
             idempotent: true,
-            historyId: positiveInteger(existing.history_id ?? existing.id)
+            historyId: positiveInteger(existing.history_id ?? existing.id),
+            ...(warnings.length > 0 ? { warnings } : {})
         };
     }
 
@@ -939,6 +1093,7 @@ export async function executeJobOrderWorkflow(
             actorUserId: Number(command.actorUserId),
             eventKey: idempotencyKey
         });
+        const warnings = await reconcileSalesOrderAfterJobOrderEnd(jobOrderId, "cancel");
         return {
             jobOrderId,
             jobOrderNo: cancellation.response.jobOrderNo,
@@ -949,7 +1104,8 @@ export async function executeJobOrderWorkflow(
             newStatus: JOB_ORDER_STATUS.CANCELLED,
             changed: true,
             idempotent: false,
-            historyId: null
+            historyId: null,
+            ...(warnings.length > 0 ? { warnings } : {})
         };
     }
 
@@ -965,7 +1121,12 @@ export async function executeJobOrderWorkflow(
         await markReservationsWip(jobOrderId, command.actorUserId, new Date().toISOString());
     }
 
-    return writeTransition(jobOrder, command, previousStatus, actionTarget(command.action));
+    const result = await writeTransition(jobOrder, command, previousStatus, actionTarget(command.action));
+    if (command.action === "terminate-production") {
+        const warnings = await reconcileSalesOrderAfterJobOrderEnd(jobOrderId, command.action);
+        if (warnings.length > 0) result.warnings = warnings;
+    }
+    return result;
 }
 
 export async function loadWorkflowJobOrder(joId: string | number) {

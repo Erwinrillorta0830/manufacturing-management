@@ -67,6 +67,90 @@ export function calculateFullBatchTarget(
     );
 }
 
+export interface RecipeBatchSizeDisplay {
+    grossBaseQuantity: number;
+    expectedYieldPercentage: number;
+    expectedNetQuantity: number;
+}
+
+/**
+ * Recipe Batch Size display contract: `base_quantity` is the GROSS batch
+ * output. The net output is derived (gross * yield %) for display only and
+ * must never be fed back in as the batch size for batch-count math —
+ * net-stored base quantities (e.g. 6986.19 instead of 7092.5556 at 98.5%
+ * yield) under-plan full-batch targets by the yield factor.
+ */
+export function resolveRecipeBatchSizeDisplay(
+    baseQuantity: number,
+    expectedYieldPercentage?: number | null
+): RecipeBatchSizeDisplay {
+    const gross = requirePositiveProductionNumber(baseQuantity, "Recipe base quantity");
+    const parsedYield = Number(expectedYieldPercentage);
+    const yieldPct = Number.isFinite(parsedYield) && parsedYield > 0
+        ? Math.min(parsedYield, 100)
+        : 100;
+    const net = Number(
+        DecimalValue.from(gross)
+            .multiply(DecimalValue.from(yieldPct).divideRounded(100, 8))
+            .toFixed(PRODUCTION_DECIMAL_SCALE)
+    );
+    return {
+        grossBaseQuantity: roundProductionValue(gross),
+        expectedYieldPercentage: yieldPct,
+        expectedNetQuantity: net
+    };
+}
+
+/**
+ * Estimates the gross batch size that would produce a given net output at
+ * the configured yield (net / yieldFactor). Display/recovery helper only —
+ * callers must re-pin or correct master data, never silently rewrite plans.
+ */
+export function estimateGrossBaseQuantityFromNet(
+    netBaseQuantity: number,
+    expectedYieldPercentage?: number | null
+): number {
+    const net = requirePositiveProductionNumber(netBaseQuantity, "Net base quantity");
+    const parsedYield = Number(expectedYieldPercentage);
+    const yieldPct = Number.isFinite(parsedYield) && parsedYield > 0
+        ? Math.min(parsedYield, 100)
+        : 100;
+    if (yieldPct >= 100) return roundProductionValue(net);
+    return Number(
+        DecimalValue.from(net)
+            .divideRounded(DecimalValue.from(yieldPct).divideRounded(100, 8), 8)
+            .toFixed(PRODUCTION_DECIMAL_SCALE)
+    );
+}
+
+/**
+ * Detects a net-stored base quantity at the editor boundary, where the
+ * bottleneck gross output is known. Returns true when the entered base
+ * quantity matches the derived net output (within 1% relative) while
+ * differing from gross by more than the yield loss (0.5%), so genuine
+ * gross entries and 100%-yield recipes never flag.
+ */
+export function isLikelyNetStoredBaseQuantity(
+    enteredBaseQuantity: number,
+    grossOutput: number,
+    expectedYieldPercentage?: number | null
+): boolean {
+    const entered = Number(enteredBaseQuantity);
+    const gross = Number(grossOutput);
+    if (!Number.isFinite(entered) || entered <= 0) return false;
+    if (!Number.isFinite(gross) || gross <= 0) return false;
+    const parsedYield = Number(expectedYieldPercentage);
+    const yieldPct = Number.isFinite(parsedYield) && parsedYield > 0
+        ? Math.min(parsedYield, 100)
+        : 100;
+    if (!(yieldPct < 99.99)) return false;
+    const net = gross * (yieldPct / 100);
+    if (!(net > 0)) return false;
+    const netGap = Math.abs(entered - net) / net;
+    const grossGap = Math.abs(entered - gross) / gross;
+    return netGap < 0.01 && grossGap > 0.005;
+}
+
 export interface ProductionQuantityPlan {
     requestedQuantity: number;
     baseQuantity: number;
@@ -394,4 +478,69 @@ export function normalizeProductionOutputQuantity(quantity: number, uom: unknown
 
 export function formatProductionValue(value: number | null | undefined): string {
     return DecimalValue.from(Number.isFinite(Number(value)) ? Number(value) : 0).toFixed(PRODUCTION_DECIMAL_SCALE);
+}
+
+/**
+ * Sanitizes a free-typed quantity draft without collapsing it to a number.
+ * Empty and partial drafts ("", ".", "-") are preserved so Backspace/Delete
+ * never appear blocked while retyping. Piece UOMs accept digits only;
+ * other UOMs accept digits with a single decimal point.
+ */
+export function sanitizeQuantityDraft(draft: string, isPieceUom: boolean): string {
+    const text = String(draft ?? "");
+    if (isPieceUom) return text.replace(/[^0-9]/g, "");
+    const cleaned = text.replace(/[^0-9.]/g, "");
+    const dotIndex = cleaned.indexOf(".");
+    if (dotIndex < 0) return cleaned;
+    return cleaned.slice(0, dotIndex + 1) + cleaned.slice(dotIndex + 1).replace(/\./g, "");
+}
+
+export interface ConvergedProductionTarget {
+    /** Demand basis after the SO floor (requested, or SO demand as fallback). */
+    basis: number;
+    /** Full-batch effective target in output UOM (PCS normalized to whole units). */
+    effective: number;
+    batchCount: number;
+    wasAdjusted: boolean;
+    note: string | null;
+}
+
+/**
+ * Converges a free-typed requested quantity to the forced full-batch
+ * effective target. Sub-batch requests and values below SO demand floor up;
+ * empty/unparseable drafts fall back to the SO demand basis. Never throws
+ * for user input — invalid drafts converge to the SO-based full batch.
+ */
+export function convergeToFullBatch(
+    requested: number | null,
+    soDemand: number,
+    baseQuantity: number,
+    uom: unknown
+): ConvergedProductionTarget {
+    const demand = Math.max(0, Number(soDemand) || 0);
+    const parsed = Number(requested);
+    const hasRequested = Number.isFinite(parsed) && parsed > 0;
+    const basis = hasRequested ? Math.max(demand, parsed) : demand;
+    const base = Number(baseQuantity);
+    if (!Number.isFinite(base) || base <= 0 || basis <= 0) {
+        return {
+            basis,
+            effective: normalizeProductionOutputQuantity(basis, uom),
+            batchCount: 0,
+            wasAdjusted: hasRequested && parsed !== basis,
+            note: !hasRequested ? "Enter a quantity, or the SO demand basis applies." : null
+        };
+    }
+    const batchCount = calculateRequiredBatchCount(basis, base);
+    const effective = normalizeProductionOutputQuantity(calculateFullBatchTarget(basis, base), uom);
+    const wasAdjusted = !hasRequested || effective !== normalizeProductionOutputQuantity(parsed, uom);
+    let note: string | null = null;
+    if (!hasRequested) {
+        note = "Enter a quantity, or the SO demand basis applies.";
+    } else if (parsed < demand) {
+        note = `Below SO demand — floors at ${demand.toLocaleString()} before batch rounding.`;
+    } else if (wasAdjusted) {
+        note = `Adjusted to ${batchCount} full batch${batchCount === 1 ? "" : "es"}: ${effective.toLocaleString()} ${String(uom ?? "").trim() || "units"}.`;
+    }
+    return { basis, effective, batchCount, wasAdjusted, note };
 }

@@ -1,6 +1,7 @@
 /* eslint-disable */
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
+import { authorizeJobOrderModuleAccess, JOB_ORDER_MODULE_PATHS } from "@/app/api/manufacturing/job-orders/_module-access";
 import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers, formatPhtDateTime, getTodayDateString, getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
@@ -219,6 +220,11 @@ async function reconcileSalesOrderFulfillment(
 
 // GET handler: Fetches yield ledger logs, rejection reasons, or status history
 export async function GET(request: Request) {
+    const accessDenied = await authorizeJobOrderModuleAccess([
+        JOB_ORDER_MODULE_PATHS.production,
+        JOB_ORDER_MODULE_PATHS.qualityAssurance
+    ]);
+    if (accessDenied) return accessDenied;
     try {
         const { searchParams } = new URL(request.url);
         const taskId = searchParams.get("taskId");
@@ -916,5 +922,7 @@ async function legacyShiftRunPost(request: Request) {
 // implementation remains below for historical reference but is no longer the
 // public POST path because it selected reservations by product.
 export async function POST(request: Request) {
+    const accessDenied = await authorizeJobOrderModuleAccess(JOB_ORDER_MODULE_PATHS.production);
+    if (accessDenied) return accessDenied;
     return recordShiftRunSession(request);
 }

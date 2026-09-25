@@ -31,7 +31,7 @@ import {
     getFactoryOverheadBasisLabel
 } from "../utils/cogs-helper";
 import { calculateProductionMetrics } from "../utils/production-metrics";
-import { calculateAggregateRunHours, calculatePerUnitMaterialRequirement, calculateReleaseMaterialRequirementPlan, calculateRequiredBatchCount, DEFAULT_PRODUCTION_SHIFT_HOURS, formatProductionValue, isPieceProductionUom, normalizeProductionOutputQuantity, readUomId, resolveProductionShiftHours } from "../utils/production-timing";
+import { calculateAggregateRunHours, calculateFullBatchTarget, calculatePerUnitMaterialRequirement, calculateReleaseMaterialRequirementPlan, calculateRequiredBatchCount, convergeToFullBatch, DEFAULT_PRODUCTION_SHIFT_HOURS, formatProductionValue, isPieceProductionUom, normalizeProductionOutputQuantity, readUomId, resolveProductionShiftHours, resolveRecipeBatchSizeDisplay, sanitizeQuantityDraft } from "../utils/production-timing";
 import { buildReleaseSummaryHtml, type ReleaseSummaryComponent, type ReleaseSummaryFinancials, type ReleaseSummaryRoutingStep } from "../utils/release-summary-print";
 
 interface ReleaseJODialogProps {
@@ -59,7 +59,9 @@ interface ReleaseJODialogProps {
         groupConfigurations?: Record<string, { subAssemblyVersions: Record<number, number>; assignments: Record<number, number[]> }>,
         initialize?: boolean,
         materialTargetQuantity?: number,
-        timingTargetQuantity?: number
+        timingTargetQuantity?: number,
+        groupProductionTargets?: Record<string, number>,
+        groupMaterialTargets?: Record<string, number>
     ) => void;
     priority: number;
     setPriority: (val: number) => void;
@@ -101,7 +103,10 @@ export function ReleaseJODialog({
     const [bomData, setBomData] = useState<any | null>(null);
     const [inventories, setInventories] = useState<Record<number, any>>({});
     const [operators, setOperators] = useState<any[]>([]);
-    const [bomBaseQty, setBomBaseQty] = useState(1);
+    const [bomBaseQty, setBomBaseQty] = useState(0);
+    const [groupBaseQuantities, setGroupBaseQuantities] = useState<Record<string, number>>({});
+    const [groupDetailsByKey, setGroupDetailsByKey] = useState<Record<string, any>>({});
+    const [detailsLoadError, setDetailsLoadError] = useState("");
     const [searchQuery, setSearchQuery] = useState("");
     const [subAssemblyBoms, setSubAssemblyBoms] = useState<Record<number, any[]>>({});
     const [subAssemblyRoutings, setSubAssemblyRoutings] = useState<Record<number, { setup_time_hours: number; run_time_hours_per_unit: number; base_quantity: number }>>({});
@@ -112,6 +117,11 @@ export function ReleaseJODialog({
     const [groupSubAssemblyVersions, setGroupSubAssemblyVersions] = useState<Record<string, Record<number, number>>>({});
     const [loadingSubVersion, setLoadingSubVersion] = useState<Record<number, boolean>>({});
     const [printSelection, setPrintSelection] = useState<Record<string, boolean>>({});
+    // Free-typed requested quantity draft. Null means "no manual override":
+    // the field mirrors the committed target. Decoupling keystrokes from the
+    // shared numeric state keeps Backspace/Delete/clear-to-retype working;
+    // convergence to full batches happens on blur via convergeToFullBatch.
+    const [requestedDraft, setRequestedDraft] = useState<string | null>(null);
 
     const parseValidBranchId = (value: unknown): number | null => {
         const branchId = Number(value);
@@ -127,7 +137,7 @@ export function ReleaseJODialog({
         }, {});
     };
 
-    const normalizedReleaseGroups = releaseGroups.length > 0 ? releaseGroups : [{
+    const normalizedReleaseGroups = useMemo(() => releaseGroups.length > 0 ? releaseGroups : [{
         key: "single",
         productId: Number(selectedLinesProp[0]?.product_id?.product_id || 0),
         productName: selectedLinesProp[0]?.product_id?.product_name || "",
@@ -137,7 +147,7 @@ export function ReleaseJODialog({
         totalRemainingQuantity: targetQuantityProp,
         salesOrderIds: [...new Set(selectedLinesProp.map((line) => line.order_id))],
         salesOrderDetailIds: selectedLinesProp.map((line) => line.detail_id)
-    }];
+    }], [releaseGroups, selectedLinesProp, targetQuantityProp]);
     const isMultiRelease = normalizedReleaseGroups.length > 1;
     const activeReleaseGroup = normalizedReleaseGroups[activeGroupIndex] || normalizedReleaseGroups[0];
     const activeGroupKey = activeReleaseGroup?.key || "single";
@@ -158,10 +168,56 @@ export function ReleaseJODialog({
         || (selectedLines[0] as any)?.unit_of_measurement
         || "units";
     const operationalRequestedTargetQuantity = normalizeProductionOutputQuantity(requestedTargetQuantity, releaseSummaryUom);
-    const rawTargetQuantity = Math.max(requestedTargetQuantity, targetQuantityProp);
-    const targetQuantity = normalizeProductionOutputQuantity(
-        rawTargetQuantity,
-        releaseSummaryUom
+    const requestedProductionQuantity = isMultiRelease
+        ? requestedTargetQuantity
+        : Math.max(requestedTargetQuantity, targetQuantityProp);
+    const activeGroupBaseQuantity = isMultiRelease
+        ? Number(groupBaseQuantities[activeGroupKey] || 0)
+        : bomBaseQty;
+    const rawTargetQuantity = activeGroupBaseQuantity > 0 && requestedProductionQuantity > 0
+        ? calculateFullBatchTarget(requestedProductionQuantity, activeGroupBaseQuantity)
+        : requestedProductionQuantity;
+    const targetQuantity = normalizeProductionOutputQuantity(rawTargetQuantity, releaseSummaryUom);
+    const groupProductionTargets = useMemo(() => Object.fromEntries(normalizedReleaseGroups.map((group) => {
+        const baseQuantity = Number(groupBaseQuantities[group.key] || 0);
+        const effectiveTarget = baseQuantity > 0 && group.totalRemainingQuantity > 0
+            ? calculateFullBatchTarget(group.totalRemainingQuantity, baseQuantity)
+            : 0;
+        return [group.key, effectiveTarget];
+    })), [normalizedReleaseGroups, groupBaseQuantities]);
+    const groupMaterialTargets = useMemo(() => Object.fromEntries(normalizedReleaseGroups.map((group) => {
+        const details = groupDetailsByKey[group.key];
+        const first = group.lines[0];
+        const product = first?.product_id as any;
+        const version = details?.bom;
+        const productionTarget = Number(groupProductionTargets[group.key] || 0);
+        const baseQuantity = Number(groupBaseQuantities[group.key] || 0);
+        const uom = product?.uom_name || product?.uom || (first as any)?.unit_of_measurement || "units";
+        const normalizedTarget = normalizeProductionOutputQuantity(productionTarget, uom);
+        if (!first || !version || productionTarget <= 0 || baseQuantity <= 0) return [group.key, 0];
+
+        const metrics = calculateContainerizationMetrics(
+            product?.product_name || product?.product_code || "Product",
+            normalizedTarget,
+            product?.unit_of_measurement_count || product?.pcs_per_bundle || product?.pcs_per_case || product?.uom_count,
+            version.expected_yield_percentage || product?.expected_yield_percentage,
+            version.scrap_rate || version.scrap_percentage || version.wastage_factor_percentage,
+            version.cutting_unit_weight_grams || version.unit_weight_grams || product?.net_weight_grams || product?.piece_weight_grams,
+            version.cases_per_pallet || product?.cases_per_pallet || product?.bundles_per_pallet,
+            version.sacks_per_mix || version.sacks_per_batch,
+            version.batch_weight_per_sack || version.base_batch_weight_grams,
+            details.components || [],
+            baseQuantity,
+            group.totalRemainingQuantity,
+            version.containerization_profile || null
+        );
+        const materialTarget = metrics.hasOutputEstimate && metrics.netPieces > 0
+            ? metrics.netPieces
+            : normalizedTarget;
+        return [group.key, materialTarget];
+    })), [normalizedReleaseGroups, groupDetailsByKey, groupProductionTargets, groupBaseQuantities]);
+    const allGroupTargetsResolved = normalizedReleaseGroups.every((group) =>
+        Number.isFinite(groupProductionTargets[group.key]) && groupProductionTargets[group.key] > 0
     );
     const joNumber = isMultiRelease
         ? `${joNumberProp}-${String(activeGroupIndex + 1).padStart(2, "0")}`
@@ -200,6 +256,11 @@ export function ReleaseJODialog({
             setActiveGroupIndex(0);
             setLoadingSubVersion({});
             setPrintSelection({});
+            setRequestedDraft(null);
+            setGroupBaseQuantities({});
+            setGroupDetailsByKey({});
+            setDetailsLoadError("");
+            setBomBaseQty(0);
             setHasLoadedDetails(false);
         }
     }, [isConfirmOpen, setAssignmentsProp]);
@@ -225,55 +286,80 @@ export function ReleaseJODialog({
         }
     }, [isConfirmOpen]);
 
-    // Fetch BOM & Routing details on dialog open
+    // Load each selected recipe once so grouped releases can calculate a
+    // target from that product's own demand and batch size.
     useEffect(() => {
         if (isConfirmOpen && selectedLines.length > 0 && !hasLoadedDetails) {
+            let cancelled = false;
             const loadDetails = async () => {
                 setLoadingDetails(true);
+                setDetailsLoadError("");
                 try {
-                    const first = selectedLines[0];
-                    const pId = first.product_id.product_id;
-                    const bId = first.bom_version_id;
                     const branchId = parseValidBranchId(selectedBranchId) || 1;
-                    const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${pId}&bomId=${bId || ""}&branchId=${branchId}&usePhysicalOnHand=true&requestedQuantity=${encodeURIComponent(requestedTargetQuantity)}&plannedQuantity=${encodeURIComponent(targetQuantity)}`;
-                    const res = await fetch(url);
-                    if (res.ok) {
+                    const groupsToLoad = isMultiRelease ? normalizedReleaseGroups : [activeReleaseGroup];
+                    const loadedGroups = await Promise.all(groupsToLoad.map(async (group) => {
+                        if (groupDetailsByKey[group.key]) return [group.key, groupDetailsByKey[group.key]] as const;
+
+                        if (!group.lines[0]) throw new Error(`No Sales Order lines were found for ${group.productName}.`);
+                        const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${group.productId}&bomId=${group.bomVersionId || ""}&branchId=${branchId}&usePhysicalOnHand=true&requestedQuantity=${encodeURIComponent(group.totalRemainingQuantity)}`;
+                        const res = await fetch(url);
+                        if (!res.ok) throw new Error(`Recipe details could not be loaded for ${group.productName}.`);
                         const data = await res.json();
-                        setRoutings(data.routings || []);
-                        setComponents(data.components || []);
-                        setBomData(data.bom || null);
-                        setSubAssemblyBoms(data.subAssemblyBoms || {});
-                        setSubAssemblyRoutings(data.subAssemblyRoutings || {});
-                        setSubAssemblyVersions(data.subAssemblyVersions || {});
-                        setSelectedSubAssemblyVersions(data.selectedSubAssemblyVersions || {});
-                        setInventories(normalizeInventoryMap(data.inventories));
-                        if (data.bom) {
-                            const baseQty = Number(data.bom.base_quantity);
-                            setBomBaseQty(baseQty);
-                            if (!isMultiRelease && baseQty > 0) {
-                                const requestedQuantity = requestedTargetQuantity > 0 ? requestedTargetQuantity : baseQty;
-                                setTargetQuantity(requestedQuantity);
-                            }
-                            // Shift option is the available production capacity per day.
-                            // Recipe net runtime is calculated separately and must not be
-                            // used here because it represents only one recipe batch.
-                            setShiftOption(resolveProductionShiftHours(
-                                data.bom.shift_option,
-                                data.bom.shift_hours,
-                                data.bom.target_shift_hours
-                            ).toFixed(1));
+                        if (!data?.bom) throw new Error(`No approved recipe was found for ${group.productName}.`);
+                        const baseQuantity = Number(data.bom.base_quantity);
+                        if (!Number.isFinite(baseQuantity) || baseQuantity <= 0) {
+                            throw new Error(`Recipe batch size is missing for ${group.productName}.`);
                         }
-                        setHasLoadedDetails(true);
+                        return [group.key, data] as const;
+                    }));
+                    if (cancelled) return;
+
+                    const resolvedDetails = { ...groupDetailsByKey, ...Object.fromEntries(loadedGroups) };
+                    const resolvedBaseQuantities = Object.fromEntries(Object.entries(resolvedDetails).map(([key, data]) => [
+                        key,
+                        Number(data?.bom?.base_quantity) || 0
+                    ]));
+                    setGroupDetailsByKey(resolvedDetails);
+                    setGroupBaseQuantities(resolvedBaseQuantities);
+
+                    const data = resolvedDetails[activeGroupKey];
+                    if (!data?.bom) throw new Error(`No approved recipe was found for ${activeReleaseGroup.productName}.`);
+                    const baseQty = Number(data.bom.base_quantity);
+                    setBomBaseQty(baseQty);
+                    setRoutings(data.routings || []);
+                    setComponents(data.components || []);
+                    setBomData(data.bom);
+                    setSubAssemblyBoms(data.subAssemblyBoms || {});
+                    setSubAssemblyRoutings(data.subAssemblyRoutings || {});
+                    setSubAssemblyVersions(data.subAssemblyVersions || {});
+                    setSelectedSubAssemblyVersions(data.selectedSubAssemblyVersions || {});
+                    setInventories(normalizeInventoryMap(data.inventories));
+                    if (!isMultiRelease && baseQty > 0) {
+                        const requestedQuantity = Math.max(requestedTargetQuantity, targetQuantityProp);
+                        setTargetQuantity(normalizeProductionOutputQuantity(
+                            calculateFullBatchTarget(requestedQuantity, baseQty),
+                            releaseSummaryUom
+                        ));
                     }
+                    // Shift option is available capacity per day; recipe runtime
+                    // is calculated separately using the effective batch target.
+                    setShiftOption(resolveProductionShiftHours(
+                        data.bom.shift_option,
+                        data.bom.shift_hours,
+                        data.bom.target_shift_hours
+                    ).toFixed(1));
+                    setHasLoadedDetails(true);
                 } catch (err) {
                     console.error("Failed to load wizard details:", err);
+                    if (!cancelled) setDetailsLoadError(err instanceof Error ? err.message : "Recipe details could not be loaded.");
                 } finally {
-                    setLoadingDetails(false);
+                    if (!cancelled) setLoadingDetails(false);
                 }
             };
-            loadDetails();
+            void loadDetails();
+            return () => { cancelled = true; };
         }
-    }, [isConfirmOpen, selectedLines, selectedBranchId, hasLoadedDetails, isMultiRelease, targetQuantityProp, requestedTargetQuantity, targetQuantity, setTargetQuantity]);
+    }, [isConfirmOpen, selectedLines, selectedBranchId, hasLoadedDetails, isMultiRelease, normalizedReleaseGroups, activeReleaseGroup, activeGroupKey, groupDetailsByKey, targetQuantityProp, requestedTargetQuantity, releaseSummaryUom, setTargetQuantity]);
 
     const handleSubAssemblyVersionChange = async (subProdId: number, versionId: number) => {
         const branchId = parseValidBranchId(selectedBranchId);
@@ -309,9 +395,50 @@ export function ReleaseJODialog({
         }
     };
 
-    const requiredBatchCount = bomBaseQty > 0 && targetQuantity > 0
-        ? calculateRequiredBatchCount(targetQuantity, bomBaseQty)
+    const requiredBatchCount = activeGroupBaseQuantity > 0 && targetQuantity > 0
+        ? calculateRequiredBatchCount(targetQuantity, activeGroupBaseQuantity)
         : 0;
+
+    // Gross-vs-net display contract: the pinned recipe's base quantity is the
+    // gross batch size; the net expectation is derived for display only so a
+    // net-stored base quantity is immediately visible at release time.
+    const batchSizeDisplay = useMemo(() => {
+        if (!hasLoadedDetails || bomBaseQty <= 0) return null;
+        try {
+            return resolveRecipeBatchSizeDisplay(bomBaseQty, bomData?.expected_yield_percentage);
+        } catch {
+            return null;
+        }
+    }, [hasLoadedDetails, bomBaseQty, bomData]);
+
+    const isPieceTargetUom = isPieceProductionUom(releaseSummaryUom);
+    // Live full-batch convergence of the free-typed request. Sub-batch and
+    // below-demand requests floor up; empty drafts fall back to SO demand.
+    const convergedTarget = useMemo(() => convergeToFullBatch(
+        requestedDraft === null ? null : Number(requestedDraft),
+        isMultiRelease ? activeReleaseGroup.totalRemainingQuantity : requestedTargetQuantity,
+        activeGroupBaseQuantity,
+        releaseSummaryUom
+    ), [requestedDraft, isMultiRelease, activeReleaseGroup, requestedTargetQuantity, activeGroupBaseQuantity, releaseSummaryUom]);
+
+    // Version drift is advisory: the pinned SO recipe stays authoritative for
+    // batch math, but a stale pin (e.g. a net-stored v1.0 row) understates
+    // targets and materials by the yield factor until re-pinned or corrected.
+    const versionDrift = useMemo(() => {
+        if (!hasLoadedDetails) return null;
+        const details = groupDetailsByKey[activeGroupKey];
+        const latest = details?.latestVersion;
+        if (!details?.isPinnedStale || !latest) return null;
+        const pinnedId = Number(activeReleaseGroup?.bomVersionId || (selectedLines[0] as any)?.bom_version_id || bomData?.version_id || 0);
+        const latestId = Number(latest.version_id || 0);
+        if (!Number.isFinite(pinnedId) || !Number.isFinite(latestId) || pinnedId === latestId) return null;
+        const pinnedBase = Number(bomBaseQty);
+        const latestBase = Number(latest.base_quantity);
+        const understatePct = Number.isFinite(pinnedBase) && Number.isFinite(latestBase) && latestBase > 0 && latestBase > pinnedBase
+            ? (1 - pinnedBase / latestBase) * 100
+            : null;
+        return { pinnedId, latestId, latestName: latest.version_name || "latest", pinnedBase, latestBase, understatePct };
+    }, [hasLoadedDetails, groupDetailsByKey, activeGroupKey, activeReleaseGroup, selectedLines, bomData, bomBaseQty]);
 
     const containerMetrics = useMemo(() => {
         if (!selectedLines || selectedLines.length === 0) return null;
@@ -330,11 +457,11 @@ export function ReleaseJODialog({
             verObj?.sacks_per_mix || verObj?.sacks_per_batch,
             verObj?.batch_weight_per_sack || verObj?.base_batch_weight_grams,
             components,
-            bomBaseQty,
-            requestedTargetQuantity,
+            activeGroupBaseQuantity,
+            requestedProductionQuantity,
             bomData?.containerization_profile || null
         );
-    }, [selectedLines, targetQuantity, requestedTargetQuantity, components, bomBaseQty, bomData]);
+    }, [selectedLines, targetQuantity, requestedProductionQuantity, components, activeGroupBaseQuantity, bomData]);
 
     const materialTargetQuantity = containerMetrics?.hasOutputEstimate && containerMetrics.netPieces > 0
         ? containerMetrics.netPieces
@@ -804,6 +931,8 @@ export function ReleaseJODialog({
                                 onClick={() => {
                                     setActiveGroupIndex(index);
                                     setHasLoadedDetails(false);
+                                    setRequestedDraft(null);
+                                    setBomBaseQty(0);
                                     setRoutings([]);
                                     setComponents([]);
                                     setInventories({});
@@ -828,7 +957,7 @@ export function ReleaseJODialog({
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-muted-foreground">Recipe Version:</span>
-                                        <span className="font-bold text-primary">{selectedLines[0].bom_version_name || "Default"}</span>
+                                        <span className="font-bold text-primary">{selectedLines[0].bom_version_name || "Default"}{selectedLines[0]?.bom_version_id ? ` (#${selectedLines[0].bom_version_id})` : ""}</span>
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-muted-foreground">Target Branch:</span>
@@ -839,15 +968,41 @@ export function ReleaseJODialog({
                                         <span className="font-semibold text-foreground">{(selectedLines[0].product_id as any)?.uom_name || (selectedLines[0].product_id as any)?.uom || "Pieces"}</span>
                                     </div>
                                     <div className="flex justify-between pt-1 border-t border-border/50">
-                                        <span className="text-muted-foreground">Recipe Batch Size (Base Qty):</span>
+                                        <span className="text-muted-foreground">Recipe Batch Size (Gross Base Qty):</span>
                                         {loadingDetails ? (
                                             <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono text-xs flex items-center gap-1">
                                                 <Loader2 className="h-3 w-3 animate-spin text-emerald-600" /> Loading...
                                             </span>
                                         ) : (
-                                            <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">{bomBaseQty.toLocaleString()}</span>
+                                            <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">{bomBaseQty.toLocaleString()} {releaseSummaryUom}</span>
                                         )}
                                     </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Expected Net Output{batchSizeDisplay ? ` (${batchSizeDisplay.expectedYieldPercentage}% Yield)` : ""}:</span>
+                                        {loadingDetails || !batchSizeDisplay ? (
+                                            <span className="font-bold text-blue-600 dark:text-blue-400 font-mono text-xs flex items-center gap-1">
+                                                {loadingDetails ? <><Loader2 className="h-3 w-3 animate-spin text-blue-600" /> Loading...</> : "—"}
+                                            </span>
+                                        ) : (
+                                            <span className="font-bold text-blue-600 dark:text-blue-400 font-mono">{batchSizeDisplay.expectedNetQuantity.toLocaleString()} {releaseSummaryUom}</span>
+                                        )}
+                                    </div>
+                                    {versionDrift && !loadingDetails && (
+                                        <div className="flex items-start gap-2 p-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-xs">
+                                            <ShieldAlert className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                                            <div className="space-y-0.5">
+                                                <p className="font-semibold text-amber-700 dark:text-amber-300">
+                                                    Pinned recipe #{versionDrift.pinnedId} differs from {versionDrift.latestName} #{versionDrift.latestId}.
+                                                </p>
+                                                <p className="text-amber-700/80 dark:text-amber-300/80">
+                                                    Batch math uses the pinned version ({versionDrift.pinnedBase.toLocaleString()} vs latest {Number.isFinite(versionDrift.latestBase) ? versionDrift.latestBase.toLocaleString() : "—"} {releaseSummaryUom}).
+                                                    {versionDrift.understatePct !== null && versionDrift.understatePct > 0
+                                                        ? ` Material plans understate by ~${versionDrift.understatePct.toFixed(1)}% until re-pinned or corrected.`
+                                                        : " Re-pin the SO line or correct master data if the pinned row is stale."}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    )}
                                     <div className="flex justify-between">
                                         <span className="text-muted-foreground">Ordered Quantity (from SO):</span>
                                         <span className="font-bold text-blue-600 dark:text-blue-400 font-mono">{maxAvailableQuantity.toLocaleString()}</span>
@@ -886,8 +1041,8 @@ export function ReleaseJODialog({
                                         </div>
 
                                         <div className="space-y-1">
-                                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide flex items-center justify-between">
-                                                <span>Target Production Quantity</span>
+                                            <label htmlFor="target-requested-input" className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide flex items-center justify-between">
+                                                <span>Requested Quantity</span>
                                                 {loadingDetails && (
                                                     <span className="text-[9px] text-muted-foreground font-normal flex items-center gap-1 lowercase">
                                                         <Loader2 className="h-2.5 w-2.5 animate-spin text-primary" />
@@ -897,16 +1052,30 @@ export function ReleaseJODialog({
                                             </label>
                                             <div className="relative">
                                                 <Input
-                                                    type="number"
-                                                    value={loadingDetails ? "" : (targetQuantity || "")}
-                                                    min={1}
-                                                    step={isPieceProductionUom(releaseSummaryUom) ? 1 : "any"}
+                                                    id="target-requested-input"
+                                                    type="text"
+                                                    inputMode={isPieceTargetUom ? "numeric" : "decimal"}
+                                                    autoComplete="off"
+                                                    spellCheck={false}
+                                                    value={requestedDraft ?? (loadingDetails || !hasLoadedDetails ? "" : (String(isMultiRelease ? targetQuantity : targetQuantityProp) || ""))}
                                                     onChange={(e) => {
-                                                        const next = Number(e.target.value);
-                                                        setTargetQuantity(Number.isFinite(next) && next > 0 ? next : 0);
+                                                        setRequestedDraft(sanitizeQuantityDraft(e.target.value, isPieceTargetUom));
                                                     }}
-                                                    disabled={isMultiRelease || loadingDetails}
-                                                    placeholder={loadingDetails ? "Calculating batch size..." : "e.g. 1000"}
+                                                    onKeyDown={(e) => {
+                                                        // Piece UOMs reject decimal/exponent keystrokes outright.
+                                                        // Edit keys (Backspace, Delete, arrows, Tab, …) are never
+                                                        // intercepted so deletion always works keystroke by keystroke.
+                                                        if (!isPieceTargetUom || e.ctrlKey || e.metaKey || e.altKey) return;
+                                                        if ([".", "e", "E", "+", "-"].includes(e.key)) e.preventDefault();
+                                                    }}
+                                                    onBlur={() => {
+                                                        if (!isMultiRelease && hasLoadedDetails && convergedTarget.effective > 0) {
+                                                            setTargetQuantity(convergedTarget.effective);
+                                                        }
+                                                        setRequestedDraft(null);
+                                                    }}
+                                                    disabled={isMultiRelease || loadingDetails || !hasLoadedDetails}
+                                                    placeholder={loadingDetails || !hasLoadedDetails ? "Calculating batch size..." : "Enter requested quantity"}
                                                     className="h-9 font-semibold bg-card border-input text-foreground font-mono"
                                                 />
                                                 {loadingDetails && (
@@ -915,10 +1084,30 @@ export function ReleaseJODialog({
                                                     </div>
                                                 )}
                                             </div>
+                                            {requestedDraft !== null && convergedTarget.note && hasLoadedDetails && !loadingDetails ? (
+                                                <p className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">{convergedTarget.note}</p>
+                                            ) : null}
                                         </div>
                                     </div>
+                                    <div className="space-y-1">
+                                        <label htmlFor="target-effective-input" className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
+                                            Effective Production Target (Full-Batch)
+                                        </label>
+                                        <Input
+                                            id="target-effective-input"
+                                            type="text"
+                                            value={loadingDetails || !hasLoadedDetails ? "" : `${convergedTarget.effective.toLocaleString()} ${releaseSummaryUom}`}
+                                            readOnly
+                                            disabled
+                                            className="h-9 font-semibold bg-muted text-muted-foreground border-input font-mono"
+                                        />
+                                    </div>
                                     <p className="text-[10px] text-muted-foreground">
-                                        {`The target is not increased to a full recipe batch. ${isPieceProductionUom(releaseSummaryUom) ? "Piece-unit targets use whole pieces. " : ""}Recipe batch estimate: ${requiredBatchCount || 0} batch${requiredBatchCount === 1 ? "" : "es"}. SO demand is ${formatProductionValue(requestedTargetQuantity)} units.`}
+                                        {detailsLoadError
+                                            ? detailsLoadError
+                                            : !hasLoadedDetails
+                                                ? "Loading the recipe batch target and production details."
+                                                : `Effective production target: ${formatProductionValue(targetQuantity)} ${releaseSummaryUom} (${requiredBatchCount || 0} full recipe batch${requiredBatchCount === 1 ? "" : "es"}). SO demand remains ${formatProductionValue(requestedTargetQuantity)} ${releaseSummaryUom}. ${isPieceProductionUom(releaseSummaryUom) ? "Piece targets are shown as whole units." : ""}`}
                                     </p>
 
                                     <div className="grid grid-cols-2 gap-4">
@@ -1712,7 +1901,7 @@ export function ReleaseJODialog({
                             <Button
                                 size="sm"
                                 onClick={() => setCurrentStep((prev) => prev + 1)}
-                                 disabled={loadingDetails || !joNumber || targetQuantity <= 0 || (currentStep === 2 && !!productionMetricsError)}
+                                disabled={loadingDetails || !hasLoadedDetails || !allGroupTargetsResolved || !joNumber || targetQuantity <= 0 || (currentStep === 2 && !!productionMetricsError)}
                                 className="bg-primary hover:bg-primary/90 text-white h-8 font-semibold shadow-lg shadow-primary/20"
                             >
                                 {currentStep === 3 ? "Next: Review" : "Next"} <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
@@ -1744,9 +1933,11 @@ export function ReleaseJODialog({
                                             : undefined,
                                         false,
                                         materialTargetQuantity ?? undefined,
-                                        productionTimingTargetQuantity
+                                        productionTimingTargetQuantity,
+                                        groupProductionTargets,
+                                        groupMaterialTargets
                                     )}
-                                    disabled={releasingJO || !!productionMetricsError}
+                                    disabled={releasingJO || loadingDetails || !hasLoadedDetails || !allGroupTargetsResolved || !!detailsLoadError || !!productionMetricsError}
                                     className="border-primary/30 text-primary hover:bg-primary/5 h-8 font-semibold"
                                 >
                                     {releasingJO ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
@@ -1768,9 +1959,11 @@ export function ReleaseJODialog({
                                             : undefined,
                                         true,
                                         materialTargetQuantity ?? undefined,
-                                        productionTimingTargetQuantity
+                                        productionTimingTargetQuantity,
+                                        groupProductionTargets,
+                                        groupMaterialTargets
                                     )}
-                                    disabled={releasingJO || !!productionMetricsError || !plannedDate || priority < 0}
+                                    disabled={releasingJO || loadingDetails || !hasLoadedDetails || !allGroupTargetsResolved || !!detailsLoadError || !!productionMetricsError || !plannedDate || priority < 0}
                                     className="bg-emerald-600 hover:bg-emerald-500 text-white h-8 font-semibold shadow-lg shadow-emerald-500/20"
                                 >
                                     {releasingJO ? (

@@ -63,6 +63,10 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             `${DIRECTUS_URL}/items/manufacturing_job_order_status_history?limit=-1&sort=-changed_at&fields=*`,
             { headers: headersNoCache }
         ).catch(() => null);
+        const replacementCreditsPromise = fetch(
+            `${DIRECTUS_URL}/items/manufacturing_job_order_replacement_credits?limit=-1&fields=*`,
+            { headers: headersNoCache }
+        ).catch(() => null);
         const dailyQAInspectionsPromise = fetch(
             `${DIRECTUS_URL}/items/manufacturing_daily_qa_inspections?limit=-1&sort=-inspected_at&fields=*`,
             { headers: headersNoCache }
@@ -77,6 +81,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
         ).catch(() => null);
         const responses = await Promise.all(fetchList);
         const statusHistoryResponse = await statusHistoryPromise;
+        const replacementCreditsResponse = await replacementCreditsPromise;
         const dailyQAInspectionsResponse = await dailyQAInspectionsPromise;
         const workCentersResponse = await workCentersPromise;
         const usersResponse = await usersPromise;
@@ -92,6 +97,9 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
         const invMovements = await movementPromise;
         const statusHistoryRows = statusHistoryResponse?.ok
             ? (await statusHistoryResponse.json()).data || []
+            : [];
+        const replacementCreditRows = replacementCreditsResponse?.ok
+            ? (await replacementCreditsResponse.json()).data || []
             : [];
         const dailyQAInspections = dailyQAInspectionsResponse?.ok
             ? (await dailyQAInspectionsResponse.json()).data || []
@@ -230,6 +238,29 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
         const salesOrderParentsById = new Map<number, any>(
             salesOrderParents.map((order: any) => [getRelationId(order.order_id, ["order_id"]), order])
         );
+        const jobOrdersById = new Map<number, any>(
+            jos.map((jobOrder: any) => [getRelationId(jobOrder.job_order_id ?? jobOrder.id, ["job_order_id"]), jobOrder])
+        );
+        const replacementCreditsByJobOrder = new Map<number, any[]>();
+        for (const credit of replacementCreditRows) {
+            const replacementJobOrderId = getRelationId(credit.replacement_job_order_id, ["job_order_id"]);
+            const predecessorJobOrderId = getRelationId(credit.predecessor_job_order_id, ["job_order_id"]);
+            const salesOrderDetailId = getRelationId(credit.sales_order_detail_id, ["detail_id"]);
+            if (!replacementJobOrderId || !predecessorJobOrderId || !salesOrderDetailId) continue;
+            const predecessor = jobOrdersById.get(predecessorJobOrderId);
+            const detail = salesOrderDetailsById.get(salesOrderDetailId);
+            const orderId = getRelationId(detail?.order_id, ["order_id"]);
+            const order = salesOrderParentsById.get(orderId);
+            const rows = replacementCreditsByJobOrder.get(replacementJobOrderId) || [];
+            rows.push({
+                predecessorJobOrderId,
+                predecessorJobOrderNo: predecessor?.job_order_no || `JO-${predecessorJobOrderId}`,
+                salesOrderNo: order?.order_no || `SO-${orderId || "?"}`,
+                salesOrderDetailId,
+                creditedQuantity: Number(credit.credited_quantity || 0)
+            });
+            replacementCreditsByJobOrder.set(replacementJobOrderId, rows);
+        }
 
         // Resolve human-readable customer names for the linked sales orders so
         // the shop floor terminal can filter Job Orders by customer.
@@ -695,6 +726,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                 allocation_results: null,
                 products: simulatedProducts,
                  sales_orders: salesOrders,
+                 replacement_credits: replacementCreditsByJobOrder.get(joIdInt) || [],
                  routing_tasks: routingTasks,
                  assigned_personnel: assignedPersonnel,
                  assignedPersonnel,

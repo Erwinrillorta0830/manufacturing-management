@@ -1,5 +1,6 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
+import { authorizeJobOrderModuleAccess, JOB_ORDER_MODULE_PATHS } from "@/app/api/manufacturing/job-orders/_module-access";
 import {
     createDisposition,
     findPendingDisposition,
@@ -312,6 +313,8 @@ async function fetchDailyQAQueue(searchParams: URLSearchParams): Promise<any[]> 
 
 // GET: Retrieves all daily yield QA inspections
 export async function GET(request: Request) {
+    const accessDenied = await authorizeJobOrderModuleAccess(JOB_ORDER_MODULE_PATHS.qualityAssurance);
+    if (accessDenied) return accessDenied;
     try {
         const { searchParams } = new URL(request.url);
         const joId = searchParams.get("joId");
@@ -350,6 +353,8 @@ export async function GET(request: Request) {
 
 // POST: Creates daily yield QA inspections (supports array for paper-based checklist batch entries)
 export async function POST(request: Request) {
+    const accessDenied = await authorizeJobOrderModuleAccess(JOB_ORDER_MODULE_PATHS.qualityAssurance);
+    if (accessDenied) return accessDenied;
     try {
         const body = await request.json();
         const isEnvelope = Boolean(body && !Array.isArray(body) && Array.isArray(body.inspections));
