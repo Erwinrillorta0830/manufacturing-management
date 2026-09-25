@@ -193,16 +193,34 @@ export async function fetchLotsByBranch(branchId?: number, token?: string): Prom
         };
       });
 
-      if (branchId) {
-        return mapped.filter((l: MMLot) => Number(l.branch_id) === Number(branchId));
-      }
       return mapped;
     }
 
     // Server-side direct Directus call
-    const filterParts: string[] = [];
+    const targetBranchIds = branchId ? [branchId] : [];
     if (branchId) {
-      filterParts.push(`filter[branch_id][_eq]=${branchId}`);
+      try {
+        const bRes = await fetch(`${DIRECTUS_URL}/items/branches/${branchId}?fields=id,bad_stock_branch_id`, {
+          headers: getHeaders(token),
+          cache: "no-store",
+        });
+        if (bRes.ok) {
+          const bData = await bRes.json();
+          const badId = bData?.data?.bad_stock_branch_id;
+          if (badId && Number(badId) > 0) {
+            targetBranchIds.push(Number(badId));
+          }
+        }
+      } catch (bErr) {
+        console.warn("[LotTracking] Failed to resolve twin bad branch server-side:", bErr);
+      }
+    }
+
+    const filterParts: string[] = [];
+    if (targetBranchIds.length === 1) {
+      filterParts.push(`filter[branch_id][_eq]=${targetBranchIds[0]}`);
+    } else if (targetBranchIds.length > 1) {
+      filterParts.push(`filter[branch_id][_in]=${targetBranchIds.join(",")}`);
     }
     const queryStr = filterParts.length > 0 ? `&${filterParts.join("&")}` : "";
     
