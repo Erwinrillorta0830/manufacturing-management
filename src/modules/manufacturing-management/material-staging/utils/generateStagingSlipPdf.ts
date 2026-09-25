@@ -3,6 +3,7 @@ import autoTable from "jspdf-autotable";
 import { MaterialStagingItem, StagingJobOrder } from "../types";
 import { displayJobOrderStatus } from "../../job-order-status";
 import { stagingStateInfo } from "../../shared/job-order-journey";
+import { formatShiftLabel } from "./format-shift-label";
 
 function formatAllocationLabel(allocation: {
     lot_name?: string | null;
@@ -37,6 +38,31 @@ export function buildStagingSlipRows(materials: MaterialStagingItem[]): string[]
             lotBatchLabel
         ];
     });
+}
+
+/**
+ * Builds the header metadata rows for the slip. Labels disambiguate the two
+ * bin contexts: the header Target Bin is the floor staging destination,
+ * while each table row's Current Bin is that line's present location
+ * (MAIN-STORE pick source until staged).
+ */
+export function buildStagingSlipMeta(jobOrder: StagingJobOrder): Array<Array<{ label: string; value: string }>> {
+    return [
+        [
+            { label: "Product", value: `${jobOrder.product_name}${jobOrder.product_code ? ` (${jobOrder.product_code})` : ""}` },
+            { label: "Recipe Version", value: jobOrder.version_name || "Default" },
+            { label: "Target Quantity", value: `${jobOrder.target_quantity.toLocaleString()} units` }
+        ],
+        [
+            { label: "Branch", value: jobOrder.branch_name || (jobOrder.branch_id ? `Branch #${jobOrder.branch_id}` : "Unassigned") },
+            { label: "Target Bin (Destination)", value: jobOrder.suggested_staging_bin || "No active destination" }
+        ],
+        [
+            { label: "Shift Hours", value: formatShiftLabel(jobOrder.shift_option) },
+            { label: "Staging Progress", value: `${jobOrder.staging_percentage}% (${jobOrder.staged_materials_count}/${jobOrder.total_materials_count} components)` },
+            { label: "Reservation", value: stagingStateInfo(jobOrder.reservation_status)?.label || jobOrder.reservation_status }
+        ]
+    ];
 }
 
 /**
@@ -100,23 +126,7 @@ export function generateStagingSlipPdf(jobOrder: StagingJobOrder): jsPDF {
     const metaBoxRight = pageWidth - margin - 4;
     const metaColumnWidth = (metaBoxRight - metaBoxLeft) / 3;
     const metaColumns = [metaBoxLeft, metaBoxLeft + metaColumnWidth, metaBoxLeft + (metaColumnWidth * 2)];
-    const metaRows: Array<Array<{ label: string; value: string }>> = [
-        [
-            { label: "Product", value: `${jobOrder.product_name}${jobOrder.product_code ? ` (${jobOrder.product_code})` : ""}` },
-            { label: "Recipe Version", value: jobOrder.version_name || "Default" },
-            { label: "Target Quantity", value: `${jobOrder.target_quantity.toLocaleString()} units` }
-        ],
-        [
-            { label: "Branch", value: jobOrder.branch_name || (jobOrder.branch_id ? `Branch #${jobOrder.branch_id}` : "Unassigned") },
-            { label: "Work Center", value: jobOrder.primary_work_center_name || "Unassigned" },
-            { label: "Target Bin", value: jobOrder.suggested_staging_bin || "No active destination" }
-        ],
-        [
-            { label: "Shift", value: jobOrder.shift_option || "Shift 1" },
-            { label: "Staging Progress", value: `${jobOrder.staging_percentage}% (${jobOrder.staged_materials_count}/${jobOrder.total_materials_count} components)` },
-            { label: "Reservation", value: stagingStateInfo(jobOrder.reservation_status)?.label || jobOrder.reservation_status }
-        ]
-    ];
+    const metaRows = buildStagingSlipMeta(jobOrder);
 
     metaRows.forEach((row, rowIndex) => {
         const rowY = currentY + 10.5 + (rowIndex * 6.5);
@@ -140,7 +150,7 @@ export function generateStagingSlipPdf(jobOrder: StagingJobOrder): jsPDF {
     currentY += 34;
 
     // Materials Table
-    const tableHeaders = ["Component", "Required", "Staged", "Remaining", "Bin", "Reservation", "Lot / Batch"];
+    const tableHeaders = ["Component", "Required", "Staged", "Remaining", "Current Bin", "Reservation", "Lot / Batch"];
     const tableRows = buildStagingSlipRows(jobOrder.materials);
 
     autoTable(doc, {
@@ -174,6 +184,15 @@ export function generateStagingSlipPdf(jobOrder: StagingJobOrder): jsPDF {
             fillColor: [248, 250, 252]
         }
     });
+
+    // Bin-context footnote: header Target Bin is the floor destination;
+    // per-line Current Bin is the pick source until staged.
+    // @ts-expect-error lastAutoTable injected by jspdf-autotable
+    const tableEndY = doc.lastAutoTable?.finalY || 150;
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(6.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text("MAIN-STORE = pick source; FLOOR-STAGING = staged destination (older slips may show FLOOR-STAGING-{id}).", margin, tableEndY + 5);
 
     // Sign-Off Block
     // @ts-expect-error lastAutoTable injected by jspdf-autotable

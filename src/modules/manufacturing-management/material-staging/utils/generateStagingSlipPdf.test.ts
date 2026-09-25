@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { buildStagingSlipRows } from "./generateStagingSlipPdf";
-import { MaterialStagingItem } from "../types";
+import { buildStagingSlipMeta, buildStagingSlipRows } from "./generateStagingSlipPdf";
+import { MaterialStagingItem, StagingJobOrder } from "../types";
 
 function makeMaterial(
     overrides: Partial<MaterialStagingItem> = {}
@@ -145,5 +145,57 @@ const blankLabelRows = buildStagingSlipRows([
     })
 ]);
 assert.equal(blankLabelRows[0][6], "—");
+
+function makeJobOrder(overrides: Partial<StagingJobOrder> = {}): StagingJobOrder {
+    return {
+        job_order_id: 10,
+        job_order_no: "JO-000123",
+        parent_job_order_id: null,
+        product_id: 200,
+        product_name: "Sample FG",
+        product_code: "FG-SAMPLE-001",
+        version_id: 7,
+        version_name: "FG-SAMPLE-001 Rev 3",
+        target_quantity: 12001,
+        completed_quantity: 0,
+        rejected_quantity: 0,
+        status: "For Picking",
+        primary_work_center_id: 112,
+        primary_work_center_name: "Dough & Batch Mixing Center",
+        staging_work_center_id: 112,
+        suggested_staging_bin: "FLOOR-STAGING-112",
+        shift_option: "10",
+        branch_id: 1,
+        branch_name: "Main Facility",
+        materials: [],
+        total_materials_count: 2,
+        staged_materials_count: 1,
+        staging_percentage: 50,
+        reservation_status: "PARTIAL",
+        has_shortage: false,
+        all_staged: false,
+        ...overrides
+    };
+}
+
+// Header meta: real version code, destination-labeled bin, unambiguous shift.
+const meta = buildStagingSlipMeta(makeJobOrder());
+const metaCells = meta.flat();
+const metaValue = (label: string) =>
+    metaCells.find((cell) => cell.label === label)?.value;
+assert.equal(metaValue("Recipe Version"), "FG-SAMPLE-001 Rev 3");
+assert.equal(metaValue("Target Bin (Destination)"), "FLOOR-STAGING-112");
+assert.equal(metaValue("Shift Hours"), "10 hrs");
+assert.equal(metaCells.find((cell) => cell.label === "Work Center"), undefined);
+
+// Missing version still falls back to "Default" (last resort only).
+const metaNoVersion = buildStagingSlipMeta(
+    makeJobOrder({ version_id: null, version_name: null })
+);
+const metaNoVersionCells = metaNoVersion.flat();
+assert.equal(
+    metaNoVersionCells.find((cell) => cell.label === "Recipe Version")?.value,
+    "Default"
+);
 
 console.log("generateStagingSlipPdf tests passed");
