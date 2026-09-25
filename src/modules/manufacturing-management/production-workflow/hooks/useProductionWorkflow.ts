@@ -15,7 +15,13 @@ import {
     returnJobOrderMaterials,
     executeJobOrderWorkflow
 } from "../services/production-api";
-import { isJobOrderStatus, JOB_ORDER_STATUS, displayJobOrderStatus, normalizeJobOrderStatus } from "../../job-order-status";
+import {
+    canChangeJobOrderOperatorRoster,
+    isJobOrderStatus,
+    JOB_ORDER_STATUS,
+    displayJobOrderStatus,
+    normalizeJobOrderStatus
+} from "../../job-order-status";
 import { elapsedHours } from "../operator-time";
 import type { JobOrderWorkflowAction } from "../../job-order-workflow";
 import { areJobOrderMaterialsFullyStaged } from "../utils/material-staging-readiness";
@@ -483,15 +489,19 @@ const selectedTask = useMemo(() => {
     // Clock In / Check In Operator
     const handleAddOperator = async (startTimer: boolean, taskId: number, assigneeId: string) => {
         if (!taskId || !assigneeId || !selectedJobOrder) return;
-        if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
-            toast.error("Operators can only be assigned while the Job Order is In Production.");
+        if (startTimer && !isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
+            toast.error("A shift timer can only start while the Job Order is In Production.");
+            return;
+        }
+        if (!startTimer && !canChangeJobOrderOperatorRoster(selectedJobOrder.status)) {
+            toast.error("Operators can only be assigned while the Job Order is For Picking, Picked, or In Production.");
             return;
         }
         const uId = parseInt(assigneeId);
         const userObj = users.find((u) => (u.user_id || u.id) === uId);
         if (!userObj) return;
 
-        const action = startTimer ? "start-timer" : "log-hours";
+        const action = startTimer ? "start-timer" : "assign-operator";
         const taskObj = sortedTasks.find(t => t.id === taskId);
 
         try {
@@ -508,7 +518,7 @@ const selectedTask = useMemo(() => {
             toast.success(
                 startTimer
                     ? `${userObj.user_fname || userObj.first_name} clocked in successfully.`
-                    : `${userObj.user_fname || userObj.first_name} added to team log.`
+                    : `${userObj.user_fname || userObj.first_name} assigned to route.`
             );
             await fetchJobOrderOperators(
                 sortedTasks,
@@ -529,8 +539,8 @@ const selectedTask = useMemo(() => {
         requestId = createOperatorRequestId("remove-operator", taskId, opUserId)
     ): Promise<boolean> => {
         if (!selectedJobOrder) return false;
-        if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
-            toast.error("Operators can only be changed while the Job Order is In Production.");
+        if (!canChangeJobOrderOperatorRoster(selectedJobOrder.status)) {
+            toast.error("Operators can only be changed while the Job Order is For Picking, Picked, or In Production.");
             return false;
         }
         try {
@@ -565,8 +575,8 @@ const selectedTask = useMemo(() => {
         requestId = createOperatorRequestId("swap-operator", taskId, opUserId)
     ) => {
         if (!selectedJobOrder) return false;
-        if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
-            toast.error("Operators can only be changed while the Job Order is In Production.");
+        if (!canChangeJobOrderOperatorRoster(selectedJobOrder.status)) {
+            toast.error("Operators can only be changed while the Job Order is For Picking, Picked, or In Production.");
             return false;
         }
         const taskObj = sortedTasks.find((task) => task.id === taskId);

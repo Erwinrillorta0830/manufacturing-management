@@ -336,6 +336,8 @@ export interface MaterialCandidateLot {
     available: number;
     expiry_date?: string | null;
     manufacturing_date?: string | null;
+    qa_status?: string | null;
+    status?: string | null;
     reservation_id?: number | string | null;
     reserved_qty_for_this_lot?: number;
 }
@@ -396,15 +398,19 @@ export interface WipTopUpPayload {
     jobOrderId: number;
     joMaterialId: number;
     productId: number;
+    allocations: WipTopUpAllocation[];
+    uomId?: number | null;
+    idempotencyKey: string;
+    remarks?: string;
+}
+
+export interface WipTopUpAllocation {
     sourceType: "RAW_MATERIAL" | "MANUFACTURING";
     receiptId?: number | null;
     mmLotId?: number | null;
     inventoryLotId?: number | null;
-    batchNo?: string;
-    uomId?: number | null;
+    batchNo: string;
     quantity: number;
-    idempotencyKey: string;
-    remarks?: string;
 }
 
 export interface WipTopUpResponse {
@@ -413,6 +419,18 @@ export interface WipTopUpResponse {
     message?: string;
     error?: string;
     code?: string;
+    allocations?: Array<{
+        reservationId: number | null;
+        mmLotId: number;
+        inventoryLotId: number;
+        batchNo: string;
+        uomId?: number | null;
+        addedQuantity: number;
+        reservedQuantity: number;
+        stagedQuantity: number;
+        issuedToWipQuantity: number;
+        remainingWipQuantity: number;
+    }>;
     reservation?: {
         reservationId: number | null;
         mmLotId: number;
@@ -466,6 +484,8 @@ export interface ShiftRunLogPayload {
     materialsConsumed: ShiftRunMaterialConsumption[];
     varianceReason?: string | null;
     approveVariance?: boolean;
+    /** Finalize the production lifecycle after this session is committed. */
+    completeProductionAfterLog?: boolean;
     /** Required photo captured at the end of the production shift. */
     evidenceImage: File;
 }

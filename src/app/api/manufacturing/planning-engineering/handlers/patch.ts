@@ -11,6 +11,7 @@ import {
     validateJobOrderWorkflowEvidence
 } from "../../job-orders/_workflow-evidence";
 import { resolveApplicableRouteWorkCenters } from "../../production/_applicable-work-centers";
+import { committedGoodOutputOrAggregate, goodOutputAggregateFallback, hasReachedProductionTarget } from "@/modules/manufacturing-management/production-workflow/utils/production-output";
 import {
     JOB_ORDER_MODULE_PATHS,
     JobOrderModuleAccessError,
@@ -54,6 +55,38 @@ async function productionMutationResponse(jobOrderId: number | string): Promise<
     }
     if (isJobOrderStatus(record.status, JOB_ORDER_STATUS.PRODUCTION_COMPLETED, JOB_ORDER_STATUS.FOR_QA_RECONCILIATION, JOB_ORDER_STATUS.CLOSED)) {
         return NextResponse.json({ error: `Job Order ${record.job_order_no || jobOrderId} has completed production and cannot be updated.`, code: "PRODUCTION_COMPLETED" }, { status: 409 });
+    }
+    return null;
+}
+
+async function productionTargetResponse(jobOrderId: number | string): Promise<NextResponse | null> {
+    const numericId = positiveInteger(jobOrderId);
+    if (!numericId) return null;
+    const [jobOrderResponse, yieldResponse] = await Promise.all([
+        fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${numericId}?fields=job_order_id,job_order_no,target_quantity,quantity,actual_quantity_produced,completed_quantity`, { headers, cache: "no-store" }),
+        fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${numericId}&fields=yield_quantity,commit_status&limit=-1`, { headers, cache: "no-store" })
+    ]);
+    if (!jobOrderResponse.ok || !yieldResponse.ok) {
+        return NextResponse.json({ error: "The Job Order production target could not be verified. Refresh and try again." }, { status: 502 });
+    }
+    const [jobOrderPayload, yieldPayload] = await Promise.all([
+        jobOrderResponse.json().catch(() => ({})),
+        yieldResponse.json().catch(() => ({}))
+    ]);
+    const jobOrder = jobOrderPayload?.data;
+    if (!jobOrder) return NextResponse.json({ error: "The Job Order could not be loaded." }, { status: 404 });
+    if (!Array.isArray(yieldPayload?.data)) {
+        return NextResponse.json({ error: "The Job Order production output could not be verified. Refresh and try again." }, { status: 502 });
+    }
+    const yields = yieldPayload.data;
+    if (hasReachedProductionTarget(
+        jobOrder.target_quantity ?? jobOrder.quantity,
+        committedGoodOutputOrAggregate(yields, goodOutputAggregateFallback(jobOrder.actual_quantity_produced, jobOrder.completed_quantity))
+    )) {
+        return NextResponse.json({
+            error: `Job Order ${jobOrder.job_order_no || numericId} has reached its good-output target. Only stopping active timers and completing open route steps are allowed.`,
+            code: "PRODUCTION_TARGET_REACHED"
+        }, { status: 409 });
     }
     return null;
 }
@@ -106,6 +139,8 @@ async function handleRouteWorkCenterAssignment(body: any): Promise<NextResponse>
             code: "ROUTE_WORKCENTER_ASSIGNMENT_STATUS_NOT_ALLOWED"
         }, { status: 409 });
     }
+    const targetResponse = await productionTargetResponse(jobOrderId);
+    if (targetResponse) return targetResponse;
 
     const routesResponse = await fetch(
         `${DIRECTUS_URL}/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${jobOrderId}&fields=jo_route_id,job_order_id,sequence_order,operation_id,routing_id,work_center_id,status&sort=sequence_order&limit=-1`,
@@ -340,6 +375,17 @@ export async function handlePATCH(request: Request) {
             const { taskId, taskPatch } = body;
             const cancelledResponse = await cancelledJobOrderResponseForTask(Number(taskId));
             if (cancelledResponse) return cancelledResponse;
+            const routeContextResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes/${Number(taskId)}?fields=jo_route_id,job_order_id`, { headers, cache: "no-store" });
+            if (!routeContextResponse.ok) return NextResponse.json({ error: "Routing task was not found." }, { status: 404 });
+            const routeContext = (await routeContextResponse.json().catch(() => ({}))).data;
+            const routeJobOrderRef = routeContext?.job_order_id;
+            const routeJobOrderId = Number(typeof routeJobOrderRef === "object"
+                ? routeJobOrderRef?.job_order_id ?? routeJobOrderRef?.id
+                : routeJobOrderRef);
+            const targetResponse = await productionTargetResponse(routeJobOrderId);
+            const allowedTargetRouteCompletion = taskPatch?.status === "Completed"
+                && Object.keys(taskPatch || {}).every((key) => ["status", "completed_at", "actual_run_hours"].includes(key));
+            if (targetResponse && !allowedTargetRouteCompletion) return targetResponse;
             const res = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes/${taskId}?fields=jo_route_id,job_order_id,sequence_order,work_center_id,operation_id,planned_setup_hours,planned_run_hours,actual_setup_hours,actual_run_hours,step_batch_size,run_time_hours_factor`, {
                 method: "PATCH",
                 headers,
@@ -469,6 +515,8 @@ export async function handlePATCH(request: Request) {
             if (!Number.isSafeInteger(routeJobOrderId) || routeJobOrderId <= 0 || !Number.isSafeInteger(sequenceOrder) || sequenceOrder <= 0) {
                 return NextResponse.json({ error: "Routing task is missing its Job Order or sequence assignment." }, { status: 409 });
             }
+            const targetResponse = await productionTargetResponse(routeJobOrderId);
+            if (targetResponse) return targetResponse;
 
             const jobOrderResponse = await fetch(
                 `${DIRECTUS_URL}/items/manufacturing_job_orders/${routeJobOrderId}?fields=job_order_id,assigned_personnel`,

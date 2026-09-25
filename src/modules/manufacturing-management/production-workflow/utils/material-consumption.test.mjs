@@ -17,6 +17,16 @@ assert.deepEqual(preserveExistingActualQuantities([
     { jo_material_id: 1, reservation_id: 11, actual_qty: "36.666667", available_stock: 50 }
 ]);
 
+assert.deepEqual(preserveExistingActualQuantities([
+    { jo_material_id: 1, reservation_id: 10, actual_qty: "2.828000", available_stock: 2.828 },
+    { jo_material_id: 1, reservation_id: 11, actual_qty: "0.848400", available_stock: 0.8484 }
+], [
+    { jo_material_id: 1, reservation_id: 10, actual_qty: "2.500000", available_stock: 2.828 }
+], new Set(["1:10"])), [
+    { jo_material_id: 1, reservation_id: 10, actual_qty: "2.500000", available_stock: 2.828 },
+    { jo_material_id: 1, reservation_id: 11, actual_qty: "0.848400", available_stock: 0.8484 }
+]);
+
 const balancedReservations = calculateMaterialConsumptionDefaults([
     { jo_material_id: 1, allocated_quantity: 100, available_stock: 100 },
     { jo_material_id: 1, allocated_quantity: 100, available_stock: 50 }
@@ -38,6 +48,22 @@ assert.equal(
     shortageReservations.reduce((sum, line) => sum + Number(line.actualQuantity), 0),
     100
 );
+
+const exactShortfallBeforeTopUp = calculateMaterialConsumptionDefaults([
+    { jo_material_id: 20, allocated_quantity: 3.342181818, available_stock: 2.828 }
+], 10, 11);
+assert.equal(exactShortfallBeforeTopUp[0].theoreticalQuantity, 3.6764);
+assert.equal(exactShortfallBeforeTopUp[0].actualQuantity, "2.828000");
+assert.equal(Number((exactShortfallBeforeTopUp[0].theoreticalQuantity - 2.828).toFixed(6)), 0.8484);
+
+const exactConsumptionAfterTopUp = calculateMaterialConsumptionDefaults([
+    { jo_material_id: 20, allocated_quantity: 3.342181818, available_stock: 2.828 },
+    { jo_material_id: 20, allocated_quantity: 3.342181818, available_stock: 0.8484 }
+], 10, 11);
+assert.deepEqual(exactConsumptionAfterTopUp, [
+    { theoreticalQuantity: 2.828, actualQuantity: "2.828000" },
+    { theoreticalQuantity: 0.8484, actualQuantity: "0.848400" }
+]);
 
 const requiredQuantityFallback = calculateMaterialConsumptionDefaults([
     { jo_material_id: 3, required_quantity: 50, issued_to_wip_quantity: 4, available_stock: 0 },

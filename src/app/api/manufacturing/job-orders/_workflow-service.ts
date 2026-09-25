@@ -12,6 +12,7 @@ import {
     fetchJobOrder
 } from "../production/_material-return";
 import { buildQAYieldAssessments } from "../production/_qa-accepted-output";
+import { committedGoodOutputOrAggregate, goodOutputAggregateFallback, hasReachedProductionTarget, sumCommittedGoodOutput } from "@/modules/manufacturing-management/production-workflow/utils/production-output";
 import {
     JOB_ORDER_WORKFLOW_ACTIONS,
     type JobOrderWorkflowAction
@@ -691,9 +692,25 @@ async function assertProductionCanComplete(jobOrder: DirectusRecord): Promise<vo
             { routeIds: incompleteRoutes.map((route) => numberValue(route.jo_route_id ?? route.id)) }
         );
     }
+    const routeIds = routes.map((route) => numberValue(route.jo_route_id ?? route.id)).filter((id) => id > 0);
+    const activeOperatorSessions = routeIds.length > 0
+        ? await directusRows(
+            `/items/manufacturing_job_order_route_operators?filter[jo_route_id][_in]=${routeIds.join(",")}&fields=jo_route_operator_id,started_at,stopped_at&limit=-1`,
+            `Check active operator timers for Job Order ${jobOrderId}`
+        )
+        : [];
+    const activeTimers = activeOperatorSessions.filter((row) => text(row.started_at) && !text(row.stopped_at));
+    if (activeTimers.length > 0) {
+        throw new JobOrderWorkflowError(
+            "Stop all active operator timers before completing production.",
+            409,
+            "PRODUCTION_TIMERS_ACTIVE",
+            { operatorSessionIds: activeTimers.map((row) => numberValue(row.jo_route_operator_id ?? row.id)) }
+        );
+    }
 
     const ledgers = await loadCommittedProductionRecords(jobOrderId);
-    const target = Number(jobOrder.target_quantity || 0);
+    const target = Number(jobOrder.target_quantity ?? jobOrder.quantity ?? 0);
     if (!Number.isFinite(target) || target <= QUANTITY_EPSILON) {
         throw new JobOrderWorkflowError(
             "Production cannot be completed without a positive Job Order target quantity.",
@@ -701,9 +718,7 @@ async function assertProductionCanComplete(jobOrder: DirectusRecord): Promise<vo
             "PRODUCTION_TARGET_REQUIRED"
         );
     }
-    const completionOutput = ledgers.reduce((sum, ledger) => sum
-        + Math.max(0, Number(ledger.yield_quantity || 0))
-        + Math.max(0, Number(ledger.rejected_quantity || 0)), 0);
+    const completionOutput = sumCommittedGoodOutput(ledgers);
     if (completionOutput <= QUANTITY_EPSILON) {
         throw new JobOrderWorkflowError(
             "Production cannot be completed until output quantities are recorded.",
@@ -713,7 +728,7 @@ async function assertProductionCanComplete(jobOrder: DirectusRecord): Promise<vo
     }
     if (completionOutput + QUANTITY_EPSILON < target) {
         throw new JobOrderWorkflowError(
-            "Production cannot be completed until good and rejected output reaches the Job Order target.",
+            "Production cannot be completed until good output reaches the Job Order target.",
             422,
             "PRODUCTION_OUTPUT_INCOMPLETE",
             {
@@ -721,6 +736,25 @@ async function assertProductionCanComplete(jobOrder: DirectusRecord): Promise<vo
                 completionQuantity: completionOutput,
                 shortfall: Math.max(0, target - completionOutput)
             }
+        );
+    }
+}
+
+async function assertProductionTargetNotReached(jobOrder: DirectusRecord): Promise<void> {
+    const jobOrderId = numberValue(jobOrder.job_order_id);
+    const target = Number(jobOrder.target_quantity ?? jobOrder.quantity ?? 0);
+    const yields = await directusRows(
+        `/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${jobOrderId}&fields=yield_quantity,commit_status&limit=-1`,
+        `Check production target for Job Order ${jobOrderId}`
+    );
+    if (hasReachedProductionTarget(target, committedGoodOutputOrAggregate(
+        yields,
+        goodOutputAggregateFallback(jobOrder.actual_quantity_produced, jobOrder.completed_quantity)
+    ))) {
+        throw new JobOrderWorkflowError(
+            "The good-output target has been reached. Use Complete & Close JO to send this Job Order to QA.",
+            409,
+            "PRODUCTION_TARGET_REACHED"
         );
     }
 }
@@ -1060,6 +1094,10 @@ export async function executeJobOrderWorkflow(
             "JOB_ORDER_INVALID_TRANSITION",
             { currentStatus: previousStatus, allowedStatuses: allowed }
         );
+    }
+
+    if (["start-production", "place-on-hold", "resume-production", "terminate-production"].includes(command.action)) {
+        await assertProductionTargetNotReached(jobOrder);
     }
 
     if (["place-on-hold", "cancel", "terminate-production"].includes(command.action) && !text(command.remarks)) {
