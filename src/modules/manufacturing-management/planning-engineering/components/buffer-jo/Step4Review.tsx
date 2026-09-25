@@ -1,180 +1,209 @@
 /* eslint-disable */
 import React from "react";
-import { CheckCircle2, ShieldAlert, Clock, Users, Package, MapPin, Calendar, FileText } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Branch } from "../../types";
-import { calculateMaterialRequirementPlan, formatProductionValue, resolveProductionShiftHours } from "../../utils/production-timing";
+import { formatProductionValue } from "../../utils/production-timing";
+import {
+    formatManufacturingUnitCostForDisplay,
+    getFactoryOverheadBasisLabel,
+} from "../../utils/cogs-helper";
+import type {
+    ReleaseSummaryComponent,
+    ReleaseSummaryFinancials,
+    ReleaseSummaryRoutingStep,
+} from "../../utils/release-summary-print";
 
 export interface Step4ReviewProps {
-    selectedBranch?: Branch;
     joNumber: string;
-    selectedProduct?: any;
-    selectedVersion?: any;
+    productName: string;
+    recipeVersion: string;
+    recipeVersionId?: number | string | null;
+    branchName: string;
     targetQuantity: number;
+    uomLabel: string;
     plannedDate: string;
     dueDate: string;
-    priority: number;
-    shiftOption: string;
-    totalEstimatedHours: number;
-    components: any[];
-    bomBaseQty: number;
-    requestedTargetQuantity: number;
-    inventories: Record<number, any>;
-    routings: any[];
-    assignments: Record<number, number[]>;
-    operators: any[];
+    shiftHoursLabel: string;
+    targetDurationHours: number;
+    shortfallCount: number;
+    allChecksPassed: boolean;
     remarks: string;
+    components: ReleaseSummaryComponent[];
+    routingSteps: ReleaseSummaryRoutingStep[];
+    financials: ReleaseSummaryFinancials | null;
 }
 
 export function Step4Review({
-    selectedBranch,
     joNumber,
-    selectedProduct,
-    selectedVersion,
+    productName,
+    recipeVersion,
+    recipeVersionId,
+    branchName,
     targetQuantity,
+    uomLabel,
     plannedDate,
     dueDate,
-    priority,
-    shiftOption,
-    totalEstimatedHours,
+    shiftHoursLabel,
+    targetDurationHours,
+    shortfallCount,
+    allChecksPassed,
+    remarks,
     components,
-    bomBaseQty,
-    requestedTargetQuantity,
-    inventories,
-    routings,
-    assignments,
-    remarks
+    routingSteps,
+    financials
 }: Step4ReviewProps) {
-    const totalAssignedOperators = Object.values(assignments).flat().length;
-    // Check material shortfalls
-    let shortfallCount = 0;
-    components.forEach((comp) => {
-        const compProductId = comp.component_product_id?.product_id;
-        const needed = calculateMaterialRequirementPlan(
-            requestedTargetQuantity,
-            targetQuantity,
-            Number(comp.quantity_required || 0),
-            Number(comp.wastage_factor_percentage || 0)
-        ).plannedRequired;
-        const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
-        if (needed > available) shortfallCount++;
-    });
-
-    const estimatedDays = (totalEstimatedHours / resolveProductionShiftHours(shiftOption)).toFixed(1);
-
     return (
-        <div className="space-y-4 text-xs">
-            <div className="bg-card border border-border rounded-xl p-4 space-y-3">
-                <div className="flex items-center justify-between border-b border-border pb-3">
-                    <div>
-                        <h4 className="text-sm font-extrabold text-foreground flex items-center gap-2">
-                            <span>📋 Final Job Order Review</span>
-                        </h4>
-                        <p className="text-[11px] text-muted-foreground mt-0.5">
-                            Verify all configuration details before confirming and releasing this Buffer Job Order.
+        <div className="space-y-3">
+            <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
+                {/* 1. General Job Order Parameters */}
+                <section className="min-w-0 rounded-xl border border-border bg-card p-3.5 lg:col-start-1 lg:row-start-1" aria-label="General Job Order Parameters">
+                    <h4 className="text-[10px] font-extrabold uppercase tracking-wider text-foreground border-b border-border pb-2 mb-2">
+                        General Job Order Parameters
+                    </h4>
+                    <dl className="space-y-1.5 text-[11px]">
+                        {[
+                            { label: "Job Order Reference", value: <span className="font-mono font-bold text-foreground">{joNumber}</span> },
+                            { label: "Product Name", value: productName || "N/A" },
+                            { label: "Recipe Version", value: `${recipeVersion || "Default"}${recipeVersionId ? ` (#${recipeVersionId})` : ""}` },
+                            { label: "Target Branch", value: branchName || "N/A" },
+                            { label: "Target Quantity", value: `${targetQuantity.toLocaleString()} ${uomLabel}` },
+                            { label: "Planned Date / Due", value: `${plannedDate || "Not set"} / ${dueDate || "Not set"}` },
+                            { label: "Target Duration", value: `${formatProductionValue(targetDurationHours)} hrs (Shift: ${shiftHoursLabel} hrs)` },
+                            { label: "Linked Sales Orders", value: "Buffer stock (no linked orders)" }
+                        ].map((row) => (
+                            <div key={row.label} className="flex min-w-0 items-start justify-between gap-3">
+                                <dt className="shrink-0 text-muted-foreground">{row.label}</dt>
+                                <dd className="min-w-0 max-w-[65%] break-words text-right font-semibold text-foreground">{row.value}</dd>
+                            </div>
+                        ))}
+                    </dl>
+                </section>
+
+                {/* 2. Remarks and readiness context */}
+                <section className="min-w-0 rounded-xl border border-border bg-card p-3.5 lg:col-start-1 lg:row-start-2" aria-label="Remarks and Order Context">
+                    <h4 className="text-[10px] font-extrabold uppercase tracking-wider text-foreground border-b border-border pb-2 mb-2">
+                        Remarks / Order Context
+                    </h4>
+                    <div className="space-y-1.5 text-[11px] text-foreground">
+                        <p>Buffer replenishment run initialized with no linked sales orders.</p>
+                        <p className={allChecksPassed ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400"}>
+                            {allChecksPassed
+                                ? "All component allocations passed. Ready for picking."
+                                : `${shortfallCount} component shortfall${shortfallCount === 1 ? "" : "s"} detected. Child job orders / procurement requests will be generated on release.`}
                         </p>
+                        {remarks.trim() && (
+                            <p className="border-t border-border/60 pt-1.5 text-foreground">
+                                <span className="font-semibold">Planning Remarks:</span>{" "}
+                                <span className="italic">&quot;{remarks}&quot;</span>
+                            </p>
+                        )}
                     </div>
-                    <Badge variant="outline" className="font-mono text-xs bg-primary/10 text-primary border-primary/20 font-bold px-2.5 py-1">
-                        {joNumber}
-                    </Badge>
-                </div>
+                </section>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                    {/* General Details */}
-                    <div className="space-y-2 bg-muted/30 p-3 rounded-lg border border-border/60">
-                        <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide block">
-                            Job Order Metadata
-                        </span>
-                        <div className="space-y-1.5 font-medium">
-                            <div className="flex items-center justify-between">
-                                <span className="text-muted-foreground flex items-center gap-1.5">
-                                    <MapPin className="h-3.5 w-3.5 text-primary" /> Target Branch:
-                                </span>
-                                <span className="font-bold text-foreground">{selectedBranch?.branch_name || "N/A"}</span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                                <span className="text-muted-foreground flex items-center gap-1.5">
-                                    <Package className="h-3.5 w-3.5 text-primary" /> Target Product:
-                                </span>
-                                <span className="font-bold text-foreground truncate max-w-[180px]">{selectedProduct?.product_name || "N/A"}</span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                                <span className="text-muted-foreground flex items-center gap-1.5">
-                                    <FileText className="h-3.5 w-3.5 text-primary" /> Recipe Version:
-                                </span>
-                                <span className="font-bold text-foreground">{selectedVersion?.version_name || "Default"}</span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                                <span className="text-muted-foreground flex items-center gap-1.5">
-                                    <Calendar className="h-3.5 w-3.5 text-primary" /> Target Quantity:
-                                </span>
-                                <span className="font-extrabold text-foreground">{targetQuantity.toLocaleString()} units</span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                                <span className="text-muted-foreground flex items-center gap-1.5">
-                                    <Calendar className="h-3.5 w-3.5 text-primary" /> Planned Production:
-                                </span>
-                                <span className="font-bold text-foreground">{plannedDate || "Not set"}</span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                                <span className="text-muted-foreground flex items-center gap-1.5">
-                                    <Calendar className="h-3.5 w-3.5 text-primary" /> Due Date:
-                                </span>
-                                <span className="font-bold text-foreground">{dueDate || "Not set"}</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Operational & Sufficiency Summary */}
-                    <div className="space-y-2 bg-muted/30 p-3 rounded-lg border border-border/60">
-                        <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide block">
-                            Execution & Resource Summary
-                        </span>
-                        <div className="space-y-1.5 font-medium">
-                            <div className="flex items-center justify-between">
-                                <span className="text-muted-foreground flex items-center gap-1.5">
-                                    <Clock className="h-3.5 w-3.5 text-primary" /> Est. Lead Time:
-                                </span>
-                                <span className="font-bold text-foreground">{formatProductionValue(totalEstimatedHours)} hrs (~{estimatedDays} Days)</span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                                <span className="text-muted-foreground flex items-center gap-1.5">
-                                    <Users className="h-3.5 w-3.5 text-primary" /> Workstation Steps:
-                                </span>
-                                <span className="font-bold text-foreground">{routings.length} Routing Step{routings.length !== 1 ? "s" : ""}</span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                                <span className="text-muted-foreground flex items-center gap-1.5">
-                                    <Users className="h-3.5 w-3.5 text-primary" /> Assigned Operators:
-                                </span>
-                                <span className="font-bold text-foreground">{totalAssignedOperators} Operator{totalAssignedOperators !== 1 ? "s" : ""}</span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                                <span className="text-muted-foreground flex items-center gap-1.5">
-                                    {shortfallCount === 0 ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> : <ShieldAlert className="h-3.5 w-3.5 text-amber-500" />} BOM Stock Status:
-                                </span>
-                                {shortfallCount === 0 ? (
-                                    <Badge className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 text-[10px]">Fully Available</Badge>
-                                ) : (
-                                    <Badge variant="outline" className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30 text-[10px]">
-                                        {shortfallCount} Shortfall{shortfallCount !== 1 ? "s" : ""} (Spawns Child JOs / PR)
-                                    </Badge>
+                {/* 3. Component Sufficiency Summary */}
+                <section className="min-w-0 rounded-xl border border-border bg-card p-3.5 lg:col-start-2 lg:row-start-1" aria-label="Component Sufficiency Summary">
+                    <h4 className="text-[10px] font-extrabold uppercase tracking-wider text-foreground border-b border-border pb-2 mb-2">
+                        Component Sufficiency Summary
+                    </h4>
+                    <div className="max-h-[260px] overflow-x-hidden overflow-y-auto pr-0.5">
+                        <table className="w-full table-fixed text-[10px]">
+                            <thead className="sticky top-0 bg-card">
+                                <tr className="text-left text-[9px] uppercase tracking-wider text-muted-foreground">
+                                    <th className="w-[48%] py-1.5 pr-2 font-bold">Component</th>
+                                    <th className="w-[18%] py-1.5 pr-2 text-right font-bold">Req. Qty</th>
+                                    <th className="w-[18%] py-1.5 pr-2 text-right font-bold">Available</th>
+                                    <th className="w-[16%] py-1.5 text-right font-bold">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-border/60">
+                                {components.map((component, index) => (
+                                    <tr key={`${component.name}-${index}`}>
+                                        <td className="min-w-0 break-words py-1.5 pr-2">
+                                            <div className="break-words font-bold text-foreground">{component.name}</div>
+                                            {component.code && <div className="break-words text-[9px] text-muted-foreground">{component.code}</div>}
+                                        </td>
+                                        <td className="py-1.5 pr-2 text-right font-semibold tabular-nums">
+                                            {component.needed.toLocaleString(undefined, { maximumFractionDigits: 2 })} <span className="font-normal text-muted-foreground">{component.uom}</span>
+                                        </td>
+                                        <td className="py-1.5 pr-2 text-right text-muted-foreground tabular-nums">
+                                            {component.available.toLocaleString(undefined, { maximumFractionDigits: 2 })} <span className="font-normal">{component.uom}</span>
+                                        </td>
+                                        <td className="py-1.5 text-right">
+                                            {component.sufficient ? (
+                                                <span className="inline-flex items-center whitespace-nowrap rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold text-emerald-600 dark:text-emerald-400">Sufficient</span>
+                                            ) : (
+                                                <span className="inline-flex items-center whitespace-nowrap rounded-full border border-red-500/30 bg-red-500/10 px-1.5 py-0.5 text-[9px] font-bold text-red-600 dark:text-red-400">Insufficient</span>
+                                            )}
+                                        </td>
+                                    </tr>
+                                ))}
+                                {components.length === 0 && (
+                                    <tr>
+                                        <td colSpan={4} className="py-3 text-center text-muted-foreground">No raw material requirements specified.</td>
+                                    </tr>
                                 )}
-                            </div>
-                        </div>
+                            </tbody>
+                        </table>
                     </div>
-                </div>
+                </section>
 
-                {remarks && (
-                    <div className="pt-2 border-t border-border">
-                        <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide block mb-0.5">
-                            Planning Remarks:
-                        </span>
-                        <p className="text-xs text-foreground italic bg-muted/20 p-2 rounded border border-border/40">
-                            &quot;{remarks}&quot;
-                        </p>
+                {/* 4. Routing Steps & Financial Sanity Check */}
+                <section className="min-w-0 rounded-xl border border-border bg-card p-3.5 lg:col-start-2 lg:row-start-2" aria-label="Routing Steps and Financial Sanity Check">
+                    <h4 className="text-[10px] font-extrabold uppercase tracking-wider text-foreground border-b border-border pb-2 mb-2">
+                        Routing Steps &amp; Financial Sanity Check
+                    </h4>
+                    <div className="space-y-1.5">
+                        {routingSteps.map((step) => (
+                            <div key={`route-${step.sequence}-${step.operation}`} className="flex items-start justify-between gap-2 text-[11px]">
+                                <div className="min-w-0">
+                                    <div className="truncate font-bold text-foreground">Step {step.sequence}: {step.operation}</div>
+                                    <div className="flex min-w-0 flex-wrap items-center gap-x-1 text-[9px] text-muted-foreground">
+                                        <span className="shrink-0 font-semibold">Op {step.sequence} ({step.operators.length > 0 ? "Assigned" : "Unassigned"})</span>
+                                        <span className="min-w-0 break-words">{step.workCenter}</span>
+                                        {step.operators.length > 0 && <span className="min-w-0 break-words">· {step.operators.join(", ")}</span>}
+                                    </div>
+                                </div>
+                                <span className="shrink-0 whitespace-nowrap font-mono font-semibold text-foreground">{formatProductionValue(step.hours)} hrs</span>
+                            </div>
+                        ))}
+                        {routingSteps.length === 0 && (
+                            <p className="text-[10px] text-muted-foreground">No routing steps defined.</p>
+                        )}
                     </div>
-                )}
+                    <div className="mt-2 space-y-1 border-t border-border pt-2 text-[11px]">
+                        {financials ? (
+                            <>
+                                <div className="flex justify-between">
+                                    <span className="text-muted-foreground">Direct Materials / unit</span>
+                                    <span className="font-mono font-semibold text-foreground">₱{formatProductionValue(financials.materials)}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-muted-foreground">Direct Labor / unit</span>
+                                    <span className="font-mono font-semibold text-foreground">₱{formatProductionValue(financials.directLabor)}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-muted-foreground">Machine &amp; Routing Overhead / unit</span>
+                                    <span className="font-mono font-semibold text-foreground">₱{formatProductionValue(financials.machineOverhead)}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-muted-foreground">
+                                        Configured Factory Overhead / unit
+                                        <span className="ml-1 text-[10px]">({financials.configuredOverheadBasis})</span>
+                                    </span>
+                                    <span className="font-mono font-semibold text-foreground">₱{formatProductionValue(financials.configuredOverhead)}</span>
+                                </div>
+                                <div className="flex justify-between border-t border-border/60 pt-1">
+                                    <span className="font-bold text-foreground">Est. Unit COGS (Base)</span>
+                                    <span className="font-mono font-bold text-foreground">₱{formatManufacturingUnitCostForDisplay(financials.baseCogs)}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="font-bold text-sky-700 dark:text-sky-400">Est. Unit COGS (Yield-Adjusted)</span>
+                                    <span className="font-mono font-black text-sky-700 dark:text-sky-400">₱{formatManufacturingUnitCostForDisplay(financials.adjustedCogs)}</span>
+                                </div>
+                            </>
+                        ) : (
+                            <p className="text-[10px] text-muted-foreground">Costing data unavailable.</p>
+                        )}
+                    </div>
+                </section>
             </div>
         </div>
     );

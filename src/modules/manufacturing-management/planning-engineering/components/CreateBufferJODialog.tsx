@@ -1,6 +1,6 @@
 /* eslint-disable */
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { Loader2, ArrowRight, ArrowLeft } from "lucide-react";
+import { Loader2, ArrowRight, ArrowLeft, Printer } from "lucide-react";
 import {
     Dialog,
     DialogContent,
@@ -16,6 +16,11 @@ import { SubmittingLoadingOverlay } from "./SubmittingLoadingOverlay";
 import { calculateContainerizationMetrics } from "../utils/containerization-helper";
 import { calculateProductionMetrics } from "../utils/production-metrics";
 import { calculateAggregateRunHours, calculateMaterialRequirementPlan, calculatePerUnitMaterialRequirement, calculateFullBatchTarget, DEFAULT_PRODUCTION_SHIFT_HOURS, readUomId, resolveProductionShiftHours } from "../utils/production-timing";
+import {
+    formatManufacturingUnitCostForDisplay,
+    getFactoryOverheadBasisLabel
+} from "../utils/cogs-helper";
+import { buildReleaseSummaryHtml, type ReleaseSummaryComponent, type ReleaseSummaryFinancials, type ReleaseSummaryRoutingStep } from "../utils/release-summary-print";
 import { Step1BasicDetails } from "./buffer-jo/Step1BasicDetails";
 import { Step2BOMReview } from "./buffer-jo/Step2BOMReview";
 import { Step3Scheduling } from "./buffer-jo/Step3Scheduling";
@@ -608,6 +613,90 @@ export function CreateBufferJODialog({
 
     const cogsBreakdown = productionMetrics?.cogsBreakdown || null;
 
+    // Step-4 review summaries mirror the Release Production Run cards. The
+    // component basis matches Step 2 exactly (standard per-unit plan with
+    // wastage) so review can never disagree with the BOM checklist.
+    const bufferSummaryComponents = useMemo<ReleaseSummaryComponent[]>(() => components.map((comp) => {
+        const compProductId = Number(comp.component_product_id?.product_id || 0);
+        const materialPlan = calculateMaterialRequirementPlan(
+            targetQuantity,
+            productionTargetQuantity,
+            Number(comp.quantity_required || 0),
+            Number(comp.wastage_factor_percentage || 0)
+        );
+        const needed = materialPlan.plannedRequired;
+        const available = compProductId ? Number(inventories[compProductId]?.on_hand || 0) : 0;
+        return {
+            name: comp.component_product_id?.product_name || `Product #${compProductId}`,
+            code: comp.component_product_id?.product_code || "",
+            category: comp.component_product_id?.category_name || "Uncategorized",
+            uom: comp.unit_of_measurement || "pcs",
+            kilogramsPerUnit: comp.component_product_id?.kilograms_per_inventory_unit ?? null,
+            needed,
+            demandNeeded: materialPlan.demandRequired,
+            available,
+            sufficient: needed <= available
+        };
+    }), [components, inventories, targetQuantity, productionTargetQuantity]);
+
+    const bufferSummaryRouting = useMemo<ReleaseSummaryRoutingStep[]>(() => [...routings]
+        .sort((left, right) => Number(left.sequence_order || 0) - Number(right.sequence_order || 0))
+        .map((route) => {
+            const sequence = Number(route.sequence_order || 0);
+            const assignedIds = assignments[sequence] || [];
+            const operatorNames = assignedIds.map((operatorId) => {
+                const operator = operators.find((candidate: any) => Number(candidate.user_id || candidate.id) === Number(operatorId));
+                const fullName = operator
+                    ? `${operator.user_fname || operator.first_name || ""} ${operator.user_lname || operator.last_name || ""}`.trim()
+                    : "";
+                return fullName || `Operator #${operatorId}`;
+            });
+            return {
+                sequence,
+                operation: route.operation_name || "Production Operation",
+                workCenter: route.work_center_name || "Factory Work Center",
+                hours: productionMetrics?.routeMetrics.find((metric) => metric.sequenceOrder === sequence)?.elapsedHours || 0,
+                operators: operatorNames
+            };
+        }), [routings, assignments, operators, productionMetrics]);
+
+    const bufferSummaryFinancials = useMemo<ReleaseSummaryFinancials | null>(() => cogsBreakdown ? {
+        materials: Number(cogsBreakdown.materialCostPerUnit || 0),
+        directLabor: Number(cogsBreakdown.directLaborCostPerUnit || 0),
+        machineOverhead: Number(cogsBreakdown.machineOverheadCostPerUnit || 0),
+        configuredOverhead: Number(cogsBreakdown.fixedOverheadCostPerUnit || 0),
+        configuredOverheadBasis: getFactoryOverheadBasisLabel(cogsBreakdown.factoryOverheadBasis),
+        baseCogs: Number(cogsBreakdown.baseUnitCOGS || 0),
+        adjustedCogs: Number(cogsBreakdown.adjustedUnitCOGS || 0)
+    } : null, [cogsBreakdown]);
+
+    const bufferShortfallCount = bufferSummaryComponents.filter((component) => !component.sufficient).length;
+    const bufferSummaryReady = hasLoadedDetails && bufferShortfallCount === 0 && !productionMetricsError;
+
+    const handlePrintBufferSummary = () => {
+        const printWin = window.open("", "_blank");
+        if (!printWin) return;
+        printWin.document.write(buildReleaseSummaryHtml({
+            joNumber,
+            productName: selectedProduct?.product_name || "Product",
+            recipeVersion: selectedVersion?.version_name || "Default",
+            branchName: selectedBranch?.branch_name || "Main Branch",
+            targetQuantity: productionTargetQuantity,
+            uom: parentUomLabel,
+            plannedDate,
+            dueDate,
+            shiftHours: shiftOption,
+            targetDurationHours: totalEstimatedHours,
+            consolidatedOrders: [],
+            remarks,
+            components: bufferSummaryComponents,
+            routingSteps: bufferSummaryRouting,
+            financials: bufferSummaryFinancials,
+            allChecksPassed: bufferSummaryReady
+        }, { documentTitle: "Buffer Job Order Summary" }));
+        printWin.document.close();
+    };
+
     const subAssemblyUomList = Array.from(new Set(
         components
             .filter(comp => {
@@ -1074,8 +1163,12 @@ export function CreateBufferJODialog({
     const selectedVersion = versions.find((v) => String(v.version_id) === String(selectedVersionId));
 
     return (
-        <Dialog open={isOpen} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-6xl w-[94vw] max-h-[92vh] flex flex-col p-6 overflow-hidden bg-card text-foreground border-border sm:max-w-6xl">
+        <Dialog modal={false} open={isOpen} onOpenChange={onOpenChange}>
+            <DialogContent
+                className="max-w-6xl w-[94vw] max-h-[92vh] flex flex-col p-6 overflow-hidden bg-card text-foreground border-border sm:max-w-6xl"
+                onPointerDownOutside={(event) => event.preventDefault()}
+                onFocusOutside={(event) => event.preventDefault()}
+            >
                 <DialogHeader className="border-b border-border pb-3">
                     <DialogTitle className="text-lg font-bold flex items-center justify-between text-foreground">
                         <span>Create Buffer Job Order</span>
@@ -1183,24 +1276,23 @@ export function CreateBufferJODialog({
 
                     {currentStep === 4 && (
                         <Step4Review
-                            selectedBranch={selectedBranch}
                             joNumber={joNumber}
-                            selectedProduct={selectedProduct}
-                            selectedVersion={selectedVersion}
+                            productName={selectedProduct?.product_name || "Product"}
+                            recipeVersion={selectedVersion?.version_name || "Default"}
+                            recipeVersionId={selectedVersion?.version_id ?? selectedVersionId}
+                            branchName={selectedBranch?.branch_name || "Main Branch"}
                             targetQuantity={productionTargetQuantity}
+                            uomLabel={parentUomLabel}
                             plannedDate={plannedDate}
                             dueDate={dueDate}
-                            priority={priority}
-                            shiftOption={shiftOption}
-                            totalEstimatedHours={totalEstimatedHours}
-                            components={components}
-                            bomBaseQty={bomBaseQty}
-                            requestedTargetQuantity={targetQuantity}
-                            inventories={inventories}
-                            routings={routings}
-                            assignments={assignments}
-                            operators={operators}
+                            shiftHoursLabel={shiftOption}
+                            targetDurationHours={totalEstimatedHours}
+                            shortfallCount={bufferShortfallCount}
+                            allChecksPassed={bufferSummaryReady}
                             remarks={remarks}
+                            components={bufferSummaryComponents}
+                            routingSteps={bufferSummaryRouting}
+                            financials={bufferSummaryFinancials}
                         />
                     )}
                 </div>
@@ -1239,6 +1331,15 @@ export function CreateBufferJODialog({
                             </Button>
                         ) : (
                             <>
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={handlePrintBufferSummary}
+                                disabled={submitting || loadingDetails}
+                                className="border-border text-foreground hover:bg-accent h-8 font-semibold"
+                            >
+                                <Printer className="mr-1.5 h-3.5 w-3.5" /> Print Summary
+                            </Button>
                             <Button
                                 variant="outline"
                                 size="sm"

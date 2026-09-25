@@ -879,8 +879,12 @@ export function ReleaseJODialog({
     };
 
     return (
-        <Dialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
-            <DialogContent className="max-w-6xl w-[94vw] max-h-[92vh] flex flex-col p-6 overflow-hidden bg-card text-foreground border-border sm:max-w-6xl">
+        <Dialog modal={false} open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
+            <DialogContent
+                className="max-w-6xl w-[94vw] max-h-[92vh] flex flex-col p-6 overflow-hidden bg-card text-foreground border-border sm:max-w-6xl"
+                onPointerDownOutside={(event) => event.preventDefault()}
+                onFocusOutside={(event) => event.preventDefault()}
+            >
                 <DialogHeader className="border-b border-border pb-3">
                     <DialogTitle className="text-lg font-bold flex items-center justify-between text-foreground">
                         <span>Release Production Run</span>
@@ -1286,18 +1290,18 @@ export function ReleaseJODialog({
                                                     </div>
                                                     <div className="bg-background border border-border/60 rounded-lg p-2">
                                                         <span className="text-[10px] font-medium text-muted-foreground block">🏭 Expected Net Pcs</span>
-                                                        <span className="font-extrabold text-foreground text-xs">{containerMetrics.hasOutputEstimate ? `${Math.round(containerMetrics.netPieces).toLocaleString()} Pcs` : "Not configured"}</span>
+                                                        <span className="font-extrabold text-foreground text-xs">{`${Math.round(containerMetrics.netPieces).toLocaleString()} Pcs`}</span>
                                                         {containerMetrics.hasOutputEstimate && containerMetrics.expectedYieldPercentage < 100 && <span className="text-[10px] text-muted-foreground block">({containerMetrics.expectedYieldPercentage.toFixed(1)}% Expected Yield)</span>}
                                                     </div>
                                                     <div className="bg-background border border-border/60 rounded-lg p-2">
                                                         <span className="text-[10px] font-medium text-muted-foreground block">📦 Cases / Bundles</span>
-                                                        <span className="font-extrabold text-foreground text-xs">{containerMetrics.hasOutputEstimate ? `${containerMetrics.totalCasesBundlesFull} Full` : "Not configured"}</span>
-                                                        {containerMetrics.hasOutputEstimate && <span className="text-[10px] text-muted-foreground block">(+{containerMetrics.remainingPcs} pcs remaining)</span>}
+                                                        <span className="font-extrabold text-foreground text-xs">{`${containerMetrics.totalCasesBundlesFull} Full`}</span>
+                                                        <span className="text-[10px] text-muted-foreground block">(+{containerMetrics.remainingPcs} pcs remaining)</span>
                                                     </div>
                                                     <div className="bg-background border border-border/60 rounded-lg p-2">
                                                         <span className="text-[10px] font-medium text-muted-foreground block">🚛 Pallet Allocation</span>
-                                                        <span className="font-extrabold text-emerald-600 dark:text-emerald-400 text-xs">{containerMetrics.hasPalletEstimate ? `${containerMetrics.totalPalletsFull} Pallets` : "Not configured"}</span>
-                                                        {containerMetrics.hasPalletEstimate && <span className="text-[10px] text-muted-foreground block">(+{containerMetrics.remainingCasesBundles} cases/bundles)</span>}
+                                                        <span className="font-extrabold text-emerald-600 dark:text-emerald-400 text-xs">{!containerMetrics.hasOutputEstimate ? "0 Pallets" : containerMetrics.hasPalletEstimate ? `${containerMetrics.totalPalletsFull} Pallets` : "Not configured"}</span>
+                                                        {(containerMetrics.hasPalletEstimate || !containerMetrics.hasOutputEstimate) && <span className="text-[10px] text-muted-foreground block">(+{containerMetrics.remainingCasesBundles} cases/bundles)</span>}
                                                     </div>
                                                 </div>
                                             </div>
