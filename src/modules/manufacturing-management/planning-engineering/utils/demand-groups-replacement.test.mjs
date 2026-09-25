@@ -20,7 +20,7 @@ registerHooks({
     }
 });
 
-const { canCreateReplacementJobOrder } = await import("./demand-groups.ts");
+const { canCreateReplacementJobOrder, replacementJobOrderTargets } = await import("./demand-groups.ts");
 
 const eligibleTerminatedLine = {
     parent_order_status: "In Production",
@@ -39,5 +39,14 @@ assert.equal(canCreateReplacementJobOrder({
 }), false);
 assert.equal(canCreateReplacementJobOrder({ ...eligibleTerminatedLine, remaining_quantity: 0 }), false);
 assert.equal(canCreateReplacementJobOrder({ ...eligibleTerminatedLine, parent_order_status: "Cancelled" }), false);
+
+assert.deepEqual(replacementJobOrderTargets({
+    ...eligibleTerminatedLine,
+    ordered_quantity: 354.6278,
+    remaining_quantity: 54.6278
+}), {
+    targetQuantity: 354.6278,
+    materialTargetQuantity: 54.6278
+});
 
 console.log("Replacement Job Order eligibility checks passed.");

@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "../../job-order-status";
 import { Branch, SalesOrder, SalesOrderDetail, NetRequirementItem } from "../types";
 import { fetchBranches, fetchSalesOrders, fetchNetRequirementsRaw, releaseJobOrder, releaseMultipleJobOrders, directAllocate } from "../services/planning-api";
-import { buildSalesOrderDemandGroups, buildSalesOrderReleaseGroups, canCreateReplacementJobOrder, isSchedulableSalesOrderLine, remainingQuantity } from "../utils/demand-groups";
+import { buildSalesOrderDemandGroups, buildSalesOrderReleaseGroups, canCreateReplacementJobOrder, isSchedulableSalesOrderLine, remainingQuantity, replacementJobOrderTargets } from "../utils/demand-groups";
 import { DEFAULT_PRODUCTION_SHIFT_HOURS, normalizeProductionOutputQuantity } from "../utils/production-timing";
 
 function salesOrderDateValue(value: string | undefined): number {
@@ -82,6 +82,7 @@ export function usePlanningEngineering() {
     // Release Modal state
     const [isConfirmOpen, setIsConfirmOpen] = useState(false);
     const [targetQuantity, setTargetQuantity] = useState<number>(0);
+    const [replacementMaterialTargetQuantity, setReplacementMaterialTargetQuantity] = useState<number | null>(null);
     const [plannedDate, setPlannedDate] = useState<string>(new Date().toISOString().split("T")[0]);
     const [dueDate, setDueDate] = useState<string>("");
     const [shiftOption, setShiftOption] = useState<string>(String(DEFAULT_PRODUCTION_SHIFT_HOURS));
@@ -686,7 +687,11 @@ export function usePlanningEngineering() {
         // Auto generate a JO ID code
         const code = `JO-${Math.floor(100000 + Math.random() * 900000)}`;
 
-        setTargetQuantity(totalRemaining);
+        const replacementTargets = replacementDetailId !== undefined
+            ? replacementJobOrderTargets(linesToRelease[0])
+            : null;
+        setTargetQuantity(replacementTargets?.targetQuantity ?? totalRemaining);
+        setReplacementMaterialTargetQuantity(replacementTargets?.materialTargetQuantity ?? null);
         setJoNumber(code);
         setPlannedDate(new Date().toISOString().split("T")[0]);
         setDueDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);
@@ -957,6 +962,7 @@ export function usePlanningEngineering() {
         setIsConfirmOpen,
         targetQuantity,
         setTargetQuantity,
+        replacementMaterialTargetQuantity,
         plannedDate,
         setPlannedDate,
         dueDate,

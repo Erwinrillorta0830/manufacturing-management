@@ -38,6 +38,7 @@ import {
 } from "@/modules/manufacturing-management/planning-engineering/utils/containerization-helper";
 import { aggregateWizardMaterialComponents } from "@/modules/manufacturing-management/planning-engineering/utils/material-summary";
 import { buildFinishedGoodsProgress } from "@/modules/manufacturing-management/production-workflow/finished-goods-progress";
+import { resolveReplacementAwareProductionOutput } from "@/modules/manufacturing-management/production-workflow/replacement-output-progress";
 import { roundToInputStep } from "@/modules/manufacturing-management/production-workflow/utils/production-quantity";
 import {
     authorizeJobOrderModuleAccess,
@@ -968,22 +969,30 @@ export async function handleGET(request: Request) {
             }
 
             const targetQuantity = Math.max(0, Number(jobOrder.target_quantity || 0));
-            const yieldLedgerRes = await fetch(
-                `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(numericJoId))}&fields=yield_quantity,rejected_quantity&limit=-1`,
-                { headers, cache: "no-store" }
-            );
+            const [yieldLedgerRes, replacementCreditsRes] = await Promise.all([
+                fetch(
+                    `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(numericJoId))}&fields=yield_quantity,rejected_quantity&limit=-1`,
+                    { headers, cache: "no-store" }
+                ),
+                fetch(
+                    `${DIRECTUS_URL}/items/manufacturing_job_order_replacement_credits?filter[replacement_job_order_id][_eq]=${encodeURIComponent(String(numericJoId))}&fields=credited_quantity&limit=-1`,
+                    { headers, cache: "no-store" }
+                )
+            ]);
+            if (!replacementCreditsRes.ok) {
+                return NextResponse.json(
+                    { error: "Job Order replacement progress is temporarily unavailable.", code: "JOB_PROGRESS_CREDITS_UNAVAILABLE" },
+                    { status: 502 }
+                );
+            }
             const yieldLedgerRows: any[] = yieldLedgerRes.ok ? ((await yieldLedgerRes.json()).data || []) : [];
-            const ledgerProductionOutput = yieldLedgerRows.reduce(
-                (sum: number, row: any) => sum
-                    + Math.max(0, Number(row.yield_quantity || 0))
-                    + Math.max(0, Number(row.rejected_quantity || 0)),
-                0
-            );
-            const producedQuantity = yieldLedgerRows.length > 0
-                ? ledgerProductionOutput
-                : Number(jobOrder.actual_quantity_produced || 0) > 0
-                    ? Number(jobOrder.actual_quantity_produced)
-                    : Math.max(0, Number(jobOrder.completed_quantity || 0));
+            const replacementCreditRows: any[] = (await replacementCreditsRes.json())?.data || [];
+            const producedQuantity = resolveReplacementAwareProductionOutput({
+                replacementCredits: replacementCreditRows,
+                yieldLedgerRows,
+                actualQuantityProduced: jobOrder.actual_quantity_produced,
+                completedQuantity: jobOrder.completed_quantity
+            }).producedQuantity;
 
             // Raw materials and their WIP reservations.
             const materialsRes = await fetch(

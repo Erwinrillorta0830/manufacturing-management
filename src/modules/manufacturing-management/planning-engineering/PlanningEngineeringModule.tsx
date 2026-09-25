@@ -134,6 +134,7 @@ export default function PlanningEngineeringModule() {
         setIsConfirmOpen,
         targetQuantity,
         setTargetQuantity,
+        replacementMaterialTargetQuantity,
         plannedDate,
         setPlannedDate,
         dueDate,
@@ -1400,6 +1401,7 @@ export default function PlanningEngineeringModule() {
                 setJoNumber={setJoNumber}
                 targetQuantity={targetQuantity}
                 setTargetQuantity={setTargetQuantity}
+                replacementMaterialTargetQuantity={replacementMaterialTargetQuantity}
                 plannedDate={plannedDate}
                 setPlannedDate={setPlannedDate}
                 dueDate={dueDate}

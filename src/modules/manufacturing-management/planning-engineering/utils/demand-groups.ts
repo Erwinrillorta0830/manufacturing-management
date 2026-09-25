@@ -21,6 +21,18 @@ export function isSchedulableSalesOrderLine(line: SalesOrderDetail): boolean {
         && (!line.linkedJobOrders || line.linkedJobOrders.every((jobOrder) => isTerminalJobOrderStatus(jobOrder.status)));
 }
 
+export function replacementJobOrderTargets(line: SalesOrderDetail): {
+    targetQuantity: number;
+    materialTargetQuantity: number;
+} {
+    const remaining = remainingQuantity(line);
+    const ordered = Number(line.ordered_quantity);
+    return {
+        targetQuantity: Number.isFinite(ordered) && ordered > 0 ? Math.max(ordered, remaining) : remaining,
+        materialTargetQuantity: remaining
+    };
+}
+
 export function canCreateReplacementJobOrder(line: SalesOrderDetail): boolean {
     return line.parent_order_status === "In Production"
         && Boolean(line.linkedJobOrders?.some((jobOrder) => jobOrder.isTerminated))

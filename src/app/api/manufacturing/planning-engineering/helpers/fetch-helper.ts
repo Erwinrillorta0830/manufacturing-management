@@ -7,6 +7,7 @@ import {
     calculatePerUnitMaterialRequirement
 } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
 import { normalizeOperatorAssignments } from "../../job-orders/_operator-assignment-service";
+import { resolveReplacementAwareProductionOutput } from "@/modules/manufacturing-management/production-workflow/replacement-output-progress";
 
 interface DirectusMfgRouting {
     routing_id?: string | number;
@@ -677,12 +678,12 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             }
 
             const totalProduced = joYieldLogs.reduce((sum: number, l: any) => sum + Number(l.yield_quantity || 0), 0);
-            const productionOutputQuantity = joYieldLogs.reduce(
-                (sum: number, l: any) => sum
-                    + Math.max(0, Number(l.yield_quantity || 0))
-                    + Math.max(0, Number(l.rejected_quantity || 0)),
-                0
-            );
+            const replacementOutput = resolveReplacementAwareProductionOutput({
+                replacementCredits: replacementCreditsByJobOrder.get(joIdInt) || [],
+                yieldLedgerRows: joYieldLogs,
+                actualQuantityProduced: jo.actual_quantity_produced,
+                completedQuantity: jo.completed_quantity
+            });
             const completedQuantity = Number(jo.actual_quantity_produced || 0) > 0
                 ? Number(jo.actual_quantity_produced)
                 : totalProduced;
@@ -733,7 +734,8 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                  parent_job_order_id: resolvedParentId,
                 completed_quantity: completedQuantity,
                 produced_quantity: totalProduced,
-                production_output_quantity: productionOutputQuantity,
+                production_output_quantity: replacementOutput.producedQuantity,
+                productionOutputQuantity: replacementOutput.producedQuantity,
                 yield_logs: joYieldLogs,
                 status_history: statusHistoryByJobOrder.get(joIdInt) || [],
                 cancelled_by_name: cancelledBy

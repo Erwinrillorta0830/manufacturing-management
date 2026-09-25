@@ -45,6 +45,7 @@ interface ReleaseJODialogProps {
     setJoNumber: (val: string) => void;
     targetQuantity: number;
     setTargetQuantity: (val: number) => void;
+    replacementMaterialTargetQuantity?: number | null;
     plannedDate: string;
     setPlannedDate: (val: string) => void;
     dueDate: string;
@@ -80,6 +81,7 @@ export function ReleaseJODialog({
     setJoNumber,
     targetQuantity: targetQuantityProp,
     setTargetQuantity,
+    replacementMaterialTargetQuantity = null,
     plannedDate,
     setPlannedDate,
     dueDate,
@@ -463,9 +465,11 @@ export function ReleaseJODialog({
         );
     }, [selectedLines, targetQuantity, requestedProductionQuantity, components, activeGroupBaseQuantity, bomData]);
 
-    const materialTargetQuantity = containerMetrics?.hasOutputEstimate && containerMetrics.netPieces > 0
-        ? containerMetrics.netPieces
-        : targetQuantity > 0 ? targetQuantity : null;
+    const materialTargetQuantity = replacementMaterialTargetQuantity !== null
+        ? normalizeProductionOutputQuantity(replacementMaterialTargetQuantity, releaseSummaryUom)
+        : containerMetrics?.hasOutputEstimate && containerMetrics.netPieces > 0
+            ? containerMetrics.netPieces
+            : targetQuantity > 0 ? targetQuantity : null;
     const productionTimingTargetQuantity = rawTargetQuantity;
 
     const productionMetricsResult = useMemo(() => {

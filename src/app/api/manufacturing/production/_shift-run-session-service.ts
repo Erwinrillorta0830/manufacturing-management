@@ -19,6 +19,10 @@ import {
     validateProductionYieldImage
 } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
 import { hasCompletedTimer } from "@/modules/manufacturing-management/production-workflow/operator-time";
+import {
+    remainingProductionTarget,
+    sumReplacementCreditedQuantity
+} from "@/modules/manufacturing-management/production-workflow/replacement-output-progress";
 
 const EPSILON = 0.000001;
 
@@ -1134,14 +1138,23 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
         }
 
         const targetQuantity = Math.max(0, finiteNumber(jobOrder.target_quantity ?? jobOrder.quantity));
-        const existingYieldRows = await directusRows<any>(
-            `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(input.joId))}&fields=ledger_id,yield_quantity,session_key&limit=-1`,
-            `Load existing production output for Job Order ${input.joId}`
-        );
+        const [existingYieldRows, replacementCreditRows] = await Promise.all([
+            directusRows<any>(
+                `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(input.joId))}&fields=ledger_id,yield_quantity,session_key&limit=-1`,
+                `Load existing production output for Job Order ${input.joId}`
+            ),
+            directusRows<any>(
+                `${DIRECTUS_URL}/items/manufacturing_job_order_replacement_credits?filter[replacement_job_order_id][_eq]=${encodeURIComponent(String(input.joId))}&fields=credited_quantity&limit=-1`,
+                `Load predecessor production credits for Job Order ${input.joId}`
+            )
+        ]);
+        const inheritedCreditedQuantity = sumReplacementCreditedQuantity(replacementCreditRows);
+        const remainingProductionQuantity = remainingProductionTarget(targetQuantity, inheritedCreditedQuantity);
         const existingGoodQuantity = existingYieldRows
             .filter((row) => !existingLedger || numberId(row.ledger_id) !== numberId(existingLedger.ledger_id))
             .reduce((sum, row) => sum + Math.max(0, finiteNumber(row.yield_quantity)), 0);
-        if (!existingLedger && targetQuantity > EPSILON && existingGoodQuantity + input.goodQty > targetQuantity * 1.05 + EPSILON) {
+        if (!existingLedger && input.goodQty > EPSILON
+            && existingGoodQuantity + input.goodQty > remainingProductionQuantity * 1.05 + EPSILON) {
             throw new ProductionSessionError(422, "OUTPUT_OVER_TARGET", "This production session would exceed the Job Order target by more than the configured tolerance.");
         }
 
@@ -1264,8 +1277,8 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
                 const material = materialPlans[0].material;
                 const baseQuantity = Math.max(0, finiteNumber(material.allocated_quantity ?? material.required_quantity ?? 0));
                 const totalOutputQuantity = input.goodQty + input.rejectedQty + input.scrapQty;
-                const materialTheoretical = targetQuantity > EPSILON
-                    ? roundedQuantity((baseQuantity / targetQuantity) * totalOutputQuantity)
+                const materialTheoretical = remainingProductionQuantity > EPSILON
+                    ? roundedQuantity((baseQuantity / remainingProductionQuantity) * totalOutputQuantity)
                     : 0;
                 const existingTheoretical = materialPlans
                     .filter((plan) => Boolean(plan.existingConsumption))
