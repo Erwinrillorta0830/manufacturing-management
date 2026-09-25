@@ -2,7 +2,7 @@
 
 "use client";
 
-import React, { useState, useMemo, useEffect, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import {
@@ -13,7 +13,7 @@ import {
     FulfillmentStatus,
     LinkedSalesReturn,
 } from "../types";
-import { computePreviewStatus } from "../hooks/useDeliveries";
+ 
 import {
     SearchableSelect,
     SearchableSelectOption,
@@ -399,6 +399,8 @@ export default function ProductReconciliationModal({
     const [selectedLinkedReturn, setSelectedLinkedReturn] = useState<LinkedSalesReturn | null>(() => {
         return order?.linked_sales_return || null;
     });
+    const selectedLinkedReturnRef = useRef<LinkedSalesReturn | null>(selectedLinkedReturn);
+    selectedLinkedReturnRef.current = selectedLinkedReturn;
 
     if (order !== prevOrder) {
         setPrevOrder(order);
@@ -551,8 +553,8 @@ export default function ProductReconciliationModal({
                         setAvailableReturns(mapped);
 
                         // 1. If a return is currently linked (from order or state), update with fresh mapped data
-                        const targetId = order?.linked_sales_return?.return_id || selectedLinkedReturn?.return_id;
-                        const targetNo = order?.linked_sales_return?.return_number || selectedLinkedReturn?.return_number;
+                        const targetId = order?.linked_sales_return?.return_id || selectedLinkedReturnRef.current?.return_id;
+                        const targetNo = order?.linked_sales_return?.return_number || selectedLinkedReturnRef.current?.return_number;
                         const currentMatch = (targetId || targetNo)
                             ? mapped.find(
                                   (r) =>
@@ -571,7 +573,7 @@ export default function ProductReconciliationModal({
                                 total_amount: currentMatch.total_amount,
                             });
                             syncReturnDetails(currentMatch.return_id, currentMatch.return_number);
-                        } else if (order?.fulfillment_status === "Fulfilled with Returns" && !order?.linked_sales_return && !selectedLinkedReturn) {
+                        } else if (order?.fulfillment_status === "Fulfilled with Returns" && !order?.linked_sales_return && !selectedLinkedReturnRef.current) {
                             // 2. Auto-select the most recent matching return (highest return_id) if nothing is linked yet
                             const orderNo = (order?.order_no || "").trim().toLowerCase();
                             const invNo = (order?.invoice_no || "").trim().toLowerCase();
@@ -609,7 +611,7 @@ export default function ProductReconciliationModal({
         return () => {
             isMounted = false;
         };
-    }, [isOpen, order?.invoice_no, order?.linked_sales_return, order?.order_no, syncReturnDetails]);
+    }, [isOpen, order?.fulfillment_status, order?.invoice_no, order?.linked_sales_return, order?.order_no, syncReturnDetails]);
 
     // Manual refresh handler for sales returns
     const fetchAvailableReturns = useCallback(async () => {
@@ -700,7 +702,7 @@ export default function ProductReconciliationModal({
         } catch (err: unknown) {
             console.warn("[ProductReconciliationModal] Error fetching sales returns:", err);
         }
-    }, [order?.invoice_no, order?.linked_sales_return, order?.order_no, selectedLinkedReturn, syncReturnDetails]);
+    }, [order?.fulfillment_status, order?.invoice_no, order?.linked_sales_return, order?.order_no, selectedLinkedReturn, syncReturnDetails]);
 
     // Format options for SearchableSelect combobox with SO & Invoice matching
     const returnOptions: SearchableSelectOption[] = useMemo(() => {
@@ -883,7 +885,7 @@ export default function ProductReconciliationModal({
             ].filter(Boolean);
 
             const statusLabel = r.status || (r.is_received ? "Received" : "Pending");
-            let badge = statusLabel;
+            const badge = statusLabel;
             let badgeStyle = "bg-muted text-muted-foreground border-border";
 
             if (statusLabel === "Received" || statusLabel === "Approved" || r.is_received) {
@@ -911,11 +913,6 @@ export default function ProductReconciliationModal({
 
         return opts;
     }, [availableReturns, selectedLinkedReturn, order]);
-
-    // True when there is at least one real return matching this order's invoice/SO
-    // (returnOptions always has "None" as the first item, so length > 1 means real matches exist)
-    const hasMatchingReturns = returnOptions.length > 1;
-
 
     const handleSelectReturn = (val: string) => {
         if (val === "none" || !val) {

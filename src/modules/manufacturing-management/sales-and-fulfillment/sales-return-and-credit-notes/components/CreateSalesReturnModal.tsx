@@ -1220,6 +1220,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     branches,
     priceTypeOptions,
     searchParams,
+    branchId,
   ]);
 
   // --- 6. CLICK OUTSIDE HANDLERS ---

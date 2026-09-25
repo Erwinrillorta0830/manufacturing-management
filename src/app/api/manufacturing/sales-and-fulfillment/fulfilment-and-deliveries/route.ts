@@ -1325,7 +1325,6 @@ export async function GET(req: NextRequest) {
                                     (!hasSpecificInvoice && targetInvoices.length === 1 && so?.order_id ? salesReturnMap.get(String(so.order_id)) : null) ||
                                     null;
 
-                                const conUpdatedAtMs = con.updated_at ? new Date(con.updated_at).getTime() : 0;
                                 const effectiveInvId = invoiceId || inv?.invoice_id || so?.invoice_id || null;
 
                                 const matchingUst = isManifestCleared && effectiveInvId
@@ -1490,7 +1489,7 @@ export async function GET(req: NextRequest) {
                                         const rawPt = prod?.product_type;
                                         const productTypeId =
                                             typeof rawPt === "object" && rawPt !== null
-                                                ? (rawPt.id ?? (rawPt as any).type_id)
+                                                ? (rawPt.id ?? (rawPt as { id?: number | string; type_id?: number | string }).type_id)
                                                 : rawPt;
                                         const productTypeName =
                                             typeof rawPt === "object" && rawPt !== null
@@ -1706,7 +1705,7 @@ export async function GET(req: NextRequest) {
                                         const rawPt = prod?.product_type;
                                         const productTypeId =
                                             typeof rawPt === "object" && rawPt !== null
-                                                ? (rawPt.id ?? (rawPt as any).type_id)
+                                                ? (rawPt.id ?? (rawPt as { id?: number | string; type_id?: number | string }).type_id)
                                                 : rawPt;
                                         const productTypeName =
                                             typeof rawPt === "object" && rawPt !== null

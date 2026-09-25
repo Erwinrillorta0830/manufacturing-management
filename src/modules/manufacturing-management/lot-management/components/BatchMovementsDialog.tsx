@@ -27,13 +27,8 @@ import {
     Building2,
     AlertTriangle,
     AlertCircle,
-    Info,
     ChevronDown,
-    ChevronUp,
-    Scale,
-    Tag,
-    FileText,
-    ArrowRight
+    ChevronUp 
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { resolveProductClassification } from "../services/lot-tracking.service";
@@ -685,7 +680,7 @@ export default function BatchMovementsDialog({
                                         <div className="pt-1 flex flex-col gap-2 border-t border-amber-500/20 mt-1">
                                             <div className="flex items-center justify-between">
                                                 <span className="text-[11px] text-muted-foreground">
-                                                    Identified <strong>{discrepancies.conflictingMovements.length}</strong> related transaction(s) with conflicting metadata linked to Storage Rack "{targetLotName}".
+                                                    Identified <strong>{discrepancies.conflictingMovements.length}</strong> related transaction(s) with conflicting metadata linked to Storage Rack &quot;{targetLotName}&quot;.
                                                 </span>
                                                 <Button
                                                     variant="outline"
@@ -828,7 +823,7 @@ export default function BatchMovementsDialog({
                                                 Direct Movement Records Filtered Out
                                             </span>
                                             <p className="text-xs max-w-md mt-1 text-muted-foreground">
-                                                Zero direct movements strictly match batch <strong className="text-foreground">"{batch.batchNumber}"</strong> for product <strong className="text-foreground">"{batch.productName}"</strong>.
+                                                Zero direct movements strictly match batch <strong className="text-foreground">&quot;{batch.batchNumber}&quot;</strong> for product <strong className="text-foreground">&quot;{batch.productName}&quot;</strong>.
                                             </p>
                                             <p className="text-xs max-w-md mt-1 text-muted-foreground">
                                                 The recorded balance of <strong className="text-foreground">{batch.quantity.toLocaleString()} {unitLabel}</strong> originated from the {discrepancies.conflictingMovements.length} conflicting transaction(s) documented in the diagnostics card above.
