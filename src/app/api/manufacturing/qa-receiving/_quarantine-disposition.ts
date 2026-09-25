@@ -293,7 +293,7 @@ export async function fetchQuarantineDisposition(id: number): Promise<Quarantine
 
 async function fetchSourceReceivingVariants(id: number): Promise<SourceReceiving[]> {
     const receiving = await directusItem(
-        `/items/purchase_order_receiving/${id}?fields=purchase_order_product_id,purchase_order_id,purchase_order_line_id,product_id,branch_id,mm_lot_id,lot_id,batch_no,expiry_date,received_quantity,quantity_rejected,rejection_reason,receipt_no,qa_status`,
+        `/items/purchase_order_receiving/${id}?fields=purchase_order_product_id,purchase_order_id,purchase_order_line_id,product_id,branch_id,mm_lot_id,lot_id,batch_no,expiry_date,received_quantity,quantity_rejected,rejected_lot_id,rejected_batch_id,rejection_reason,receipt_no,qa_status`,
         "The source QA receiving record could not be found."
     );
     const sourceReceivingId = relationId(receiving.purchase_order_product_id, "purchase_order_product_id") || id;

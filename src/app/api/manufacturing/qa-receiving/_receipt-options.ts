@@ -208,7 +208,7 @@ export async function fetchQaReceiptOptions(
     const receivingParams = new URLSearchParams({
         "filter[purchase_order_id][_eq]": String(purchaseOrderId),
         "filter[is_reverted][_eq]": "0",
-        fields: "purchase_order_product_id,purchase_order_line_id,receipt_no,receipt_date,received_date,receiving_header_id,receiving_header_id.id,receiving_method,received_quantity,quantity_rejected,isPosted,is_reverted,is_replacement",
+        fields: "purchase_order_product_id,purchase_order_line_id,receipt_no,receipt_date,received_date,receiving_header_id,receiving_header_id.id,receiving_method,received_quantity,quantity_rejected,rejected_lot_id,rejected_batch_id,isPosted,is_reverted,is_replacement",
         limit: "-1"
     });
 
