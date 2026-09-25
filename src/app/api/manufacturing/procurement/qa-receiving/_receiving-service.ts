@@ -184,7 +184,7 @@ function preQaRfidAnchorSnapshot(row: Record<string, unknown>) {
         "purchase_order_line_id", "receiving_header_id", "product_id", "batch_no", "mm_lot_id", "lot_id",
         "expiry_date", "received_quantity", "unit_price", "discounted_amount", "discount_type", "total_amount",
         "allocated_expense_php", "final_landed_unit_cost", "branch_id", "receipt_no", "received_date", "receipt_date",
-        "isPosted", "qa_status", "quantity_rejected", "rejection_reason", "receipt_type", "quarantine_disposition_id",
+        "isPosted", "qa_status", "quantity_rejected", "rejection_reason", "rejected_lot_id", "rejected_batch_id", "receipt_type", "quarantine_disposition_id",
         "is_replacement", "is_over_received", "over_delivery_quantity", "receiving_method"
     ];
     return Object.fromEntries(fields.map(field => [field, row[field] ?? null]));
@@ -565,7 +565,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         if (!branches.some(branch => Number(branch.id) === branchId)) throw new ReceivingError("The selected receiving branch does not exist.", 400);
 
         const receiptNumbers = lineItemUpdates.map(item => receiptNumberForLine(referenceNumber, item.line_id));
-        let receiptsRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,receiving_header_id,product_id,branch_id,receipt_no,receipt_date,received_date,received_quantity,quantity_rejected,isPosted,is_reverted,is_replacement,batch_no,mm_lot_id,lot_id,expiry_date,unit_price,discounted_amount,discount_type,total_amount,allocated_expense_php,final_landed_unit_cost,qa_status,rejection_reason,receipt_type,quarantine_disposition_id,is_over_received,over_delivery_quantity,receiving_method&limit=-1`, { headers, cache: "no-store" });
+        let receiptsRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,receiving_header_id,product_id,branch_id,receipt_no,receipt_date,received_date,received_quantity,quantity_rejected,rejected_lot_id,rejected_batch_id,isPosted,is_reverted,is_replacement,batch_no,mm_lot_id,lot_id,expiry_date,unit_price,discounted_amount,discount_type,total_amount,allocated_expense_php,final_landed_unit_cost,qa_status,rejection_reason,receipt_type,quarantine_disposition_id,is_over_received,over_delivery_quantity,receiving_method&limit=-1`, { headers, cache: "no-store" });
         if (!receiptsRes.ok) {
             receiptsRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,receiving_header_id,product_id,branch_id,receipt_no,receipt_date,received_date,received_quantity,quantity_rejected,isPosted,is_reverted,is_replacement,batch_no,mm_lot_id,lot_id,expiry_date,unit_price,discounted_amount,discount_type,total_amount,allocated_expense_php,final_landed_unit_cost,qa_status,rejection_reason,receipt_type,quarantine_disposition_id,is_over_received,over_delivery_quantity,receiving_method&limit=-1`, { headers, cache: "no-store" });
         }
@@ -1053,8 +1053,13 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 const allocation = allocations.get(line.item.line_id)!;
                 const primaryAllocation = line.acceptedLotAllocations[0] || line.rejectedLotAllocations[0];
                 if (!primaryAllocation) throw new ReceivingError(`A storage lot is required for product ${line.productId}.`, 400);
+                // First rejected allocation only; the full lot detail stays in
+                // inventory_movements. Null when nothing was rejected.
+                const firstRejected = line.rejectedLotAllocations[0];
                 const receiptPayload = {
                     purchase_order_id: shipmentId, purchase_order_line_id: line.item.line_id, receiving_header_id: options.receivingHeaderId || null, product_id: line.productId, batch_no: primaryAllocation.batchNumber, mm_lot_id: primaryAllocation.storageLotId, lot_id: null,
+                    rejected_lot_id: firstRejected?.storageLotId ?? null,
+                    rejected_batch_id: (firstRejected?.batchNumber || "").trim() || null,
                     expiry_date: primaryAllocation.expirationDate, received_quantity: line.received,
                     unit_price: normalizeProcurementMoney(line.baseUnitCostPhp),
                     discounted_amount: normalizeProcurementMoney(String(line.poLine.discounted_amount ?? 0)),

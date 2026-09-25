@@ -1234,6 +1234,7 @@ export default function PlanningEngineeringModule() {
                         error={productionOrdersError}
                         salesOrderGroups={productionSalesOrderGroups}
                         onRetry={() => { void loadInProductionSalesOrders(); }}
+                        onCreateJobOrder={handleInitiateRelease}
                     />
                 </TabsContent>
 

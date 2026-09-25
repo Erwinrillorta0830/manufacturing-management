@@ -15,6 +15,18 @@ export function resolveJobOrderTargetQuantity(
 export const MATERIAL_QUANTITY_EPSILON = 0.000001;
 
 /**
+ * Rounds to the 6dp production input step. Native `max`/`step` validation
+ * compares exact floats, so an unrounded balance like 273.1389999999 blocks
+ * the exact, display-identical value 273.139. Round balances before they
+ * reach inputs or validators.
+ */
+export function roundToInputStep(value: unknown): number {
+    const parsed = Number(value || 0);
+    if (!Number.isFinite(parsed)) return 0;
+    return Math.round(parsed * 1_000_000) / 1_000_000;
+}
+
+/**
  * Compares consumed/actual quantities against reservation balances with the
  * codebase float tolerance. Reservation sums accumulate sub-display dust, so
  * a strict `>` misfires (red shortfall bar on variance-0 entries) when the

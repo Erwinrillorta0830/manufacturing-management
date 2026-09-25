@@ -31,7 +31,7 @@ import { validateProductionYieldImage } from "../services/production-yield-image
 import { AddReservedMaterialDialog, type TopUpTarget } from "./AddReservedMaterialDialog";
 import { toast } from "sonner";
 import { calculatePipelinedLineDurationHours } from "../../planning-engineering/utils/production-timing";
-import { exceedsAvailableStock, formatProductionQuantity, resolveJobOrderTargetQuantity } from "../utils/production-quantity";
+import { exceedsAvailableStock, formatProductionQuantity, resolveJobOrderTargetQuantity, roundToInputStep } from "../utils/production-quantity";
 import { hasCompletedTimer } from "../operator-time";
 
 interface JobOrderShiftLogModalProps {
@@ -1011,7 +1011,7 @@ export function JobOrderShiftLogModal({
                                                     : isExceeded 
                                                     ? "bg-amber-500" 
                                                     : "bg-emerald-500";
-                                                const availableStock = Number(m.available_stock || 0);
+                                                const availableStock = roundToInputStep(m.available_stock);
                                                 const shortfall = Math.max(0, theoretical - availableStock);
                                                 const needsTopUp = !m.reservation_id || shortfall > 0.000001;
 

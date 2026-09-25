@@ -25,6 +25,8 @@ export interface LinkedJobOrder {
     jobOrderNo: string;
     status: string;
     allocatedQuantity: number;
+    producedQuantity: number;
+    isTerminated: boolean;
 }
 
 export interface SalesOrderDetail {

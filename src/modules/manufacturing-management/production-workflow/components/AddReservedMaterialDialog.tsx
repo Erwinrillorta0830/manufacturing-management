@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { addReservedMaterial } from "../services/production-api";
+import { roundToInputStep } from "../utils/production-quantity";
 import type { MaterialCandidateLot } from "../types";
 
 export interface TopUpTarget {
@@ -77,7 +78,9 @@ export function AddReservedMaterialDialog({
     }, [open, target]);
 
     const selectedLot = candidates.find((candidate) => candidateKey(candidate) === selectedKey) || null;
-    const maxQuantity = selectedLot ? Number(selectedLot.available || 0) : 0;
+    // Round to the input step so native max validation agrees with the
+    // rounded display (raw float dust would block the exact shown value).
+    const maxQuantity = selectedLot ? roundToInputStep(selectedLot.available) : 0;
     const effectiveQuantity = Number(quantity || 0);
     const isSubmitDisabled = submitting
         || !selectedLot

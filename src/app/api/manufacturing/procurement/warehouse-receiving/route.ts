@@ -21,12 +21,13 @@ import type {
     WarehouseReceivingReceiptHistory,
     WarehouseReceivingReceiptHistoryLine
 } from "@/modules/manufacturing-management/warehouse-receiving/types";
+import { isReceiptQuantityOverRemaining, WAREHOUSE_RECEIPT_QUANTITY_EPSILON } from "@/modules/manufacturing-management/warehouse-receiving/quantity-validation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const RECEIPT_NUMBER_MAX_LENGTH = 32;
-const QUANTITY_EPSILON = 1e-9;
+const QUANTITY_EPSILON = WAREHOUSE_RECEIPT_QUANTITY_EPSILON;
 
 const positiveId = z.coerce.number().int().positive();
 const warehouseLineSchema = z.object({
@@ -681,6 +682,15 @@ async function validateWarehouseLines(order: DirectusOrder, command: WarehouseRe
         const total = validated.reduce((sum, item) => sum + item.quantity, 0);
         if (metadata.receiptType === "partial" && total <= QUANTITY_EPSILON) {
             throw new WarehouseReceivingError("A partial warehouse receipt must include at least one received quantity.", 400);
+        }
+        if (metadata.receiptType === "partial") {
+            const overRemainingLine = validated.find(item => isReceiptQuantityOverRemaining(
+                item.quantity,
+                Math.max(0, item.line.orderedQuantity - (postedByLine.get(item.line.lineId) || 0))
+            ));
+            if (overRemainingLine) {
+                throw new WarehouseReceivingError(`Partial receipt quantity for line ${overRemainingLine.line.lineId} cannot exceed its remaining quantity.`, 400);
+            }
         }
         if (metadata.receiptType === "full" && validated.some(item => item.quantity + QUANTITY_EPSILON < Math.max(0, item.line.orderedQuantity - (postedByLine.get(item.line.lineId) || 0)))) {
             throw new WarehouseReceivingError("A full warehouse receipt must cover the remaining quantity on every line.", 400);

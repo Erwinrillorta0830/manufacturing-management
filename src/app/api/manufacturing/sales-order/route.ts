@@ -853,7 +853,7 @@ export async function GET(request: Request) {
                 });
             }
         }
-        const replacementCreditData = excludeHasJo
+        const replacementCreditData = excludeHasJo || inProductionQueue
             ? await loadReplacementCreditData(read, details, readFinishedGoodsReceipts)
             : { byDetail: new Map<number, number>(), attributions: [] };
         const detailsMap = await enrichSalesOrderReadModel(
