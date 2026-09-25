@@ -202,9 +202,6 @@ export function SalesReturnLotBatchModal({
   // Multi-Lot Allocation Groups State
   const [lotGroups, setLotGroups] = useState<LotAllocationGroup[]>([]);
 
-  // Toolbar Dates (stored locally until user explicitly clicks 'Apply to all')
-  const [toolbarDates, setToolbarDates] = useState<Record<number, { mfg: string; exp: string }>>({});
-
   // Current item classification
   const currentItemClassification = useMemo(() => {
     return resolveProductClassification(productType, productCategory || categoryName, productCode, productName);
@@ -430,7 +427,6 @@ export function SalesReturnLotBatchModal({
     if (!open) {
       queueMicrotask(() => {
         setLotGroups([]);
-        setToolbarDates({});
         setBranchOnhandList([]);
       });
       return;
@@ -887,17 +883,6 @@ export function SalesReturnLotBatchModal({
 
           const finalGroups = Array.from(mergedGroupMap.values());
           setLotGroups(finalGroups);
-
-          // Populate toolbar dates from the first batch
-          const firstBatch = finalGroups[0]?.batches?.[0];
-          if (firstBatch?.manufacturing_date || firstBatch?.expiry_date) {
-            setToolbarDates({
-              0: {
-                mfg: firstBatch.manufacturing_date ? String(firstBatch.manufacturing_date).substring(0, 10) : '',
-                exp: firstBatch.expiry_date ? String(firstBatch.expiry_date).substring(0, 10) : '',
-              },
-            });
-          }
           return;
         }
 
@@ -916,25 +901,19 @@ export function SalesReturnLotBatchModal({
             : (initLookedUp?.expDate || '');
 
           const rawBatchNo = String(initialValues.batch_no || '');
-          const splitBatches = rawBatchNo.split(',').map(s => s.trim()).filter(Boolean);
-          const batchCount = splitBatches.length || 1;
-          const perBatchQty = Math.max(1, Math.floor(initialQty / batchCount));
+          let rowQA: QAStatus = initialValues.qa_status || initLookedUp?.qaStatus || 'GOOD';
+          if (isGoodReturn) rowQA = 'GOOD';
+          else if (isBadOrder && rowQA === 'GOOD') rowQA = 'DAMAGED';
 
-          const batchesList = (splitBatches.length > 1 ? splitBatches : [rawBatchNo]).map((bName, idx) => {
-            const bKey = bName.toLowerCase();
-            const lookedUp = bKey ? batchMetaMap.get(bKey) : undefined;
-            const isLast = idx === (splitBatches.length > 1 ? splitBatches.length - 1 : 0);
-            const bQty = isLast ? Math.max(0, initialQty - perBatchQty * (batchCount - 1)) : perBatchQty;
-            return {
-              inventory_lot_id: initialValues.inventory_lot_id ?? lookedUp?.inventoryLotId,
-              batch_no: bName,
-              manufacturing_date: lookedUp?.mfgDate || initMfg,
-              expiry_date: lookedUp?.expDate || initExp,
-              quantity: bQty,
-              unit_cost: initialValues.unit_cost ?? lookedUp?.unitCost,
-              qa_status: initialValues.qa_status || lookedUp?.qaStatus || 'GOOD',
-            };
-          });
+          const singleBatch: BatchRowAllocation = {
+            inventory_lot_id: initialValues.inventory_lot_id ?? initLookedUp?.inventoryLotId,
+            batch_no: rawBatchNo,
+            manufacturing_date: initLookedUp?.mfgDate || initMfg,
+            expiry_date: initLookedUp?.expDate || initExp,
+            quantity: initialQty,
+            unit_cost: initialValues.unit_cost ?? initLookedUp?.unitCost,
+            qa_status: rowQA,
+          };
 
           setLotGroups([
             {
@@ -946,17 +925,9 @@ export function SalesReturnLotBatchModal({
               allocated_quantity: initialQty,
               active_batch_count: bCountMap.get(lId) || 0,
               current_stock_quantity: sQtyMap.get(lId) || 0,
-              batches: batchesList,
+              batches: [singleBatch],
             },
           ]);
-          if (initMfg || initExp) {
-            setToolbarDates({
-              0: {
-                mfg: initMfg,
-                exp: initExp,
-              },
-            });
-          }
           return;
         }
 
@@ -1012,29 +983,19 @@ export function SalesReturnLotBatchModal({
             : (cleanLookedUp?.expDate || '');
 
           const rawBatchNo = String(initialValues?.batch_no || '');
-          const splitBatches = rawBatchNo.split(',').map(s => s.trim()).filter(Boolean);
-          const batchCount = splitBatches.length || 1;
-          const perBatchQty = Math.max(1, Math.floor(initialQty / batchCount));
+          let rowQA: QAStatus = cleanLookedUp?.qaStatus || defaultQA;
+          if (isGoodReturn) rowQA = 'GOOD';
+          else if (isBadOrder && rowQA === 'GOOD') rowQA = 'DAMAGED';
 
-          const batchesList = (splitBatches.length > 1 ? splitBatches : [rawBatchNo]).map((bName, idx) => {
-            const bKey = bName.toLowerCase();
-            const lookedUp = bKey ? batchMetaMap.get(bKey) : undefined;
-            const isLast = idx === (splitBatches.length > 1 ? splitBatches.length - 1 : 0);
-            const bQty = isLast ? Math.max(0, initialQty - perBatchQty * (batchCount - 1)) : perBatchQty;
-            let rowQA: QAStatus = lookedUp?.qaStatus || defaultQA;
-            if (isGoodReturn) rowQA = 'GOOD';
-            else if (isBadOrder && rowQA === 'GOOD') rowQA = 'DAMAGED';
-
-            return {
-              inventory_lot_id: initialValues?.inventory_lot_id ?? lookedUp?.inventoryLotId,
-              batch_no: bName,
-              manufacturing_date: lookedUp?.mfgDate || cleanMfg,
-              expiry_date: lookedUp?.expDate || cleanExp,
-              quantity: bQty,
-              unit_cost: initialValues?.unit_cost ?? lookedUp?.unitCost,
-              qa_status: rowQA,
-            };
-          });
+          const singleBatch: BatchRowAllocation = {
+            inventory_lot_id: initialValues?.inventory_lot_id ?? cleanLookedUp?.inventoryLotId,
+            batch_no: rawBatchNo,
+            manufacturing_date: cleanLookedUp?.mfgDate || cleanMfg,
+            expiry_date: cleanLookedUp?.expDate || cleanExp,
+            quantity: initialQty,
+            unit_cost: initialValues?.unit_cost ?? cleanLookedUp?.unitCost,
+            qa_status: rowQA,
+          };
 
           setLotGroups([
             {
@@ -1046,17 +1007,9 @@ export function SalesReturnLotBatchModal({
               allocated_quantity: initialQty,
               active_batch_count: bCountMap.get(lId) || 0,
               current_stock_quantity: sQtyMap.get(lId) || 0,
-              batches: batchesList,
+              batches: [singleBatch],
             },
           ]);
-          if (cleanMfg || cleanExp) {
-            setToolbarDates({
-              0: {
-                mfg: cleanMfg,
-                exp: cleanExp,
-              },
-            });
-          }
         } else {
           setLotGroups([]);
         }
@@ -1175,16 +1128,6 @@ export function SalesReturnLotBatchModal({
         ],
       },
     ]);
-
-    if (defaultMfg || defaultExp) {
-      setToolbarDates((prev) => ({
-        ...prev,
-        [newGroupIndex]: {
-          mfg: defaultMfg,
-          exp: defaultExp,
-        },
-      }));
-    }
   };
 
   // Remove a storage lot allocation group
@@ -1205,17 +1148,13 @@ export function SalesReturnLotBatchModal({
       prev.map((g, i) => {
         if (i === groupIndex) {
           const updatedBatches = (g.batches || []).map((b) => {
-            const currentIsBad = b.qa_status && b.qa_status !== 'GOOD';
-            let newQA = b.qa_status || 'GOOD';
-            if (isSelectedLotBad && !currentIsBad) {
-              newQA = 'EXPIRED';
-            } else if (!isSelectedLotBad && currentIsBad) {
-              newQA = 'GOOD';
-            }
-
             return {
               ...b,
-              qa_status: newQA,
+              batch_no: '',
+              inventory_lot_id: undefined,
+              manufacturing_date: '',
+              expiry_date: '',
+              qa_status: isSelectedLotBad ? ('EXPIRED' as QAStatus) : ('GOOD' as QAStatus),
             };
           });
 
@@ -1229,66 +1168,6 @@ export function SalesReturnLotBatchModal({
             active_batch_count: lotBatchCountMap.get(newLotId) || 0,
             current_stock_quantity: lotStockQtyMap.get(newLotId) || 0,
             batches: updatedBatches,
-          };
-        }
-        return g;
-      })
-    );
-  };
-
-  // Add a batch split within a storage lot
-  const handleAddBatch = (groupIndex: number) => {
-    const targetGroup = lotGroups[groupIndex];
-    const targetLot = lots.find((l) => Number(l.lot_id) === Number(targetGroup?.lot_id));
-    const isLotBad = targetLot ? isBadStockLot(targetLot) : false;
-    let defaultQA: QAStatus = 'GOOD';
-    if (isBadOrder) {
-      defaultQA = isLotBad ? 'EXPIRED' : 'DAMAGED';
-    } else if (isGoodReturn) {
-      defaultQA = 'GOOD';
-    } else {
-      defaultQA = isLotBad ? 'EXPIRED' : 'GOOD';
-    }
-
-    // Auto-fill dates from toolbar state or the first batch in this lot group
-    const fallbackMfg = targetGroup?.batches?.[0]?.manufacturing_date || (initialValues?.manufacturing_date ? String(initialValues.manufacturing_date).substring(0, 10) : '');
-    const fallbackExp = targetGroup?.batches?.[0]?.expiry_date || (initialValues?.expiry_date ? String(initialValues.expiry_date).substring(0, 10) : '');
-    const groupMfg = toolbarDates[groupIndex]?.mfg ?? fallbackMfg;
-    const groupExp = toolbarDates[groupIndex]?.exp ?? fallbackExp;
-
-    setLotGroups((prev) =>
-      prev.map((g, i) => {
-        if (i === groupIndex) {
-          return {
-            ...g,
-            batches: [
-              ...g.batches,
-              {
-                batch_no: '',
-                manufacturing_date: groupMfg,
-                expiry_date: groupExp,
-                quantity: 0,
-                qa_status: defaultQA,
-              },
-            ],
-          };
-        }
-        return g;
-      })
-    );
-  };
-
-  // Remove a batch split within a storage lot
-  const handleRemoveBatch = (groupIndex: number, batchIndex: number) => {
-    setLotGroups((prev) =>
-      prev.map((g, i) => {
-        if (i === groupIndex) {
-          if (g.batches.length <= 1) return g;
-          const updatedBatches = g.batches.filter((_, bIdx) => bIdx !== batchIndex);
-          return {
-            ...g,
-            batches: updatedBatches,
-            allocated_quantity: updatedBatches.reduce((sum, b) => sum + Number(b.quantity || 0), 0),
           };
         }
         return g;
@@ -1318,68 +1197,7 @@ export function SalesReturnLotBatchModal({
       return;
     }
 
-    // 1. Build stream of batch allocations to distribute
-    const allBatches: BatchRowAllocation[] = [];
-    lotGroups.forEach((g) => {
-      (g.batches || []).forEach((b) => {
-        if (b.quantity > 0 || (allBatches.length === 0 && b.batch_no)) {
-          allBatches.push({ ...b });
-        }
-      });
-    });
-
-    const stream: {
-      batchNo: string;
-      quantity: number;
-      mfgDate?: string | null;
-      expDate?: string | null;
-      qaStatus: QAStatus;
-      unitCost?: number;
-      inventoryLotId?: number;
-    }[] = [];
-
-    if (allBatches.length > 0) {
-      const sumBatchQty = allBatches.reduce((s, b) => s + Number(b.quantity || 0), 0);
-      let remTarget = targetTotal;
-      allBatches.forEach((b, idx) => {
-        if (remTarget <= 0) return;
-        let splitQty = 0;
-        if (idx === allBatches.length - 1) {
-          splitQty = remTarget;
-        } else if (sumBatchQty > 0) {
-          splitQty = Math.min(remTarget, Math.round((Number(b.quantity || 0) / sumBatchQty) * targetTotal));
-        } else {
-          splitQty = Math.min(remTarget, Math.round(targetTotal / allBatches.length));
-        }
-        remTarget -= splitQty;
-        stream.push({
-          batchNo: b.batch_no || initialValues?.batch_no || '',
-          quantity: splitQty,
-          mfgDate: b.manufacturing_date || (initialValues?.manufacturing_date ? String(initialValues.manufacturing_date).substring(0, 10) : ''),
-          expDate: b.expiry_date || (initialValues?.expiry_date ? String(initialValues.expiry_date).substring(0, 10) : ''),
-          qaStatus: b.qa_status || 'GOOD',
-          unitCost: b.unit_cost,
-          inventoryLotId: b.inventory_lot_id,
-        });
-      });
-      if (remTarget > 0 && stream.length > 0) {
-        stream[stream.length - 1].quantity += remTarget;
-      }
-    } else {
-      stream.push({
-        batchNo: initialValues?.batch_no || '',
-        quantity: targetTotal,
-        mfgDate: initialValues?.manufacturing_date ? String(initialValues.manufacturing_date).substring(0, 10) : '',
-        expDate: initialValues?.expiry_date ? String(initialValues.expiry_date).substring(0, 10) : '',
-        qaStatus: (initialValues?.qa_status as QAStatus) || 'GOOD',
-        unitCost: initialValues?.unit_cost,
-        inventoryLotId: initialValues?.inventory_lot_id,
-      });
-    }
-
-    const remainingStream = stream.map((s) => ({ ...s }));
-
-    // 2. Distribute across lotGroups respecting each lot's available space
+    let remTarget = targetTotal;
     const updatedGroups = lotGroups.map((g, gIdx) => {
       const isLastGroup = gIdx === lotGroups.length - 1;
       const matchedLot = lots.find((l) => Number(l.lot_id) === Number(g.lot_id));
@@ -1387,65 +1205,29 @@ export function SalesReturnLotBatchModal({
       const curStock = Math.max(0, Number(lotStockQtyMap.get(Number(g.lot_id)) ?? g.current_stock_quantity ?? 0));
       const availableSpace = maxCap > 0 ? Math.max(0, maxCap - curStock) : Infinity;
 
-      let spaceForThisLot = availableSpace;
-      const lotBatches: BatchRowAllocation[] = [];
-      let totalLotAllocated = 0;
-
-      const existingBatchNos = (g.batches || []).map((b) => b.batch_no);
-      const isLotBad = matchedLot ? isBadStockLot(matchedLot) : false;
-
-      while (remainingStream.length > 0 && (isLastGroup || spaceForThisLot > 0)) {
-        const item = remainingStream[0];
-        if (item.quantity <= 0) {
-          remainingStream.shift();
-          continue;
-        }
-
-        const qtyToTake = isLastGroup ? item.quantity : Math.min(item.quantity, spaceForThisLot);
-        if (qtyToTake <= 0) break;
-
-        item.quantity -= qtyToTake;
-        spaceForThisLot -= qtyToTake;
-        totalLotAllocated += qtyToTake;
-
-        const targetQA: QAStatus = isLotBad
-          ? (item.qaStatus !== 'GOOD' ? item.qaStatus : 'EXPIRED')
-          : (item.qaStatus || 'GOOD');
-
-        lotBatches.push({
-          inventory_lot_id: item.inventoryLotId,
-          batch_no: item.batchNo,
-          quantity: qtyToTake,
-          manufacturing_date: item.mfgDate,
-          expiry_date: item.expDate,
-          qa_status: targetQA,
-          unit_cost: item.unitCost,
-        });
-
-        if (item.quantity === 0) {
-          remainingStream.shift();
-        }
+      let qtyToTake = 0;
+      if (isLastGroup) {
+        qtyToTake = Math.max(0, remTarget);
+      } else {
+        qtyToTake = Math.min(remTarget, availableSpace);
       }
+      remTarget -= qtyToTake;
 
-      if (lotBatches.length === 0) {
-        const defaultBatchName = existingBatchNos[0] || initialValues?.batch_no || '';
-        const lookedUp = defaultBatchName ? batchMetaLookup.get(defaultBatchName.toLowerCase()) : undefined;
-        const targetQA: QAStatus = isLotBad ? 'EXPIRED' : (lookedUp?.qaStatus || 'GOOD');
-        lotBatches.push({
-          inventory_lot_id: lookedUp?.inventoryLotId || initialValues?.inventory_lot_id,
-          batch_no: defaultBatchName,
-          quantity: 0,
-          manufacturing_date: lookedUp?.mfgDate || (initialValues?.manufacturing_date ? String(initialValues.manufacturing_date).substring(0, 10) : ''),
-          expiry_date: lookedUp?.expDate || (initialValues?.expiry_date ? String(initialValues.expiry_date).substring(0, 10) : ''),
-          qa_status: targetQA,
-          unit_cost: lookedUp?.unitCost || initialValues?.unit_cost,
-        });
-      }
+      const firstBatch = g.batches?.[0];
+      const singleBatch: BatchRowAllocation = {
+        inventory_lot_id: firstBatch?.inventory_lot_id,
+        batch_no: firstBatch?.batch_no || initialValues?.batch_no || '',
+        quantity: qtyToTake,
+        manufacturing_date: firstBatch?.manufacturing_date || (initialValues?.manufacturing_date ? String(initialValues.manufacturing_date).substring(0, 10) : ''),
+        expiry_date: firstBatch?.expiry_date || (initialValues?.expiry_date ? String(initialValues.expiry_date).substring(0, 10) : ''),
+        qa_status: firstBatch?.qa_status || (initialValues?.qa_status as QAStatus) || 'GOOD',
+        unit_cost: firstBatch?.unit_cost ?? initialValues?.unit_cost,
+      };
 
       return {
         ...g,
-        allocated_quantity: totalLotAllocated,
-        batches: lotBatches,
+        allocated_quantity: qtyToTake,
+        batches: [singleBatch],
       };
     });
 
@@ -2382,83 +2164,10 @@ export function SalesReturnLotBatchModal({
 
                     {/* BATCHES SUB-TABLE */}
                     <div className="p-4 space-y-3">
-                      <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 pb-2 border-b border-border/50">
-                        <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5 shrink-0">
-                          <Tag className="w-3.5 h-3.5 text-primary" /> Batches to Allocate in this Lot
+                      <div className="flex items-center justify-between pb-2 border-b border-border/50">
+                        <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                          <Tag className="w-3.5 h-3.5 text-primary" /> Allocated Batch Details
                         </span>
-
-                        {/* Bulk Auto-fill Toolbar Outside the Input Cards */}
-                        <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto justify-between lg:justify-end">
-                          <div className="flex flex-wrap items-center gap-2 bg-muted/40 px-3 py-1.5 rounded-lg border border-border/70">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-[10px] font-bold text-muted-foreground uppercase">Mfg:</span>
-                              <Input
-                                type="date"
-                                value={
-                                  toolbarDates[gIdx]?.mfg ??
-                                  (group.batches[0]?.manufacturing_date ? String(group.batches[0].manufacturing_date).substring(0, 10) : '')
-                                }
-                                onChange={(e) => {
-                                  const current = toolbarDates[gIdx] || {
-                                    mfg: group.batches[0]?.manufacturing_date ? String(group.batches[0].manufacturing_date).substring(0, 10) : '',
-                                    exp: group.batches[0]?.expiry_date ? String(group.batches[0].expiry_date).substring(0, 10) : '',
-                                  };
-                                  setToolbarDates({ ...toolbarDates, [gIdx]: { ...current, mfg: e.target.value } });
-                                }}
-                                className="h-7 text-xs w-36 bg-background px-2 py-0"
-                                title="Select manufacturing date to apply"
-                              />
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-[10px] font-bold text-muted-foreground uppercase">Exp:</span>
-                              <Input
-                                type="date"
-                                value={
-                                  toolbarDates[gIdx]?.exp ??
-                                  (group.batches[0]?.expiry_date ? String(group.batches[0].expiry_date).substring(0, 10) : '')
-                                }
-                                onChange={(e) => {
-                                  const current = toolbarDates[gIdx] || {
-                                    mfg: group.batches[0]?.manufacturing_date ? String(group.batches[0].manufacturing_date).substring(0, 10) : '',
-                                    exp: group.batches[0]?.expiry_date ? String(group.batches[0].expiry_date).substring(0, 10) : '',
-                                  };
-                                  setToolbarDates({ ...toolbarDates, [gIdx]: { ...current, exp: e.target.value } });
-                                }}
-                                className="h-7 text-xs w-36 bg-background px-2 py-0"
-                                title="Select expiration date to apply"
-                              />
-                            </div>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="secondary"
-                              onClick={() => {
-                                const currentMfg =
-                                  toolbarDates[gIdx]?.mfg ??
-                                  (group.batches[0]?.manufacturing_date ? String(group.batches[0].manufacturing_date).substring(0, 10) : '');
-                                const currentExp =
-                                  toolbarDates[gIdx]?.exp ??
-                                  (group.batches[0]?.expiry_date ? String(group.batches[0].expiry_date).substring(0, 10) : '');
-
-                                handleApplyDatesToAll(gIdx, currentMfg, currentExp);
-                              }}
-                              className="h-7 text-xs font-bold px-3 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 cursor-pointer"
-                              title="Apply selected dates to all batches in this lot"
-                            >
-                              Apply to all
-                            </Button>
-                          </div>
-
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => handleAddBatch(gIdx)}
-                            className="h-8 text-xs font-bold text-primary hover:bg-primary/10 gap-1 px-3 shrink-0 border border-primary/20"
-                          >
-                            <Plus className="w-3.5 h-3.5" /> Add Batch Split
-                          </Button>
-                        </div>
                       </div>
 
                       <div className="space-y-2.5">
@@ -2655,21 +2364,6 @@ export function SalesReturnLotBatchModal({
                                     Good stock shouldn&apos;t be allocated here
                                   </span>
                                 )}
-                              </div>
-
-                              {/* Remove Batch Split */}
-                              <div className="shrink-0 flex items-end pt-5 md:pt-0">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  disabled={group.batches.length <= 1}
-                                  onClick={() => handleRemoveBatch(gIdx, bIdx)}
-                                  className="h-9 w-9 text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg disabled:opacity-30"
-                                  title="Remove Batch"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </Button>
                               </div>
                             </div>
                           );

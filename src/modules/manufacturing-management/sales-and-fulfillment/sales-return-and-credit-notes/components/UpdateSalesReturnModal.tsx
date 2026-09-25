@@ -6,6 +6,7 @@ import {
   Loader2,
   Plus,
   Trash2,
+  Copy,
   Printer,
   Save,
   AlertTriangle,
@@ -701,6 +702,30 @@ export function UpdateSalesReturnModal({
 
   const handleDeleteRow = (index: number) => {
     setDetails((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleDuplicateRow = (index: number) => {
+    setDetails((prev) => {
+      const target = prev[index];
+      if (!target) return prev;
+      const duplicated: SalesReturnItem = {
+        ...target,
+        id: undefined,
+        lot_id: null,
+        lot_name: undefined,
+        inventory_lot_id: undefined,
+        batch: "",
+        manufacturing_date: "",
+        expiry_date: "",
+        qa_status: undefined,
+        lot_allocations: [],
+        returnType: "",
+        reason: target.reason || "",
+      };
+      const updated = [...prev];
+      updated.splice(index + 1, 0, duplicated);
+      return updated;
+    });
   };
 
   const handleAddProductsToEdit = (newItems: (Partial<SalesReturnItem> & { price?: number, product_name?: string })[]) => {
@@ -1549,16 +1574,28 @@ export function UpdateSalesReturnModal({
                               {/* Actions */}
                               {canEditAll && (
                                 <TableCell className="align-middle p-2 text-center whitespace-nowrap sticky right-0 bg-background z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => handleDeleteRow(idx)}
-                                    className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10 rounded-md"
-                                    title="Remove Item"
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </Button>
+                                  <div className="flex items-center justify-center gap-1">
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => handleDuplicateRow(idx)}
+                                      className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-md"
+                                      title="Duplicate Item"
+                                    >
+                                      <Copy className="h-4 w-4" />
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => handleDeleteRow(idx)}
+                                      className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10 rounded-md"
+                                      title="Remove Item"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  </div>
                                 </TableCell>
                               )}
                             </TableRow>
@@ -1811,15 +1848,26 @@ export function UpdateSalesReturnModal({
                                   </TableCell>
                                   {canEditAll && (
                                     <TableCell className="text-center align-middle whitespace-nowrap sticky right-0 bg-background z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-8 w-8 text-destructive hover:text-white hover:bg-destructive"
-                                        onClick={() => handleDeleteRow(idx)}
-                                        title="Remove row"
-                                      >
-                                        <Trash2 className="h-4 w-4" />
-                                      </Button>
+                                      <div className="flex items-center justify-center gap-1">
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-md"
+                                          onClick={() => handleDuplicateRow(idx)}
+                                          title="Duplicate row"
+                                        >
+                                          <Copy className="h-4 w-4" />
+                                        </Button>
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          className="h-8 w-8 text-destructive hover:text-white hover:bg-destructive"
+                                          onClick={() => handleDeleteRow(idx)}
+                                          title="Remove row"
+                                        >
+                                          <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                      </div>
                                     </TableCell>
                                   )}
                                 </TableRow>
