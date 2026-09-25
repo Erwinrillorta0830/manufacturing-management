@@ -12,6 +12,10 @@ import { fetchMmInventoryMovements, MmInventoryMovementError } from "../services
 import { loadMmLots, mmLotId } from "../services/mm-lots.service";
 import { isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 import { groupMaterialRequirements } from "@/modules/manufacturing-management/planning-engineering/utils/material-requirement-groups";
+import {
+    authorizeJobOrderModuleAccess,
+    JOB_ORDER_MODULE_PATHS
+} from "@/app/api/manufacturing/job-orders/_module-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -98,6 +102,8 @@ function requireDirectusResponse(response: Response | null, collection: string):
 }
 
 export async function GET(request: Request) {
+    const accessDenied = await authorizeJobOrderModuleAccess(JOB_ORDER_MODULE_PATHS.staging);
+    if (accessDenied) return accessDenied;
     try {
         const { searchParams } = new URL(request.url);
         const branchFilter = searchParams.get("branchId");

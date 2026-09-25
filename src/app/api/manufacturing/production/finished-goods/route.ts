@@ -1,6 +1,7 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
 import { AuthenticatedActorError, requireManufacturingActorId } from "../_authenticated-actor";
+import { authorizeJobOrderModuleAccess, JOB_ORDER_MODULE_PATHS } from "@/app/api/manufacturing/job-orders/_module-access";
 import { completeYieldClosing, YieldCompletionError } from "../_yield-closing-service";
 import { YieldMaterialsError } from "../_yield-materials";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
@@ -93,6 +94,11 @@ async function readOptionalDirectusCollection<T = any>(url: string, label: strin
 }
 
 export async function GET(request: Request) {
+    const accessDenied = await authorizeJobOrderModuleAccess([
+        JOB_ORDER_MODULE_PATHS.qualityAssurance,
+        JOB_ORDER_MODULE_PATHS.costVariance
+    ]);
+    if (accessDenied) return accessDenied;
     try {
         const { searchParams } = new URL(request.url);
         const requestedJobOrder = searchParams.get("joId")?.trim() || "";
@@ -224,6 +230,11 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+    const accessDenied = await authorizeJobOrderModuleAccess([
+        JOB_ORDER_MODULE_PATHS.qualityAssurance,
+        JOB_ORDER_MODULE_PATHS.costVariance
+    ]);
+    if (accessDenied) return accessDenied;
     try {
         const body = await request.json();
         const {

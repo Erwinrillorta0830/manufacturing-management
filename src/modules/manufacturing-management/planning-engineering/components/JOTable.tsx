@@ -1,6 +1,5 @@
 /* eslint-disable */
 import React from "react";
-import Link from "next/link";
 import { Loader2, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -105,7 +104,7 @@ export function JOTable({
                         if (!fg.isFamily) {
                             const jo = fg.parentJo;
                             const metrics = computeJoMetrics(jo);
-                            const journey = resolveJobOrderJourney({ status: jo.status, jobOrderNo: jo.jo_id });
+                            const journey = resolveJobOrderJourney({ status: jo.status });
                             return (
                                 <tr key={jo.jo_id || jo.id} className="hover:bg-muted/10">
                                     <td className="px-2 py-3 break-words font-semibold text-primary">{jo.jo_id}</td>
@@ -155,41 +154,17 @@ export function JOTable({
                                     </td>
                                     <td className="px-2 py-3 text-center">
                                         <div className="flex flex-wrap items-center justify-center gap-1.5">
-                                            {readOnly ? (
-                                                <Button
-                                                    size="sm"
-                                                    variant="outline"
-                                                    onClick={() => handleOpenDetails(jo)}
-                                                    className="h-auto min-h-8 max-w-full shrink whitespace-normal break-words border-primary/30 px-2 py-1 text-center text-[11px] font-bold leading-tight text-primary transition-all duration-200 hover:border-primary hover:bg-primary/5"
-                                                >
-                                                    View Details
-                                                </Button>
-                                            ) : journey.nextAction?.href && !journey.nextAction.blockedReason ? (
-                                                <Button asChild size="sm" className="h-auto min-h-8 max-w-full shrink whitespace-normal break-words px-2 py-1 text-center text-[11px] font-semibold leading-tight">
-                                                    <Link href={journey.nextAction.href}>{journey.nextAction.label}</Link>
-                                                </Button>
-                                            ) : (
-                                                <Button
-                                                    size="sm"
-                                                    variant="outline"
-                                                    onClick={() => handleOpenDetails(jo)}
-                                                    disabled={Boolean(journey.nextAction?.blockedReason)}
-                                                    title={journey.nextAction?.blockedReason || journey.nextAction?.description}
-                                                    className="h-auto min-h-8 max-w-full shrink whitespace-normal break-words border-primary/30 px-2 py-1 text-center text-[11px] font-bold leading-tight text-primary transition-all duration-200 hover:border-primary hover:bg-primary/5"
-                                                >
-                                                    {journey.nextAction?.label || "Manage / View Details"}
-                                                </Button>
-                                            )}
-                                            {!readOnly && (
-                                                <Button
-                                                    size="sm"
-                                                    variant="ghost"
-                                                    onClick={() => handleOpenDetails(jo)}
-                                                    className="h-auto min-h-8 max-w-full shrink whitespace-normal break-words px-2 py-1 text-center text-[11px] leading-tight text-muted-foreground"
-                                                >
-                                                    Details
-                                                </Button>
-                                            )}
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                onClick={() => handleOpenDetails(jo)}
+                                                title={readOnly
+                                                    ? "View Job Order details."
+                                                    : journey.nextAction?.blockedReason || journey.nextAction?.description || "View Job Order details."}
+                                                className="h-auto min-h-8 max-w-full shrink whitespace-normal break-words border-primary/30 px-2 py-1 text-center text-[11px] font-bold leading-tight text-primary transition-all duration-200 hover:border-primary hover:bg-primary/5"
+                                            >
+                                                View Details
+                                            </Button>
                                         </div>
                                     </td>
                                 </tr>
@@ -289,7 +264,7 @@ export function JOTable({
                                                 )}
                                             </div>
                                             <JobOrderJourneyBar
-                                                journey={resolveJobOrderJourney({ status: fg.parentJo.status, jobOrderNo: fg.parentJo.jo_id })}
+                                                journey={resolveJobOrderJourney({ status: fg.parentJo.status })}
                                                 compact
                                                 className="min-w-0"
                                             />

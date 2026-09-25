@@ -1,9 +1,12 @@
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
+import { authorizeJobOrderModuleAccess, JOB_ORDER_MODULE_PATHS } from "@/app/api/manufacturing/job-orders/_module-access";
 import { recordWipTopUp, WipTopUpError } from "../_wip-top-up-service";
 
 export async function POST(request: Request) {
+    const accessDenied = await authorizeJobOrderModuleAccess(JOB_ORDER_MODULE_PATHS.production);
+    if (accessDenied) return accessDenied;
     try {
         return await recordWipTopUp(request);
     } catch (error) {

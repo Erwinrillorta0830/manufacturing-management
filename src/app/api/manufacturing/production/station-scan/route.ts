@@ -1,6 +1,7 @@
 /* eslint-disable */
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
+import { authorizeJobOrderModuleAccess, JOB_ORDER_MODULE_PATHS } from "@/app/api/manufacturing/job-orders/_module-access";
 import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers, getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 import { isCancelledJobOrderStatus, isJobOrderStatus, isTerminalJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
@@ -299,6 +300,8 @@ async function fetchMappedWorkCenters(extraFilter = ""): Promise<any[]> {
 }
 
 export async function GET(request: Request) {
+    const accessDenied = await authorizeJobOrderModuleAccess(JOB_ORDER_MODULE_PATHS.production);
+    if (accessDenied) return accessDenied;
     try {
         const { searchParams } = new URL(request.url);
         const joId = searchParams.get("joId");
@@ -399,6 +402,8 @@ export async function GET(request: Request) {
 
 // POST: Process Station Start Scan (Work Center Barcode + Job Order Batch Barcode)
 export async function POST(request: Request) {
+    const accessDenied = await authorizeJobOrderModuleAccess(JOB_ORDER_MODULE_PATHS.production);
+    if (accessDenied) return accessDenied;
     try {
         const body = await request.json();
         const { workCenterBarcode, jobOrderBarcode, workCenterId, jobOrderId, joRouteId } = body;
