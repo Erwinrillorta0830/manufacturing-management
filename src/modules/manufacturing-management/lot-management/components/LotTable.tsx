@@ -125,7 +125,7 @@ export default function LotTable({
                                         <TableCell>
                                             <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-muted text-foreground border border-border">
                                                 <Building2 className="h-3 w-3 text-primary shrink-0" />
-                                                <span>{lot.branchName || `Branch #${lot.branchId}`}</span>
+                                                <span>{lot.branchName || "-"}</span>
                                                 {lot.branchCode && (
                                                     <span className="text-[10px] font-mono text-muted-foreground font-bold">
                                                         ({lot.branchCode})

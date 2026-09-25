@@ -75,6 +75,30 @@ export const getProductId = (item: unknown): number => {
   return Number(rec.product_id || rec.productId || 0);
 };
 
+// Comprehensive UOM normalization helper supporting abbreviations and synonyms
+export const normalizeUom = (uom?: string | null): string => {
+  if (!uom) return '';
+  const s = uom.trim().toLowerCase();
+  if (['pcs', 'pc', 'piece', 'pieces', 'pck', 'pack', 'packs', 'unit', 'units'].includes(s)) return 'pieces';
+  if (['bx', 'box', 'boxes'].includes(s)) return 'box';
+  if (['bg', 'bag', 'bags'].includes(s)) return 'bag';
+  if (['kg', 'kgs', 'kilogram', 'kilograms', 'kilo', 'kilos'].includes(s)) return 'kg';
+  if (['g', 'gm', 'gms', 'gram', 'grams'].includes(s)) return 'g';
+  if (['l', 'ltr', 'liter', 'liters', 'litre', 'litres'].includes(s)) return 'l';
+  if (['ml', 'milliliter', 'milliliters'].includes(s)) return 'ml';
+  if (['m', 'meter', 'meters'].includes(s)) return 'm';
+  if (['cm', 'centimeter', 'centimeters'].includes(s)) return 'cm';
+  if (['mm', 'millimeter', 'millimeters'].includes(s)) return 'mm';
+  if (['roll', 'rolls', 'rl'].includes(s)) return 'roll';
+  if (['tie', 'ties'].includes(s)) return 'tie';
+  if (['ib', 'inner box', 'inner-box', 'innerbox'].includes(s)) return 'ib';
+  if (['tin', 'tins'].includes(s)) return 'tin';
+  if (['can', 'cans'].includes(s)) return 'can';
+  if (['btl', 'bottle', 'bottles'].includes(s)) return 'bottle';
+  if (['sachet', 'sachets'].includes(s)) return 'sachet';
+  return s;
+};
+
 export type ProductClassification = 'RM' | 'PKG' | 'FG' | 'OTHER';
 
 export interface LotBatchSelectionResult {
@@ -309,9 +333,12 @@ export function SalesReturnLotBatchModal({
       if (lUomId && targetId) {
         return lUomId === targetId;
       }
-      // 2. If both have names and target name is not generic placeholder 'units', compare names
-      if (lUomName && targetName && targetName !== 'units') {
-        return lUomName === targetName;
+      // 2. If both have names/shortcuts, compare normalized UOMs
+      const rawLotShortcut = ((l as unknown as Record<string, unknown>).uomShortcut || (l as unknown as Record<string, unknown>).unit_shortcut) as string | undefined;
+      const normLot = normalizeUom(lUomName || rawLotShortcut);
+      const normTarget = normalizeUom(targetName);
+      if (normLot && normTarget) {
+        if (normLot === normTarget) return true;
       }
       // 3. Exact string match if target is named 'units' and lot is also named 'units'
       if (lUomName && targetName && lUomName === targetName) {
@@ -882,6 +909,27 @@ export function SalesReturnLotBatchModal({
           }
 
           const finalGroups = Array.from(mergedGroupMap.values());
+
+          // Auto-balance if allocated quantity across groups is 0 and requestedQuantity > 0
+          const totalAllocatedSoFar = finalGroups.reduce((sum, grp) => sum + Number(grp.allocated_quantity || 0), 0);
+          if (totalAllocatedSoFar === 0 && requestedQuantity > 0 && finalGroups.length > 0) {
+            const firstGrp = finalGroups[0];
+            if (firstGrp.batches.length === 1) {
+              firstGrp.batches[0].quantity = requestedQuantity;
+              firstGrp.allocated_quantity = requestedQuantity;
+            } else if (firstGrp.batches.length === 0) {
+              firstGrp.batches.push({
+                inventory_lot_id: initialValues?.inventory_lot_id,
+                batch_no: initialValues?.batch_no || '',
+                manufacturing_date: initialValues?.manufacturing_date || null,
+                expiry_date: initialValues?.expiry_date || null,
+                quantity: requestedQuantity,
+                qa_status: 'GOOD' as QAStatus,
+              });
+              firstGrp.allocated_quantity = requestedQuantity;
+            }
+          }
+
           setLotGroups(finalGroups);
           return;
         }
@@ -973,22 +1021,43 @@ export function SalesReturnLotBatchModal({
               : (initialValues?.qa_status || 'GOOD');
           }
           const initialQty = (initialValues as { quantity?: number; total_quantity?: number })?.quantity ?? initialValues?.total_quantity ?? (requestedQuantity || 0);
-          const cleanKey = String(initialValues?.batch_no || '').trim().toLowerCase();
-          const cleanLookedUp = cleanKey ? batchMetaMap.get(cleanKey) : undefined;
-          const cleanMfg = initialValues?.manufacturing_date
+          let rawBatchNo = String(initialValues?.batch_no || '').trim();
+          let cleanMfg = initialValues?.manufacturing_date
             ? String(initialValues.manufacturing_date).substring(0, 10)
-            : (cleanLookedUp?.mfgDate || '');
-          const cleanExp = initialValues?.expiry_date
+            : '';
+          let cleanExp = initialValues?.expiry_date
             ? String(initialValues.expiry_date).substring(0, 10)
-            : (cleanLookedUp?.expDate || '');
+            : '';
+          let invLotId = initialValues?.inventory_lot_id;
 
-          const rawBatchNo = String(initialValues?.batch_no || '');
+          // If no batch number is provided, auto-suggest from existing product batch records
+          if (!rawBatchNo) {
+            const autoBatch = (productInvLotsData || []).find((ib) => ib.batch_no && (ib.status === 'ACTIVE' || !ib.status))
+              || (branchInvLotsData || []).find((ib) => getProductId(ib) === productId && ib.batch_no);
+            if (autoBatch) {
+              rawBatchNo = autoBatch.batch_no;
+              invLotId = invLotId ?? autoBatch.inventory_lot_id;
+              if (!cleanMfg && autoBatch.manufacturing_date) {
+                cleanMfg = String(autoBatch.manufacturing_date).substring(0, 10);
+              }
+              if (!cleanExp && autoBatch.expiry_date) {
+                cleanExp = String(autoBatch.expiry_date).substring(0, 10);
+              }
+            }
+          }
+
+          const cleanKey = rawBatchNo.toLowerCase();
+          const cleanLookedUp = cleanKey ? batchMetaMap.get(cleanKey) : undefined;
+          if (!cleanMfg && cleanLookedUp?.mfgDate) cleanMfg = cleanLookedUp.mfgDate;
+          if (!cleanExp && cleanLookedUp?.expDate) cleanExp = cleanLookedUp.expDate;
+          if (invLotId === undefined && cleanLookedUp?.inventoryLotId) invLotId = cleanLookedUp.inventoryLotId;
+
           let rowQA: QAStatus = cleanLookedUp?.qaStatus || defaultQA;
           if (isGoodReturn) rowQA = 'GOOD';
           else if (isBadOrder && rowQA === 'GOOD') rowQA = 'DAMAGED';
 
           const singleBatch: BatchRowAllocation = {
-            inventory_lot_id: initialValues?.inventory_lot_id ?? cleanLookedUp?.inventoryLotId,
+            inventory_lot_id: invLotId ?? initialValues?.inventory_lot_id ?? cleanLookedUp?.inventoryLotId,
             batch_no: rawBatchNo,
             manufacturing_date: cleanLookedUp?.mfgDate || cleanMfg,
             expiry_date: cleanLookedUp?.expDate || cleanExp,

@@ -285,7 +285,7 @@ export default function InventoryMovementTable({
                                 const rawLotId = m.mmLotId ?? m.lotId;
                                 const effectiveLotId = (hasInvId && rawLotId) ? Number(rawLotId) : 0;
                                 const matchedLot = lots.find((l) => Number(l.lotId) === Number(effectiveLotId));
-                                const resolvedLotName = matchedLot?.lotName || (Number(effectiveLotId) === 0 ? "Unassigned / Pending Storage Rack (Ghost Rack)" : (m.lotName || `Lot #${effectiveLotId}`));
+                                const resolvedLotName = matchedLot?.lotName || (Number(effectiveLotId) === 0 ? "Unassigned / Pending Storage Rack (Ghost Rack)" : (m.lotName || "-"));
                                 const qty = isDirectionIn ? Number(m.quantityIn || 0) : Number(m.quantityOut || 0);
 
                                 return (
@@ -333,7 +333,7 @@ export default function InventoryMovementTable({
                                         </TableCell>
                                         <TableCell>
                                             {(() => {
-                                                const branchName = matchedLot?.branchName || (m.branchId ? `Branch #${m.branchId}` : null);
+                                                const branchName = matchedLot?.branchName || (m.branchName as string) || (m.branch_name as string) || null;
                                                 const branchCode = matchedLot?.branchCode;
                                                 if (!branchName) return <span className="text-muted-foreground text-xs">-</span>;
                                                 return (
@@ -360,7 +360,7 @@ export default function InventoryMovementTable({
                                                         m.description ||
                                                         matchedProduct?.description ||
                                                         m.productName ||
-                                                        (m.productId ? `Product #${m.productId}` : "-");
+                                                        "-";
 
                                                     return (
                                                         <span className="font-semibold text-xs text-foreground truncate" title={displayDescription}>

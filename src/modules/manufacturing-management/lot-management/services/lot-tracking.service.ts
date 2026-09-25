@@ -142,8 +142,9 @@ export async function fetchLotsByBranch(branchId?: number, token?: string): Prom
     // If running in browser (Client Component), call Next.js API BFF route
     if (typeof window !== "undefined") {
       const url = branchId
-        ? `/api/manufacturing/lots?branch_id=${branchId}&include_all=true`
-        : "/api/manufacturing/lots?include_all=true";
+      //src\app\api\manufacturing\inventory-warehousing\lot-management\lots
+        ? `/api/manufacturing/inventory-warehousing/lot-management/lots?branch_id=${branchId}&include_all=true`
+        : "/api/manufacturing/inventory-warehousing/lot-management/lots?include_all=true";
       const res = await fetch(url, { cache: "no-store" });
       if (!res.ok) {
         await notifyClientApiError(res, "Failed to fetch lots from BFF");
@@ -179,7 +180,7 @@ export async function fetchLotsByBranch(branchId?: number, token?: string): Prom
 
         return {
           lot_id: Number(r.lot_id || r.lotId || r.id),
-          lot_name: String(r.lot_name || r.lotName || `Lot #${r.lot_id || r.lotId || r.id}`),
+          lot_name: String(r.lot_name || r.lotName || "-"),
           branch_id: bId,
           unit_id: resolvedUnitId,
           max_batch_capacity: Number(r.max_batch_capacity || r.maxBatchCapacity || 10),
@@ -228,7 +229,7 @@ export async function fetchLotsByBranch(branchId?: number, token?: string): Prom
 
       return {
         lot_id: Number(r.lot_id || r.id),
-        lot_name: String(r.lot_name || `Lot #${r.lot_id || r.id}`),
+        lot_name: String(r.lot_name || "-"),
         branch_id: bId,
         unit_id: r.unit_id ? Number(typeof r.unit_id === "object" ? (r.unit_id as { unit_id?: number; id?: number }).unit_id || (r.unit_id as { unit_id?: number; id?: number }).id : r.unit_id) : null,
         max_batch_capacity: Number(r.max_batch_capacity || 10),
@@ -273,7 +274,8 @@ export async function ensureLotForBranch(branchId: number, token?: string): Prom
     };
 
     if (typeof window !== "undefined") {
-      const res = await fetch("/api/manufacturing/lots", {
+      //src\app\api\manufacturing\inventory-warehousing\lot-management\lots
+      const res = await fetch("/api/manufacturing/inventory-warehousing/lot-management/lots", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(lotPayload),
@@ -337,7 +339,8 @@ export async function fetchInventoryLots(params: {
       if (params.status) searchParams.set("status", params.status);
 
       const qs = searchParams.toString();
-      const res = await fetch(`/api/manufacturing/inventory-lots${qs ? `?${qs}` : ""}`, { cache: "no-store" });
+      //src\app\api\manufacturing\inventory-warehousing\lot-management\inventory-lots
+      const res = await fetch(`/api/manufacturing/inventory-warehousing/lot-management/inventory-lots${qs ? `?${qs}` : ""}`, { cache: "no-store" });
       if (!res.ok) {
         await notifyClientApiError(res, "Failed to fetch inventory lots from BFF");
         return [];
@@ -472,7 +475,8 @@ export async function createInventoryLot(payload: CreateInventoryLotPayload, tok
     };
 
     if (typeof window !== "undefined") {
-      const res = await fetch("/api/manufacturing/inventory-lots", {
+                    // src\app\api\manufacturing\inventory-warehousing\lot-management\inventory-lots
+      const res = await fetch("/api/manufacturing/inventory-warehousing/lot-management/inventory-lots", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -729,7 +733,8 @@ export async function fetchBatchOnhand(params: {
 
     // Client-side execution
     if (typeof window !== "undefined") {
-      const url = `/api/manufacturing/batch-onhand${qs ? `?${qs}` : ""}`;
+      //src\app\api\manufacturing\inventory-warehousing\lot-management\batch-onhand
+      const url = `/api/manufacturing/inventory-warehousing/lot-management/batch-onhand${qs ? `?${qs}` : ""}`;
       const res = await fetch(url, { cache: "no-store" });
       if (!res.ok) {
         await notifyClientApiError(res, "Failed to fetch batch onhand inventory");

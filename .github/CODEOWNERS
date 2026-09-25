@@ -109,6 +109,9 @@
 /src/app/api/manufacturing/sales-and-fulfillment/fulfilment-and-deliveries/ @Fierrez
 /src/app/(manufacturing-management)/mm/sales-and-fulfillment/fulfillment-and-deliveries/ @Fierrez
 
+# Consolidaiton Shared
+/src/app/(manufacturing-management)/mm/sales-and-fulfillment/shared/ @Fierrez
+
 # Sales Order Fulfillment
 /src/modules/manufacturing-management/sales-and-fulfillment/sales-order-fulfillment/ @Fierrez
 /src/app/api/manufacturing/sales-and-fulfillment/sales-order-fulfillment/ @Fierrez
@@ -117,3 +120,29 @@
 # Finished Goods Master
 /src/modules/manufacturing-management/inventory-warehousing/finished-goods-master/ @Fierrez
 /src/app/api/manufacturing/inventory-warehousing/finished-goods-master/ @Fierrez
+
+# Fixed Assets Depreciation Schedule
+/src/modules/business-intelligence-and-analytics/financial-management/fixed-assets-depreciation-schedule @Fierrez
+/src/app/api/manufacturing/financial-management/fixed-assets-depreciation-schedule @Fierrez
+/src/app/(business-intelligence-and-analytics)/financial-management/fixed-assets-depreciation-schedule @Fierrez
+
+# Machine Depreciation Overhead Allocation
+/src/modules/business-intelligence-and-analytics/financial-management/machine-depreciation-overhead-allocation @Fierrez
+/src/app/api/manufacturing/financial-management/machine-depreciation-overhead-allocation @Fierrez
+/src/app/(business-intelligence-and-analytics)/financial-management/machine-depreciation-overhead-allocation @Fierrez
+
+# WIP Tracking Report
+/src/modules/business-intelligence-and-analytics/costing/wip-tracking-report @Fierrez
+/src/app/api/manufacturing/costing/wip-tracking-report @Fierrez
+/src/app/(business-intelligence-and-analytics)/costing/wip-tracking-report @Fierrez
+
+# BOM Costing Report
+/src/modules/business-intelligence-and-analytics/costing/bom-costing-report @Fierrez
+/src/app/api/manufacturing/costing/bom-costing-report @Fierrez
+/src/app/(business-intelligence-and-analytics)/costing/bom-costing-report @Fierrez
+
+# Inventory Reports
+/src/modules/manufacturing-management/mm/inventory-warehousing/inventory-reports @Fierrez
+/src/app/api/manufacturing/inventory-warehousing/inventory-reports @Fierrez
+/src/app/(manufacturing-management)/mm/inventory-warehousing/inventory-reports @Fierrez
+

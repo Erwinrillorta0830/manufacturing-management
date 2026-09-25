@@ -38,7 +38,7 @@ import { fetchAllocationPreview } from "../services/invoice-consolidation-api";
 import { generateConsolidationPDF } from "../utils/ConsolidationSummaryPrint";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { SearchableSelect } from "@/modules/manufacturing-management/shared/components/SearchableSelect";
+import { SearchableSelect } from "../../shared/components/SearchableSelect";
 import { toast } from "sonner";
 
 interface Props {

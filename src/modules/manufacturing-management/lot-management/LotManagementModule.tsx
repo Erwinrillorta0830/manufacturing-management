@@ -181,7 +181,18 @@ export default function LotManagementModule() {
 
     const availableLotsForSelect = useMemo(() => {
         const knownLotIds = new Set(lots.map((l) => Number(l.lotId)));
-        const hasGhostBatches = batches.some((b) => !b.lotId || Number(b.lotId) === 0 || !knownLotIds.has(Number(b.lotId)));
+        const branchIdNum = selectedBranchId === "ALL" ? null : Number(selectedBranchId);
+
+        // Check if there are ghost batches relevant to current branch selection
+        const hasGhostBatches = batches.some((b) => {
+            const isGhost = !b.lotId || Number(b.lotId) === 0 || !knownLotIds.has(Number(b.lotId));
+            if (!isGhost) return false;
+            if (branchIdNum === null || branchIdNum === 0) return true;
+            const batchBranchId = Number(b.branchId || 0);
+            const matchedLot = lots.find((l) => Number(l.lotId) === Number(b.lotId));
+            const lotBranchId = matchedLot ? Number(matchedLot.branchId) : 0;
+            return batchBranchId === branchIdNum || lotBranchId === branchIdNum;
+        });
 
         const ghostLot: Lot = {
             lotId: 0,
@@ -199,10 +210,16 @@ export default function LotManagementModule() {
             createdAt: "2025-01-01T00:00:00.000Z",
             updatedAt: "2025-01-01T00:00:00.000Z"
         };
-        let baseLots = hasGhostBatches ? [ghostLot, ...lots] : [...lots];
 
-        if (selectedBranchId !== "ALL") {
-            baseLots = baseLots.filter((l) => Number(l.lotId) === 0 || Number(l.branchId) === Number(selectedBranchId));
+        let baseLots: Lot[] = [];
+        if (selectedBranchId === 0) {
+            // System Virtual Rack selected: ONLY show Ghost Rack!
+            baseLots = hasGhostBatches ? [ghostLot] : [];
+        } else if (selectedBranchId !== "ALL") {
+            const branchLots = lots.filter((l) => Number(l.branchId) === branchIdNum);
+            baseLots = hasGhostBatches ? [ghostLot, ...branchLots] : branchLots;
+        } else {
+            baseLots = hasGhostBatches ? [ghostLot, ...lots] : [...lots];
         }
         if (selectedUomId !== "ALL") {
             baseLots = baseLots.filter((l) => Number(l.lotId) === 0 || Number(l.uomId) === Number(selectedUomId));
@@ -230,13 +247,23 @@ export default function LotManagementModule() {
     const availableBatchesForSelect = useMemo(() => {
         const knownLotIds = new Set(lots.map((l) => Number(l.lotId)));
         return batches.filter((b) => {
-            if (selectedBranchId !== "ALL") {
+            const isGhost = !b.lotId || Number(b.lotId) === 0 || !knownLotIds.has(Number(b.lotId));
+
+            if (selectedBranchId === 0) {
+                // System Virtual Rack: only ghost batches
+                if (!isGhost) return false;
+            } else if (selectedBranchId !== "ALL") {
+                const branchIdNum = Number(selectedBranchId);
                 const batchBranchId = Number(b.branchId || 0);
                 const matchedLot = lots.find((l) => Number(l.lotId) === Number(b.lotId));
                 const lotBranchId = matchedLot ? Number(matchedLot.branchId) : 0;
-                const matchesBranch = batchBranchId === Number(selectedBranchId) || (batchBranchId === 0 && lotBranchId === Number(selectedBranchId));
-                if (!matchesBranch) {
-                    return false;
+
+                if (isGhost) {
+                    const matchesGhost = batchBranchId === branchIdNum || lotBranchId === branchIdNum;
+                    if (!matchesGhost) return false;
+                } else {
+                    const matchesBranch = batchBranchId === branchIdNum || (batchBranchId === 0 && lotBranchId === branchIdNum);
+                    if (!matchesBranch) return false;
                 }
             }
             if (selectedProductType !== "ALL") {
@@ -302,7 +329,9 @@ export default function LotManagementModule() {
 
     const displayedLotsForTable = useMemo(() => {
         let baseLots = filteredLots;
-        if (selectedBranchId !== "ALL") {
+        if (selectedBranchId === 0) {
+            baseLots = [];
+        } else if (selectedBranchId !== "ALL") {
             baseLots = baseLots.filter((l) => Number(l.branchId) === Number(selectedBranchId));
         }
         if (selectedUomId !== "ALL") {
@@ -689,6 +718,8 @@ export default function LotManagementModule() {
                 movements={movements}
                 lots={lots}
                 branches={branches}
+                products={products}
+                uoms={uoms}
                 loading={loadingMovements}
             />
 

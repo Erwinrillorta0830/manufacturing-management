@@ -39,6 +39,8 @@ import {
     Search,
     RefreshCw,
     Save,
+    RotateCcw,
+    Lightbulb,
 } from "lucide-react";
 import ProductReconciliationModal from "./ProductReconciliationModal";
 
@@ -58,6 +60,7 @@ interface SavedDeliveryDraft {
     orders: Array<{
         order_id: number;
         invoice_id: number;
+        invoice_no?: string;
         remarks: string;
         fulfillment_status: FulfillmentStatus;
         linked_sales_return?: LinkedSalesReturn | null;
@@ -79,6 +82,47 @@ const getReservationPickedQty = (r: LineItemReservation): number => {
     }
     return Number(r.reserved_quantity || 0);
 };
+
+export function getStatusBadgeConfig(status: FulfillmentStatus) {
+    switch (status) {
+        case "Fulfilled":
+            return {
+                label: "Fulfilled",
+                icon: CheckCircle2,
+                className: "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/30",
+                iconClass: "text-emerald-600 dark:text-emerald-400",
+            };
+        case "Fulfilled with Concerns":
+            return {
+                label: "Fulfilled with Concerns",
+                icon: AlertTriangle,
+                className: "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/30",
+                iconClass: "text-amber-600 dark:text-amber-400",
+            };
+        case "Fulfilled with Returns":
+            return {
+                label: "Fulfilled with Returns",
+                icon: RotateCcw,
+                className: "bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 dark:bg-blue-500/10 dark:text-blue-300 dark:border-blue-500/30",
+                iconClass: "text-blue-600 dark:text-blue-400",
+            };
+        case "Pending":
+            return {
+                label: "Pending",
+                icon: AlertCircle,
+                className: "bg-zinc-50 text-zinc-700 border-zinc-200 hover:bg-zinc-100 dark:bg-zinc-500/10 dark:text-zinc-300 dark:border-zinc-500/30",
+                iconClass: "text-zinc-600 dark:text-zinc-400",
+            };
+        case "Unfulfilled / Returns":
+        default:
+            return {
+                label: "Unfulfilled",
+                icon: AlertCircle,
+                className: "bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100 dark:bg-rose-500/10 dark:text-rose-300 dark:border-rose-500/30",
+                iconClass: "text-rose-600 dark:text-rose-400",
+            };
+    }
+}
 
 function loadLocalDraft(consolidatorId: number): SavedDeliveryDraft | null {
     if (typeof window === "undefined" || !consolidatorId) return null;
@@ -103,7 +147,7 @@ export default function DeliveryClearanceModal({
     onSubmit,
     onRefresh,
 }: DeliveryClearanceModalProps) {
-    const isReadOnly = Boolean(record?.is_cleared || record?.status === "Completed" || record?.status === "Delivered");
+    const isReadOnly = Boolean(record?.is_cleared || record?.status === "Completed");
 
     const [hasActiveDraft, setHasActiveDraft] = useState<boolean>(() => {
         if (isReadOnly || !record?.consolidator_id) return false;
@@ -116,38 +160,30 @@ export default function DeliveryClearanceModal({
 
         return (record?.orders || []).map((ord) => {
             const savedOrder = localDraft?.orders?.find(
-                (so) => so.order_id === ord.order_id || (ord.invoice_id && so.invoice_id === ord.invoice_id)
+                (so) =>
+                    (ord.invoice_id && so.invoice_id === ord.invoice_id) ||
+                    (ord.invoice_no && ord.invoice_no !== "---" && so.invoice_no === ord.invoice_no) ||
+                    (!ord.invoice_id && so.order_id === ord.order_id)
             );
 
-            const hasReturnItems = (ord.items || []).some((i) => i.returned_quantity > 0);
-            const isAllUnfulfilled =
-                (ord.items || []).length > 0 &&
-                (ord.items || []).every((i) => {
-                    const target = i.invoiced_quantity !== undefined && i.invoiced_quantity !== null
-                        ? Number(i.invoiced_quantity)
-                        : Number(i.ordered_quantity || 0);
-                    return i.received_quantity === 0 && i.returned_quantity === target && target > 0;
-                });
-
-            let derivedStatus = ord.fulfillment_status;
-            if (savedOrder?.fulfillment_status) {
+            let derivedStatus: FulfillmentStatus = "Fulfilled";
+            if (isReadOnly) {
+                derivedStatus = ord.fulfillment_status || "Fulfilled";
+            } else if (savedOrder?.fulfillment_status) {
                 derivedStatus = savedOrder.fulfillment_status;
             } else if (ord.fulfillment_status && ord.fulfillment_status !== "Pending") {
                 derivedStatus = ord.fulfillment_status;
-            } else if (isAllUnfulfilled) {
-                derivedStatus = "Unfulfilled / Returns";
-            } else if (ord.linked_sales_return || hasReturnItems) {
-                derivedStatus = "Fulfilled with Returns";
-            } else {
-                derivedStatus = computePreviewStatus(ord.items || []);
             }
 
             const savedLinkedReturn =
-                savedOrder?.linked_sales_return !== undefined
+                isReadOnly
+                    ? ord.linked_sales_return
+                    : savedOrder?.linked_sales_return !== undefined
                     ? savedOrder.linked_sales_return
                     : ord.linked_sales_return;
 
             const items = (ord.items || []).map((item) => {
+                if (isReadOnly) return { ...item };
                 const savedItem = savedOrder?.items?.find(
                     (si) => si.detail_id === item.detail_id || (si.product_id === item.product_id && !si.detail_id)
                 );
@@ -172,9 +208,10 @@ export default function DeliveryClearanceModal({
 
             return {
                 ...ord,
-                remarks: savedOrder?.remarks !== undefined ? savedOrder.remarks : "",
-                fulfillment_status: savedOrder?.fulfillment_status || derivedStatus,
-                linked_sales_return: savedLinkedReturn,
+                is_cleared: ord.is_cleared !== false,
+                remarks: isReadOnly ? (ord.remarks || "") : (savedOrder?.remarks !== undefined ? savedOrder.remarks : (ord.remarks || "")),
+                fulfillment_status: isReadOnly ? (ord.fulfillment_status || derivedStatus) : (savedOrder?.fulfillment_status || derivedStatus),
+                linked_sales_return: isReadOnly ? (ord.fulfillment_status === "Fulfilled with Returns" ? ord.linked_sales_return : null) : savedLinkedReturn,
                 items,
             };
         });
@@ -210,34 +247,33 @@ export default function DeliveryClearanceModal({
                 return (record.orders || []).map((freshOrd) => {
                     const existing = prevOrders.find((o) => o.invoice_id === freshOrd.invoice_id);
                     const savedOrder = localDraft?.orders?.find(
-                        (so) => so.order_id === freshOrd.order_id || (freshOrd.invoice_id && so.invoice_id === freshOrd.invoice_id)
+                        (so) =>
+                            (freshOrd.invoice_id && so.invoice_id === freshOrd.invoice_id) ||
+                            (freshOrd.invoice_no && freshOrd.invoice_no !== "---" && so.invoice_no === freshOrd.invoice_no) ||
+                            (!freshOrd.invoice_id && so.order_id === freshOrd.order_id)
                     );
 
-                    const hasReturnItems = (freshOrd.items || []).some((i) => i.returned_quantity > 0);
-                    const isAllUnfulfilled =
-                        (freshOrd.items || []).length > 0 &&
-                        (freshOrd.items || []).every((i) => i.received_quantity === 0 && i.returned_quantity === i.ordered_quantity);
-
-                    let derivedStatus = freshOrd.fulfillment_status;
-                    if (savedOrder?.fulfillment_status) {
+                    let derivedStatus: FulfillmentStatus = "Fulfilled";
+                    if (isReadOnly) {
+                        derivedStatus = freshOrd.fulfillment_status || "Fulfilled";
+                    } else if (existing?.fulfillment_status) {
+                        derivedStatus = existing.fulfillment_status;
+                    } else if (savedOrder?.fulfillment_status) {
                         derivedStatus = savedOrder.fulfillment_status;
                     } else if (freshOrd.fulfillment_status && freshOrd.fulfillment_status !== "Pending") {
                         derivedStatus = freshOrd.fulfillment_status;
-                    } else if (isAllUnfulfilled) {
-                        derivedStatus = "Unfulfilled / Returns";
-                    } else if (freshOrd.linked_sales_return || hasReturnItems) {
-                        derivedStatus = "Fulfilled with Returns";
-                    } else {
-                        derivedStatus = computePreviewStatus(freshOrd.items || []);
                     }
 
                     const savedLinkedReturn =
-                        savedOrder?.linked_sales_return !== undefined
+                        isReadOnly
+                            ? freshOrd.linked_sales_return
+                            : savedOrder?.linked_sales_return !== undefined
                             ? savedOrder.linked_sales_return
                             : freshOrd.linked_sales_return;
 
-                    if (!existing) {
+                    if (!existing || isReadOnly) {
                         const items = (freshOrd.items || []).map((item) => {
+                            if (isReadOnly) return { ...item };
                             const savedItem = savedOrder?.items?.find(
                                 (si) => si.detail_id === item.detail_id || (si.product_id === item.product_id && !si.detail_id)
                             );
@@ -262,15 +298,26 @@ export default function DeliveryClearanceModal({
 
                         return {
                             ...freshOrd,
-                            remarks: savedOrder?.remarks !== undefined ? savedOrder.remarks : "",
-                            fulfillment_status: savedOrder?.fulfillment_status || derivedStatus,
-                            linked_sales_return: savedLinkedReturn,
+                            is_cleared: freshOrd.is_cleared !== false,
+                            remarks: isReadOnly ? (freshOrd.remarks || "") : (savedOrder?.remarks !== undefined ? savedOrder.remarks : (freshOrd.remarks || "")),
+                            fulfillment_status: isReadOnly ? (freshOrd.fulfillment_status || derivedStatus) : (savedOrder?.fulfillment_status || derivedStatus),
+                            linked_sales_return: isReadOnly ? (freshOrd.fulfillment_status === "Fulfilled with Returns" ? freshOrd.linked_sales_return : null) : savedLinkedReturn,
                             items,
                         };
                     }
+                    const baseLinkedReturn = existing.linked_sales_return || savedLinkedReturn || freshOrd.linked_sales_return;
+                    let resolvedLinkedReturn = baseLinkedReturn;
+                    if (baseLinkedReturn && freshOrd.linked_sales_return && (baseLinkedReturn.return_id === freshOrd.linked_sales_return.return_id || baseLinkedReturn.return_number === freshOrd.linked_sales_return.return_number)) {
+                        resolvedLinkedReturn = {
+                            ...baseLinkedReturn,
+                            status: freshOrd.linked_sales_return.status,
+                            is_received: freshOrd.linked_sales_return.is_received,
+                        };
+                    }
+
                     return {
                         ...existing,
-                        linked_sales_return: existing.fulfillment_status === "Fulfilled with Returns" ? (existing.linked_sales_return || savedLinkedReturn || freshOrd.linked_sales_return) : null,
+                        linked_sales_return: existing.fulfillment_status === "Fulfilled with Returns" ? resolvedLinkedReturn : null,
                         fulfillment_status: existing.fulfillment_status || derivedStatus,
                     };
                 });
@@ -279,10 +326,46 @@ export default function DeliveryClearanceModal({
     }
 
     const handleRefresh = async () => {
-        if (!onRefresh) return;
         setIsRefreshing(true);
         try {
-            await onRefresh();
+            if (onRefresh) await onRefresh();
+
+            // Actively fetch fresh sales returns to update all linked returns across orders
+            const res = await fetch("/api/manufacturing/sales-and-fulfillment/sales-return-and-credit-notes?action=list&limit=100", { cache: "no-store" });
+            const data = res.ok ? await res.json() : null;
+            const list = Array.isArray(data)
+                ? data
+                : data && typeof data === "object" && "data" in data && Array.isArray((data as { data: unknown[] }).data)
+                    ? (data as { data: unknown[] }).data
+                    : [];
+            if (Array.isArray(list) && list.length > 0) {
+                setOrders((prev) =>
+                    prev.map((ord) => {
+                        if (!ord.linked_sales_return) return ord;
+                        const retId = ord.linked_sales_return.return_id;
+                        const retNo = ord.linked_sales_return.return_number;
+                        const found = list.find(
+                            (r: Record<string, unknown>) =>
+                                (retId && Number(r.id || r.return_id) === retId) ||
+                                (retNo && String(r.returnNo || r.return_number).trim().toLowerCase() === retNo.trim().toLowerCase())
+                        );
+                        if (found) {
+                            const isReceived = Boolean(
+                                found.status === "Received" || found.status === "Approved" || found.isReceived || found.is_received
+                            );
+                            return {
+                                ...ord,
+                                linked_sales_return: {
+                                    ...ord.linked_sales_return,
+                                    status: (found.status as string) || ord.linked_sales_return.status,
+                                    is_received: isReceived,
+                                },
+                            };
+                        }
+                        return ord;
+                    })
+                );
+            }
             toast.success("Sales Return status updated.");
         } catch {
             toast.error("Failed to refresh Sales Return status.");
@@ -349,9 +432,12 @@ export default function DeliveryClearanceModal({
     const missingRemarksOrders = useMemo(() => {
         return orders.filter((ord) => {
             const status = ord.fulfillment_status;
-            const hasVariance = (ord.items || []).some(
-                (i) => i.ordered_quantity !== i.received_quantity + i.returned_quantity
-            );
+            const hasVariance = (ord.items || []).some((i) => {
+                const target = i.invoiced_quantity !== undefined && i.invoiced_quantity !== null
+                    ? i.invoiced_quantity
+                    : i.ordered_quantity;
+                return target !== i.received_quantity + i.returned_quantity;
+            });
             const requiresRemarks =
                 status === "Fulfilled with Returns" ||
                 status === "Fulfilled with Concerns" ||
@@ -375,7 +461,8 @@ export default function DeliveryClearanceModal({
                 if (item.received_quantity < 0 || item.returned_quantity < 0) {
                     issues.push(`Order ${ord.order_no} Line ${itemIdx + 1}: Quantities cannot be negative.`);
                 }
-                if (item.returned_quantity > 0 && item.reservations && item.reservations.length > 0) {
+                // Batch allocation for returns is strictly handled by the Sales Return module when status is Fulfilled with Returns
+                if (ord.fulfillment_status !== "Fulfilled with Returns" && item.returned_quantity > 0 && item.reservations && item.reservations.length > 0) {
                     const physicalDispatched = item.reservations.reduce(
                         (sum, r) => sum + getReservationPickedQty(r),
                         0
@@ -437,38 +524,27 @@ export default function DeliveryClearanceModal({
     };
 
     // Update order status preset at order row level
-    const setOrderStatusPreset = (orderIndex: number, preset: LineStatus) => {
+    const setOrderStatusPreset = (orderIndex: number, preset: FulfillmentStatus) => {
         setOrders((prev) => {
             const next = [...prev];
             const ord = next[orderIndex];
 
             let updatedItems = ord.items;
             if (preset === "Unfulfilled / Returns") {
-                // All items returned to hub: received is 0, returned equals physical dispatch (picked/invoiced) or existing received
+                // When status is "Unfulfilled / Returns":
+                // Fulfilled must always be 0.
+                // Do NOT auto-fill or auto-calculate returned_quantity (start at 0 so user can manually input returned qty and inspect variance).
                 updatedItems = (ord.items || []).map((item) => {
-                    const physicalDispatched = (item.reservations || []).reduce(
-                        (sum, r) => sum + getReservationPickedQty(r),
-                        0
-                    );
-                    const itemBaseline = item.invoiced_quantity !== undefined && item.invoiced_quantity !== null
-                        ? item.invoiced_quantity
-                        : item.ordered_quantity;
-                    const returnQty = physicalDispatched > 0
-                        ? Math.min(physicalDispatched, itemBaseline)
-                        : (typeof item.received_quantity === "number" && item.received_quantity > 0 ? item.received_quantity : itemBaseline);
-
-                    const updatedReservations = (item.reservations || []).map((r) => ({
-                        ...r,
-                        returned_quantity: getReservationPickedQty(r),
-                    }));
-
                     return {
                         ...item,
                         received_quantity: 0,
-                        returned_quantity: returnQty,
+                        returned_quantity: 0,
                         has_concern: false,
                         line_status: "Unfulfilled / Returns" as LineStatus,
-                        reservations: updatedReservations,
+                        reservations: (item.reservations || []).map((r) => ({
+                            ...r,
+                            returned_quantity: 0,
+                        })),
                     };
                 });
             } else if (preset === "Fulfilled") {
@@ -524,7 +600,7 @@ export default function DeliveryClearanceModal({
 
             next[orderIndex] = {
                 ...ord,
-                fulfillment_status: preset as FulfillmentStatus,
+                fulfillment_status: preset,
                 linked_sales_return: preset === "Fulfilled with Returns" ? ord.linked_sales_return : null,
                 items: updatedItems,
             };
@@ -544,35 +620,16 @@ export default function DeliveryClearanceModal({
         updatedRemarks?: string
     ) => {
         if (selectedOrderIndex === null) return;
-        // console.log("[DeliveryClearanceModal] 💾 Reconciled items received from ProductReconciliationModal:", {
-        //     orderIndex: selectedOrderIndex,
-        //     order_no: orders[selectedOrderIndex]?.order_no,
-        //     updatedItems,
-        //     updatedLinkedReturn,
-        //     updatedRemarks,
-        // });
         setOrders((prev) => {
             const next = [...prev];
             const ord = next[selectedOrderIndex];
             const linkedReturn = updatedLinkedReturn !== undefined ? updatedLinkedReturn : ord.linked_sales_return;
-            const computed = computePreviewStatus(updatedItems);
-            let newStatus = ord.fulfillment_status || computed;
-            if (linkedReturn) {
-                newStatus = "Fulfilled with Returns";
-            } else if (ord.fulfillment_status === "Fulfilled with Concerns") {
-                newStatus = "Fulfilled with Concerns";
-            } else if (ord.fulfillment_status === "Fulfilled with Returns") {
-                newStatus = computed === "Unfulfilled / Returns" ? "Unfulfilled / Returns" : "Fulfilled with Returns";
-            } else if (ord.fulfillment_status === "Unfulfilled / Returns") {
-                newStatus = "Unfulfilled / Returns";
-            } else {
-                newStatus = computed;
-            }
+
             next[selectedOrderIndex] = {
                 ...ord,
                 remarks: updatedRemarks !== undefined ? updatedRemarks : ord.remarks,
                 linked_sales_return: linkedReturn,
-                fulfillment_status: newStatus,
+                fulfillment_status: ord.fulfillment_status, // Strictly maintain the user-selected status
                 items: updatedItems,
             };
             return next;
@@ -657,6 +714,7 @@ export default function DeliveryClearanceModal({
                 orders: orders.map((ord) => ({
                     order_id: ord.order_id,
                     invoice_id: ord.invoice_id,
+                    invoice_no: ord.invoice_no,
                     remarks: ord.remarks,
                     fulfillment_status: ord.fulfillment_status,
                     linked_sales_return: ord.linked_sales_return || null,
@@ -1015,15 +1073,15 @@ export default function DeliveryClearanceModal({
                                 </div>
                             )}
 
-                            {/* Sales Order Reconciliation Table Section */}
+                            {/* Invoice Reconciliation Table Section */}
                             <div className="space-y-3">
                                 <div className="px-1 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                                     <div>
                                         <h3 className="text-sm font-black text-foreground tracking-tight">
-                                            Sales Order Reconciliation Table
+                                            Invoice Reconciliation Table
                                         </h3>
                                         <p className="text-xs font-semibold text-rose-500 dark:text-rose-400 pt-0.5">
-                                            Click any order row to reconcile individual product lines and returned quantities.
+                                            Select status and mark items as cleared. Click a row to add remarks/details.
                                         </p>
                                     </div>
 
@@ -1049,89 +1107,110 @@ export default function DeliveryClearanceModal({
                                     </div>
                                 </div>
 
-                                {/* Orders Table */}
+                                {/* Invoices Table */}
                                 <div className="border rounded-xl overflow-hidden bg-card shadow-sm">
                                     <div className="overflow-x-auto">
                                         <table className="w-full text-left border-collapse text-xs">
                                             <thead>
                                                 <tr className="border-b bg-muted/40 text-[10px] uppercase font-black text-muted-foreground tracking-wider">
-                                                    <th className="p-3.5 w-48">Status</th>
+                                                    <th className="p-3.5 min-w-[210px] w-56">Status</th>
                                                     <th className="p-3.5">Order No.</th>
                                                     <th className="p-3.5">Invoice No.</th>
                                                     <th className="p-3.5">Invoice Date</th>
                                                     <th className="p-3.5">Customer</th>
                                                     <th className="p-3.5 text-right">Amount</th>
-                                                    <th className="p-3.5 min-w-[140px]">Linked Return</th>
+                                                    <th className="p-3.5 min-w-[150px]">Remarks</th>
                                                 </tr>
                                             </thead>
                                             <tbody className="divide-y">
                                                 {filteredOrdersWithIndex.length === 0 ? (
                                                     <tr>
                                                         <td colSpan={7} className="p-8 text-center text-muted-foreground text-xs font-semibold">
-                                                            No sales orders matching &quot;{orderSearch}&quot; found.
+                                                            No invoices matching &quot;{orderSearch}&quot; found.
                                                         </td>
                                                     </tr>
                                                 ) : (
                                                     filteredOrdersWithIndex.map(({ ord, originalIndex }) => {
-                                                        const currentStatus = ord.fulfillment_status || "Fulfilled";
+                                                        const currentStatus =
+                                                            !ord.fulfillment_status || ord.fulfillment_status === "Pending"
+                                                                ? "Fulfilled"
+                                                                : ord.fulfillment_status;
+                                                        const config = getStatusBadgeConfig(currentStatus);
+                                                        const StatusIcon = config.icon;
 
                                                         return (
                                                             <tr
-                                                                key={ord.invoice_id || originalIndex}
+                                                                key={ord.invoice_id || `${ord.order_id}-${originalIndex}`}
                                                                 onClick={() => handleOpenReconciliation(originalIndex)}
                                                                 className="hover:bg-muted/15 cursor-pointer transition-colors group"
                                                             >
-                                                                {/* Status Selector */}
-                                                                <td className="p-3.5 align-middle" onClick={(e) => e.stopPropagation()}>
+
+                                                                {/* Status Selector Pill */}
+                                                                <td
+                                                                    className="p-3.5 align-middle"
+                                                                    onClick={(e) => e.stopPropagation()}
+                                                                    onPointerDown={(e) => e.stopPropagation()}
+                                                                >
                                                                     {isReadOnly ? (
                                                                         <span
-                                                                            className={`inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider border ${
-                                                                                currentStatus === "Fulfilled"
-                                                                                    ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
-                                                                                    : currentStatus === "Fulfilled with Concerns" || currentStatus === "Fulfilled with Returns"
-                                                                                    ? "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30"
-                                                                                    : currentStatus === "Unfulfilled / Returns"
-                                                                                    ? "bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/30"
-                                                                                    : "bg-muted text-muted-foreground border-border"
-                                                                            }`}
+                                                                            className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full text-xs font-semibold border ${config.className}`}
                                                                         >
-                                                                            {currentStatus}
+                                                                            <StatusIcon className={`h-3.5 w-3.5 shrink-0 ${config.iconClass}`} />
+                                                                            <span>{config.label}</span>
                                                                         </span>
                                                                     ) : (
                                                                         <Select
                                                                             value={currentStatus}
                                                                             onValueChange={(val) =>
-                                                                                setOrderStatusPreset(originalIndex, val as LineStatus)
+                                                                                setOrderStatusPreset(originalIndex, val as FulfillmentStatus)
                                                                             }
                                                                         >
                                                                             <SelectTrigger
-                                                                                className={`w-full h-8 text-[11px] font-bold rounded-lg transition-all ${
-                                                                                    currentStatus === "Fulfilled"
-                                                                                        ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
-                                                                                        : currentStatus === "Fulfilled with Concerns"
-                                                                                        ? "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30"
-                                                                                        : currentStatus === "Fulfilled with Returns"
-                                                                                        ? "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30"
-                                                                                        : currentStatus === "Unfulfilled / Returns"
-                                                                                        ? "bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/30"
-                                                                                        : "bg-background text-foreground border-input"
-                                                                                }`}
+                                                                                className={`h-7 px-2.5 rounded-full text-xs font-semibold border flex items-center justify-between gap-1.5 transition-colors cursor-pointer w-full max-w-[210px] shadow-2xs ${config.className}`}
                                                                             >
-                                                                                <SelectValue placeholder="Status" />
+                                                                                <div className="flex items-center gap-1.5 truncate">
+                                                                                    <StatusIcon className={`h-3.5 w-3.5 shrink-0 ${config.iconClass}`} />
+                                                                                    <SelectValue placeholder="Status">
+                                                                                        <span className="truncate">{config.label}</span>
+                                                                                    </SelectValue>
+                                                                                </div>
                                                                             </SelectTrigger>
-                                                                            <SelectContent>
-                                                                                {ord.linked_sales_return ? (
-                                                                                    <SelectItem value="Fulfilled with Returns" className="text-amber-700 dark:text-amber-300 font-bold text-xs">Fulfilled with Returns</SelectItem>
-                                                                                ) : (
-                                                                                    <>
-                                                                                        <SelectItem value="Fulfilled" className="text-emerald-700 dark:text-emerald-300 font-bold text-xs">Fulfilled</SelectItem>
-                                                                                        <SelectItem value="Fulfilled with Concerns" className="text-amber-700 dark:text-amber-300 font-bold text-xs">Fulfilled with Concerns</SelectItem>
-                                                                                        <SelectItem value="Fulfilled with Returns" className="text-amber-700 dark:text-amber-300 font-bold text-xs">Fulfilled with Returns</SelectItem>
-                                                                                        <SelectItem value="Unfulfilled / Returns" className="text-rose-700 dark:text-rose-300 font-bold text-xs">Unfulfilled / Returns</SelectItem>
-                                                                                    </>
-                                                                                )}
+                                                                            <SelectContent position="popper" className="z-[9999] min-w-[200px] rounded-xl border shadow-xl bg-popover">
+                                                                                <SelectItem value="Fulfilled" className="cursor-pointer text-xs font-semibold py-2">
+                                                                                    <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300">
+                                                                                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                                                                                        <span>Fulfilled</span>
+                                                                                    </div>
+                                                                                </SelectItem>
+                                                                                <SelectItem value="Fulfilled with Concerns" className="cursor-pointer text-xs font-semibold py-2">
+                                                                                    <div className="flex items-center gap-2 text-amber-700 dark:text-amber-300">
+                                                                                        <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                                                                                        <span>Fulfilled with Concerns</span>
+                                                                                    </div>
+                                                                                </SelectItem>
+                                                                                <SelectItem value="Fulfilled with Returns" className="cursor-pointer text-xs font-semibold py-2">
+                                                                                    <div className="flex items-center gap-2 text-blue-700 dark:text-blue-300">
+                                                                                        <RotateCcw className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+                                                                                        <span>Fulfilled with Returns</span>
+                                                                                    </div>
+                                                                                </SelectItem>
+                                                                                <SelectItem value="Unfulfilled / Returns" className="cursor-pointer text-xs font-semibold py-2">
+                                                                                    <div className="flex items-center gap-2 text-rose-700 dark:text-rose-300">
+                                                                                        <AlertCircle className="h-3.5 w-3.5 text-rose-600 dark:text-rose-400" />
+                                                                                        <span>Unfulfilled</span>
+                                                                                    </div>
+                                                                                </SelectItem>
                                                                             </SelectContent>
                                                                         </Select>
+                                                                    )}
+                                                                    {currentStatus === "Fulfilled" && ord.linked_sales_return && (
+                                                                        <div
+                                                                            className="mt-1 flex items-center gap-1 text-[10px] text-amber-700 dark:text-amber-300 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md font-semibold max-w-[210px] truncate"
+                                                                            title={`Tip: Order is Fulfilled but linked to Sales Return ${ord.linked_sales_return.return_number}`}
+                                                                        >
+                                                                            <Lightbulb className="h-3 w-3 shrink-0 text-amber-600 dark:text-amber-400" />
+                                                                            <span className="truncate">Tip: Linked to {ord.linked_sales_return.return_number}</span>
+                                                                        </div>
                                                                     )}
                                                                 </td>
 
@@ -1181,36 +1260,18 @@ export default function DeliveryClearanceModal({
                                                                     ₱{ord.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                                 </td>
 
-                                                                {/* Linked Return */}
-                                                                <td className="p-3.5 align-middle" onClick={(e) => e.stopPropagation()}>
-                                                                    {ord.linked_sales_return ? (
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={(e) => {
-                                                                                e.stopPropagation();
-                                                                                handleRedirectToSalesReturn(ord);
-                                                                            }}
-                                                                            title="Click to view/edit Sales Return"
-                                                                            className={`inline-flex items-center gap-1 text-[9px] font-bold px-2 py-1 rounded-md border cursor-pointer hover:opacity-80 transition-opacity ${
-                                                                                ord.linked_sales_return.status === "Received" ||
-                                                                                ord.linked_sales_return.status === "Approved" ||
-                                                                                ord.linked_sales_return.is_received
-                                                                                    ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
-                                                                                    : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
-                                                                            }`}
-                                                                        >
-                                                                            {ord.linked_sales_return.status === "Received" ||
-                                                                            ord.linked_sales_return.status === "Approved" ||
-                                                                            ord.linked_sales_return.is_received ? (
-                                                                                <CheckCircle2 className="h-3 w-3" />
-                                                                            ) : (
-                                                                                <AlertCircle className="h-3 w-3" />
-                                                                            )}
+                                                                {/* Remarks */}
+                                                                <td className="p-3.5 align-middle text-xs">
+                                                                    {ord.remarks && ord.remarks.trim() ? (
+                                                                        <span className="text-foreground font-medium block truncate max-w-[180px]" title={ord.remarks}>
+                                                                            {ord.remarks}
+                                                                        </span>
+                                                                    ) : ord.linked_sales_return ? (
+                                                                        <span className="text-blue-600 dark:text-blue-400 font-medium block truncate max-w-[180px]">
                                                                             SR: {ord.linked_sales_return.return_number} ({ord.linked_sales_return.status || "Pending"})
-                                                                            <ExternalLink className="h-2.5 w-2.5 ml-0.5 opacity-70" />
-                                                                        </button>
+                                                                        </span>
                                                                     ) : (
-                                                                        <span className="text-muted-foreground font-mono text-xs">---</span>
+                                                                        <span className="text-muted-foreground/60 font-mono">—</span>
                                                                     )}
                                                                 </td>
                                                             </tr>

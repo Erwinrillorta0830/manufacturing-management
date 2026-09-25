@@ -59,7 +59,7 @@ export async function fetchInventoryData(): Promise<RawInventoryResponse> {
 }
 
 export async function fetchLotsList(): Promise<LotLookup[]> {
-    const res = await fetch("/api/manufacturing/lots");
+    const res = await fetch("/api/manufacturing/inventory-warehousing/inventory-reports/lots");
     if (!res.ok) {
         throw new Error("Failed to fetch lots for lookup from BFF");
     }

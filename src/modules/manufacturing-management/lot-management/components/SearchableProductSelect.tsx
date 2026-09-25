@@ -89,7 +89,7 @@ export function SearchableProductSelect({
                                 )}
                             </span>
                         ) : value ? (
-                            <span className="font-semibold text-foreground text-xs">Product #{value}</span>
+                            <span className="font-semibold text-foreground text-xs">-</span>
                         ) : (
                             <span className="text-xs">{placeholder}</span>
                         )}

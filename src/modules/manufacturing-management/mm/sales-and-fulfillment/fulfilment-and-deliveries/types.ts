@@ -44,6 +44,8 @@ export interface ClearanceLineItem {
     concern_notes: string;
     line_status: LineStatus;
     reservations?: LineItemReservation[];
+    product_type?: number | string | null;
+    product_type_name?: string | null;
 }
 
 export interface LinkedSalesReturn {

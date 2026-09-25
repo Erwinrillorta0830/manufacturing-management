@@ -38,7 +38,7 @@ import {
     type LotAllocation,
 } from "../../shared/consolidation-api";
 import { ConsolidationStatusBadge } from "../../shared/consolidation-ui";
-import { SearchableSelect, type SearchableSelectOption } from "@/modules/manufacturing-management/shared/components/SearchableSelect";
+import { SearchableSelect, type SearchableSelectOption } from "../../shared/components/SearchableSelect";
 
 interface Props {
     isOpen: boolean;

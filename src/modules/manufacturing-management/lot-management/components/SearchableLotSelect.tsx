@@ -117,7 +117,7 @@ export function SearchableLotSelect<T extends number[] | number | "ALL" | "" = n
                         ) : selectedLotIds.length === 1 ? (
                             <span className="flex items-center gap-1.5 truncate">
                                 <span className="font-semibold text-foreground text-xs truncate">
-                                    {selectedSingleLot ? selectedSingleLot.lotName : `Lot #${selectedLotIds[0]}`}
+                                    {selectedSingleLot ? selectedSingleLot.lotName : "-"}
                                 </span>
                             </span>
                         ) : selectedLotIds.length > 1 ? (

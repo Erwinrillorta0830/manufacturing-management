@@ -4,7 +4,7 @@ import React from "react";
 import { Search, X, RefreshCw, FileDown, ChevronsDown, ChevronsUp } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { SearchableSelect, SearchableSelectOption } from "@/modules/manufacturing-management/shared/components/SearchableSelect";
+import { SearchableSelect, SearchableSelectOption } from "./SearchableSelect";
 import { BranchLookup, CategoryLookup, ProductTypeLookup, InventoryReportFilterState } from "../types";
 
 interface ReportFiltersProps {

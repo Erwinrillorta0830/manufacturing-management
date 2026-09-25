@@ -472,7 +472,7 @@ export default function DeliveriesModule() {
                             >
                                 {records.map((record) => {
                                     const isExpanded = expandedRowIds.has(record.consolidator_id);
-                                    const isCleared = record.is_cleared || record.status === "Completed" || record.status === "Delivered";
+                                    const isCleared = Boolean(record.is_cleared || record.status === "Completed");
 
                                     return (
                                         <React.Fragment key={record.consolidator_id}>

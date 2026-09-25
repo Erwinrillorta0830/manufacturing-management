@@ -122,7 +122,7 @@ export function SearchableBatchSelect<T extends number[] | number | "ALL" | "" =
                         ) : selectedBatchIds.length === 1 ? (
                             <span className="flex items-center gap-1.5 truncate min-w-0">
                                 <span className="font-mono font-bold text-foreground text-xs truncate">
-                                    {selectedSingleBatch ? selectedSingleBatch.batchNumber : `Batch #${selectedBatchIds[0]}`}
+                                    {selectedSingleBatch ? selectedSingleBatch.batchNumber : "-"}
                                 </span>
                                 {selectedSingleBatch?.productName && (
                                     <span className="text-[11px] text-muted-foreground truncate hidden sm:inline">
@@ -276,7 +276,7 @@ export function SearchableBatchSelect<T extends number[] | number | "ALL" | "" =
                                                         )}
                                                     </div>
                                                     <div className="text-[11px] text-muted-foreground truncate mt-0.5">
-                                                        {b.productName || `Product #${b.productId}`}
+                                                        {b.productName || "-"}
                                                         {b.itemCode && <span className="font-mono text-[10px] ml-1">({b.itemCode})</span>}
                                                     </div>
                                                 </div>
