@@ -54,8 +54,8 @@ export function StatusLegendPopover({
                                 ))}
                             </ul>
                             <p className="mt-2 text-[10px] text-muted-foreground">
-                                Main Store is the central warehouse. The floor bin (for example,
-                                <span className="font-mono"> FLOOR-STAGING-112</span>) is the work-center staging area.
+                                Main Store is the central warehouse. The floor bin (
+                                <span className="font-mono">FLOOR-STAGING</span>) is the generic raw-material staging area.
                             </p>
                         </div>
                     )}

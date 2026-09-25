@@ -220,9 +220,9 @@ function buildNextAction(
         case "materials":
             return {
                 label: "Stage materials",
-                description: "Move the reserved materials from the Main Store to the work-center floor bin.",
+                description: "Move the reserved materials from the Main Store to the floor staging bin.",
                 ...(destinationBlocked
-                    ? { blockedReason: "No active work-center destination is configured for this Job Order." }
+                    ? { blockedReason: "No active staging destination is configured for this Job Order." }
                     : {})
             };
         case "ready":
@@ -260,7 +260,7 @@ function buildBlockers(input: JobOrderJourneyInput, stage: JobOrderJourneyStage)
         input.hasActiveDestination === false
         && (stage === "materials" || stage === "ready")
     ) {
-        blockers.push("No active work-center destination is configured, so materials cannot be staged yet.");
+        blockers.push("No active staging destination is configured, so materials cannot be staged yet.");
     }
     return blockers;
 }

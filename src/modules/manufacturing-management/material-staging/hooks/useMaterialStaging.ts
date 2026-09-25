@@ -10,7 +10,6 @@ import {
     StagingCommitPayload,
     StagingJobOrder,
     StagingStats,
-    WorkCenter,
     Branch
 } from "../types";
 import { commitMaterialStaging, fetchAllocationPreview, fetchStagingJobOrders } from "../services/staging-api";
@@ -19,7 +18,7 @@ import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 
 export function useMaterialStaging() {
     const [jobOrders, setJobOrders] = useState<StagingJobOrder[]>([]);
-    const [workCenters, setWorkCenters] = useState<WorkCenter[]>([]);
+
     const [branches, setBranches] = useState<Branch[]>([]);
     const [stats, setStats] = useState<StagingStats>({
         totalActiveJobs: 0,
@@ -79,7 +78,6 @@ export function useMaterialStaging() {
             if (!response.success) throw new Error(response.error || "Failed to load data");
             setLoadError(null);
             setJobOrders(response.data);
-            setWorkCenters(response.workCenters || []);
             setBranches(response.branches || []);
             if (response.stats) setStats(response.stats);
             setHasSuccessfulLoad(true);
@@ -196,11 +194,6 @@ export function useMaterialStaging() {
             toast.error(`Cannot stage JO #${jobOrder.job_order_no}: it is cancelled.`);
             return;
         }
-        const workCenterId = jobOrder.staging_work_center_id;
-        if (!workCenterId) {
-            toast.error(`Cannot stage JO #${jobOrder.job_order_no}: no active work-center destination is configured.`);
-            return;
-        }
         const materialIds = [...new Set(jobOrder.materials
             .filter(material => material.required_quantity > material.staged_quantity + 0.000001)
             .flatMap(material => material.jo_material_ids?.length ? material.jo_material_ids : [material.jo_material_id]))];
@@ -215,7 +208,7 @@ export function useMaterialStaging() {
             const preview = await fetchAllocationPreview({
                 job_order_id: jobOrder.job_order_id,
                 job_order_no: jobOrder.job_order_no,
-                work_center_id: workCenterId,
+                work_center_id: null,
                 mode: "auto",
                 material_ids: materialIds
             });
@@ -237,7 +230,7 @@ export function useMaterialStaging() {
             const result = await commitMaterialStaging({
                 job_order_id: jobOrder.job_order_id,
                 job_order_no: jobOrder.job_order_no,
-                work_center_id: workCenterId,
+                work_center_id: null,
                 mode: "auto",
                 material_ids: materialIds,
                 lines: preview.proposed_allocations,
@@ -292,7 +285,6 @@ export function useMaterialStaging() {
         selectedJobOrder,
         selectedJobOrderId,
         setSelectedJobOrderId,
-        workCenters,
         branches,
         stats,
         loading,

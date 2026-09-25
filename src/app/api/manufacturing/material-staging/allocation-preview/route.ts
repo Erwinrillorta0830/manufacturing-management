@@ -25,7 +25,7 @@ const allocationLineSchema = z.object({
 const previewSchema = z.object({
     job_order_id: z.number().int().positive(),
     job_order_no: z.string().optional(),
-    work_center_id: z.number().int().positive(),
+    work_center_id: z.number().int().positive().nullish(),
     mode: z.enum(["auto", "manual"]),
     material_ids: z.array(z.number().int().positive()).optional(),
     lines: z.array(allocationLineSchema).optional(),
