@@ -1,6 +1,6 @@
 "use client";
 
-import { SearchableSelect } from "@/components/ui/searchable-select";
+import { SearchableSelect } from "./components/SearchableSelect";
 import { EligibleFinishedGoodsLot } from "./finished-goods-lots-api";
 
 interface FinishedGoodsLotSelectProps {

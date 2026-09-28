@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { SalesInvoiceHeader, SalesInvoiceDetail, FMInvoiceMetrics, SalesmanOption, PaginationMeta } from "../types";
+import { SalesInvoiceHeader, SalesInvoiceDetail, FMInvoiceMetrics, SalesmanOption, PaginationMeta, SalesInvoicePdf } from "../types";
 import { fetchSalesInvoices, fetchSalesInvoiceDetails } from "../services/sales-invoices-api";
 
 export function useSalesInvoices() {
     const [invoices, setInvoices] = useState<SalesInvoiceHeader[]>([]);
     const [salesmen, setSalesmen] = useState<SalesmanOption[]>([]);
     const [detailsMap, setDetailsMap] = useState<Record<number, SalesInvoiceDetail[]>>({});
+    const [pdfMap, setPdfMap] = useState<Record<number, SalesInvoicePdf | null>>({});
     const [loading, setLoading] = useState<boolean>(true);
     const [loadingDetails, setLoadingDetails] = useState<Record<number, boolean>>({});
     const [page, setPage] = useState<number>(1);
@@ -48,23 +49,24 @@ export function useSalesInvoices() {
     }, [loadInvoices]);
 
     const loadInvoiceDetails = useCallback(async (invoiceId: number) => {
-        if (detailsMap[invoiceId]) return;
+        if (detailsMap[invoiceId] && pdfMap[invoiceId] !== undefined) return;
         setLoadingDetails((prev) => ({ ...prev, [invoiceId]: true }));
         try {
-            const details = await fetchSalesInvoiceDetails(invoiceId);
+            const { details, pdf } = await fetchSalesInvoiceDetails(invoiceId);
             console.log(
-                `%c[Sales Invoice #${invoiceId}] Loaded line items:`,
+                `%c[Sales Invoice #${invoiceId}] Loaded line items and saved PDF:`,
                 "color: #0284c7; font-weight: bold;",
-                details
+                { details, pdf }
             );
             setDetailsMap((prev) => ({ ...prev, [invoiceId]: details }));
+            setPdfMap((prev) => ({ ...prev, [invoiceId]: pdf }));
         } catch (err) {
             const msg = err instanceof Error ? err.message : `Failed to load details for Invoice #${invoiceId}.`;
             toast.error(msg);
         } finally {
             setLoadingDetails((prev) => ({ ...prev, [invoiceId]: false }));
         }
-    }, [detailsMap]);
+    }, [detailsMap, pdfMap]);
 
     const metrics = useMemo<FMInvoiceMetrics>(() => {
         return invoices.reduce<FMInvoiceMetrics>(
@@ -141,6 +143,7 @@ export function useSalesInvoices() {
         invoices,
         salesmen,
         detailsMap,
+        pdfMap,
         loading,
         loadingDetails,
         metrics,

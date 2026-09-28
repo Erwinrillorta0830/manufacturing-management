@@ -1,4 +1,4 @@
-import { SalesInvoiceHeader, SalesInvoiceDetail, SalesmanOption, PaginationMeta } from "../types";
+import { SalesInvoiceHeader, SalesInvoiceDetail, SalesmanOption, PaginationMeta, SalesInvoicePdf } from "../types";
 
 const API_BASE = "/api/manufacturing/invoicing-and-billing/sales-invoices";
 
@@ -28,12 +28,18 @@ export async function fetchSalesInvoices(params: FetchSalesInvoicesParams | bool
     return res.json();
 }
 
-export async function fetchSalesInvoiceDetails(invoiceId: number): Promise<SalesInvoiceDetail[]> {
+export async function fetchSalesInvoiceDetails(invoiceId: number): Promise<{
+    details: SalesInvoiceDetail[];
+    pdf: SalesInvoicePdf | null;
+}> {
     const res = await fetch(`${API_BASE}?invoiceId=${invoiceId}`, { cache: "no-store" });
     if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.error || `Failed to fetch details for Invoice #${invoiceId} (HTTP ${res.status}).`);
     }
     const json = await res.json();
-    return json.details || [];
+    return {
+        details: json.details || [],
+        pdf: json.pdf || null,
+    };
 }

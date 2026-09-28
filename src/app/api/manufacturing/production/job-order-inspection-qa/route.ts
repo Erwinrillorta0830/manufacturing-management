@@ -63,6 +63,15 @@ function textValue(value: unknown): string {
     return String(value ?? "").trim();
 }
 
+function productUomValue(product: DirectusRow | undefined): string | null {
+    if (!product) return null;
+    const uom = product.unit_of_measurement;
+    if (uom && typeof uom === "object") {
+        return textValue(uom.unit_shortcut) || textValue(uom.unit_name) || null;
+    }
+    return textValue(uom) || null;
+}
+
 function directusFileId(value: unknown): string | null {
     if (value && typeof value === "object") {
         const record = value as DirectusRow;
@@ -173,7 +182,7 @@ async function loadJobOrderSummaries() {
             "Yield ledger lookup"
         ),
         readRows(
-            "/items/products?limit=-1&fields=product_id,product_name,product_code",
+            "/items/products?limit=-1&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name",
             "Product lookup"
         ),
         readRows(
@@ -233,6 +242,7 @@ async function loadJobOrderSummaries() {
                 productId: productId || null,
                 productName: textValue(product?.product_name) || (productId ? `Product #${productId}` : "—"),
                 productCode: textValue(product?.product_code) || null,
+                productUom: productUomValue(product),
                 branchId: relationId(jobOrder.branch_id, ["branch_id", "id"]) || null,
                 targetQuantity: numberValue(jobOrder.target_quantity ?? jobOrder.quantity),
                 producedQuantity,
@@ -267,7 +277,7 @@ async function loadJobOrderDetails(id: number) {
             `Routing lookup for Job Order ${id}`
         ),
         readRows(
-            "/items/products?limit=-1&fields=product_id,product_name,product_code",
+            "/items/products?limit=-1&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name",
             "Product lookup"
         ),
         readRows(
@@ -402,6 +412,7 @@ async function loadJobOrderDetails(id: number) {
         productId: productId || null,
         productName: textValue(product?.product_name) || (productId ? `Product #${productId}` : "—"),
         productCode: textValue(product?.product_code) || null,
+        productUom: productUomValue(product),
         branchId: relationId(jobOrder.branch_id, ["branch_id", "id"]) || null,
         targetQuantity: numberValue(jobOrder.target_quantity ?? jobOrder.quantity),
         completedQuantity: numberValue(jobOrder.completed_quantity),
