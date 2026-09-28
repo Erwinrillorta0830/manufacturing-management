@@ -7,6 +7,7 @@ export interface JobOrderDailyYieldSummary {
     productId: number | null;
     productName: string;
     productCode: string | null;
+    productUom?: string | null;
     branchId: number | null;
     targetQuantity: number;
     producedQuantity: number;

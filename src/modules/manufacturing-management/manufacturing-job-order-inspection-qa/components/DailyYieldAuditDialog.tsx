@@ -28,6 +28,13 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 import { FinishedGoodsLotSelect } from "../../shared/FinishedGoodsLotSelect";
 import type { DailyYieldAuditController } from "../hooks/useDailyYieldAudit";
 import type { DailyYieldQALog, DailyYieldQAParameter } from "../types";
@@ -186,16 +193,23 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                             {details?.productName || "Product not specified"}
                                         </p>
                                     </div>
-                                    {details?.productCode && (
-                                        <Badge variant="outline" className="font-mono text-[10px] bg-background shrink-0">
-                                            {details.productCode}
-                                        </Badge>
-                                    )}
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                        {details?.productUom && (
+                                            <Badge variant="secondary" className="font-medium text-[10px] bg-primary/10 text-primary border border-primary/20 shrink-0">
+                                                {details.productUom}
+                                            </Badge>
+                                        )}
+                                        {details?.productCode && (
+                                            <Badge variant="outline" className="font-mono text-[10px] bg-background shrink-0">
+                                                {details.productCode}
+                                            </Badge>
+                                        )}
+                                    </div>
                                 </div>
                                 <div className="flex items-center gap-3 pt-1 border-t border-primary/10 text-xs text-muted-foreground">
-                                    <span>Target: <strong className="text-foreground font-mono">{numericText(details?.targetQuantity)}</strong> units</span>
+                                    <span>Target: <strong className="text-foreground font-mono">{numericText(details?.targetQuantity)}</strong> {details?.productUom || "units"}</span>
                                     <span>•</span>
-                                    <span>Produced: <strong className="text-emerald-600 font-mono">{numericText(details?.producedQuantity)}</strong> units</span>
+                                    <span>Produced: <strong className="text-emerald-600 font-mono">{numericText(details?.producedQuantity)}</strong> {details?.productUom || "units"}</span>
                                 </div>
                             </div>
 
@@ -602,26 +616,53 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                                 <div className="space-y-1">
                                     <Label htmlFor="daily-yield-sensory" className="text-foreground font-bold text-xs">Sensory Status</Label>
-                                    <select id="daily-yield-sensory" disabled={isVerified} value={controller.sensoryStatus} onChange={(event) => controller.setSensoryStatus(event.target.value as "Passed" | "Failed")} className="flex h-9 w-full rounded-lg border border-border bg-background text-foreground px-2.5 py-1 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary cursor-pointer font-medium">
-                                        <option value="Passed">Passed (Color/Texture Pass)</option>
-                                        <option value="Failed">Failed (Deviation/Reject)</option>
-                                    </select>
+                                    <Select
+                                        disabled={isVerified}
+                                        value={controller.sensoryStatus}
+                                        onValueChange={(val) => controller.setSensoryStatus(val as "Passed" | "Failed")}
+                                    >
+                                        <SelectTrigger id="daily-yield-sensory" className="h-9 w-full text-xs font-medium bg-background border-border">
+                                            <SelectValue placeholder="Select sensory status..." />
+                                        </SelectTrigger>
+                                        <SelectContent position="popper" className="z-[9999]">
+                                            <SelectItem value="Passed" className="text-xs">Passed (Color/Texture Pass)</SelectItem>
+                                            <SelectItem value="Failed" className="text-xs">Failed (Deviation/Reject)</SelectItem>
+                                        </SelectContent>
+                                    </Select>
                                 </div>
                                 <div className="space-y-1">
                                     <Label htmlFor="daily-yield-action" className="text-foreground font-bold text-xs">QA Disposition Action</Label>
-                                    <select id="daily-yield-action" disabled={isVerified} value={controller.dailyActionTaken} onChange={(event) => controller.setDailyActionTaken(event.target.value as "Released" | "Quarantined" | "Scrapped")} className="flex h-9 w-full rounded-lg border border-border bg-background text-foreground px-2.5 py-1 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary cursor-pointer font-medium">
-                                        <option value="Released">Release Shift Yield</option>
-                                        <option value="Quarantined">Hold / Quarantine Yield</option>
-                                        <option value="Scrapped">Scrap Yield Lot</option>
-                                    </select>
+                                    <Select
+                                        disabled={isVerified}
+                                        value={controller.dailyActionTaken}
+                                        onValueChange={(val) => controller.setDailyActionTaken(val as "Released" | "Quarantined" | "Scrapped")}
+                                    >
+                                        <SelectTrigger id="daily-yield-action" className="h-9 w-full text-xs font-medium bg-background border-border">
+                                            <SelectValue placeholder="Select action..." />
+                                        </SelectTrigger>
+                                        <SelectContent position="popper" className="z-[9999]">
+                                            <SelectItem value="Released" className="text-xs">Release Shift Yield</SelectItem>
+                                            <SelectItem value="Quarantined" className="text-xs">Hold / Quarantine Yield</SelectItem>
+                                            <SelectItem value="Scrapped" className="text-xs">Scrap Yield Lot</SelectItem>
+                                        </SelectContent>
+                                    </Select>
                                 </div>
                                 <div className="space-y-1">
                                     <Label htmlFor="daily-yield-lab" className="text-foreground font-bold text-xs">Lab Status</Label>
-                                    <select id="daily-yield-lab" disabled={isVerified} value={controller.dailyLabStatus} onChange={(event) => controller.setDailyLabStatus(event.target.value as "Pending" | "Passed" | "Failed")} className="flex h-9 w-full rounded-lg border border-border bg-background text-foreground px-2.5 py-1 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary cursor-pointer font-medium">
-                                        <option value="Passed">Passed (Lab Verified)</option>
-                                        <option value="Pending">Pending Analysis</option>
-                                        <option value="Failed">Failed (Contamination)</option>
-                                    </select>
+                                    <Select
+                                        disabled={isVerified}
+                                        value={controller.dailyLabStatus}
+                                        onValueChange={(val) => controller.setDailyLabStatus(val as "Pending" | "Passed" | "Failed")}
+                                    >
+                                        <SelectTrigger id="daily-yield-lab" className="h-9 w-full text-xs font-medium bg-background border-border">
+                                            <SelectValue placeholder="Select lab status..." />
+                                        </SelectTrigger>
+                                        <SelectContent position="popper" className="z-[9999]">
+                                            <SelectItem value="Passed" className="text-xs">Passed (Lab Verified)</SelectItem>
+                                            <SelectItem value="Pending" className="text-xs">Pending Analysis</SelectItem>
+                                            <SelectItem value="Failed" className="text-xs">Failed (Contamination)</SelectItem>
+                                        </SelectContent>
+                                    </Select>
                                 </div>
                             </div>
 
