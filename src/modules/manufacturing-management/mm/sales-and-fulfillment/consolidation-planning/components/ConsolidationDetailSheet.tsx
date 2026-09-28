@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+ 
 import { toast } from "sonner";
 import {
     Box,
@@ -18,7 +18,7 @@ import {
     Play,
     Printer,
     Search,
-    ShieldCheck,
+ 
     Tag,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
