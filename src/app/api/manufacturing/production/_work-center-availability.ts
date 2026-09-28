@@ -1,7 +1,7 @@
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { JOB_ORDER_STATUS, isJobOrderStatus, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 import type {
-    StationJobOrderSummary,
+    WorkCenterJobOrderSummary,
     WorkCenterJobOrderAssignmentSource,
     WorkCenterJobOrderAvailability
 } from "@/modules/manufacturing-management/production-workflow/types";
@@ -65,7 +65,7 @@ function buildSummary(
     operationNameById: Map<number, string>,
     assignmentSource: WorkCenterJobOrderAssignmentSource,
     fallbackRouteStatus: string
-): StationJobOrderSummary {
+): WorkCenterJobOrderSummary {
     const jobOrderId = relationId(jobOrder.job_order_id, ["job_order_id"]) || relationId(jobOrder.id);
     const productId = relationId(jobOrder.product_id, ["product_id"]) || null;
     const routeId = relationId(route?.jo_route_id, ["jo_route_id"]) || relationId(route?.id);
@@ -170,7 +170,12 @@ export async function fetchWorkCenterJobOrderAvailability(options: {
 
     jobOrders.forEach((jobOrder) => {
         const normalizedStatus = normalizeJobOrderStatus(jobOrder.status);
-        if (!normalizedStatus || !isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.PICKED, JOB_ORDER_STATUS.IN_PRODUCTION)) return;
+        if (!normalizedStatus || !isJobOrderStatus(
+            normalizedStatus,
+            JOB_ORDER_STATUS.FOR_PICKING,
+            JOB_ORDER_STATUS.PICKED,
+            JOB_ORDER_STATUS.IN_PRODUCTION
+        )) return;
 
         const branchId = relationId(jobOrder.branch_id, ["branch_id"]);
         if (allowedBranchId > 0 && branchId !== allowedBranchId) return;
@@ -250,7 +255,7 @@ export async function fetchWorkCenterJobOrderAvailability(options: {
                 fallbackRouteStatus
             );
 
-            if (normalizedStatus === JOB_ORDER_STATUS.PICKED) {
+            if (isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.FOR_PICKING, JOB_ORDER_STATUS.PICKED)) {
                 availability.availableJobOrders.push(summary);
             } else {
                 availability.inProgressJobOrders.push(summary);
@@ -259,7 +264,7 @@ export async function fetchWorkCenterJobOrderAvailability(options: {
     });
 
     availabilityByWorkCenter.forEach((availability) => {
-        const sortSummaries = (left: StationJobOrderSummary, right: StationJobOrderSummary) =>
+        const sortSummaries = (left: WorkCenterJobOrderSummary, right: WorkCenterJobOrderSummary) =>
             left.routeSequence - right.routeSequence
             || left.jobOrderNo.localeCompare(right.jobOrderNo);
         availability.availableJobOrders.sort(sortSummaries);

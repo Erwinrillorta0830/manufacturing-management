@@ -12,6 +12,7 @@ import {
     fetchJobOrder
 } from "../production/_material-return";
 import { buildQAYieldAssessments } from "../production/_qa-accepted-output";
+import { committedGoodOutputOrAggregate, goodOutputAggregateFallback, hasReachedProductionTarget, sumCommittedGoodOutput } from "@/modules/manufacturing-management/production-workflow/utils/production-output";
 import {
     JOB_ORDER_WORKFLOW_ACTIONS,
     type JobOrderWorkflowAction
@@ -105,6 +106,14 @@ function text(value: unknown): string {
     return String(value ?? "").trim();
 }
 
+function batchValues<T>(values: T[], batchSize = 100): T[][] {
+    const batches: T[][] = [];
+    for (let index = 0; index < values.length; index += batchSize) {
+        batches.push(values.slice(index, index + batchSize));
+    }
+    return batches;
+}
+
 function workflowRequestHash(command: JobOrderWorkflowCommand): string {
     return createHash("sha256").update(JSON.stringify({
         action: command.action,
@@ -187,8 +196,7 @@ function jobOrderIdFromPath(value: string | number): number {
 function allowedStatuses(action: JobOrderWorkflowAction): CanonicalJobOrderStatus[] {
     switch (action) {
         case "initialize": return [JOB_ORDER_STATUS.DRAFT];
-        case "complete-staging": return [JOB_ORDER_STATUS.FOR_PICKING];
-        case "start-production": return [JOB_ORDER_STATUS.PICKED];
+        case "start-production": return [JOB_ORDER_STATUS.FOR_PICKING, JOB_ORDER_STATUS.PICKED];
         case "place-on-hold": return [JOB_ORDER_STATUS.IN_PRODUCTION];
         case "resume-production": return [JOB_ORDER_STATUS.ON_HOLD];
         case "complete-production": return [JOB_ORDER_STATUS.IN_PRODUCTION];
@@ -202,7 +210,6 @@ function allowedStatuses(action: JobOrderWorkflowAction): CanonicalJobOrderStatu
 function actionTarget(action: JobOrderWorkflowAction): CanonicalJobOrderStatus {
     switch (action) {
         case "initialize": return JOB_ORDER_STATUS.FOR_PICKING;
-        case "complete-staging": return JOB_ORDER_STATUS.PICKED;
         case "start-production": return JOB_ORDER_STATUS.IN_PRODUCTION;
         case "place-on-hold": return JOB_ORDER_STATUS.ON_HOLD;
         case "resume-production": return JOB_ORDER_STATUS.IN_PRODUCTION;
@@ -354,6 +361,14 @@ export async function reconcileSalesOrderAfterJobOrderEnd(
             jobOrder.status
         ]));
 
+        const orderIds = [...orderDetails.keys()];
+        const salesOrders = (await Promise.all(batchValues(orderIds).map(ids => directusRows(
+            `/items/sales_order?filter[order_id][_in]=${ids.join(",")}&fields=order_id,order_status&limit=-1`,
+            `Load linked Sales Orders for Job Order ${jobOrderId}`
+        )))).flat();
+        const salesOrderById = new Map(salesOrders.map(order => [numberValue(order.order_id ?? order.id), order]));
+        const statusUpdates: DirectusRecord[] = [];
+
         for (const [orderId, linkedDetailIds] of orderDetails) {
             const linkedDetailSet = new Set(linkedDetailIds);
             const hasOtherActiveJobOrder = otherAllocations.some((allocation) => {
@@ -374,10 +389,10 @@ export async function reconcileSalesOrderAfterJobOrderEnd(
             });
             if (hasOtherActiveJobOrder) continue;
 
-            const order = (await directusRequest<DirectusRecord>(
-                `/items/sales_order/${orderId}?fields=order_id,order_status`,
-                `Re-read Sales Order ${orderId} before status rollback`
-            ));
+            const order = salesOrderById.get(orderId);
+            if (!order) {
+                throw new Error(`Sales Order ${orderId} could not be loaded before status rollback.`);
+            }
             const nextStatus = salesOrderStatusAfterJobOrderEnd(
                 order.order_status,
                 shouldRollback,
@@ -385,10 +400,14 @@ export async function reconcileSalesOrderAfterJobOrderEnd(
             );
             if (nextStatus === text(order.order_status)) continue;
 
+            statusUpdates.push({ order_id: orderId, order_status: nextStatus });
+        }
+
+        for (const updateBatch of batchValues(statusUpdates)) {
             await directusRequest(
-                `/items/sales_order/${orderId}`,
-                `Recalculate Sales Order ${orderId} after Job Order end`,
-                { method: "PATCH", body: JSON.stringify({ order_status: nextStatus }) }
+                "/items/sales_order",
+                `Recalculate ${updateBatch.length} linked Sales Order status(es) after Job Order end`,
+                { method: "PATCH", body: JSON.stringify(updateBatch) }
             );
         }
         return [];
@@ -561,7 +580,7 @@ async function assertFullStaging(jobOrderId: number): Promise<void> {
     }).filter((item) => item.required > 0 && item.staged + QUANTITY_EPSILON < item.required);
     if (incomplete.length > 0) {
         throw new JobOrderWorkflowError(
-            "The Job Order is only partially staged. Complete every material requirement before marking it Picked.",
+            "The Job Order is only partially staged. Stage every required material before starting production.",
             422,
             "MATERIAL_STAGING_INCOMPLETE",
             { incomplete }
@@ -673,9 +692,25 @@ async function assertProductionCanComplete(jobOrder: DirectusRecord): Promise<vo
             { routeIds: incompleteRoutes.map((route) => numberValue(route.jo_route_id ?? route.id)) }
         );
     }
+    const routeIds = routes.map((route) => numberValue(route.jo_route_id ?? route.id)).filter((id) => id > 0);
+    const activeOperatorSessions = routeIds.length > 0
+        ? await directusRows(
+            `/items/manufacturing_job_order_route_operators?filter[jo_route_id][_in]=${routeIds.join(",")}&fields=jo_route_operator_id,started_at,stopped_at&limit=-1`,
+            `Check active operator timers for Job Order ${jobOrderId}`
+        )
+        : [];
+    const activeTimers = activeOperatorSessions.filter((row) => text(row.started_at) && !text(row.stopped_at));
+    if (activeTimers.length > 0) {
+        throw new JobOrderWorkflowError(
+            "Stop all active operator timers before completing production.",
+            409,
+            "PRODUCTION_TIMERS_ACTIVE",
+            { operatorSessionIds: activeTimers.map((row) => numberValue(row.jo_route_operator_id ?? row.id)) }
+        );
+    }
 
     const ledgers = await loadCommittedProductionRecords(jobOrderId);
-    const target = Number(jobOrder.target_quantity || 0);
+    const target = Number(jobOrder.target_quantity ?? jobOrder.quantity ?? 0);
     if (!Number.isFinite(target) || target <= QUANTITY_EPSILON) {
         throw new JobOrderWorkflowError(
             "Production cannot be completed without a positive Job Order target quantity.",
@@ -683,9 +718,7 @@ async function assertProductionCanComplete(jobOrder: DirectusRecord): Promise<vo
             "PRODUCTION_TARGET_REQUIRED"
         );
     }
-    const completionOutput = ledgers.reduce((sum, ledger) => sum
-        + Math.max(0, Number(ledger.yield_quantity || 0))
-        + Math.max(0, Number(ledger.rejected_quantity || 0)), 0);
+    const completionOutput = sumCommittedGoodOutput(ledgers);
     if (completionOutput <= QUANTITY_EPSILON) {
         throw new JobOrderWorkflowError(
             "Production cannot be completed until output quantities are recorded.",
@@ -695,7 +728,7 @@ async function assertProductionCanComplete(jobOrder: DirectusRecord): Promise<vo
     }
     if (completionOutput + QUANTITY_EPSILON < target) {
         throw new JobOrderWorkflowError(
-            "Production cannot be completed until good and rejected output reaches the Job Order target.",
+            "Production cannot be completed until good output reaches the Job Order target.",
             422,
             "PRODUCTION_OUTPUT_INCOMPLETE",
             {
@@ -703,6 +736,25 @@ async function assertProductionCanComplete(jobOrder: DirectusRecord): Promise<vo
                 completionQuantity: completionOutput,
                 shortfall: Math.max(0, target - completionOutput)
             }
+        );
+    }
+}
+
+async function assertProductionTargetNotReached(jobOrder: DirectusRecord): Promise<void> {
+    const jobOrderId = numberValue(jobOrder.job_order_id);
+    const target = Number(jobOrder.target_quantity ?? jobOrder.quantity ?? 0);
+    const yields = await directusRows(
+        `/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${jobOrderId}&fields=yield_quantity,commit_status&limit=-1`,
+        `Check production target for Job Order ${jobOrderId}`
+    );
+    if (hasReachedProductionTarget(target, committedGoodOutputOrAggregate(
+        yields,
+        goodOutputAggregateFallback(jobOrder.actual_quantity_produced, jobOrder.completed_quantity)
+    ))) {
+        throw new JobOrderWorkflowError(
+            "The good-output target has been reached. Use Complete & Close JO to send this Job Order to QA.",
+            409,
+            "PRODUCTION_TARGET_REACHED"
         );
     }
 }
@@ -839,9 +891,6 @@ async function writeTransition(
     if (command.action === "initialize") {
         lifecycleFields.initialized_at = now;
         lifecycleFields.initialized_by = command.actorUserId;
-    } else if (command.action === "complete-staging") {
-        lifecycleFields.picked_at = now;
-        lifecycleFields.picked_by = command.actorUserId;
     } else if (command.action === "start-production") {
         lifecycleFields.production_started_at = now;
         lifecycleFields.production_started_by = command.actorUserId;
@@ -951,7 +1000,6 @@ async function writeTransition(
         }
         const lifecycleFieldByAction: Partial<Record<JobOrderWorkflowAction, string>> = {
             initialize: "initialized",
-            "complete-staging": "picked",
             "start-production": "production_started",
             "complete-production": "production_completed",
             "terminate-production": "cancelled",
@@ -1048,6 +1096,10 @@ export async function executeJobOrderWorkflow(
         );
     }
 
+    if (["start-production", "place-on-hold", "resume-production", "terminate-production"].includes(command.action)) {
+        await assertProductionTargetNotReached(jobOrder);
+    }
+
     if (["place-on-hold", "cancel", "terminate-production"].includes(command.action) && !text(command.remarks)) {
         throw new JobOrderWorkflowError("A reason is required for this workflow action.", 400, "WORKFLOW_REASON_REQUIRED");
     }
@@ -1076,10 +1128,11 @@ export async function executeJobOrderWorkflow(
         await assertInitializationPrerequisites(jobOrder);
         if (!command.force) await assertMaterialReservations(jobOrderId);
     }
-    if (command.action === "complete-staging") await assertFullStaging(jobOrderId);
     if (command.action === "start-production") {
-        const workCenterId = positiveInteger(command.workCenterId);
-        if (!workCenterId) throw new JobOrderWorkflowError("A valid work center is required to start production.", 400, "WORK_CENTER_REQUIRED");
+        const hasWorkCenterId = command.workCenterId !== undefined && command.workCenterId !== null;
+        if (hasWorkCenterId && !positiveInteger(command.workCenterId)) {
+            throw new JobOrderWorkflowError("The work center ID must be a positive integer.", 400, "WORK_CENTER_INVALID");
+        }
         await assertFullStaging(jobOrderId);
     }
     if (command.action === "complete-production") await assertProductionCanComplete(jobOrder);

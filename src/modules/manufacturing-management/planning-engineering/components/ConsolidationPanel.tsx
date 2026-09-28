@@ -92,7 +92,7 @@ export function ConsolidationPanel({
                         </div>
 
                         <div className="space-y-2">
-                            <Button className="w-full font-bold text-xs uppercase" disabled={!hasValidTargetBranch || !mergeValidation.isValid} onClick={handleInitiateRelease}>
+                            <Button className="w-full font-bold text-xs uppercase" disabled={!hasValidTargetBranch || !mergeValidation.isValid} onClick={() => handleInitiateRelease()}>
                                 {releaseGroups.length > 1 ? `Release ${releaseGroups.length} Job Orders` : "Release Job Order"}
                             </Button>
 

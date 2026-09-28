@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { JobOrder, User, RouteOperatorRecord, RoutingTask, JobOrderCancellationPreview, SalesOrderLink, JobOrderMaterialLine } from "../types";
+import { JobOrder, User, RouteOperatorRecord, RoutingTask, JobOrderCancellationPreview, JobOrderCancellationResponse, SalesOrderLink, JobOrderMaterialLine } from "../types";
 import {
     fetchJobOrders,
     fetchUsersList as apiFetchUsers,
@@ -15,9 +15,16 @@ import {
     returnJobOrderMaterials,
     executeJobOrderWorkflow
 } from "../services/production-api";
-import { isJobOrderStatus, JOB_ORDER_STATUS, displayJobOrderStatus, normalizeJobOrderStatus } from "../../job-order-status";
+import {
+    canChangeJobOrderOperatorRoster,
+    isJobOrderStatus,
+    JOB_ORDER_STATUS,
+    displayJobOrderStatus,
+    normalizeJobOrderStatus
+} from "../../job-order-status";
 import { elapsedHours } from "../operator-time";
 import type { JobOrderWorkflowAction } from "../../job-order-workflow";
+import { areJobOrderMaterialsFullyStaged } from "../utils/material-staging-readiness";
 import {
     buildDisplayRouteOperatorRecords,
     getJobOrderOperatorAssignments,
@@ -25,6 +32,7 @@ import {
 } from "../operator-assignment-display";
 
 const SHOP_FLOOR_QUEUE_STATUSES = [
+    JOB_ORDER_STATUS.FOR_PICKING,
     JOB_ORDER_STATUS.PICKED,
     JOB_ORDER_STATUS.IN_PRODUCTION,
     JOB_ORDER_STATUS.ON_HOLD,
@@ -71,6 +79,7 @@ export function useProductionWorkflow() {
     const [selectedJobOrderId, setSelectedJobOrderId] = useState<string>("");
     const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
     const [jobOrderMaterials, setJobOrderMaterials] = useState<JobOrderMaterialLine[]>([]);
+    const [jobOrderMaterialsJobOrderId, setJobOrderMaterialsJobOrderId] = useState<number | null>(null);
     const [loadingJobOrderMaterials, setLoadingJobOrderMaterials] = useState(false);
 
     // Operator logs for the selected task
@@ -107,8 +116,24 @@ export function useProductionWorkflow() {
     const [cancellationPreview, setCancellationPreview] = useState<JobOrderCancellationPreview | null>(null);
     const [loadingCancellation, setLoadingCancellation] = useState(false);
     const [submittingCancellation, setSubmittingCancellation] = useState(false);
+    const [refreshingCancellation, setRefreshingCancellation] = useState(false);
+    const [cancellationMutationSucceeded, setCancellationMutationSucceeded] = useState(false);
     const [cancellationError, setCancellationError] = useState<string | null>(null);
+    const cancellationModalOpenRef = useRef(false);
+    const cancellationPreviewRequestIdRef = useRef(0);
+    const cancellationPreviewAbortRef = useRef<AbortController | null>(null);
+    const cancellationPreviewInFlightRef = useRef(false);
+    const cancellationActionInFlightRef = useRef(false);
+    const cancellationMutationSucceededRef = useRef(false);
+    const cancellationTargetJoIdRef = useRef<string | number | null>(null);
+    const cancellationSuccessResponseRef = useRef<JobOrderCancellationResponse | null>(null);
     const [workflowSubmitting, setWorkflowSubmitting] = useState(false);
+
+    useEffect(() => () => {
+        cancellationModalOpenRef.current = false;
+        cancellationPreviewRequestIdRef.current += 1;
+        cancellationPreviewAbortRef.current?.abort();
+    }, []);
 
     const inProductionJobOrders = useMemo(() => {
         return jobOrders.filter((jo) => isJobOrderStatus(jo.status, JOB_ORDER_STATUS.IN_PRODUCTION));
@@ -214,13 +239,13 @@ const selectedTask = useMemo(() => {
             setSelectedJobOrderId(match.jo_id);
             setSelectedTaskId(null);
         } else {
-            toast.info("Only Picked, In Production, On Hold, or QA Hold Job Orders can be opened in this terminal.");
+            toast.info("Only For Picking, Picked, In Production, On Hold, or QA Hold Job Orders can be opened in this terminal.");
         }
         setPendingDeepLinkTarget(null);
     }, [pendingDeepLinkTarget, loadingJobs, terminalJobOrders]);
 
     // Fetch Job Orders
-    const fetchJobs = useCallback(async (selectIdAfterFetch?: string, silent = false) => {
+    const fetchJobs = useCallback(async (selectIdAfterFetch?: string, silent = false): Promise<boolean> => {
         if (!silent) setLoadingJobs(true);
         try {
             const data = await fetchJobOrders();
@@ -240,8 +265,10 @@ const selectedTask = useMemo(() => {
                 setSelectedJobOrderId("");
                 setSelectedTaskId(null);
             }
+            return true;
         } catch (err: any) {
             if (!silent) toast.error(err.message || "Failed to load Job Orders from terminal.");
+            return false;
         } finally {
             if (!silent) setLoadingJobs(false);
         }
@@ -405,19 +432,26 @@ const selectedTask = useMemo(() => {
         const jobOrderId = selectedJobOrder?.order_id || selectedJobOrder?.job_order_id;
         if (!jobOrderId) {
             setJobOrderMaterials([]);
+            setJobOrderMaterialsJobOrderId(null);
             setLoadingJobOrderMaterials(false);
             return;
         }
 
         let disposed = false;
+        setJobOrderMaterials([]);
+        setJobOrderMaterialsJobOrderId(null);
         setLoadingJobOrderMaterials(true);
         void fetchJobOrderMaterials(jobOrderId)
             .then((materials) => {
-                if (!disposed) setJobOrderMaterials(materials);
+                if (!disposed) {
+                    setJobOrderMaterials(materials);
+                    setJobOrderMaterialsJobOrderId(Number(jobOrderId));
+                }
             })
             .catch((error: any) => {
                 if (!disposed) {
                     setJobOrderMaterials([]);
+                    setJobOrderMaterialsJobOrderId(null);
                     console.error("Error fetching Job Order material batches:", error);
                 }
             })
@@ -455,15 +489,19 @@ const selectedTask = useMemo(() => {
     // Clock In / Check In Operator
     const handleAddOperator = async (startTimer: boolean, taskId: number, assigneeId: string) => {
         if (!taskId || !assigneeId || !selectedJobOrder) return;
-        if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
-            toast.error("Operators can only be assigned while the Job Order is In Production.");
+        if (startTimer && !isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
+            toast.error("A shift timer can only start while the Job Order is In Production.");
+            return;
+        }
+        if (!startTimer && !canChangeJobOrderOperatorRoster(selectedJobOrder.status)) {
+            toast.error("Operators can only be assigned while the Job Order is For Picking, Picked, or In Production.");
             return;
         }
         const uId = parseInt(assigneeId);
         const userObj = users.find((u) => (u.user_id || u.id) === uId);
         if (!userObj) return;
 
-        const action = startTimer ? "start-timer" : "log-hours";
+        const action = startTimer ? "start-timer" : "assign-operator";
         const taskObj = sortedTasks.find(t => t.id === taskId);
 
         try {
@@ -480,7 +518,7 @@ const selectedTask = useMemo(() => {
             toast.success(
                 startTimer
                     ? `${userObj.user_fname || userObj.first_name} clocked in successfully.`
-                    : `${userObj.user_fname || userObj.first_name} added to team log.`
+                    : `${userObj.user_fname || userObj.first_name} assigned to route.`
             );
             await fetchJobOrderOperators(
                 sortedTasks,
@@ -501,8 +539,8 @@ const selectedTask = useMemo(() => {
         requestId = createOperatorRequestId("remove-operator", taskId, opUserId)
     ): Promise<boolean> => {
         if (!selectedJobOrder) return false;
-        if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
-            toast.error("Operators can only be changed while the Job Order is In Production.");
+        if (!canChangeJobOrderOperatorRoster(selectedJobOrder.status)) {
+            toast.error("Operators can only be changed while the Job Order is For Picking, Picked, or In Production.");
             return false;
         }
         try {
@@ -537,8 +575,8 @@ const selectedTask = useMemo(() => {
         requestId = createOperatorRequestId("swap-operator", taskId, opUserId)
     ) => {
         if (!selectedJobOrder) return false;
-        if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
-            toast.error("Operators can only be changed while the Job Order is In Production.");
+        if (!canChangeJobOrderOperatorRoster(selectedJobOrder.status)) {
+            toast.error("Operators can only be changed while the Job Order is For Picking, Picked, or In Production.");
             return false;
         }
         const taskObj = sortedTasks.find((task) => task.id === taskId);
@@ -840,50 +878,191 @@ const selectedTask = useMemo(() => {
         }
     };
 
-    const openCancellationModal = useCallback(async (mode: "cancel" | "return", joId?: string) => {
+    const loadCancellationPreview = useCallback(async (targetJoId: string | number) => {
+        if (!cancellationModalOpenRef.current || cancellationPreviewInFlightRef.current) return;
+
+        cancellationPreviewAbortRef.current?.abort();
+        const controller = new AbortController();
+        cancellationPreviewAbortRef.current = controller;
+        cancellationPreviewInFlightRef.current = true;
+        const requestId = ++cancellationPreviewRequestIdRef.current;
+        setLoadingCancellation(true);
+        setCancellationPreview(null);
+        setCancellationError(null);
+
+        try {
+            const preview = await fetchJobOrderCancellationPreview(targetJoId, controller.signal);
+            if (requestId === cancellationPreviewRequestIdRef.current && cancellationModalOpenRef.current) {
+                setCancellationPreview(preview);
+            }
+        } catch (err: any) {
+            if (requestId === cancellationPreviewRequestIdRef.current && !controller.signal.aborted) {
+                setCancellationError(err.message || "Failed to load the cancellation preview.");
+            }
+        } finally {
+            if (requestId === cancellationPreviewRequestIdRef.current) {
+                cancellationPreviewAbortRef.current = null;
+                cancellationPreviewInFlightRef.current = false;
+                setLoadingCancellation(false);
+            }
+        }
+    }, []);
+
+    const openCancellationModal = useCallback((mode: "cancel" | "return", joId?: string) => {
         const targetJoId = joId || selectedJobOrder?.jo_id;
-        if (!targetJoId) return;
+        if (!targetJoId || cancellationModalOpenRef.current || cancellationActionInFlightRef.current) return;
+
+        cancellationModalOpenRef.current = true;
+        cancellationTargetJoIdRef.current = targetJoId;
         setCancellationMode(mode);
         setCancellationModalOpen(true);
         setCancellationPreview(null);
         setCancellationError(null);
-        setLoadingCancellation(true);
+        setCancellationMutationSucceeded(false);
+        cancellationMutationSucceededRef.current = false;
+        cancellationSuccessResponseRef.current = null;
+        void loadCancellationPreview(targetJoId);
+    }, [loadCancellationPreview, selectedJobOrder]);
+
+    const handleCancellationModalOpenChange = useCallback((nextOpen: boolean) => {
+        if (nextOpen) return;
+        if (cancellationActionInFlightRef.current || cancellationMutationSucceededRef.current) return;
+
+        cancellationModalOpenRef.current = false;
+        cancellationPreviewRequestIdRef.current += 1;
+        cancellationPreviewAbortRef.current?.abort();
+        cancellationPreviewAbortRef.current = null;
+        cancellationPreviewInFlightRef.current = false;
+        cancellationTargetJoIdRef.current = null;
+        setCancellationModalOpen(false);
+        setCancellationPreview(null);
+        setCancellationError(null);
+        setLoadingCancellation(false);
+        setCancellationMutationSucceeded(false);
+        cancellationSuccessResponseRef.current = null;
+    }, []);
+
+    const finishCancellationFlow = useCallback((response: JobOrderCancellationResponse, mode: "cancel" | "return") => {
+        toast.success(
+            mode === "cancel"
+                ? `Job Order ${response.jobOrderNo} cancelled. Returned ${response.returnedQuantity.toLocaleString()} unit(s) to MAIN-STORE.`
+                : `Returned ${response.returnedQuantity.toLocaleString()} unit(s) from Job Order ${response.jobOrderNo} to MAIN-STORE.`
+        );
+        cancellationModalOpenRef.current = false;
+        cancellationMutationSucceededRef.current = false;
+        cancellationSuccessResponseRef.current = null;
+        cancellationTargetJoIdRef.current = null;
+        setCancellationModalOpen(false);
+        setCancellationPreview(null);
+        setCancellationError(null);
+        setCancellationMutationSucceeded(false);
+    }, []);
+
+    const retryCancellationPreview = useCallback(() => {
+        const targetJoId = cancellationTargetJoIdRef.current;
+        if (!targetJoId || !cancellationModalOpenRef.current) return;
+        void loadCancellationPreview(targetJoId);
+    }, [loadCancellationPreview]);
+
+    const retryCancellationRefresh = useCallback(async () => {
+        const response = cancellationSuccessResponseRef.current;
+        if (!response || !cancellationMutationSucceededRef.current || cancellationActionInFlightRef.current) return;
+
+        cancellationActionInFlightRef.current = true;
+        setSubmittingCancellation(true);
+        setRefreshingCancellation(true);
+        setCancellationError(null);
         try {
-            const preview = await fetchJobOrderCancellationPreview(targetJoId);
-            setCancellationPreview(preview);
-        } catch (err: any) {
-            setCancellationError(err.message || "Failed to load the cancellation preview.");
+            const refreshed = await fetchJobs(undefined, true);
+            if (!refreshed) {
+                setCancellationError("The operation succeeded, but the terminal could not refresh. Retry the refresh; do not repeat the operation.");
+                return;
+            }
+            finishCancellationFlow(response, cancellationMode);
         } finally {
-            setLoadingCancellation(false);
+            cancellationActionInFlightRef.current = false;
+            setSubmittingCancellation(false);
+            setRefreshingCancellation(false);
         }
-    }, [selectedJobOrder]);
+    }, [cancellationMode, fetchJobs, finishCancellationFlow]);
 
     const handleConfirmCancellation = useCallback(async (reason: string, cancellationImage?: File | null) => {
-        if (!cancellationPreview) return;
+        if (
+            !cancellationPreview
+            || !cancellationModalOpenRef.current
+            || cancellationActionInFlightRef.current
+            || cancellationMutationSucceededRef.current
+        ) return;
         if (cancellationMode === "cancel" && !cancellationImage) {
             setCancellationError("A cancellation evidence image is required.");
             return;
         }
+
+        cancellationActionInFlightRef.current = true;
         setSubmittingCancellation(true);
         setCancellationError(null);
         try {
             const response = cancellationMode === "cancel"
                 ? await cancelJobOrder(cancellationPreview.jobOrderId, reason, cancellationImage as File)
                 : await returnJobOrderMaterials(cancellationPreview.jobOrderId, reason);
-            toast.success(
-                cancellationMode === "cancel"
-                    ? `Job Order ${response.jobOrderNo} cancelled. Returned ${response.returnedQuantity.toLocaleString()} unit(s) to MAIN-STORE.`
-                    : `Returned ${response.returnedQuantity.toLocaleString()} unit(s) from Job Order ${response.jobOrderNo} to MAIN-STORE.`
-            );
-            setCancellationModalOpen(false);
-            setCancellationPreview(null);
-            fetchJobs(cancellationPreview.jobOrderNo, true);
+
+            cancellationMutationSucceededRef.current = true;
+            cancellationSuccessResponseRef.current = response;
+            setCancellationMutationSucceeded(true);
+            setRefreshingCancellation(true);
+            const refreshed = await fetchJobs(undefined, true);
+            if (!refreshed) {
+                setCancellationError("The operation succeeded, but the terminal could not refresh. Retry the refresh; do not repeat the operation.");
+                return;
+            }
+            finishCancellationFlow(response, cancellationMode);
         } catch (err: any) {
             setCancellationError(err.message || "Failed to process the Job Order cancellation.");
         } finally {
+            cancellationActionInFlightRef.current = false;
             setSubmittingCancellation(false);
+            setRefreshingCancellation(false);
         }
-    }, [cancellationPreview, cancellationMode, fetchJobs]);
+    }, [cancellationPreview, cancellationMode, fetchJobs, finishCancellationFlow]);
+
+    const handleStartProduction = useCallback(async (): Promise<boolean> => {
+        if (
+            cancellationModalOpenRef.current
+            || cancellationActionInFlightRef.current
+            || cancellationMutationSucceededRef.current
+        ) return false;
+        if (!selectedJobOrder) return false;
+        const jobOrderId = selectedJobOrder.order_id || selectedJobOrder.job_order_id;
+        if (!jobOrderId) {
+            toast.error("The selected Job Order has no valid identifier.");
+            return false;
+        }
+        if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.FOR_PICKING, JOB_ORDER_STATUS.PICKED)) {
+            toast.error("Only For Picking or Picked Job Orders can start production.");
+            return false;
+        }
+        if (
+            loadingJobOrderMaterials
+            || jobOrderMaterialsJobOrderId !== Number(jobOrderId)
+            || !areJobOrderMaterialsFullyStaged(jobOrderMaterials)
+        ) {
+            toast.error("Stage all required materials before starting production.");
+            return false;
+        }
+
+        setWorkflowSubmitting(true);
+        try {
+            await executeJobOrderWorkflow(jobOrderId, { action: "start-production" });
+            toast.success("Production started.");
+            await fetchJobs(selectedJobOrder.jo_id, true);
+            return true;
+        } catch (err: any) {
+            toast.error(err.message || "Failed to start production.");
+            return false;
+        } finally {
+            setWorkflowSubmitting(false);
+        }
+    }, [selectedJobOrder, fetchJobs, loadingJobOrderMaterials, jobOrderMaterialsJobOrderId, jobOrderMaterials]);
 
     const handleWorkflowAction = useCallback(async (
         action: Extract<JobOrderWorkflowAction, "place-on-hold" | "resume-production" | "complete-production" | "terminate-production">,
@@ -894,6 +1073,11 @@ const selectedTask = useMemo(() => {
             workflowEvidenceImage?: File | null;
         } = {}
     ): Promise<boolean> => {
+        if (
+            cancellationModalOpenRef.current
+            || cancellationActionInFlightRef.current
+            || cancellationMutationSucceededRef.current
+        ) return false;
         if (!selectedJobOrder) return false;
         const jobOrderId = selectedJobOrder.order_id || selectedJobOrder.job_order_id;
         if (!jobOrderId) {
@@ -995,6 +1179,7 @@ const selectedTask = useMemo(() => {
         selectedJobOrder,
         sortedTasks,
         jobOrderMaterials,
+        jobOrderMaterialsJobOrderId,
         loadingJobOrderMaterials,
         activeStep,
         fetchJobs,
@@ -1024,15 +1209,21 @@ const selectedTask = useMemo(() => {
         releasingDraft,
         handleReleaseDraftJO,
         cancellationModalOpen,
-        setCancellationModalOpen,
+        handleCancellationModalOpenChange,
+        jobOrderActionLocked: cancellationModalOpen || loadingCancellation || submittingCancellation || cancellationMutationSucceeded,
         cancellationMode,
         cancellationPreview,
         loadingCancellation,
         submittingCancellation,
+        refreshingCancellation,
+        cancellationMutationSucceeded,
         cancellationError,
         openCancellationModal,
+        retryCancellationPreview,
+        retryCancellationRefresh,
         handleConfirmCancellation,
         workflowSubmitting,
+        handleStartProduction,
         handleWorkflowAction
     };
 }

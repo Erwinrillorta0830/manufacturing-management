@@ -4,8 +4,6 @@ import {
     User, 
     RouteOperatorRecord, 
     WorkCenter, 
-    StationScanPayload, 
-    StationScanResponse, 
     JobOrderStatusHistoryRecord, 
     RejectionReason, 
     MaterialGenealogyRecord,
@@ -38,22 +36,28 @@ export async function fetchJobOrderMaterials(jobOrderId: number | string): Promi
         throw new Error(data?.error || "Failed to load Job Order material batches.");
     }
     return Array.isArray(data)
-        ? data.map((line: any) => ({
-            jo_material_id: Number(line.jo_material_id || line.id || 0) || undefined,
-            product_id: Number(line.product_id?.product_id || line.product_id || 0),
-            product_name: String(line.product_name || `Product #${line.product_id || ""}`),
-            reservations: Array.isArray(line.reservations)
-                ? line.reservations.map((reservation: any) => ({
-                    reservation_id: Number(reservation.reservation_id || reservation.jo_materials_reservation_id || reservation.id || 0) || null,
-                    batch_no: reservation.batch_no ? String(reservation.batch_no) : null,
-                    reservation_status: reservation.reservation_status || null,
-                    reserved_quantity: Number(reservation.reserved_quantity || 0),
-                    staged_quantity: Number(reservation.staged_quantity || 0),
-                    issued_to_wip_quantity: Number(reservation.issued_to_wip_quantity || 0),
-                    remaining_wip_quantity: Number(reservation.remaining_wip_quantity || 0)
-                }))
-                : []
-        }))
+        ? data.map((line: any) => {
+            const requiredQuantity = line.allocated_quantity ?? line.required_quantity ?? line.quantity_required;
+            return {
+                jo_material_id: Number(line.jo_material_id || line.id || 0) || undefined,
+                product_id: Number(line.product_id?.product_id || line.product_id || 0),
+                product_name: String(line.product_name || `Product #${line.product_id || ""}`),
+                required_quantity: requiredQuantity === undefined || requiredQuantity === null || requiredQuantity === ""
+                    ? undefined
+                    : Number(requiredQuantity),
+                reservations: Array.isArray(line.reservations)
+                    ? line.reservations.map((reservation: any) => ({
+                        reservation_id: Number(reservation.reservation_id || reservation.jo_materials_reservation_id || reservation.id || 0) || null,
+                        batch_no: reservation.batch_no ? String(reservation.batch_no) : null,
+                        reservation_status: reservation.reservation_status || null,
+                        reserved_quantity: Number(reservation.reserved_quantity || 0),
+                        staged_quantity: Number(reservation.staged_quantity || 0),
+                        issued_to_wip_quantity: Number(reservation.issued_to_wip_quantity || 0),
+                        remaining_wip_quantity: Number(reservation.remaining_wip_quantity || 0)
+                    }))
+                    : []
+            };
+        })
         : [];
 }
 
@@ -131,7 +135,7 @@ export async function fetchRouteOperators(taskId: number): Promise<RouteOperator
 }
 
 export interface RouteOperatorPayload {
-    action: "start-timer" | "stop-timer" | "log-hours" | "remove-operator" | "swap-operator" | "edit-hours" | "edit-times" | string;
+    action: "assign-operator" | "start-timer" | "stop-timer" | "log-hours" | "remove-operator" | "swap-operator" | "edit-hours" | "edit-times";
     taskId: number;
     userId: number;
     joId: string;
@@ -254,19 +258,6 @@ export async function addReservedMaterial(payload: WipTopUpPayload): Promise<Wip
     return data as WipTopUpResponse;
 }
 
-export async function scanStationStart(payload: StationScanPayload): Promise<StationScanResponse> {
-    const res = await fetch("/api/manufacturing/production/station-scan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-    });
-    const data = await res.json();
-    if (!res.ok) {
-        throw new Error(data.error || "Failed to process station start scan.");
-    }
-    return data;
-}
-
 export type WorkCenterApplicabilitySource = "VERSION_ROUTING" | "JO_ROUTES" | "NONE" | "ALL";
 
 export interface RouteWorkCenterOption {
@@ -289,9 +280,9 @@ export interface WorkCenterListResponse {
 export async function fetchWorkCenters(jobOrderId?: number | string | null): Promise<WorkCenterListResponse> {
     const hasJobOrder = jobOrderId !== undefined && jobOrderId !== null && String(jobOrderId).trim() !== "";
     const query = hasJobOrder
-        ? `?action=applicable-work-centers&joId=${encodeURIComponent(String(jobOrderId))}`
+        ? `?joId=${encodeURIComponent(String(jobOrderId))}`
         : "";
-    const res = await fetch(`/api/manufacturing/production/station-scan${query}`, { cache: "no-store" });
+    const res = await fetch(`/api/manufacturing/production/work-centers${query}`, { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to load work centers list.");
     const json = await res.json();
     return {
@@ -310,7 +301,7 @@ export async function fetchWorkCenterAvailability(options: {
     if (options.workCenterId) params.set("workCenterId", String(options.workCenterId));
     if (options.branchId) params.set("branchId", String(options.branchId));
 
-    const res = await fetch(`/api/manufacturing/production/station-scan?${params.toString()}`, { cache: "no-store" });
+    const res = await fetch(`/api/manufacturing/production/work-center-availability?${params.toString()}`, { cache: "no-store" });
     const json = await res.json().catch(() => ({}));
     if (!res.ok || json.success === false) {
         throw new Error(json.error || "Failed to load Job Order workstation availability.");
@@ -360,7 +351,7 @@ export async function assignRouteWorkCenters(
 }
 
 export async function fetchJobOrderStatusHistory(joId: string | number): Promise<JobOrderStatusHistoryRecord[]> {
-    const res = await fetch(`/api/manufacturing/production/station-scan?action=history&joId=${joId}`, { cache: "no-store" });
+    const res = await fetch(`/api/manufacturing/job-orders/${encodeURIComponent(String(joId))}/status-history`, { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to load Job Order status history.");
     const json = await res.json();
     return json.data || [];
@@ -388,10 +379,10 @@ export async function fetchGenealogyAndMovements(joId: string | number, batchNo?
     };
 }
 
-export async function fetchJobOrderCancellationPreview(joId: string | number): Promise<JobOrderCancellationPreview> {
+export async function fetchJobOrderCancellationPreview(joId: string | number, signal?: AbortSignal): Promise<JobOrderCancellationPreview> {
     const res = await fetch(
         `/api/manufacturing/production/job-order-cancellation?joId=${encodeURIComponent(String(joId))}`,
-        { cache: "no-store" }
+        { cache: "no-store", signal }
     );
     const json = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(json.error || "Failed to load the Job Order cancellation preview.");

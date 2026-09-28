@@ -92,6 +92,21 @@ export function isJobOrderStatus(
     return normalized !== null && expected.includes(normalized);
 }
 
+/** Materials may be staged or re-staged until the Job Order enters production. */
+export function canStageJobOrderMaterials(value: unknown): boolean {
+    return isJobOrderStatus(value, JOB_ORDER_STATUS.FOR_PICKING, JOB_ORDER_STATUS.PICKED);
+}
+
+/** Route personnel may be assigned or reorganized before production starts. */
+export function canChangeJobOrderOperatorRoster(value: unknown): boolean {
+    return isJobOrderStatus(
+        value,
+        JOB_ORDER_STATUS.FOR_PICKING,
+        JOB_ORDER_STATUS.PICKED,
+        JOB_ORDER_STATUS.IN_PRODUCTION
+    );
+}
+
 export function isTerminalJobOrderStatus(value: unknown): boolean {
     return isJobOrderStatus(
         value,

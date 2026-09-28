@@ -38,9 +38,8 @@ export function hasStagingDelta(
     const remaining = Number(remainingQuantity);
     const hasRemaining = Number.isFinite(remaining) && remaining > ALLOCATION_DELTA_EPSILON;
     const selectedTotal = (selected || []).reduce((sum, line) => sum + Math.max(0, Number(line.quantity) || 0), 0);
-    // Committed lines are incremental top-ups capped at the remaining
-    // requirement, so any non-empty selection against outstanding remaining
-    // quantity is committable by construction.
+    // Any non-empty selection against an outstanding requirement is a
+    // committable top-up; manual allocations may exceed it for floor buffer.
     if (hasRemaining && selectedTotal > ALLOCATION_DELTA_EPSILON) return true;
     const stagedByKey = new Map<string, { quantity: number; bin: string | null }>();
     for (const row of staged || []) {

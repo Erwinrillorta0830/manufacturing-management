@@ -6,6 +6,7 @@ import { fetchMmInventoryMovements, MmInventoryMovementError, type NormalizedMmI
 import { isExpired, normalizeDirectusStagingMovement } from "../../material-staging/_stock";
 import { loadMmInventoryLots, loadMmLots, mmInventoryLotId, mmLotId, resolveProductUnitId } from "../../services/mm-lots.service";
 import { JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
+import { getUnissuedReservationQuantity } from "./reservation-availability";
 
 const ACTIVE_JOB_ORDER_STATUSES = [
     JOB_ORDER_STATUS.DRAFT,
@@ -26,6 +27,7 @@ export interface AvailableInventoryLot {
     physicalQuantity?: number;
     expiryDate?: string | null;
     manufacturingDate?: string | null;
+    qaStatus?: string | null;
 }
 
 const RESERVABLE_QA_STATUSES = new Set([
@@ -125,6 +127,14 @@ function isReservableQaStatus(value: unknown): boolean {
     return RESERVABLE_QA_STATUSES.has(status || "GOOD");
 }
 
+function isGoodQaStatus(value: unknown): boolean {
+    return String(value ?? "")
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "") === "GOOD";
+}
+
 /**
  * Return the movement-backed lots that can be reserved for a raw material.
  *
@@ -136,6 +146,8 @@ export interface AvailableInventoryLotOptions {
     movementRows?: NormalizedMmInventoryMovement[];
     /** Set false when planning must use physical stock without subtracting other JO reservations. */
     includeReservations?: boolean;
+    /** Require an explicit GOOD QA status rather than the broader reservable status set. */
+    requireGoodQa?: boolean;
 }
 
 export async function getAvailableInventoryLots(
@@ -164,7 +176,7 @@ export async function getAvailableInventoryLots(
                 { branch_id: { _eq: numericBranchId } },
                 { jo_material_id: { job_order_id: { status: { _in: ACTIVE_JOB_ORDER_STATUSES } } } }
             ]
-        }))}&fields=product_id,batch_no,mm_lot_id,inventory_lot_id,reserved_quantity&limit=-1`, { headers, cache: "no-store" });
+        }))}&fields=product_id,batch_no,mm_lot_id,inventory_lot_id,reserved_quantity,staged_quantity,issued_to_wip_quantity&limit=-1`, { headers, cache: "no-store" });
     const [springMovements, receiptsRes, yieldsRes, reservationsRes, eligibleStorageLots, inventoryLots, directusMovementsRes] = await Promise.all([
         movementRowsPromise,
         fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[product_id][_eq]=${numericProductId}&filter[branch_id][_eq]=${numericBranchId}&fields=purchase_order_product_id,product_id,batch_no,lot_no,qa_status,is_reverted,received_quantity,mm_lot_id,expiry_date,manufacturing_date,created_at&limit=-1`, { headers, cache: "no-store" }),
@@ -310,7 +322,7 @@ export async function getAvailableInventoryLots(
             || String(movement.manufacturing_date || movement.manufacturingDate || movement.created_at || "").trim()
             || receiptManufacturingByBatch.get(batchKey(batchNo))
             || null;
-        const qaStatus = canonicalInventory?.qaStatus || batchStatusMap.get(`${numericProductId}:${batchKey(batchNo)}`) || "GOOD";
+        const qaStatus = canonicalInventory?.qaStatus || batchStatusMap.get(`${numericProductId}:${batchKey(batchNo)}`) || null;
 
         if (existing) {
             existing.quantity += quantity;
@@ -337,7 +349,13 @@ export async function getAvailableInventoryLots(
     reservations.forEach((reservation: any) => {
         const batchNo = batchText(reservation.batch_no);
         const normalizedBatch = batchKey(batchNo);
-        const quantity = Number(reservation.reserved_quantity || 0);
+        // Staged/issued stock has already reduced the movement-backed Main
+        // Store balance. Only deduct the still-unissued portion of a JO reserve.
+        const quantity = getUnissuedReservationQuantity(
+            reservation.reserved_quantity,
+            reservation.staged_quantity,
+            reservation.issued_to_wip_quantity
+        );
         if (quantity <= 0) return;
 
         const reservationMmLotId = mmLotId(reservation.mm_lot_id);
@@ -369,7 +387,10 @@ export async function getAvailableInventoryLots(
     }>>();
     movementBalances.forEach((balance, key) => {
         if (balance.quantity <= 0) return;
-        if (!isReservableQaStatus(balance.qaStatus) || isExpired(balance.expiryDate)) return;
+        const qaEligible = options.requireGoodQa
+            ? isGoodQaStatus(balance.qaStatus)
+            : isReservableQaStatus(balance.qaStatus);
+        if (!qaEligible || isExpired(balance.expiryDate)) return;
 
         const normalizedBatch = batchKey(balance.batchNo);
         if (!lotsByBatch.has(normalizedBatch)) lotsByBatch.set(normalizedBatch, []);
@@ -403,7 +424,8 @@ export async function getAvailableInventoryLots(
                 available,
                 physicalQuantity: lot.quantity,
                 expiryDate: lot.expiryDate,
-                manufacturingDate: lot.manufacturingDate
+                manufacturingDate: lot.manufacturingDate,
+                qaStatus: lot.qaStatus
             });
         });
     });

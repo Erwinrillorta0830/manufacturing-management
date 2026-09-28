@@ -28,6 +28,7 @@ import {
 import { WorkstationBreakdownDialog } from "./WorkstationBreakdownDialog";
 import { WorkstationAssetSummary } from "./WorkstationAssetSummary";
 import { elapsedSecondsSince, formatPhtDateTime } from "../operator-time";
+import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 
 interface RouteExecutionTableProps {
     sortedTasks: RoutingTask[];
@@ -49,6 +50,7 @@ interface RouteExecutionTableProps {
     onRequestCompleteStep: (taskId: number) => void;
     onBreakdownSaved?: () => void;
     readOnly?: boolean;
+    productionTargetReached?: boolean;
 }
 
 interface RouteExecutionRowProps {
@@ -71,6 +73,7 @@ interface RouteExecutionRowProps {
     onRequestCompleteStep: (taskId: number) => void;
     setSelectedTaskId: (id: number) => void;
     readOnly: boolean;
+    productionTargetReached: boolean;
 }
 
 interface OperatorGroup {
@@ -174,7 +177,8 @@ function RouteExecutionRow({
     onOpenBreakdown,
     onRequestCompleteStep,
     setSelectedTaskId,
-    readOnly
+    readOnly,
+    productionTargetReached
 }: RouteExecutionRowProps) {
     const [assigneeId, setAssigneeId] = useState("");
     const [materialsOpen, setMaterialsOpen] = useState(false);
@@ -226,6 +230,8 @@ function RouteExecutionRow({
     const isCompleted = task.status === "Completed";
     const isOngoing = task.status === "Ongoing" || task.status === "In Progress";
     const isQAHold = task.status === "QA Hold";
+    const canStartTimer = isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION);
+    const floorMutationsLocked = readOnly || productionTargetReached;
     const hasMaterials = (task.bom_items || []).length > 0;
     const shiftDurationHours = Math.max(0.1, Number(selectedJobOrder.shiftOption ?? selectedJobOrder.shift_option ?? 8) || 8);
     const rowClass = isSelected
@@ -301,7 +307,7 @@ function RouteExecutionRow({
                                 ))}
                             </div>
                         </div>
-                        {!readOnly && (
+                        {!floorMutationsLocked && (
                             <div className="border-t border-dashed border-border/70 pt-2">
                                 <div className="mb-1 text-[9px] font-bold uppercase tracking-wider text-muted-foreground">
                                     Assign Additional Personnel
@@ -312,7 +318,7 @@ function RouteExecutionRow({
                                         value={assigneeId}
                                         onValueChange={setAssigneeId}
                                         placeholder="Select additional personnel..."
-                                        disabled={loadingOperators}
+                                        disabled={loadingOperators || floorMutationsLocked}
                                         className="h-8 min-w-0 flex-1 text-[10px]"
                                     />
                                     <div className="flex shrink-0 gap-1">
@@ -320,26 +326,30 @@ function RouteExecutionRow({
                                             type="button"
                                             size="xs"
                                             variant="outline"
-                                            disabled={!assigneeId}
+                                            disabled={!assigneeId || floorMutationsLocked}
                                             onClick={() => {
                                                 handleAddOperator(false, task.id, assigneeId);
                                                 setAssigneeId("");
                                             }}
                                             className="h-8 px-2 text-[10px] font-bold"
-                                            title="Log additional personnel without starting a timer"
+                                            title="Assign additional personnel without starting a timer"
                                         >
-                                            Log
+                                            Assign
                                         </Button>
                                         <Button
                                             type="button"
                                             size="xs"
-                                            disabled={!assigneeId || isCompleted}
+                                            disabled={!assigneeId || isCompleted || !canStartTimer || floorMutationsLocked}
                                             onClick={() => {
                                                 handleAddOperator(true, task.id, assigneeId);
                                                 setAssigneeId("");
                                             }}
                                             className="h-8 bg-primary px-2 text-[10px] font-bold text-primary-foreground"
-                                            title={isCompleted ? "Cannot start a timer because this route is completed." : "Assign additional personnel and start timer"}
+                                            title={isCompleted
+                                                ? "Cannot start a timer because this route is completed."
+                                                : !canStartTimer
+                                                    ? "Start production before starting an operator timer."
+                                                    : "Assign additional personnel and start timer"}
                                         >
                                             <Play className="h-3 w-3" />
                                         </Button>
@@ -367,7 +377,7 @@ function RouteExecutionRow({
                                 type="button"
                                 size="xs"
                                 variant="outline"
-                                disabled={readOnly}
+                                disabled={floorMutationsLocked}
                                 onClick={() => onOpenBreakdown(task.id)}
                                 className="h-7 border-destructive/30 px-2 text-[10px] font-bold text-destructive hover:text-destructive"
                             >
@@ -377,7 +387,13 @@ function RouteExecutionRow({
                         {stepAction}
                     </div>
                     <div className="mt-2 text-[10px] text-muted-foreground">
-                        {isCompleted ? "Completion recorded" : readOnly ? "Route actions unavailable" : "Complete this route explicitly when finished"}
+                        {isCompleted
+                            ? "Completion recorded"
+                            : productionTargetReached
+                                ? "Output target reached. Stop active timers and complete this route; other production actions are locked."
+                                : readOnly
+                                    ? "Route actions unavailable"
+                                    : "Complete this route explicitly when finished"}
                     </div>
                 </td>
                 <td className="px-3 py-3 align-top" onClick={(event) => event.stopPropagation()}>
@@ -426,18 +442,18 @@ function RouteExecutionRow({
                                                     <Square className="mr-1 h-2.5 w-2.5 fill-current" /> Stop
                                                 </Button>
                                             ) : (
-                                                <Button type="button" size="xs" variant="outline" disabled={readOnly || isCompleted} title={isCompleted ? "Cannot start a timer because this route is completed." : "Start shift timer"} className="h-6 border-emerald-500/30 px-2 text-[9px] font-bold text-emerald-700 dark:text-emerald-400" onClick={() => handleStartTimer(task.id, operator.userId)}>
+                                                <Button type="button" size="xs" variant="outline" disabled={floorMutationsLocked || isCompleted || !canStartTimer} title={productionTargetReached ? "The Job Order output target has been reached." : isCompleted ? "Cannot start a timer because this route is completed." : !canStartTimer ? "Start production before starting an operator timer." : "Start shift timer"} className="h-6 border-emerald-500/30 px-2 text-[9px] font-bold text-emerald-700 dark:text-emerald-400" onClick={() => handleStartTimer(task.id, operator.userId)}>
                                                     <Play className="mr-1 h-2.5 w-2.5 fill-current" /> Start
                                                 </Button>
                                             )}
                                             <Tooltip>
                                                 <TooltipTrigger asChild>
-                                                    <span tabIndex={!readOnly && !hasEditableSession ? 0 : -1}>
+                                                    <span tabIndex={!floorMutationsLocked && !hasEditableSession ? 0 : -1}>
                                                         <Button
                                                             type="button"
                                                             size="xs"
                                                             variant="ghost"
-                                                            disabled={readOnly || !hasEditableSession}
+                                                            disabled={floorMutationsLocked || !hasEditableSession}
                                                             className="h-6 px-1.5 text-[9px]"
                                                             onClick={() => onRequestEditOperator(task, operator)}
                                                             title={editTimeMessage}
@@ -446,16 +462,16 @@ function RouteExecutionRow({
                                                         </Button>
                                                     </span>
                                                 </TooltipTrigger>
-                                                {!readOnly && !hasEditableSession && <TooltipContent>{editTimeMessage}</TooltipContent>}
+                                                {!floorMutationsLocked && !hasEditableSession && <TooltipContent>{editTimeMessage}</TooltipContent>}
                                             </Tooltip>
                                             <Tooltip>
                                                 <TooltipTrigger asChild>
-                                                    <span tabIndex={hasProtectedLabor && !readOnly ? 0 : -1}>
+                                                    <span tabIndex={hasProtectedLabor && !floorMutationsLocked ? 0 : -1}>
                                                         <Button
                                                             type="button"
                                                             size="xs"
                                                             variant="ghost"
-                                                            disabled={readOnly || hasProtectedLabor}
+                                                            disabled={floorMutationsLocked || hasProtectedLabor}
                                                             aria-label="Swap operator assignment"
                                                             className="h-6 px-1.5 text-[9px] text-amber-700 hover:text-amber-800 dark:text-amber-400"
                                                             onClick={() => onRequestSwapOperator(task, operator, operatorOptions)}
@@ -465,16 +481,16 @@ function RouteExecutionRow({
                                                         </Button>
                                                     </span>
                                                 </TooltipTrigger>
-                                                {hasProtectedLabor && !readOnly && <TooltipContent>{guardrailMessage}</TooltipContent>}
+                                                {hasProtectedLabor && !floorMutationsLocked && <TooltipContent>{guardrailMessage}</TooltipContent>}
                                             </Tooltip>
                                             <Tooltip>
                                                 <TooltipTrigger asChild>
-                                                    <span tabIndex={hasProtectedLabor && !readOnly ? 0 : -1}>
+                                                    <span tabIndex={hasProtectedLabor && !floorMutationsLocked ? 0 : -1}>
                                                         <Button
                                                             type="button"
                                                             size="xs"
                                                             variant="ghost"
-                                                            disabled={readOnly || hasProtectedLabor}
+                                                            disabled={floorMutationsLocked || hasProtectedLabor}
                                                             aria-label="Remove personnel from route"
                                                             className="h-6 px-1.5 text-[9px] text-destructive hover:text-destructive"
                                                             onClick={() => onRequestRemoveOperator(task, operator)}
@@ -484,7 +500,7 @@ function RouteExecutionRow({
                                                         </Button>
                                                     </span>
                                                 </TooltipTrigger>
-                                                {hasProtectedLabor && !readOnly && <TooltipContent>{guardrailMessage}</TooltipContent>}
+                                                {hasProtectedLabor && !floorMutationsLocked && <TooltipContent>{guardrailMessage}</TooltipContent>}
                                             </Tooltip>
                                         </div>
                                     </div>
@@ -558,7 +574,8 @@ export function RouteExecutionTable({
     handleSaveOperatorTimes,
     onRequestCompleteStep,
     onBreakdownSaved,
-    readOnly = false
+    readOnly = false,
+    productionTargetReached = false
 }: RouteExecutionTableProps) {
     const [breakdownTaskId, setBreakdownTaskId] = useState<number | null>(null);
     const [pendingRosterChange, setPendingRosterChange] = useState<OperatorRosterChange | null>(null);
@@ -678,6 +695,7 @@ export function RouteExecutionTable({
                                     onRequestCompleteStep={onRequestCompleteStep}
                                     setSelectedTaskId={setSelectedTaskId}
                                     readOnly={readOnly}
+                                    productionTargetReached={productionTargetReached}
                                 />
                             ))}
                         </tbody>

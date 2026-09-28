@@ -129,6 +129,7 @@ export default function OperatorPanel({
     onOpenShiftLogModal,
     readOnly = false
 }: OperatorPanelProps) {
+    const canStartTimer = isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION);
     const [isBreakdownOpen, setIsBreakdownOpen] = useState(false);
     const [localAssigneeId, setLocalAssigneeId] = useState("");
     const [localManualHours, setLocalManualHours] = useState("");
@@ -448,8 +449,9 @@ export default function OperatorPanel({
                                     }}
                                     className="h-8 font-bold text-xs px-2.5"
                                     disabled={!localAssigneeId}
+                                    title="Assign personnel to this route without starting a timer"
                                 >
-                                    Log Hours
+                                    Assign
                                 </Button>
                                 <Button
                                     size="sm"
@@ -458,7 +460,8 @@ export default function OperatorPanel({
                                         setLocalAssigneeId("");
                                     }}
                                     className="h-8 font-bold text-xs px-2.5 bg-primary text-white"
-                                    disabled={!localAssigneeId}
+                                    disabled={!localAssigneeId || !canStartTimer}
+                                    title={canStartTimer ? "Assign personnel and start a timer" : "Start production before starting an operator timer."}
                                 >
                                     Clock In (Timer)
                                 </Button>
@@ -570,7 +573,8 @@ export default function OperatorPanel({
                                                                 size="xs"
                                                                 className="h-6.5 text-emerald-700 border-emerald-300 hover:bg-emerald-50 dark:text-emerald-400 dark:border-emerald-900/50 dark:hover:bg-emerald-950/40 px-2 text-[10px] font-medium"
                                                                 onClick={() => handleStartTimer(selectedTask.id, gop.user_id)}
-                                                                disabled={readOnly}
+                                                                disabled={readOnly || !canStartTimer}
+                                                                title={canStartTimer ? "Start shift timer" : "Start production before starting an operator timer."}
                                                             >
                                                                 <Play className="mr-1 h-3 w-3 fill-current" /> Run
                                                             </Button>
@@ -583,8 +587,8 @@ export default function OperatorPanel({
                                                                 setLocalActiveManualUserId(gop.user_id);
                                                                 setLocalManualHours(gop.total_logged_hours.toString());
                                                             }}
-                                                            disabled={readOnly}
-                                                            title="Edit hours manually"
+                                                            disabled={readOnly || !canStartTimer}
+                                                            title={canStartTimer ? "Edit hours manually" : "Start production before editing operator hours."}
                                                         >
                                                             Manual
                                                         </Button>

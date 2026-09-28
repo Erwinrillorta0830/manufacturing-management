@@ -192,8 +192,6 @@ export function jobOrderWorkflowModulePath(
     switch (action) {
         case "initialize":
             return JOB_ORDER_MODULE_PATHS.planning;
-        case "complete-staging":
-            return JOB_ORDER_MODULE_PATHS.staging;
         case "start-production":
         case "place-on-hold":
         case "resume-production":

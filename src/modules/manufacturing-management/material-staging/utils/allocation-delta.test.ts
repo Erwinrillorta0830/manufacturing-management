@@ -17,11 +17,18 @@ assert.equal(
     false
 );
 
-// Any non-empty top-up against outstanding remaining is committable,
-// even if it coincides with already-staged quantities (incremental lines).
+// Manual top-ups may exceed the outstanding target for floor buffer,
+// even if they coincide with already-staged quantities (incremental lines).
 assert.equal(
     hasStagingDelta(staged, [
         { mm_lot_id: 1, inventory_lot_id: 11, batch_no: "B-001", quantity: 100 },
+        { mm_lot_id: 2, inventory_lot_id: 22, batch_no: "B-002", quantity: 50 },
+    ], BIN_A, 150),
+    true
+);
+assert.equal(
+    hasStagingDelta(staged, [
+        { mm_lot_id: 1, inventory_lot_id: 11, batch_no: "B-001", quantity: 120 },
         { mm_lot_id: 2, inventory_lot_id: 22, batch_no: "B-002", quantity: 50 },
     ], BIN_A, 150),
     true

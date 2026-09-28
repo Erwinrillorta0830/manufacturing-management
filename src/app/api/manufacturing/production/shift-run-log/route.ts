@@ -325,7 +325,7 @@ async function legacyShiftRunPost(request: Request) {
         }
         if (canonicalJoStatus !== JOB_ORDER_STATUS.IN_PRODUCTION) {
             return NextResponse.json({
-                error: `Job Order ${joId} must be In Production before a shift run can be recorded. Start it from a Picked Job Order first.`,
+                error: `Job Order ${joId} must be In Production before a shift run can be recorded. Start production from the Shop Floor Execution terminal first.`,
                 code: "JOB_ORDER_NOT_IN_PRODUCTION"
             }, { status: 409 });
         }

@@ -7,11 +7,14 @@ import {
     normalizeJobOrderStatus,
     JOB_ORDER_STATUS
 } from "@/modules/manufacturing-management/job-order-status";
-import {
-    resolveOrCreateMmInventoryLot,
-    MmInventoryLotRecord
-} from "@/app/api/manufacturing/services/mm-lots.service";
 import { jobOrderCancellationImageUrl } from "./job-order-cancellation/_image";
+import {
+    buildMaterialReleaseBatch,
+    buildReservationReleaseBatch,
+    chunkBatch,
+    DIRECTUS_BATCH_SIZE,
+    matchesExistingReturnMovement
+} from "./_cancellation-batch";
 
 const QUANTITY_EPSILON = 0.000001;
 const STAGING_MARKER = "[MM-MATERIAL-STAGING]";
@@ -208,6 +211,49 @@ async function directusWrite<T>(path: string, method: "POST" | "PATCH", payload:
     return (parsed?.data ?? parsed) as T;
 }
 
+async function directusBulkWrite<T>(path: string, method: "POST" | "PATCH", payload: unknown, label: string): Promise<T[]> {
+    const response = await fetch(`${DIRECTUS_URL}${path}`, {
+        method,
+        headers,
+        body: JSON.stringify(payload)
+    });
+    if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new JobOrderCancellationError(
+            `Failed to ${label}: ${response.status}${text ? ` - ${text}` : ""}`,
+            502,
+            "DIRECTUS_WRITE_FAILED"
+        );
+    }
+    const parsed = await response.json().catch(() => ({}));
+    const data = parsed?.data ?? parsed;
+    if (!Array.isArray(data)) {
+        throw new JobOrderCancellationError(
+            `Failed to ${label}: Directus returned an invalid batch response.`,
+            502,
+            "DIRECTUS_WRITE_FAILED"
+        );
+    }
+    return data as T[];
+}
+
+async function directusBulkDelete(path: string, ids: number[], label: string): Promise<void> {
+    if (ids.length === 0) return;
+    const response = await fetch(`${DIRECTUS_URL}${path}`, {
+        method: "DELETE",
+        headers,
+        body: JSON.stringify(ids)
+    });
+    if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new JobOrderCancellationError(
+            `Failed to ${label}: ${response.status}${text ? ` - ${text}` : ""}`,
+            502,
+            "DIRECTUS_WRITE_FAILED"
+        );
+    }
+}
+
 function canonicalTypeName(value: unknown): string {
     return String(value ?? "")
         .trim()
@@ -262,13 +308,62 @@ export interface MaterialReturnWriter {
     create<T = RawRecord>(collection: string, payload: Record<string, unknown>, label: string): Promise<T>;
     patch<T = RawRecord>(collection: string, id: number, payload: Record<string, unknown>, label: string): Promise<T>;
     delete(collection: string, id: number, label: string): Promise<void>;
+    createMany?<T = RawRecord>(collection: string, payloads: Record<string, unknown>[], label: string): Promise<T[]>;
+    patchMany?<T = RawRecord>(collection: string, payloads: Record<string, unknown>[], label: string): Promise<T[]>;
+    deleteMany?(collection: string, ids: number[], label: string): Promise<void>;
 }
 
 const defaultMaterialReturnWriter: MaterialReturnWriter = {
     create: (collection, payload, label) => directusWrite(`/items/${collection}`, "POST", payload, label),
     patch: (collection, id, payload, label) => directusWrite(`/items/${collection}/${id}`, "PATCH", payload, label),
-    delete: (collection, id, label) => directusDelete(`/items/${collection}/${id}`, label)
+    delete: (collection, id, label) => directusDelete(`/items/${collection}/${id}`, label),
+    createMany: (collection, payloads, label) => directusBulkWrite(`/items/${collection}`, "POST", payloads, label),
+    patchMany: (collection, payloads, label) => directusBulkWrite(`/items/${collection}`, "PATCH", payloads, label),
+    deleteMany: (collection, ids, label) => directusBulkDelete(`/items/${collection}`, ids, label)
 };
+
+async function writerCreateMany<T = RawRecord>(
+    writer: MaterialReturnWriter,
+    collection: string,
+    payloads: Record<string, unknown>[],
+    label: string
+): Promise<T[]> {
+    if (payloads.length === 0) return [];
+    if (writer.createMany) return writer.createMany<T>(collection, payloads, label);
+    return Promise.all(payloads.map(payload => writer.create<T>(collection, payload, label)));
+}
+
+async function writerPatchMany<T = RawRecord>(
+    writer: MaterialReturnWriter,
+    collection: string,
+    payloads: Record<string, unknown>[],
+    label: string
+): Promise<T[]> {
+    if (payloads.length === 0) return [];
+    if (writer.patchMany) return writer.patchMany<T>(collection, payloads, label);
+    return Promise.all(payloads.map(payload => {
+        const primaryKeyField = collection === "manufacturing_job_order_materials_reservations"
+            ? "jo_materials_reservation_id"
+            : collection === "manufacturing_job_order_materials"
+                ? "jo_material_id"
+                : "id";
+        const id = num(payload[primaryKeyField]);
+        const body = { ...payload };
+        delete body[primaryKeyField];
+        return writer.patch<T>(collection, id, body, label);
+    }));
+}
+
+async function writerDeleteMany(
+    writer: MaterialReturnWriter,
+    collection: string,
+    ids: number[],
+    label: string
+): Promise<void> {
+    if (ids.length === 0) return;
+    if (writer.deleteMany) return writer.deleteMany(collection, ids, label);
+    await Promise.all(ids.map(id => writer.delete(collection, id, label)));
+}
 
 function parseRemarkValue(remarks: string, key: string): string | null {
     const match = remarks.match(new RegExp(`${key}=([^;|]+)`, "i"));
@@ -617,34 +712,48 @@ async function resolveReturnLineDestinations(
     lines: JobOrderMaterialReturnLine[],
     jobOrder: ResolvedJobOrder
 ): Promise<void> {
+    const returnableLines = lines.filter(line => !line.releaseOnly && line.returnableQuantity > QUANTITY_EPSILON);
+    const inventoryLotIds = [...new Set(returnableLines.map(line => line.inventoryLotId).filter(id => id > 0))];
+    const masterLotIds = [...new Set(returnableLines.map(line => line.mmLotId).filter(id => id > 0))];
+
     for (const line of lines) {
         line.destination = null;
         line.requiresLotSelection = false;
-        if (line.releaseOnly || line.returnableQuantity <= QUANTITY_EPSILON) continue;
+    }
 
-        if (line.inventoryLotId > 0) {
-            const rows = await directusGet<RawRecord[]>(
-                `/items/mm_inventory_lots?filter[inventory_lot_id][_eq]=${line.inventoryLotId}&fields=inventory_lot_id,status,lot_id,batch_no&limit=1`,
-                `load the source inventory lot for ${line.batchNo}`
-            );
-            const row = rows[0];
-            if (row && String(row.status || "").trim().toUpperCase() === "ACTIVE") {
-                line.destination = {
-                    mmLotId: line.mmLotId,
-                    inventoryLotId: line.inventoryLotId,
-                    batchNo: line.batchNo,
-                    action: "REUSE"
-                };
-                continue;
-            }
+    const [inventoryLotBatches, masterLotBatches] = await Promise.all([
+        Promise.all(chunkBatch(inventoryLotIds).map(ids => directusGet<RawRecord[]>(
+            `/items/mm_inventory_lots?filter[inventory_lot_id][_in]=${ids.join(",")}&fields=inventory_lot_id,status,lot_id,batch_no&limit=-1`,
+            "load source inventory lots for material returns"
+        ))),
+        Promise.all(chunkBatch(masterLotIds).map(ids => directusGet<RawRecord[]>(
+            `/items/mm_lots?filter[lot_id][_in]=${ids.join(",")}&fields=lot_id,status&limit=-1`,
+            "load source master lots for material returns"
+        ).catch(() => [] as RawRecord[])))
+    ]);
+    const inventoryLots = inventoryLotBatches.flat();
+    const masterLots = masterLotBatches.flat();
+
+    const activeInventoryLotIds = new Set(
+        inventoryLots
+            .filter(row => String(row.status || "").trim().toUpperCase() === "ACTIVE")
+            .map(row => num(row.inventory_lot_id))
+    );
+    const masterStatusById = new Map(masterLots.map(row => [num(row.lot_id), String(row.status || "").trim().toUpperCase()]));
+
+    for (const line of returnableLines) {
+        if (line.inventoryLotId > 0 && activeInventoryLotIds.has(line.inventoryLotId)) {
+            line.destination = {
+                mmLotId: line.mmLotId,
+                inventoryLotId: line.inventoryLotId,
+                batchNo: line.batchNo,
+                action: "REUSE"
+            };
+            continue;
         }
 
-        const masterRows = await directusGet<RawRecord[]>(
-            `/items/mm_lots?filter[lot_id][_eq]=${line.mmLotId}&fields=lot_id,status&limit=1`,
-            `load the source master lot for ${line.batchNo}`
-        ).catch(() => [] as RawRecord[]);
-        const masterStatus = String(masterRows[0]?.status || "").trim().toUpperCase();
-        if (masterRows[0] && ACTIVE_MASTER_LOT_STATUSES.has(masterStatus)) {
+        const masterStatus = masterStatusById.get(line.mmLotId);
+        if (masterStatus && ACTIVE_MASTER_LOT_STATUSES.has(masterStatus)) {
             line.destination = {
                 mmLotId: line.mmLotId,
                 inventoryLotId: 0,
@@ -656,6 +765,162 @@ async function resolveReturnLineDestinations(
 
         line.requiresLotSelection = true;
     }
+}
+
+async function loadExistingReturnMovements(operationIds: string[]): Promise<RawRecord[]> {
+    const rows = await Promise.all(chunkBatch(operationIds).map(async ids => {
+        const filter = { staging_operation_id: { _in: ids } };
+        return directusGet<RawRecord[]>(
+            `/items/inventory_movements?filter=${encodeURIComponent(JSON.stringify(filter))}&fields=movement_id,product_id,branch_id,mm_lot_id,inventory_lot_id,batch_no,transaction_type_id,quantity,staging_operation_id&limit=-1`,
+            "check existing material-staging reversals"
+        );
+    }));
+    return rows.flat();
+}
+
+interface ReturnInventoryLotCandidate {
+    line: JobOrderMaterialReturnLine;
+    mmLotId: number;
+    productId: number;
+    branchId: number;
+    batchNo: string;
+}
+
+interface ReturnInventoryLotResolution {
+    inventoryLotId: number;
+}
+
+function returnInventoryLotKey(candidate: Pick<ReturnInventoryLotCandidate, "mmLotId" | "productId" | "batchNo">): string {
+    return `${candidate.mmLotId}:${candidate.productId}:${normalizeBatch(candidate.batchNo)}`;
+}
+
+function inventoryLotKeyFromRecord(row: RawRecord): string {
+    return `${num(row.lot_id)}:${num(row.product_id)}:${normalizeBatch(row.batch_no)}`;
+}
+
+async function loadReturnInventoryLots(candidates: ReturnInventoryLotCandidate[]): Promise<RawRecord[]> {
+    const uniqueCandidates = [...new Map(candidates.map(candidate => [returnInventoryLotKey(candidate), candidate])).values()];
+    const rows = await Promise.all(chunkBatch(uniqueCandidates, 40).map(async batch => {
+        const filter = {
+            _or: batch.map(candidate => ({
+                lot_id: { _eq: candidate.mmLotId },
+                product_id: { _eq: candidate.productId },
+                batch_no: { _eq: candidate.batchNo }
+            }))
+        };
+        return directusGet<RawRecord[]>(
+            `/items/mm_inventory_lots?filter=${encodeURIComponent(JSON.stringify(filter))}&fields=inventory_lot_id,lot_id,branch_id,product_id,batch_no,status&limit=-1`,
+            "load existing return inventory lots"
+        );
+    }));
+    return rows.flat();
+}
+
+async function resolveReturnInventoryLots(
+    lines: JobOrderMaterialReturnLine[],
+    jobOrder: ResolvedJobOrder,
+    actorUserId: number,
+    writer: MaterialReturnWriter,
+    createdInventoryLotIds: number[]
+): Promise<Map<string, ReturnInventoryLotResolution>> {
+    const candidates = lines.flatMap(line => {
+        const destination = line.destination;
+        if (!destination || destination.action !== "CREATE") return [];
+        return [{
+            line,
+            mmLotId: destination.mmLotId,
+            productId: line.productId,
+            branchId: line.branchId,
+            batchNo: destination.batchNo
+        }];
+    });
+    const uniqueCandidates = [...new Map(candidates.map(candidate => [returnInventoryLotKey(candidate), candidate])).values()];
+    const resolutions = new Map<string, ReturnInventoryLotResolution>();
+    if (uniqueCandidates.length === 0) return resolutions;
+
+    const existingRows = await loadReturnInventoryLots(uniqueCandidates);
+    const existingByKey = new Map(existingRows.map(row => [inventoryLotKeyFromRecord(row), row]));
+    for (const candidate of uniqueCandidates) {
+        const existing = existingByKey.get(returnInventoryLotKey(candidate));
+        const inventoryLotId = num(existing?.inventory_lot_id);
+        if (inventoryLotId > 0) {
+            resolutions.set(returnInventoryLotKey(candidate), { inventoryLotId });
+        }
+    }
+
+    const missingCandidates = uniqueCandidates.filter(candidate => !resolutions.has(returnInventoryLotKey(candidate)));
+    const payloads = missingCandidates.map(candidate => ({
+        lot_id: candidate.mmLotId,
+        branch_id: candidate.branchId,
+        product_id: candidate.productId,
+        batch_no: candidate.batchNo.trim(),
+        manufacturing_date: null,
+        expiry_date: null,
+        unit_cost: 0,
+        qa_status: "GOOD",
+        status: "ACTIVE",
+        source_type: "JOB_ORDER_RETURN",
+        source_reference: jobOrder.jobOrderNo,
+        remarks: `Returned material from Job Order ${jobOrder.jobOrderNo}`,
+        created_by: actorUserId
+    }));
+
+    for (const [chunkIndex, payloadChunk] of chunkBatch(payloads).entries()) {
+        const candidateChunk = missingCandidates.slice(
+            chunkIndex * DIRECTUS_BATCH_SIZE,
+            chunkIndex * DIRECTUS_BATCH_SIZE + payloadChunk.length
+        );
+        let createdRows: RawRecord[];
+        try {
+            createdRows = await writerCreateMany<RawRecord>(
+                writer,
+                "mm_inventory_lots",
+                payloadChunk,
+                "create return inventory batches"
+            );
+        } catch (error) {
+            // A duplicate batch can be created concurrently. Match the existing
+            // resolver's recovery behavior without issuing one lookup per line.
+            const recoveredRows = await loadReturnInventoryLots(candidateChunk).catch(() => []);
+            const recoveredByKey = new Map(recoveredRows.map(row => [inventoryLotKeyFromRecord(row), row]));
+            const allRecovered = candidateChunk.every(candidate => {
+                const recoveredId = num(recoveredByKey.get(returnInventoryLotKey(candidate))?.inventory_lot_id);
+                if (recoveredId <= 0) return false;
+                resolutions.set(returnInventoryLotKey(candidate), { inventoryLotId: recoveredId });
+                return true;
+            });
+            if (!allRecovered) throw error;
+            continue;
+        }
+
+        if (createdRows.length !== candidateChunk.length) {
+            throw new JobOrderCancellationError(
+                "Directus did not return every created return inventory batch.",
+                502,
+                "INVENTORY_LOT_WRITE_FAILED"
+            );
+        }
+        const returnedByKey = new Map(createdRows.map(row => [inventoryLotKeyFromRecord(row), row]));
+        const responseHasCandidateFields = createdRows.some(row => num(row.lot_id) > 0 && num(row.product_id) > 0 && Boolean(row.batch_no));
+        for (let index = 0; index < candidateChunk.length; index += 1) {
+            const candidate = candidateChunk[index];
+            const row = candidate && responseHasCandidateFields
+                ? returnedByKey.get(returnInventoryLotKey(candidate))
+                : createdRows[index];
+            const inventoryLotId = num(row?.inventory_lot_id ?? row?.id);
+            if (!candidate || inventoryLotId <= 0) {
+                throw new JobOrderCancellationError(
+                    "A created return inventory batch did not return a valid ID.",
+                    502,
+                    "INVENTORY_LOT_WRITE_FAILED"
+                );
+            }
+            resolutions.set(returnInventoryLotKey(candidate), { inventoryLotId });
+            createdInventoryLotIds.push(inventoryLotId);
+        }
+    }
+
+    return resolutions;
 }
 
 export async function computeJobOrderMaterialReturns(jobOrder: ResolvedJobOrder): Promise<ComputedCancellation> {
@@ -732,7 +997,7 @@ async function executeCancellation(
     const createdMovementIds: number[] = [];
     const createdInventoryLotIds: number[] = [];
     const reservationSnapshots: ReservationSnapshot[] = [];
-    const materialSnapshots: ReleaseTarget[] = [];
+    const materialSnapshots: Array<{ id: number; reservedQuantity: number }> = [];
     let cancellationSnapshot: {
         status: string;
         cancelledAt: string | null;
@@ -754,44 +1019,47 @@ async function executeCancellation(
 
     const compensate = async () => {
         const failures: string[] = [];
-        for (const movementId of [...createdMovementIds].reverse()) {
-            try {
-                await materialReturnWriter.delete("inventory_movements", movementId, `remove return movement ${movementId}`);
-            } catch (error) {
-                failures.push(`movement ${movementId}: ${errorMessage(error)}`);
+        const rollbackDeleteMany = async (collection: string, ids: number[], label: string) => {
+            for (const batch of chunkBatch([...ids].reverse())) {
+                try {
+                    await writerDeleteMany(materialReturnWriter, collection, batch, label);
+                } catch (error) {
+                    failures.push(`${collection}: ${errorMessage(error)}`);
+                }
             }
-        }
-        for (const inventoryLotId of [...createdInventoryLotIds].reverse()) {
-            try {
-                await materialReturnWriter.delete("mm_inventory_lots", inventoryLotId, `remove return batch ${inventoryLotId}`);
-            } catch (error) {
-                failures.push(`inventory lot ${inventoryLotId}: ${errorMessage(error)}`);
+        };
+        const rollbackPatchMany = async (collection: string, payloads: Record<string, unknown>[], label: string) => {
+            for (const batch of chunkBatch([...payloads].reverse())) {
+                try {
+                    await writerPatchMany(materialReturnWriter, collection, batch, label);
+                } catch (error) {
+                    failures.push(`${collection}: ${errorMessage(error)}`);
+                }
             }
-        }
-        for (const snapshot of [...reservationSnapshots].reverse()) {
-            try {
-                await directusWrite(
-                    `/items/manufacturing_job_order_materials_reservations/${snapshot.id}`,
-                    "PATCH",
-                    snapshot.payload,
-                    `restore reservation ${snapshot.id}`
-                );
-            } catch (error) {
-                failures.push(`reservation ${snapshot.id}: ${errorMessage(error)}`);
-            }
-        }
-        for (const snapshot of [...materialSnapshots].reverse()) {
-            try {
-                await directusWrite(
-                    `/items/manufacturing_job_order_materials/${snapshot.id}`,
-                    "PATCH",
-                    { reserved_quantity: snapshot.reservedQuantity },
-                    `restore material ${snapshot.id}`
-                );
-            } catch (error) {
-                failures.push(`material ${snapshot.id}: ${errorMessage(error)}`);
-            }
-        }
+        };
+
+        await rollbackDeleteMany("inventory_movements", createdMovementIds, "remove material return movements");
+        await rollbackDeleteMany("mm_inventory_lots", createdInventoryLotIds, "remove return inventory batches");
+
+        const reservationRestores = reservationSnapshots.map(snapshot => ({
+            jo_materials_reservation_id: snapshot.id,
+            ...snapshot.payload
+        }));
+        await rollbackPatchMany(
+            "manufacturing_job_order_materials_reservations",
+            reservationRestores,
+            "restore Job Order material reservations"
+        );
+        const materialRestores = materialSnapshots.map(snapshot => ({
+            jo_material_id: snapshot.id,
+            reserved_quantity: snapshot.reservedQuantity
+        }));
+        await rollbackPatchMany(
+            "manufacturing_job_order_materials",
+            materialRestores,
+            "restore Job Order material reservations"
+        );
+
         if (statusHistoryId) {
             try {
                 await directusDelete(
@@ -831,14 +1099,14 @@ async function executeCancellation(
     };
 
     try {
+        if (returnLines.length > 0 && !reversalTransactionTypeId) {
+            throw new JobOrderCancellationError(
+                "The material-staging reversal transaction type could not be resolved.",
+                503,
+                "TRANSACTION_TYPE_UNAVAILABLE"
+            );
+        }
         for (const line of returnLines) {
-            if (!reversalTransactionTypeId) {
-                throw new JobOrderCancellationError(
-                    "The material-staging reversal transaction type could not be resolved.",
-                    503,
-                    "TRANSACTION_TYPE_UNAVAILABLE"
-                );
-            }
             if (line.requiresLotSelection || !line.destination) {
                 throw new JobOrderCancellationError(
                     `Lot ${line.batchNo} needs an active destination lot before its stock can be returned.`,
@@ -846,38 +1114,42 @@ async function executeCancellation(
                     "JOB_ORDER_RETURN_DESTINATION_REQUIRED"
                 );
             }
-            let effectiveInventoryLotId = line.destination.inventoryLotId;
-            const effectiveBatchNo = line.destination.action === "CREATE"
-                ? line.destination.batchNo
-                : line.batchNo;
-            if (line.destination.action === "CREATE") {
-                const createdLot = await resolveOrCreateMmInventoryLot({
-                    mmLotId: line.destination.mmLotId,
-                    branchId: line.branchId,
+        }
+
+        const lotResolutions = await resolveReturnInventoryLots(
+            returnLines,
+            jobOrder,
+            options.actorUserId,
+            materialReturnWriter,
+            createdInventoryLotIds
+        );
+        const operationById = new Map<string, {
+            line: JobOrderMaterialReturnLine;
+            effectiveBatchNo: string;
+        }>();
+        for (const line of returnLines) {
+            const destination = line.destination!;
+            const lotResolution = destination.action === "CREATE"
+                ? lotResolutions.get(returnInventoryLotKey({
+                    mmLotId: destination.mmLotId,
                     productId: line.productId,
-                    batchNo: line.destination.batchNo,
-                    qaStatus: "GOOD",
-                    sourceType: "JOB_ORDER_RETURN",
-                    sourceReference: jobOrder.jobOrderNo,
-                    remarks: `Returned material from Job Order ${jobOrder.jobOrderNo}`,
-                    createdBy: options.actorUserId,
-                    onCreate: async (body) => {
-                        const created = await materialReturnWriter.create<RawRecord>(
-                            "mm_inventory_lots",
-                            { ...body },
-                            `create the return batch ${line.destination?.batchNo}`
-                        );
-                        return created as unknown as MmInventoryLotRecord;
-                    }
-                });
-                effectiveInventoryLotId = num(createdLot.inventory_lot_id);
-                if (createdLot.created !== false && effectiveInventoryLotId > 0) {
-                    createdInventoryLotIds.push(effectiveInventoryLotId);
-                }
+                    batchNo: destination.batchNo
+                }))
+                : null;
+            const effectiveInventoryLotId = destination.action === "CREATE"
+                ? num(lotResolution?.inventoryLotId)
+                : destination.inventoryLotId;
+            if (effectiveInventoryLotId <= 0) {
+                throw new JobOrderCancellationError(
+                    `Lot ${destination.batchNo} does not have a valid destination inventory lot.`,
+                    503,
+                    "JOB_ORDER_RETURN_DESTINATION_REQUIRED"
+                );
             }
+            const effectiveBatchNo = destination.action === "CREATE" ? destination.batchNo : line.batchNo;
             const effectiveLine: JobOrderMaterialReturnLine = {
                 ...line,
-                mmLotId: line.destination.mmLotId,
+                mmLotId: destination.mmLotId,
                 inventoryLotId: effectiveInventoryLotId,
                 batchNo: effectiveBatchNo
             };
@@ -885,14 +1157,27 @@ async function executeCancellation(
                 mmLotId: effectiveLine.mmLotId,
                 inventoryLotId: effectiveLine.inventoryLotId,
                 batchNo: effectiveLine.batchNo,
-                action: line.destination.action
+                action: destination.action
             };
             const operationId = reversalOperationId(jobOrder.jobOrderId, effectiveLine);
-            const allocationId = reversalLineId(effectiveLine);
-            const existing = await directusGet<RawRecord[]>(
-                `/items/inventory_movements?filter[staging_operation_id][_eq]=${encodeURIComponent(operationId)}&fields=movement_id,product_id,branch_id,mm_lot_id,inventory_lot_id,batch_no,transaction_type_id,quantity&limit=-1`,
-                `check the existing material-staging reversal for ${effectiveBatchNo}`
-            );
+            operationById.set(operationId, { line, effectiveBatchNo });
+        }
+
+        const operationIds = [...operationById.keys()];
+        const existingRows = await loadExistingReturnMovements(operationIds);
+        const existingByOperation = new Map<string, RawRecord[]>();
+        for (const row of existingRows) {
+            const operationId = String(row.staging_operation_id || "");
+            const matches = existingByOperation.get(operationId) || [];
+            matches.push(row);
+            existingByOperation.set(operationId, matches);
+        }
+
+        const movementPayloads: Record<string, unknown>[] = [];
+        for (const [operationId, operation] of operationById) {
+            const { line, effectiveBatchNo } = operation;
+            const resolved = line.resolvedDestination!;
+            const existing = existingByOperation.get(operationId) || [];
             if (existing.length > 1) {
                 throw new JobOrderCancellationError(
                     `Multiple material-staging reversals already exist for ${effectiveBatchNo}. Reconciliation is required.`,
@@ -902,13 +1187,15 @@ async function executeCancellation(
             }
             if (existing.length === 1) {
                 const persisted = existing[0];
-                const matches = num(persisted.product_id) === line.productId
-                    && num(persisted.branch_id) === line.branchId
-                    && num(persisted.mm_lot_id) === effectiveLine.mmLotId
-                    && num(persisted.inventory_lot_id) === effectiveLine.inventoryLotId
-                    && normalizeBatch(persisted.batch_no) === normalizeBatch(effectiveLine.batchNo)
-                    && num(persisted.transaction_type_id) === reversalTransactionTypeId
-                    && Math.abs(num(persisted.quantity) - line.returnableQuantity) <= QUANTITY_EPSILON;
+                const matches = matchesExistingReturnMovement(persisted, {
+                    productId: line.productId,
+                    branchId: line.branchId,
+                    mmLotId: resolved.mmLotId,
+                    inventoryLotId: resolved.inventoryLotId,
+                    batchNo: resolved.batchNo,
+                    transactionTypeId: reversalTransactionTypeId || 0,
+                    quantity: line.returnableQuantity
+                }, QUANTITY_EPSILON);
                 if (!matches) {
                     throw new JobOrderCancellationError(
                         `The existing material-staging reversal for ${effectiveBatchNo} does not match the requested quantity or lot identity.`,
@@ -919,16 +1206,23 @@ async function executeCancellation(
                 continue;
             }
 
+            const effectiveLine: JobOrderMaterialReturnLine = {
+                ...line,
+                mmLotId: resolved.mmLotId,
+                inventoryLotId: resolved.inventoryLotId,
+                batchNo: resolved.batchNo
+            };
+            const allocationId = reversalLineId(effectiveLine);
             const remarks = buildReturnRemarks(effectiveLine, jobOrder, options.reason, operationId, allocationId);
             const base: Record<string, unknown> = {
                 product_id: line.productId,
-                mm_lot_id: effectiveLine.mmLotId,
-                inventory_lot_id: effectiveLine.inventoryLotId,
+                mm_lot_id: resolved.mmLotId,
+                inventory_lot_id: resolved.inventoryLotId,
                 lot_id: null,
                 branch_id: line.branchId,
                 source_document_id: jobOrder.jobOrderId,
                 source_document_no: jobOrder.jobOrderNo,
-                batch_no: effectiveLine.batchNo,
+                batch_no: resolved.batchNo,
                 transaction_type_id: reversalTransactionTypeId,
                 staging_operation_id: operationId,
                 staging_allocation_line_id: allocationId,
@@ -936,20 +1230,77 @@ async function executeCancellation(
                 remarks
             };
             base.created_by = options.actorUserId;
-            const created = await materialReturnWriter.create<RawRecord>(
-                "inventory_movements",
-                base,
-                "create the raw material staging reversal movement"
-            );
-            const movementId = num(created.movement_id ?? created.id);
-            if (!movementId) {
+            movementPayloads.push(base);
+        }
+
+        for (const batch of chunkBatch(movementPayloads)) {
+            let createdRows: RawRecord[];
+            try {
+                createdRows = await writerCreateMany<RawRecord>(
+                    materialReturnWriter,
+                    "inventory_movements",
+                    batch,
+                    "create raw material staging reversal movements"
+                );
+            } catch (error) {
+                // Resolve an ambiguous network result by the stable operation
+                // keys before compensation can remove destination lots.
+                const batchOperationIds = batch.map(payload => String(payload.staging_operation_id || ""));
+                const recoveredRows = await loadExistingReturnMovements(batchOperationIds).catch(() => []);
+                const recoveredByOperation = new Map<string, RawRecord[]>();
+                for (const row of recoveredRows) {
+                    const operationId = String(row.staging_operation_id || "");
+                    const matches = recoveredByOperation.get(operationId) || [];
+                    matches.push(row);
+                    recoveredByOperation.set(operationId, matches);
+                }
+                const allRecovered = batch.every(payload => {
+                    const operationId = String(payload.staging_operation_id || "");
+                    const operation = operationById.get(operationId);
+                    const recovered = recoveredByOperation.get(operationId) || [];
+                    if (!operation || recovered.length !== 1) return false;
+                    const resolved = operation.line.resolvedDestination;
+                    if (!resolved || !matchesExistingReturnMovement(recovered[0], {
+                        productId: operation.line.productId,
+                        branchId: operation.line.branchId,
+                        mmLotId: resolved.mmLotId,
+                        inventoryLotId: resolved.inventoryLotId,
+                        batchNo: resolved.batchNo,
+                        transactionTypeId: reversalTransactionTypeId || 0,
+                        quantity: operation.line.returnableQuantity
+                    }, QUANTITY_EPSILON)) return false;
+                    return num(recovered[0].movement_id ?? recovered[0].id) > 0;
+                });
+                if (!allRecovered) throw error;
+                createdRows = batch.map(payload => {
+                    const operationId = String(payload.staging_operation_id || "");
+                    return recoveredByOperation.get(operationId)![0];
+                });
+            }
+            if (createdRows.length !== batch.length) {
                 throw new JobOrderCancellationError(
-                    "The raw material staging reversal movement did not return an ID.",
+                    "Directus did not return every raw material staging reversal movement.",
                     503,
                     "MOVEMENT_WRITE_FAILED"
                 );
             }
-            createdMovementIds.push(movementId);
+            const returnedByOperation = new Map(createdRows.map(row => [String(row.staging_operation_id || ""), row]));
+            const responseHasOperationIds = createdRows.some(row => Boolean(row.staging_operation_id));
+            for (let index = 0; index < batch.length; index += 1) {
+                const operationId = String(batch[index]?.staging_operation_id || "");
+                const created = responseHasOperationIds
+                    ? returnedByOperation.get(operationId)
+                    : createdRows[index];
+                const movementId = num(created?.movement_id ?? created?.id);
+                if (!movementId) {
+                    throw new JobOrderCancellationError(
+                        "A raw material staging reversal movement did not return an ID.",
+                        503,
+                        "MOVEMENT_WRITE_FAILED"
+                    );
+                }
+                createdMovementIds.push(movementId);
+            }
         }
 
         // Re-read the staging ledger after writing so a concurrent cancellation
@@ -974,33 +1325,24 @@ async function executeCancellation(
             }
         }
 
-        for (const target of computed.reservationReleaseTargets) {
-            if (target.reservedQuantity <= 0 && target.stagedQuantity <= 0) continue;
-            const restorePayload = {
-                reserved_quantity: target.reservedQuantity,
-                staged_quantity: target.stagedQuantity,
-                reservation_status: target.reservationStatus
-            };
-            reservationSnapshots.push({ id: target.id, payload: restorePayload });
-            await directusWrite(
-                `/items/manufacturing_job_order_materials_reservations/${target.id}`,
-                "PATCH",
-                {
-                    reserved_quantity: 0,
-                    staged_quantity: roundQuantity(Math.min(target.stagedQuantity, target.actualUsedQuantity)),
-                    reservation_status: "RELEASED"
-                },
-                `release reservation ${target.id}`
+        const reservationBatch = buildReservationReleaseBatch(computed.reservationReleaseTargets, roundQuantity);
+        reservationSnapshots.push(...reservationBatch.snapshots);
+        for (const batch of chunkBatch(reservationBatch.updates)) {
+            await writerPatchMany(
+                materialReturnWriter,
+                "manufacturing_job_order_materials_reservations",
+                batch,
+                "release Job Order material reservations"
             );
         }
-        for (const target of computed.materialReleaseTargets) {
-            if (target.reservedQuantity <= 0) continue;
-            materialSnapshots.push(target);
-            await directusWrite(
-                `/items/manufacturing_job_order_materials/${target.id}`,
-                "PATCH",
-                { reserved_quantity: 0 },
-                `release Job Order material ${target.id}`
+        const materialBatch = buildMaterialReleaseBatch(computed.materialReleaseTargets);
+        materialSnapshots.push(...materialBatch.snapshots);
+        for (const batch of chunkBatch(materialBatch.updates)) {
+            await writerPatchMany(
+                materialReturnWriter,
+                "manufacturing_job_order_materials",
+                batch,
+                "release Job Order material reservations"
             );
         }
 
