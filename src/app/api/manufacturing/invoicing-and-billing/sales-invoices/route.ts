@@ -175,7 +175,31 @@ export async function GET(request: Request) {
                 net_amount: Number(d.total_amount || 0)
             }));
 
-            return NextResponse.json({ details: formattedDetails });
+            let pdfRecord: Record<string, unknown> | null = null;
+            if (!isReturn) {
+                try {
+                    const pdfRes = await fetch(
+                        `${DIRECTUS_URL}/items/sales_invoice_pdf?filter[sales_invoice_id][_eq]=${parsedId}&fields=id,sales_invoice_id,receipt_numbers,pdf_file,page,width_mm,height_mm,created_at&sort=-id&limit=1`,
+                        { headers, cache: "no-store" }
+                    );
+                    if (pdfRes.ok) {
+                        const pdfJson = await pdfRes.json();
+                        const rawPdf = pdfJson.data?.[0] || null;
+                        if (rawPdf) {
+                            const rawFile = rawPdf.pdf_file;
+                            const fileId = typeof rawFile === "object" && rawFile !== null ? (rawFile as { id?: string }).id : rawFile;
+                            pdfRecord = {
+                                ...rawPdf,
+                                pdf_file: fileId || null,
+                            };
+                        }
+                    }
+                } catch (pdfErr) {
+                    console.error("Error fetching sales_invoice_pdf:", pdfErr);
+                }
+            }
+
+            return NextResponse.json({ details: formattedDetails, pdf: pdfRecord });
         }
 
         const pageParam = searchParams.get("page");
