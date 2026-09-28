@@ -196,7 +196,8 @@ function jobOrderIdFromPath(value: string | number): number {
 function allowedStatuses(action: JobOrderWorkflowAction): CanonicalJobOrderStatus[] {
     switch (action) {
         case "initialize": return [JOB_ORDER_STATUS.DRAFT];
-        case "start-production": return [JOB_ORDER_STATUS.FOR_PICKING, JOB_ORDER_STATUS.PICKED];
+        case "pick": return [JOB_ORDER_STATUS.FOR_PICKING];
+        case "start-production": return [JOB_ORDER_STATUS.PICKED];
         case "place-on-hold": return [JOB_ORDER_STATUS.IN_PRODUCTION];
         case "resume-production": return [JOB_ORDER_STATUS.ON_HOLD];
         case "complete-production": return [JOB_ORDER_STATUS.IN_PRODUCTION];
@@ -210,6 +211,7 @@ function allowedStatuses(action: JobOrderWorkflowAction): CanonicalJobOrderStatu
 function actionTarget(action: JobOrderWorkflowAction): CanonicalJobOrderStatus {
     switch (action) {
         case "initialize": return JOB_ORDER_STATUS.FOR_PICKING;
+        case "pick": return JOB_ORDER_STATUS.PICKED;
         case "start-production": return JOB_ORDER_STATUS.IN_PRODUCTION;
         case "place-on-hold": return JOB_ORDER_STATUS.ON_HOLD;
         case "resume-production": return JOB_ORDER_STATUS.IN_PRODUCTION;
@@ -891,6 +893,9 @@ async function writeTransition(
     if (command.action === "initialize") {
         lifecycleFields.initialized_at = now;
         lifecycleFields.initialized_by = command.actorUserId;
+    } else if (command.action === "pick") {
+        lifecycleFields.picked_at = now;
+        lifecycleFields.picked_by = command.actorUserId;
     } else if (command.action === "start-production") {
         lifecycleFields.production_started_at = now;
         lifecycleFields.production_started_by = command.actorUserId;
@@ -1000,6 +1005,7 @@ async function writeTransition(
         }
         const lifecycleFieldByAction: Partial<Record<JobOrderWorkflowAction, string>> = {
             initialize: "initialized",
+            pick: "picked",
             "start-production": "production_started",
             "complete-production": "production_completed",
             "terminate-production": "cancelled",
@@ -1127,6 +1133,9 @@ export async function executeJobOrderWorkflow(
     if (command.action === "initialize") {
         await assertInitializationPrerequisites(jobOrder);
         if (!command.force) await assertMaterialReservations(jobOrderId);
+    }
+    if (command.action === "pick") {
+        await assertFullStaging(jobOrderId);
     }
     if (command.action === "start-production") {
         const hasWorkCenterId = command.workCenterId !== undefined && command.workCenterId !== null;

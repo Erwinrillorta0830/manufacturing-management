@@ -419,7 +419,7 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
             </section>
 
             <Dialog open={Boolean(jobOrderState.selectedJobOrder)} onOpenChange={(open) => { if (!open) jobOrderState.closeDetails(); }}>
-                <DialogContent className="w-[calc(100vw-1rem)] max-w-none sm:w-[calc(100vw-2rem)] sm:max-w-none max-h-[calc(100dvh-1rem)] sm:max-h-[calc(100dvh-2rem)] overflow-hidden flex flex-col bg-background text-foreground">
+                <DialogContent className="w-[calc(100vw-1rem)] sm:w-[75vw] sm:max-w-[75vw] max-h-[calc(100dvh-1rem)] sm:max-h-[calc(100dvh-2rem)] overflow-hidden flex flex-col bg-background text-foreground">
                     <DialogHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div className="min-w-0 space-y-1">
                             <DialogTitle className="flex items-center gap-2 text-primary"><PackageCheck className="h-5 w-5 shrink-0" /> {details?.jobOrderNo || jobOrderState.selectedJobOrder?.jobOrderNo || "Job Order Details"}</DialogTitle>

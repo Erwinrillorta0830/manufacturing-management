@@ -7,6 +7,7 @@ import type { CanonicalJobOrderStatus } from "./job-order-status";
  */
 export const JOB_ORDER_WORKFLOW_ACTIONS = [
     "initialize",
+    "pick",
     "start-production",
     "place-on-hold",
     "resume-production",
