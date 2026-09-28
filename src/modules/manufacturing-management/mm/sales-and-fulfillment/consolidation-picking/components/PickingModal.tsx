@@ -895,21 +895,19 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                                                 Allocated Storage Lots ({prodAllocations.length})
                                             </span>
                                             <div className="flex items-center gap-2">
-                                                {availableBatchOptions.length > 0 && (
-                                                    <div className="w-56 sm:w-64">
-                                                        <SearchableSelect
-                                                            options={availableBatchOptions}
-                                                            value=""
-                                                            placeholder={`+ Add Lot / Batch (${activeBatch.branchName || `Branch #${activeBatch.branchId}`})...`}
-                                                            searchPlaceholder={`Search available lot in ${activeBatch.branchName || `Branch #${activeBatch.branchId}`}...`}
-                                                            emptyMessage={`No more lots available in ${activeBatch.branchName || `Branch #${activeBatch.branchId}`}`}
-                                                            onValueChange={(val) => {
-                                                                if (val) handleAddAlternativeLot(prodItem.productId, val);
-                                                            }}
-                                                            triggerClassName="h-7 text-xs bg-muted/30 hover:bg-muted/60 border-dashed border-primary/40 text-primary font-semibold"
-                                                        />
-                                                    </div>
-                                                )}
+                                                <div className="w-56 sm:w-64">
+                                                    <SearchableSelect
+                                                        options={availableBatchOptions}
+                                                        value=""
+                                                        placeholder={`+ Add Lot / Batch (${branchLabel})...`}
+                                                        searchPlaceholder={`Search available lot in ${branchLabel}...`}
+                                                        emptyMessage={`No more lots available in ${branchLabel}`}
+                                                        onValueChange={(val) => {
+                                                            if (val) handleAddAlternativeLot(prodItem.productId, val);
+                                                        }}
+                                                        triggerClassName="h-7 text-xs bg-muted/30 hover:bg-muted/60 border-dashed border-primary/40 text-primary font-semibold"
+                                                    />
+                                                </div>
                                                 <span className="text-[10px] font-normal normal-case text-muted-foreground hidden sm:inline">
                                                     Click batch card to pick
                                                 </span>
