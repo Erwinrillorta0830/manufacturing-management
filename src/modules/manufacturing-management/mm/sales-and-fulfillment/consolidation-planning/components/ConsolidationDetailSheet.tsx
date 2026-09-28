@@ -693,41 +693,7 @@ export default function ConsolidationDetailSheet({
                                 Initialize Picking
                             </Button>
                         )}
-
-                        {consolidation.status === "Picking" && (
-                            <Button
-                                asChild
-                                className="h-11 rounded-xl bg-blue-600 text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 px-6"
-                            >
-                                <Link
-                                    href={`/mm/sales-and-fulfillment/consolidation-picking/${encodeURIComponent(
-                                        consolidation.consolidatorNo
-                                    )}`}
-                                >
-                                    <Play className="mr-2 h-4 w-4" />
-                                    Open Picking Workspace
-                                </Link>
-                            </Button>
-                        )}
-
-                        {consolidation.status === "Picked" && (
-                            <Button
-                                disabled={submitting}
-                                onClick={() => onRequestAction("audit", consolidation.id)}
-                                className="h-11 rounded-xl bg-violet-600 text-[10px] font-black uppercase tracking-widest hover:bg-violet-700 px-6"
-                            >
-                                <ShieldCheck className="mr-2 h-4 w-4" />
-                                Verify Batch
-                            </Button>
-                        )}
-
-                        {(consolidation.status === "Approved" || consolidation.status === "Audited") && (
-                            <Badge className="bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 px-3 py-2 text-[10px] font-black uppercase tracking-widest">
-                                <CheckCircle className="mr-1.5 h-4 w-4" />
-                                Approved & Dispatched
-                            </Badge>
-                        )}
-                    </div>
+                   </div>
                 </div>
             </DialogContent>
         </Dialog>

@@ -229,7 +229,6 @@ export default function ProductionWorkflowModule() {
     const canReturnProductionMaterials = isProductionReadOnly;
     const canStartSelectedJobOrder = isJobOrderStatus(
         selectedJobOrderStatus,
-        JOB_ORDER_STATUS.FOR_PICKING,
         JOB_ORDER_STATUS.PICKED
     ) && selectedJobOrderHasFullStaging;
     const selectedJobOrderJourney = selectedJobOrder
@@ -498,9 +497,11 @@ export default function ProductionWorkflowModule() {
                                     <Button
                                         onClick={() => void handleStartProduction()}
                                         disabled={workflowSubmitting || !canStartSelectedJobOrder || jobOrderActionLocked}
-                                        title={canStartSelectedJobOrder ? undefined : loadingJobOrderMaterials
-                                            ? "Checking material staging status."
-                                            : "Stage all required materials before starting production."}
+                                        title={canStartSelectedJobOrder ? undefined : isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.FOR_PICKING)
+                                            ? "Materials must be marked as Picked in Material Staging before starting production."
+                                            : loadingJobOrderMaterials
+                                                ? "Checking material staging status."
+                                                : "Stage all required materials before starting production."}
                                         className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-10 text-xs px-5 shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/20 transition-all duration-200 flex items-center disabled:opacity-60"
                                     >
                                         <Play className="mr-1.5 h-4 w-4" /> {workflowSubmitting ? "Starting Production..." : "Start Production"}

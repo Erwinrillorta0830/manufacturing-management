@@ -63,7 +63,7 @@ export function TwoPointQAInspectionModal({
 
     return (
         <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-            <DialogContent className="w-[calc(100vw-1rem)] max-w-2xl max-h-[calc(100dvh-1rem)] overflow-hidden p-0 gap-0 flex flex-col">
+            <DialogContent className="w-[calc(100vw-1rem)] sm:w-[75vw] sm:max-w-[75vw] max-h-[calc(100dvh-1rem)] overflow-hidden p-0 gap-0 flex flex-col">
                 <TwoPointQAFormContent
                     key={jobOrder.job_order_id || jobOrder.id}
                     jobOrder={jobOrder}
