@@ -56,6 +56,7 @@ export default function MaterialStagingModule() {
         isAllocationModalOpen,
         activeAllocationItem,
         transferring,
+        markingPicked,
         batchStageResult,
         stageProgressLabel,
         handleDismissBatchStageResult,
@@ -63,6 +64,7 @@ export default function MaterialStagingModule() {
         handleCloseAllocationModal,
         handleCommitAllocation,
         handleStageAllAvailable,
+        handleMarkAsPicked,
         refreshData
     } = useMaterialStaging();
 
@@ -250,6 +252,9 @@ export default function MaterialStagingModule() {
                             <SelectContent>
                                 <SelectItem value="FOR_PICKING" className="text-xs font-medium">
                                     For Picking (Default)
+                                </SelectItem>
+                                <SelectItem value="PICKED" className="text-xs font-medium">
+                                    Picked
                                 </SelectItem>
                                 <SelectItem value="all" className="text-xs">
                                     All Stageable JOs (For Picking & Picked)
@@ -470,6 +475,8 @@ export default function MaterialStagingModule() {
                         jobOrder={selectedJobOrder}
                         onOpenTransferModal={handleOpenAllocationModal}
                         onStageAllAvailable={handleStageAllAvailable}
+                        onMarkAsPicked={handleMarkAsPicked}
+                        isMarkingPicked={markingPicked}
                         batchStageResult={batchStageResult}
                         stageProgressLabel={stageProgressLabel}
                         onDismissBatchStageResult={handleDismissBatchStageResult}

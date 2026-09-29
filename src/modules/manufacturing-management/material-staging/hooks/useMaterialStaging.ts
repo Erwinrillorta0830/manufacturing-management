@@ -12,7 +12,7 @@ import {
     StagingStats,
     Branch
 } from "../types";
-import { commitMaterialStaging, fetchAllocationPreview, fetchStagingJobOrders } from "../services/staging-api";
+import { commitMaterialStaging, fetchAllocationPreview, fetchStagingJobOrders, markJobOrderPicked } from "../services/staging-api";
 import { createMaterialStagingOperationId } from "../utils/operation-id";
 import { canStageJobOrderMaterials, isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 
@@ -43,6 +43,7 @@ export function useMaterialStaging() {
         lot?: AllocatedLot;
     } | null>(null);
     const [transferring, setTransferring] = useState(false);
+    const [markingPicked, setMarkingPicked] = useState(false);
     const [batchStageResult, setBatchStageResult] = useState<BatchStageResult | null>(null);
     const [stageProgressLabel, setStageProgressLabel] = useState<string | null>(null);
     const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -99,8 +100,13 @@ export function useMaterialStaging() {
     }, [loadData]);
 
     const filteredJobOrders = useMemo(() => jobOrders.filter(jobOrder => {
-        if (selectedStatusFilter !== "all" && !isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.FOR_PICKING)) return false;
-        if (selectedStatusFilter === "all" && !canStageJobOrderMaterials(jobOrder.status)) return false;
+        if (selectedStatusFilter === "PICKED") {
+            if (!isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.PICKED)) return false;
+        } else if (selectedStatusFilter !== "all") {
+            if (!isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.FOR_PICKING)) return false;
+        } else {
+            if (!canStageJobOrderMaterials(jobOrder.status)) return false;
+        }
         if (onlyShortages && !jobOrder.has_shortage) return false;
         const query = searchQuery.trim().toLowerCase();
         if (!query) return true;
@@ -249,6 +255,27 @@ export function useMaterialStaging() {
         }
     }, [loadData]);
 
+    const handleMarkAsPicked = useCallback(async (jobOrder: StagingJobOrder) => {
+        if (!jobOrder.all_staged) {
+            toast.error("All required materials must be staged before marking as Picked.");
+            return;
+        }
+        try {
+            setMarkingPicked(true);
+            await markJobOrderPicked(jobOrder.job_order_id);
+            toast.success(`Job Order ${jobOrder.job_order_no} marked as Picked.`);
+            const refreshed = await loadData(false);
+            if (refreshed && refreshed.some(jo => jo.job_order_id === jobOrder.job_order_id)) {
+                setSelectedJobOrderId(jobOrder.job_order_id);
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to mark Job Order as Picked.";
+            toast.error(message);
+        } finally {
+            setMarkingPicked(false);
+        }
+    }, [loadData]);
+
     return {
         jobOrders,
         filteredJobOrders,
@@ -271,6 +298,7 @@ export function useMaterialStaging() {
         isAllocationModalOpen,
         activeAllocationItem,
         transferring,
+        markingPicked,
         batchStageResult,
         stageProgressLabel,
         handleDismissBatchStageResult,
@@ -278,6 +306,7 @@ export function useMaterialStaging() {
         handleCloseAllocationModal,
         handleCommitAllocation,
         handleStageAllAvailable,
+        handleMarkAsPicked,
         refreshData: loadData
     };
 }

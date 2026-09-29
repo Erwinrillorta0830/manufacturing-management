@@ -90,3 +90,24 @@ export async function commitMaterialStaging(payload: StagingCommitPayload): Prom
     }
     return json as StagingCommitResponse;
 }
+
+/** Mark a Job Order as Picked via canonical workflow API */
+export async function markJobOrderPicked(jobOrderId: number | string): Promise<{ success: boolean; message?: string }> {
+    const res = await fetch(`/api/manufacturing/job-orders/${encodeURIComponent(String(jobOrderId))}/workflow`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            action: "pick",
+            idempotencyKey: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+                ? crypto.randomUUID()
+                : `workflow:pick:${jobOrderId}:${Date.now()}`
+        })
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        throw new Error(json.error || `Failed to mark Job Order as Picked (${res.status})`);
+    }
+    return json;
+}

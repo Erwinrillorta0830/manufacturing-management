@@ -92,3 +92,17 @@ export interface InvoiceFilterState {
     endDate: string;
 }
 
+export interface SalesInvoicePdf {
+    id: number;
+    sales_invoice_id: number;
+    receipt_numbers?: string | null;
+    pdf_file?: string | null;
+    page?: number | null;
+    width_mm?: number | null;
+    height_mm?: number | null;
+    created_at?: string | null;
+    created_by?: number | null;
+    updated_at?: string | null;
+    updated_by?: number | null;
+}
+

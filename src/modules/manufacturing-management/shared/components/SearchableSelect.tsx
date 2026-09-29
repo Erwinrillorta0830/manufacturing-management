@@ -118,7 +118,9 @@ export function SearchableSelect({
         data-radix-scroll-lock-ignore="true"
         onCloseAutoFocus={(e) => e.preventDefault()}
         onWheelCapture={(e) => e.stopPropagation()}
+        onWheel={(e) => e.stopPropagation()}
         onTouchMoveCapture={(e) => e.stopPropagation()}
+        onTouchMove={(e) => e.stopPropagation()}
       >
         <Command shouldFilter={false} className="w-full">
           <div className="flex items-center border-b border-border px-2.5">
@@ -134,7 +136,9 @@ export function SearchableSelect({
             className="max-h-64 overflow-y-auto overscroll-contain p-1 touch-pan-y"
             data-radix-scroll-lock-ignore="true"
             onWheelCapture={(e) => e.stopPropagation()}
+            onWheel={(e) => e.stopPropagation()}
             onTouchMoveCapture={(e) => e.stopPropagation()}
+            onTouchMove={(e) => e.stopPropagation()}
           >
             {filteredOptions.length === 0 ? (
               <div className="py-6 text-center text-xs text-muted-foreground italic">

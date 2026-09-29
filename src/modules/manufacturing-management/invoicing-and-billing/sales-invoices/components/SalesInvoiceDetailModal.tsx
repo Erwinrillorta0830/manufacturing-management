@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
     X,
@@ -11,16 +11,16 @@ import {
     Printer,
     ArrowLeft,
     ShieldCheck,
+    Download,
+    FileX,
 } from "lucide-react";
 import { toast } from "sonner";
-import { SalesInvoiceHeader, SalesInvoiceDetail } from "../types";
-import { ReceiptPreview } from "@/modules/manufacturing-management/invoicing-and-billing/invoicing-old/components/ReceiptPreview";
-import { generateInvoiceReceiptPdf } from "@/modules/manufacturing-management/invoicing-and-billing/invoicing-old/utils/generateInvoiceReceiptPdf";
-import { PrintableInvoice } from "@/modules/manufacturing-management/invoicing-and-billing/invoicing-old/types";
+import { SalesInvoiceHeader, SalesInvoiceDetail, SalesInvoicePdf } from "../types";
 
 interface SalesInvoiceDetailModalProps {
     invoice: SalesInvoiceHeader | null;
     invoiceDetails: SalesInvoiceDetail[];
+    pdf?: SalesInvoicePdf | null;
     isOpen: boolean;
     onClose: () => void;
     loadingDetails: boolean;
@@ -29,6 +29,7 @@ interface SalesInvoiceDetailModalProps {
 export default function SalesInvoiceDetailModal({
     invoice,
     invoiceDetails,
+    pdf,
     isOpen,
     onClose,
     loadingDetails,
@@ -36,6 +37,7 @@ export default function SalesInvoiceDetailModal({
     const [now] = useState(() => Date.now());
     const [showPreviewModal, setShowPreviewModal] = useState(false);
     const [downloadingPdf, setDownloadingPdf] = useState(false);
+    const iframeRef = useRef<HTMLIFrameElement>(null);
 
     useEffect(() => {
         if (isOpen && invoice) {
@@ -45,9 +47,10 @@ export default function SalesInvoiceDetailModal({
             );
             console.log("%cInvoice Header Record:", "font-weight: bold; color: #0284c7;", invoice);
             console.log("%cLine Items Details:", "font-weight: bold; color: #0284c7;", invoiceDetails);
+            console.log("%cSaved PDF Record:", "font-weight: bold; color: #0284c7;", pdf);
             console.groupEnd();
         }
-    }, [isOpen, invoice, invoiceDetails]);
+    }, [isOpen, invoice, invoiceDetails, pdf]);
 
     if (!isOpen || !invoice) return null;
 
@@ -57,63 +60,50 @@ export default function SalesInvoiceDetailModal({
     const paidAmount = Number(invoice.paid_amount);
     const remainingBalance = Math.max(0, netAmount - paidAmount);
 
-    const printableInvoice: PrintableInvoice = {
-        invoiceId: invoice.invoice_id,
-        invoiceNo: invoice.invoice_no,
-        invoiceDate: invoice.invoice_date || invoice.created_date || new Date().toISOString(),
-        dueDate: invoice.due_date || "",
-        transactionStatus: invoice.transaction_status || "Prepared",
-        receiptType: {
-            id: 1,
-            type: "Charge Invoice",
-            isOfficial: true,
-            maxLength: 50,
-        },
-        orderNo: invoice.sales_order_no || `SO-${invoice.order_id}`,
-        poNo: "N/A",
-        customerName: invoice.customer_name,
-        storeName: invoice.customer_name,
-        customerTin: invoice.customer_tin || "N/A",
-        customerAddress: invoice.customer_address || "N/A",
-        salesmanName: invoice.salesman_name || "Unassigned",
-        paymentTermName: invoice.payment_term_name || "30 Days",
-        lines: invoiceDetails.map((d, index) => ({
-            detailId: d.id || index + 1,
-            productCode: d.product?.product_code || `P-${d.product?.product_id}`,
-            productName: d.product?.description || d.product?.product_name || "Item",
-            quantity: Number(d.quantity || 0),
-            unit: d.product?.uom || "PCS",
-            unitPrice: Number(d.unit_price || 0),
-            discountAmount: Number(d.discount_amount || 0),
-            grossAmount: Number(d.gross_amount || 0),
-            netAmount: Number(d.net_amount || 0),
-        })),
-        totals: {
-            gross: grossAmount,
-            discount: Number(invoice.discount_amount || 0),
-            vat: vatAmount,
-            net: netAmount,
-        },
-    };
-
-    const handleDownloadPdf = async () => {
+    const handleDownloadSavedPdf = async () => {
+        if (!pdf?.pdf_file) {
+            toast.error("No saved PDF receipt file available to download.");
+            return;
+        }
         setDownloadingPdf(true);
         try {
-            const doc = await generateInvoiceReceiptPdf(printableInvoice, { includeBackground: false });
-            const blob = doc.output("blob");
-            const a = document.createElement("a");
+            const res = await fetch(`/api/manufacturing/files?id=${pdf.pdf_file}`);
+            if (!res.ok) throw new Error(`Failed to fetch saved PDF (HTTP ${res.status}).`);
+            const blob = await res.blob();
             const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
             a.href = url;
-            a.download = `${invoice.invoice_no}.pdf`;
+            const cleanReceiptNo = pdf.receipt_numbers?.replace(/[/\\?%*:|"<>]/g, "_");
+            a.download = cleanReceiptNo ? `${cleanReceiptNo}.pdf` : `${invoice.invoice_no || "invoice"}_receipt.pdf`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
-            toast.success("BIR Charge Invoice receipt downloaded successfully.");
+            toast.success("Saved PDF receipt downloaded successfully.");
         } catch (error) {
-            toast.error(error instanceof Error ? error.message : "Failed to generate receipt PDF");
+            toast.error(error instanceof Error ? error.message : "Failed to download saved PDF receipt");
         } finally {
             setDownloadingPdf(false);
+        }
+    };
+
+    const handlePrintSavedPdf = () => {
+        if (!pdf?.pdf_file) {
+            toast.error("No saved PDF receipt file available to print.");
+            return;
+        }
+        if (iframeRef.current?.contentWindow) {
+            try {
+                iframeRef.current.contentWindow.focus();
+                iframeRef.current.contentWindow.print();
+                return;
+            } catch (err) {
+                console.warn("Could not print iframe directly, opening popup:", err);
+            }
+        }
+        const win = window.open(`/api/manufacturing/files?id=${pdf.pdf_file}`, "_blank");
+        if (!win) {
+            toast.error("Popup was blocked by your browser. Please allow popups to print.");
         }
     };
 
@@ -207,13 +197,7 @@ export default function SalesInvoiceDetailModal({
                                 </div>
 
                                 <div className="flex items-center gap-2">
-                                    <button
-                                        onClick={() => setShowPreviewModal(true)}
-                                        className="flex items-center gap-1.5 rounded-xl border bg-background px-3.5 py-2 text-xs font-semibold hover:bg-muted transition-colors shadow-2xs text-primary"
-                                    >
-                                        <Printer className="h-4 w-4 text-primary" />
-                                        Print Receipt
-                                    </button>
+ 
                                     <button
                                         onClick={onClose}
                                         className="rounded-full p-2 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
@@ -463,9 +447,14 @@ export default function SalesInvoiceDetailModal({
                             </div>
 
                             {/* Modal Footer */}
-                            <div className="flex items-center justify-between border-t px-6 py-4 bg-muted/30">
+                            <div className="flex gap-2 items-center justify-end border-t px-6 py-4 bg-muted/30">
                                 <button
-                                    onClick={() => setShowPreviewModal(true)}
+                                    onClick={() => {
+                                        if (!pdf?.pdf_file) {
+                                            toast.error(`No saved PDF receipt found for Invoice #${invoice.invoice_no || invoice.invoice_id}.`);
+                                        }
+                                        setShowPreviewModal(true);
+                                    }}
                                     className="flex items-center gap-1.5 rounded-xl border bg-background px-4 py-2 text-xs font-semibold hover:bg-muted transition-colors shadow-2xs text-primary"
                                 >
                                     <Printer className="h-4 w-4 text-primary" />
@@ -482,14 +471,14 @@ export default function SalesInvoiceDetailModal({
                         </motion.div>
                     </div>
 
-                    {/* BIR CHARGE INVOICE PREVIEW MODAL STEP */}
+                    {/* SAVED INVOICE RECEIPT PDF PREVIEW MODAL */}
                     {showPreviewModal && (
                         <div className="fixed inset-0 z-60 flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-sm overflow-y-auto">
                             <motion.div
                                 initial={{ opacity: 0, scale: 0.95 }}
                                 animate={{ opacity: 1, scale: 1 }}
                                 exit={{ opacity: 0, scale: 0.95 }}
-                                className="relative flex flex-col w-full max-w-4xl max-h-[92vh] rounded-2xl bg-card border shadow-2xl overflow-hidden"
+                                className="relative flex flex-col w-full max-w-5xl max-h-[94vh] rounded-2xl bg-card border shadow-2xl overflow-hidden"
                             >
                                 <div className="flex items-center justify-between border-b px-6 py-3.5 bg-muted/40">
                                     <div className="flex items-center gap-2.5">
@@ -498,10 +487,10 @@ export default function SalesInvoiceDetailModal({
                                         </div>
                                         <div>
                                             <h3 className="text-sm font-bold text-foreground">
-                                                BIR Charge Invoice Document Preview
+                                                Saved Invoice Receipt (BIR Charge Invoice)
                                             </h3>
                                             <p className="text-[11px] text-muted-foreground">
-                                                Verify tax document details before official printing
+                                                Archived PDF receipt from system registry (sales_invoice_pdf)
                                             </p>
                                         </div>
                                     </div>
@@ -515,24 +504,103 @@ export default function SalesInvoiceDetailModal({
                                             Back to Details
                                         </button>
                                         <button
-                                            onClick={handleDownloadPdf}
-                                            disabled={downloadingPdf}
-                                            className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-1.5 text-xs font-bold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors shadow-xs"
+                                            onClick={handleDownloadSavedPdf}
+                                            disabled={!pdf?.pdf_file || downloadingPdf}
+                                            className="flex items-center gap-1.5 rounded-xl border bg-background px-3.5 py-1.5 text-xs font-semibold hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-2xs"
                                         >
                                             {downloadingPdf ? (
                                                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                                             ) : (
-                                                <Printer className="h-3.5 w-3.5" />
+                                                <Download className="h-3.5 w-3.5 text-emerald-600" />
                                             )}
-                                            Print Invoice Receipt
+                                            Download PDF
+                                        </button>
+                                        <button
+                                            onClick={handlePrintSavedPdf}
+                                            disabled={!pdf?.pdf_file}
+                                            className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-1.5 text-xs font-bold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-xs"
+                                        >
+                                            <Printer className="h-3.5 w-3.5" />
+                                            Print Receipt
                                         </button>
                                     </div>
                                 </div>
 
-                                <div className="flex-1 overflow-auto p-4 sm:p-6 bg-muted/20 flex justify-center">
-                                    <div className="shadow-lg rounded-sm overflow-hidden bg-white">
-                                        <ReceiptPreview invoice={printableInvoice} scale={0.9} />
+                                {/* Receipt Metadata Ribbon */}
+                                <div className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-2.5 bg-muted/20 text-xs">
+                                    <div className="flex flex-wrap items-center gap-4">
+                                        <div>
+                                            <span className="text-[10px] uppercase font-bold text-muted-foreground mr-1.5">
+                                                Receipt No:
+                                            </span>
+                                            <span className="font-mono font-bold text-foreground">
+                                                {pdf?.receipt_numbers || "-"}
+                                            </span>
+                                        </div>
+                                        <div>
+                                            <span className="text-[10px] uppercase font-bold text-muted-foreground mr-1.5">
+                                                Invoice No:
+                                            </span>
+                                            <span className="font-mono font-bold text-primary">
+                                                {invoice.invoice_no || "-"}
+                                            </span>
+                                        </div>
+                                        <div>
+                                            <span className="text-[10px] uppercase font-bold text-muted-foreground mr-1.5">
+                                                Dimensions:
+                                            </span>
+                                            <span className="font-semibold text-foreground">
+                                                {pdf?.width_mm && pdf?.height_mm ? `${pdf.width_mm}mm × ${pdf.height_mm}mm` : "-"}
+                                            </span>
+                                        </div>
+                                        <div>
+                                            <span className="text-[10px] uppercase font-bold text-muted-foreground mr-1.5">
+                                                Page:
+                                            </span>
+                                            <span className="font-semibold text-foreground">
+                                                {pdf?.page ? `Page ${pdf.page}` : "-"}
+                                            </span>
+                                        </div>
                                     </div>
+
+                                    <div>
+                                        <span className="text-[10px] uppercase font-bold text-muted-foreground mr-1.5">
+                                            Archived Date:
+                                        </span>
+                                        <span className="text-muted-foreground font-medium">
+                                            {pdf?.created_at ? new Date(pdf.created_at).toLocaleString() : "-"}
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <div className="flex-1 overflow-auto p-4 sm:p-6 bg-muted/30 flex justify-center items-center min-h-[550px]">
+                                    {pdf?.pdf_file ? (
+                                        <div className="w-full h-full min-h-[550px] flex flex-col rounded-xl overflow-hidden border bg-background shadow-lg">
+                                            <iframe
+                                                ref={iframeRef}
+                                                src={`/api/manufacturing/files?id=${pdf.pdf_file}`}
+                                                className="w-full h-full min-h-[550px] border-0"
+                                                title={`Saved Receipt PDF - ${invoice.invoice_no || invoice.invoice_id}`}
+                                            />
+                                        </div>
+                                    ) : (
+                                        <div className="flex flex-col items-center justify-center p-12 text-center bg-card rounded-2xl border border-dashed shadow-xs max-w-md w-full">
+                                            <div className="rounded-full bg-destructive/10 p-4 text-destructive mb-3">
+                                                <FileX className="h-8 w-8" />
+                                            </div>
+                                            <h4 className="text-sm font-bold text-foreground">
+                                                No Saved PDF Receipt Found
+                                            </h4>
+                                            <p className="text-xs text-muted-foreground mt-1.5">
+                                                There is no archived PDF document registered in <span className="font-mono font-semibold text-[11px]">sales_invoice_pdf</span> for Sales Invoice #{invoice.invoice_id} ({invoice.invoice_no || "-"}).
+                                            </p>
+                                            <div className="mt-4 flex items-center gap-2 rounded-lg bg-muted px-3 py-1.5 text-[11px] font-mono text-muted-foreground">
+                                                <span>Receipt File: -</span>
+                                                <span>•</span>
+                                                <span>Status: Unarchived</span>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             </motion.div>
                         </div>

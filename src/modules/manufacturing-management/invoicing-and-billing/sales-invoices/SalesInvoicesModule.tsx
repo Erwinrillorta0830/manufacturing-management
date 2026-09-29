@@ -47,6 +47,7 @@ export default function SalesInvoicesModule() {
         invoices,
         salesmen,
         detailsMap,
+        pdfMap,
         loading,
         loadingDetails,
         metrics,
@@ -619,6 +620,9 @@ export default function SalesInvoicesModule() {
                 invoice={selectedInvoice}
                 invoiceDetails={
                     selectedInvoice ? detailsMap[selectedInvoice.invoice_id] || [] : []
+                }
+                pdf={
+                    selectedInvoice ? pdfMap[selectedInvoice.invoice_id] || null : null
                 }
                 isOpen={!!selectedInvoice}
                 onClose={() => setSelectedInvoiceId(null)}
