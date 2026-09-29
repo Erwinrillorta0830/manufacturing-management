@@ -288,7 +288,8 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
     const normalizeUom = (uom?: string | null) => (uom || "").trim().toLowerCase();
 
     // Check validation error for an individual lot allocation
-    const getLotValidationError = (_productId: number, _alloc: LotAllocation, _allocIdx: number): string | null => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const getLotValidationError = (productId: number, alloc: LotAllocation, allocIdx: number): string | null => {
         // Individual lot capacity is no longer restricted; user can pick to a lot/batch even if available is less
         return null;
     };
