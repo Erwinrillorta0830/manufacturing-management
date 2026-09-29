@@ -69,6 +69,9 @@ export interface SalesOrder {
     for_shipping_at: string | null;
     delivered_at: string | null;
     not_fulfilled_at: string | null;
+    for_production_at?: string | null;
+    job_order_created_at?: string | null;
+    audited_at?: string | null;
 
     // Recycled order — pre-existing invoice data
     existing_invoice_no: number | null;           // invoice_id (integer FK for details)

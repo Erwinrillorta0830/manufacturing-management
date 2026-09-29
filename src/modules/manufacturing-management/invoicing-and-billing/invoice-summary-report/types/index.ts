@@ -5,6 +5,7 @@ export const InvoiceReportRowSchema = z.object({
   original_invoice: z.string(), // 🚀 FIX: Changed to string to support alphanumeric invoice numbers
   sales_order_no: z.string(),
   customer_name: z.string(),
+  customer_code: z.string().optional(),
   amount: z.number(),
   defect_reason: z.string(),
   csr_remarks: z.string().nullable(),

@@ -586,8 +586,8 @@ export default function DeliveryClearanceModal({
                         ...item,
                         received_quantity: targetQty,
                         returned_quantity: 0,
-                        has_concern: true,
-                        line_status: "Fulfilled with Concerns" as LineStatus,
+                        has_concern: Boolean(item.has_concern),
+                        line_status: (item.has_concern ? "Fulfilled with Concerns" : "Fulfilled") as LineStatus,
                         reservations: updatedReservations,
                     };
                 });

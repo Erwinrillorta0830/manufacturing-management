@@ -698,7 +698,7 @@ export function LotBatchSelectionModal({
           onhandForLot.forEach((bo) => {
             const pId = getProductId(bo);
             const addQty = Number(bo.onhandQuantity || 0);
-            if (pId > 0 && addQty > 0) {
+            if (pId > 0 && addQty !== 0) {
               hasOnhandData = true;
               const meta = productMetaMap.get(pId);
               const existing = productQtyMap.get(pId) || {
@@ -721,13 +721,13 @@ export function LotBatchSelectionModal({
             }
           });
 
-          // Fallback to mm_inventory_lots only if no on-hand records exist for this lot, checking for strictly positive available_quantity
+          // Fallback to mm_inventory_lots only if no on-hand records exist for this lot, checking for non-zero available_quantity
           if (!hasOnhandData) {
             invLotsForLot.forEach((ib) => {
               const pId = getProductId(ib);
               const prodObj = typeof ib.product_id === 'object' && ib.product_id !== null ? (ib.product_id as Record<string, unknown>) : null;
               const ibQty = Number(ib.available_quantity || 0);
-              if (pId > 0 && ibQty > 0) {
+              if (pId > 0 && ibQty !== 0) {
                 const meta = productMetaMap.get(pId);
                 const existing = productQtyMap.get(pId) || {
                   qty: 0,
@@ -844,7 +844,7 @@ export function LotBatchSelectionModal({
           let primaryClass: ProductClassification | undefined = undefined;
 
           productQtyMap.forEach((info, pId) => {
-            if (info.qty <= 0) return;
+            if (info.qty === 0) return;
             totalQty += info.qty;
             totalWarehouseQty += info.warehouseQty;
             totalDraftQty += info.draftQty;
@@ -878,9 +878,9 @@ export function LotBatchSelectionModal({
           });
 
           const storedItems = Array.from(storedProductSummaryMap.values());
-          const lotStockQty = sQtyMap.get(lId) || 0;
+      
           const batchCount = bCountMap.get(lId) || 0;
-          const isEmpty = totalQty <= 0 && lotStockQty <= 0 && storedItems.length === 0;
+          const isEmpty = storedItems.length === 0;
           const isDraftOnly = !isEmpty && totalWarehouseQty === 0 && totalDraftQty > 0;
 
           const distinctLabels = Array.from(
@@ -1825,7 +1825,7 @@ export function LotBatchSelectionModal({
           <div className="space-y-1">
             <DialogTitle className="text-lg font-bold text-foreground flex items-center gap-2">
               <Boxes className="w-5 h-5 text-primary" />
-              Multi-Lot & Multi-Batch Allocation Stock Adjustment Registration
+              Multi-Lot & Multi-Batch Allocation | Stock Adjustment Registration
             </DialogTitle>
             <DialogDescription className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
               <span>PRODUCT: <strong className="text-foreground">{productName || 'Selected Item'}</strong></span>

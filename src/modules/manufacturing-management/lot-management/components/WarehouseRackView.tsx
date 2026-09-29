@@ -401,14 +401,14 @@ export default function WarehouseRackView({
 
                     const uomLabel = lot.uomShortcut || lot.uomName || "";
 
-                    // Calculate stored inventory types in this lot — only batches with positive quantity
+                    // Calculate stored inventory types in this lot — include both positive and negative stock
                     const storedClassifications = (() => {
-                        const positiveBatches = allLotBatches.filter((b) => Number(b.quantity || 0) > 0);
-                        if (positiveBatches.length === 0) {
+                        const activeBatches = allLotBatches.filter((b) => Number(b.quantity || 0) !== 0);
+                        if (activeBatches.length === 0) {
                             return [{ code: "EMPTY", label: "Empty / Vacant", className: "bg-muted text-muted-foreground border-border/80" }];
                         }
                         const map = new Map<string, { code: string; label: string; className: string }>();
-                        positiveBatches.forEach((b) => {
+                        activeBatches.forEach((b) => {
                             const cls = resolveProductClassification(
                                 b.productType,
                                 b.productCategory,

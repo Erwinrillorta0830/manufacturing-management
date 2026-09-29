@@ -71,7 +71,8 @@ export async function GET(req: NextRequest) {
             "for_loading_at",
             "for_shipping_at",
             "delivered_at",
-            "not_fulfilled_at"
+            "not_fulfilled_at",
+            "for_production_at"
         ].join(",");
 
         const url = `${DIRECTUS_BASE}/items/sales_order?${filterParams}&fields=${fields}&limit=-1`;

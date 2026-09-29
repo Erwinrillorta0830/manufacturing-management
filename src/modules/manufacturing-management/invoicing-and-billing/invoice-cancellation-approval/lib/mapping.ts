@@ -27,10 +27,7 @@ export function mapRequestsToInvoiceRows(
             reason_code: req.reason_code || "N/A",
             remarks: req.remarks ?? null,
             status: req.ui_status,
-            approved_by:
-                Number((req as Record<string, unknown>).approved_by) === 1
-                    ? "N/A"
-                    : "N/A",
+            approved_by: req.approved_by ? String(req.approved_by) : null,
             date_approved:
                 ((req as Record<string, unknown>).date_approved as string) ||
                 ((req as Record<string, unknown>).updated_at as string) ||

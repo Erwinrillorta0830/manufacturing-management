@@ -10,3 +10,5 @@
 Read .agents\rules\manufacturing_guide.md then add task or checklist
  
 - Only Modify Folder for that Module but u can read any files and if that module is referencing another route from another folder create a new route file for that or integrate it to current the folder route should be the same for module and api in their page src\app\(manufacturing-management)\mm
+
+Read .agents\rules\manufacturing_guide.md then add task or checklist

@@ -162,6 +162,7 @@ export interface AvailableLotBatchItem {
     inventoryCondition?: string;
     branchId?: number;
     branchName?: string;
+    unit?: string;
 }
 
 export interface PickingSavePayload {

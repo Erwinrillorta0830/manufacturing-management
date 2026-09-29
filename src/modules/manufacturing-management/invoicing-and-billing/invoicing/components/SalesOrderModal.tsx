@@ -13,24 +13,26 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
 import { SalesOrder, ReceiptType } from "../types";
 import { formatToPHT } from "../utils/dateUtils";
 import { InvoicingService } from "../services/InvoicingService";
-import { 
-    Loader2, 
-    Calendar, 
-    Briefcase, 
-    Truck, 
-    Clock, 
-    ClipboardList,
+import {
+    Loader2,
+
+    Truck,
+    Clock,
+
     CheckCircle2,
     Circle,
     PackageSearch,
-    CreditCard,
-    FileText
+
+    FileText,
+    Factory,
+    Boxes,
+    ShieldCheck,
+    ClipboardCheck
 } from "lucide-react";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
@@ -118,12 +120,12 @@ export const SalesOrderModal: React.FC<SalesOrderModalProps> = ({ order, open, o
     const debouncedSave = useDebouncedCallback(async (newRemarks: string) => {
         const normalizedNew = (newRemarks || "").trim();
         const normalizedLast = (lastSavedRemarksRef.current || "").trim();
-        
+
         if (!order || normalizedNew === normalizedLast) {
             isUserChangeRef.current = false;
             return;
         }
-        
+
         setIsSaving(true);
         try {
             await InvoicingService.updateSalesOrderRemarks(order.order_id, normalizedNew);
@@ -169,15 +171,82 @@ export const SalesOrderModal: React.FC<SalesOrderModalProps> = ({ order, open, o
     };
 
 
+    const hasInvoice = !!order.existing_invoice_no || (order.existing_invoices && order.existing_invoices.length > 0);
+
     const timelineData = [
-        { label: "Creation", date: order.created_date, icon: Clock },
-        { label: "Consolidation", date: order.for_consolidation_at, icon: PackageSearch },
-        { label: "Picking", date: order.for_picking_at, icon: Briefcase },
-        { label: "Approval", date: order.for_approval_at, icon: ClipboardList },
-        { label: "Invoicing", date: order.for_invoicing_at, icon: Calendar },
-        { label: "Dispatched", date: order.for_shipping_at || order.for_loading_at, icon: Truck },
-        { label: "Delivered", date: order.delivered_at, icon: CheckCircle2 },
+        {
+            label: "Creation",
+            description: "Order logged into the system.",
+            date: order.created_date,
+            icon: Clock
+        },
+        {
+            label: "Approval",
+            description: "Order validated and approved for fulfillment.",
+            date: order.for_approval_at,
+            icon: ClipboardCheck
+        },
+        ...(order.for_production_at ? [{
+            label: "Job Order Generation / In Production",
+            description: "Demand signaled to manufacturing for JO creation.",
+            date: order.for_production_at,
+            icon: Factory,
+            badgeText: "PRODUCTION"
+        }] : []),
+        {
+            label: "Consolidation",
+            description: "Orders batched into consolidated demand.",
+            date: order.for_consolidation_at,
+            icon: PackageSearch
+        },
+        {
+            label: "Picking",
+            description: "Inventory allocated and picked from storage lots.",
+            date: order.for_picking_at,
+            icon: Boxes
+        },
+        ...(order.audited_at ? [{
+            label: "Audited",
+            description: "Consolidation Approval.",
+            date: order.audited_at,
+            icon: ShieldCheck
+        }] : []),
+        {
+            label: "Invoicing",
+            description: "Billing document generated.",
+            date: hasInvoice ? (order.order_date || order.for_invoicing_at) : (order.order_status === "Invoiced" ? order.for_invoicing_at : null),
+            icon: FileText
+        },
+        {
+            label: "Dispatched",
+            description: "After invoicing — For fulfillment and deliveries.",
+            date: order.for_shipping_at || order.for_loading_at,
+            icon: Truck
+        },
+        {
+            label: "Delivered",
+            description: "Order shipped out to customer.",
+            date: order.delivered_at,
+            icon: CheckCircle2
+        },
     ];
+
+    // const netAmount = order.net_amount || 0;
+    // const allocatedAmount = order.allocated_amount ?? null;
+    // const isAllocated = allocatedAmount !== null && allocatedAmount > 0;
+    // const isFullyAllocated = isAllocated && allocatedAmount >= netAmount && netAmount > 0;
+    // const allocationCoverage = netAmount > 0 && allocatedAmount !== null
+    //     ? Math.min(100, Math.max(0, Math.round((allocatedAmount / netAmount) * 100)))
+    //     : 0;
+
+    const handleConvertToInvoiceClick = () => {
+        const currentTypeId = selectedTypeId || order.receipt_type?.id?.toString();
+        if (!currentTypeId) {
+            toast.error("Please select a receipt type first before converting to invoice.");
+            return;
+        }
+        setIsConvertModalOpen(true);
+    };
 
     return (
         <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
@@ -185,80 +254,105 @@ export const SalesOrderModal: React.FC<SalesOrderModalProps> = ({ order, open, o
                 <DialogHeader className="p-4 md:p-6 pb-2 md:pb-4 bg-gradient-to-r from-primary/10 via-background to-transparent border-b relative overflow-hidden flex-shrink-0">
                     <DialogTitle className="sr-only">Sales Order Details - {order.order_no}</DialogTitle>
                     <div className="relative z-10 flex flex-col gap-2">
-                    <motion.div
-                        initial={{ opacity: 0, y: -20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.4 }}
-                    >
-                        <div className="flex flex-col gap-4">
-                            <div className="space-y-1.5 w-full">
-                                <div className="flex justify-between items-start pr-8">
-                                    <div className="flex gap-6 md:gap-12 items-start">
-                                        <div className="space-y-4">
-                                            {/* Sales Order Detail */}
-                                            <div className="space-y-0.5">
-                                                <p className="text-[9px] font-bold uppercase tracking-widest text-primary/70">Sales Order Detail</p>
-                                                <div className="text-[11px] font-black text-foreground leading-tight">
-                                                    {order.order_no}
+                        <motion.div
+                            initial={{ opacity: 0, y: -20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.4 }}
+                        >
+                            <div className="flex flex-col gap-4">
+                                <div className="space-y-1.5 w-full">
+                                    <div className="flex justify-between items-start pr-8">
+                                        <div className="flex gap-6 md:gap-12 items-start">
+                                            <div className="space-y-4">
+                                                {/* Sales Order Detail */}
+                                                <div className="space-y-0.5">
+                                                    <p className="text-[9px] font-bold uppercase tracking-widest text-primary/70">Sales Order Detail</p>
+                                                    <div className="text-[11px] font-black text-foreground leading-tight">
+                                                        {order.order_no}
+                                                    </div>
+                                                </div>
+
+                                                {/* PO Ref */}
+                                                <div className="space-y-0.5">
+                                                    <p className="text-[9px] font-bold uppercase tracking-widest text-primary/70">PO Ref</p>
+                                                    <div className="text-[11px] font-black text-foreground leading-tight uppercase">
+                                                        {order.po_no || "—"}
+                                                    </div>
                                                 </div>
                                             </div>
 
-                                            {/* PO Ref */}
-                                            <div className="space-y-0.5">
-                                                <p className="text-[9px] font-bold uppercase tracking-widest text-primary/70">PO Ref</p>
-                                                <div className="text-[11px] font-black text-foreground leading-tight uppercase">
-                                                    {order.po_no || "—"}
+                                            {/* Middle Information Section */}
+                                            <div className="hidden lg:grid grid-cols-3 gap-x-8 gap-y-3 pt-1 border-l border-primary/10 pl-10">
+                                                <div className="space-y-0.5">
+                                                    <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">Customer</p>
+                                                    <p className="text-[11px] font-black text-foreground leading-tight">{order.customer_code?.customer_name || "—"}</p>
+                                                </div>
+                                                <div className="space-y-0.5">
+                                                    <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">Salesman</p>
+                                                    <p className="text-[11px] font-black text-foreground leading-tight">{order.salesman_id?.salesman_name || "—"}</p>
+                                                </div>
+                                                <div className="space-y-0.5">
+                                                    <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">Branch</p>
+                                                    <p className="text-[11px] font-black text-foreground leading-tight">{order.branch_id?.branch_name || "—"}</p>
                                                 </div>
                                             </div>
                                         </div>
 
-                                        {/* Middle Information Section */}
-                                        <div className="hidden lg:grid grid-cols-3 gap-x-8 gap-y-3 pt-1 border-l border-primary/10 pl-10">
-                                            <div className="space-y-0.5">
-                                                <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">Customer</p>
-                                                <p className="text-[11px] font-black text-foreground leading-tight">{order.customer_code?.customer_name || "—"}</p>
+                                        <div className="hidden md:flex flex-col items-end gap-1.5 text-muted-foreground mt-1">
+                                            <div className="flex items-center gap-2">
+                                                <div className="h-1 w-1 rounded-full bg-primary/30" />
+                                                <p className="text-[10px] font-bold uppercase tracking-wider whitespace-nowrap">
+                                                    Order Date: <span className="text-foreground ml-1">{order.order_date ? formatToPHT(order.order_date, "MMM dd, yyyy") : "—"}</span>
+                                                </p>
                                             </div>
-                                            <div className="space-y-0.5">
-                                                <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">Salesman</p>
-                                                <p className="text-[11px] font-black text-foreground leading-tight">{order.salesman_id?.salesman_name || "—"}</p>
-                                            </div>
-                                            <div className="space-y-0.5">
-                                                <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">Branch</p>
-                                                <p className="text-[11px] font-black text-foreground leading-tight">{order.branch_id?.branch_name || "—"}</p>
+                                            <div className="flex items-center gap-2 mt-1">
+                                                <Select
+                                                    value={selectedTypeId}
+                                                    onValueChange={handleTypeChange}
+                                                    disabled={isUpdatingType}
+                                                >
+                                                    <SelectTrigger className="h-9 text-[11px] py-0 px-5 bg-primary/10 hover:bg-primary/20 border-primary/20 hover:border-primary/40 text-primary uppercase font-black tracking-[0.1em] rounded-full transition-all duration-300 shadow-sm hover:shadow-lg focus:ring-0 focus:ring-offset-0 ring-0 w-auto min-w-[200px] gap-4 group">
+                                                        <div className="flex items-center gap-3">
+                                                            {isUpdatingType ? (
+                                                                <Loader2 className="h-3.5 w-3.5 animate-spin text-primary/70" />
+                                                            ) : (
+                                                                <FileText className="h-4 w-4 text-primary/60 group-hover:text-primary transition-colors" />
+                                                            )}
+                                                            <SelectValue placeholder="Receipt Type" />
+                                                        </div>
+                                                    </SelectTrigger>
+                                                    <SelectContent position="popper" sideOffset={6} className="bg-background/98 backdrop-blur-xl border-primary/20 p-2 shadow-2xl rounded-2xl min-w-[220px] animate-in fade-in zoom-in-95 duration-200">
+                                                        {receiptTypes.map((t, idx) => (
+                                                            <SelectItem
+                                                                key={`${t.id}-${idx}`}
+                                                                value={t.id.toString()}
+                                                                className="text-[11px] uppercase font-black tracking-widest rounded-xl focus:bg-primary/10 focus:text-primary cursor-pointer transition-colors py-2.5 px-4 mb-1 last:mb-0"
+                                                            >
+                                                                {t.type}
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
                                             </div>
                                         </div>
                                     </div>
 
-                                    <div className="hidden md:flex flex-col items-end gap-1.5 text-muted-foreground mt-1">
-                                        <div className="flex items-center gap-2">
-                                            <div className="h-1 w-1 rounded-full bg-primary/30" />
-                                            <p className="text-[10px] font-bold uppercase tracking-wider whitespace-nowrap">
-                                            Order Date: <span className="text-foreground ml-1">{order.order_date ? formatToPHT(order.order_date, "MMM dd, yyyy") : "—"}</span>
+                                    <div className="md:hidden flex flex-col gap-2 mt-2 pt-2 border-t border-primary/5">
+                                        <div className="flex justify-between items-center">
+                                            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                                                Date: <span className="text-foreground ml-1">{order.order_date ? formatToPHT(order.order_date, "MMM dd, yyyy") : "—"}</span>
                                             </p>
-                                        </div>
-                                        <div className="flex items-center gap-2 mt-1">
-                                            <Select 
-                                                value={selectedTypeId} 
+                                            <Select
+                                                value={selectedTypeId}
                                                 onValueChange={handleTypeChange}
                                                 disabled={isUpdatingType}
                                             >
-                                                <SelectTrigger className="h-9 text-[11px] py-0 px-5 bg-primary/10 hover:bg-primary/20 border-primary/20 hover:border-primary/40 text-primary uppercase font-black tracking-[0.1em] rounded-full transition-all duration-300 shadow-sm hover:shadow-lg focus:ring-0 focus:ring-offset-0 ring-0 w-auto min-w-[200px] gap-4 group">
-                                                    <div className="flex items-center gap-3">
-                                                        {isUpdatingType ? (
-                                                            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary/70" />
-                                                        ) : (
-                                                            <FileText className="h-4 w-4 text-primary/60 group-hover:text-primary transition-colors" />
-                                                        )}
-                                                        <SelectValue placeholder="Receipt Type" />
-                                                    </div>
+                                                <SelectTrigger className="h-7 text-[9px] py-0 px-3 bg-primary/5 border-primary/20 text-primary uppercase font-black tracking-widest rounded-full w-auto gap-2">
+                                                    <SelectValue />
                                                 </SelectTrigger>
-                                                <SelectContent position="popper" sideOffset={6} className="bg-background/98 backdrop-blur-xl border-primary/20 p-2 shadow-2xl rounded-2xl min-w-[220px] animate-in fade-in zoom-in-95 duration-200">
+                                                <SelectContent position="popper" sideOffset={4} className="bg-background/98 backdrop-blur-xl border-primary/20 p-1 shadow-xl rounded-xl">
                                                     {receiptTypes.map((t, idx) => (
-                                                        <SelectItem 
-                                                            key={`${t.id}-${idx}`} 
-                                                            value={t.id.toString()}
-                                                            className="text-[11px] uppercase font-black tracking-widest rounded-xl focus:bg-primary/10 focus:text-primary cursor-pointer transition-colors py-2.5 px-4 mb-1 last:mb-0"
-                                                        >
+                                                        <SelectItem key={`mobile-${t.id}-${idx}`} value={t.id.toString()} className="text-[10px] uppercase font-black tracking-widest py-2">
                                                             {t.type}
                                                         </SelectItem>
                                                     ))}
@@ -267,38 +361,13 @@ export const SalesOrderModal: React.FC<SalesOrderModalProps> = ({ order, open, o
                                         </div>
                                     </div>
                                 </div>
-                                
-                                <div className="md:hidden flex flex-col gap-2 mt-2 pt-2 border-t border-primary/5">
-                                    <div className="flex justify-between items-center">
-                                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                                            Date: <span className="text-foreground ml-1">{order.order_date ? formatToPHT(order.order_date, "MMM dd, yyyy") : "—"}</span>
-                                        </p>
-                                        <Select 
-                                            value={selectedTypeId} 
-                                            onValueChange={handleTypeChange}
-                                            disabled={isUpdatingType}
-                                        >
-                                            <SelectTrigger className="h-7 text-[9px] py-0 px-3 bg-primary/5 border-primary/20 text-primary uppercase font-black tracking-widest rounded-full w-auto gap-2">
-                                                <SelectValue />
-                                            </SelectTrigger>
-                                            <SelectContent position="popper" sideOffset={4} className="bg-background/98 backdrop-blur-xl border-primary/20 p-1 shadow-xl rounded-xl">
-                                                {receiptTypes.map((t, idx) => (
-                                                    <SelectItem key={`mobile-${t.id}-${idx}`} value={t.id.toString()} className="text-[10px] uppercase font-black tracking-widest py-2">
-                                                        {t.type}
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-                                </div>
                             </div>
-                        </div>
-                    </motion.div>
-                </div>
-                
-                {/* Background Decorative Element */}
-                <div className="absolute top-0 right-0 -mr-10 -mt-10 blur-3xl opacity-20 bg-primary h-32 w-32 rounded-full hidden md:block" />
-            </DialogHeader>
+                        </motion.div>
+                    </div>
+
+                    {/* Background Decorative Element */}
+                    <div className="absolute top-0 right-0 -mr-10 -mt-10 blur-3xl opacity-20 bg-primary h-32 w-32 rounded-full hidden md:block" />
+                </DialogHeader>
 
                 <div className="p-2 md:p-3 overflow-hidden">
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 md:gap-4 lg:h-[400px]">
@@ -310,7 +379,7 @@ export const SalesOrderModal: React.FC<SalesOrderModalProps> = ({ order, open, o
                                     <Label htmlFor="remarks" className="font-black text-primary uppercase text-[9px] md:text-[10px] tracking-widest">Remarks & Notes</Label>
                                     <AnimatePresence mode="wait">
                                         {isSaving ? (
-                                            <motion.span 
+                                            <motion.span
                                                 key="saving"
                                                 initial={{ opacity: 0, y: 5 }}
                                                 animate={{ opacity: 1, y: 0 }}
@@ -320,7 +389,7 @@ export const SalesOrderModal: React.FC<SalesOrderModalProps> = ({ order, open, o
                                                 <Loader2 className="h-2 w-2 animate-spin" /> saving...
                                             </motion.span>
                                         ) : (remarks || "").trim() !== (lastSavedRemarksRef.current || "").trim() ? (
-                                            <motion.span 
+                                            <motion.span
                                                 key="unsaved"
                                                 initial={{ opacity: 0, scale: 0.8 }}
                                                 animate={{ opacity: 1, scale: 1 }}
@@ -330,7 +399,7 @@ export const SalesOrderModal: React.FC<SalesOrderModalProps> = ({ order, open, o
                                                 <div className="h-1.5 w-1.5 rounded-full bg-amber-600 animate-pulse" /> unsaved
                                             </motion.span>
                                         ) : (
-                                            <motion.span 
+                                            <motion.span
                                                 key="saved"
                                                 initial={{ opacity: 0, scale: 0.8 }}
                                                 animate={{ opacity: 1, scale: 1 }}
@@ -356,20 +425,10 @@ export const SalesOrderModal: React.FC<SalesOrderModalProps> = ({ order, open, o
                                 </div>
                             </div>
 
-                            {/* FINANCIALS (CASH) */}
+                            {/* FINANCIALS (CASH & ALLOCATION) */}
                             <div className="space-y-2">
                                 <Label className="font-black text-primary uppercase text-[10px] md:text-xs tracking-widest px-1">Financials Overview</Label>
-                                <Card className="bg-primary/5 border-none ring-1 ring-primary/10 overflow-hidden relative rounded-xl group hover:shadow-lg transition-all duration-500">
-                                    <div className="absolute top-0 right-0 p-3 opacity-5 group-hover:opacity-10 transition-opacity duration-500">
-                                        <CreditCard size={56} className="rotate-12" />
-                                    </div>
-                                    <CardContent className="p-4 md:p-5 text-center flex flex-col justify-center">
-                                        <p className="text-[10px] font-black uppercase text-primary/60 tracking-[0.3em] mb-1">ALLOCATED</p>
-                                        <h2 className="text-2xl md:text-3xl font-black text-primary tracking-tighter antialiased break-words">
-                                            {formatCurrency(order.allocated_amount)}
-                                        </h2>
-                                    </CardContent>
-                                </Card>
+
 
                                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-2">
                                     <div className="bg-muted/20 border-none ring-1 ring-border/50 rounded-lg p-2.5 md:p-3 text-center hover:bg-muted/30 transition-colors">
@@ -401,46 +460,51 @@ export const SalesOrderModal: React.FC<SalesOrderModalProps> = ({ order, open, o
                             <div className="flex-1 overflow-hidden min-h-0">
                                 <ScrollArea className="h-full w-full">
                                     <div className="pl-[38px] md:pl-[44px] pr-3 md:pr-4 pb-3 md:pb-4">
-                                    <div className="relative pl-6 md:pl-7 space-y-2.5 md:space-y-3 before:absolute before:left-[11px] md:before:left-[13px] before:top-1.5 before:h-[calc(100%-12px)] before:w-[2px] before:bg-gradient-to-b before:from-primary/40 before:via-primary/20 before:to-transparent pt-1">
-                                {timelineData.map((item, idx) => {
-                                    const hasDate = !!item.date;
-                                    const Icon = item.icon;
-                                    return (
-                                        <div key={`timeline-${item.label}-${idx}`} className="relative group">
-                                            <div className={`absolute -left-[30px] md:-left-[34px] p-1 md:p-1.5 rounded-lg border-2 transition-all duration-700 z-10 ${
-                                                hasDate 
-                                                ? "bg-primary border-primary shadow-[0_0_15px_rgba(var(--primary),0.15)] scale-110" 
-                                                : "bg-background border-muted/50 scale-90"
-                                            }`}>
-                                                {hasDate ? (
-                                                    <Icon className="h-2.5 w-2.5 text-primary-foreground" />
-                                                ) : (
-                                                    <Circle className="h-2.5 w-2.5 text-muted/30" />
-                                                )}
-                                            </div>
-                                            <div className={`p-2 md:p-2.5 rounded-xl border-none ring-1 transition-all duration-500 group-hover:translate-x-1 ${
-                                                hasDate 
-                                                ? "bg-card ring-primary/10 shadow-sm" 
-                                                : "bg-muted/5 ring-transparent opacity-40"
-                                            }`}>
-                                                <div className="flex justify-between items-center mb-0.5">
-                                                    <h4 className={`text-[8px] md:text-[9px] font-black uppercase tracking-widest ${hasDate ? "text-foreground" : "text-muted-foreground"}`}>
-                                                        {item.label}
-                                                    </h4>
-                                                    {hasDate && (
-                                                        <Badge variant="ghost" className="text-[7px] font-mono bg-primary/5 text-primary px-1 py-0 rounded-sm">
-                                                            SUCCESS
-                                                        </Badge>
-                                                    )}
-                                                </div>
-                                                <p className={`text-[9px] md:text-[10px] font-bold font-mono tracking-tight ${hasDate ? "text-primary/70" : "text-muted-foreground/40"}`}>
-                                                    {hasDate ? formatDate(item.date) : "Status: Pending"}
-                                                </p>
-                                            </div>
+                                        <div className="relative pl-6 md:pl-7 space-y-2.5 md:space-y-3 before:absolute before:left-[11px] md:before:left-[13px] before:top-1.5 before:h-[calc(100%-12px)] before:w-[2px] before:bg-gradient-to-b before:from-primary/40 before:via-primary/20 before:to-transparent pt-1">
+                                            {timelineData.map((item, idx) => {
+                                                const hasDate = !!item.date;
+                                                const Icon = item.icon;
+                                                return (
+                                                    <div key={`timeline-${item.label}-${idx}`} className="relative group">
+                                                        <div className={`absolute -left-[30px] md:-left-[34px] p-1 md:p-1.5 rounded-lg border-2 transition-all duration-700 z-10 ${hasDate
+                                                            ? "bg-primary border-primary shadow-[0_0_15px_rgba(var(--primary),0.15)] scale-110"
+                                                            : "bg-background border-muted/50 scale-90"
+                                                            }`}>
+                                                            {hasDate ? (
+                                                                <Icon className="h-2.5 w-2.5 text-primary-foreground" />
+                                                            ) : (
+                                                                <Circle className="h-2.5 w-2.5 text-muted/30" />
+                                                            )}
+                                                        </div>
+                                                        <div className={`p-2 md:p-2.5 rounded-xl border-none ring-1 transition-all duration-500 group-hover:translate-x-1 ${hasDate
+                                                            ? "bg-card ring-primary/10 shadow-sm"
+                                                            : "bg-muted/5 ring-transparent opacity-40"
+                                                            }`}>
+                                                            <div className="flex justify-between items-center mb-0.5">
+                                                                <h4 className={`text-[8px] md:text-[9px] font-black uppercase tracking-widest ${hasDate ? "text-foreground" : "text-muted-foreground"}`}>
+                                                                    {item.label}
+                                                                </h4>
+                                                                {hasDate ? (
+                                                                    <Badge variant="ghost" className="text-[7px] font-mono bg-primary/10 text-primary px-1 py-0 rounded-sm font-bold">
+                                                                        {"badgeText" in item && item.badgeText ? String(item.badgeText) : "COMPLETED"}
+                                                                    </Badge>
+                                                                ) : (
+                                                                    <Badge variant="ghost" className="text-[7px] font-mono bg-muted/20 text-muted-foreground/60 px-1 py-0 rounded-sm">
+                                                                        PENDING
+                                                                    </Badge>
+                                                                )}
+                                                            </div>
+                                                            <p className={`text-[8.5px] leading-snug line-clamp-1 mb-1 ${hasDate ? "text-muted-foreground" : "text-muted-foreground/50"}`}>
+                                                                {item.description}
+                                                            </p>
+                                                            <p className={`text-[9px] md:text-[10px] font-bold font-mono tracking-tight ${hasDate ? "text-primary/70" : "text-muted-foreground/40"}`}>
+                                                                {hasDate ? formatDate(item.date) : "—"}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
-                                    );
-                                })}
-                                    </div>
                                     </div>
                                 </ScrollArea>
                             </div>
@@ -451,19 +515,19 @@ export const SalesOrderModal: React.FC<SalesOrderModalProps> = ({ order, open, o
                 {/* Styled Footer */}
                 <DialogFooter className="bg-muted/30 border-t p-4 flex flex-col-reverse sm:flex-row sm:justify-end items-center gap-3 md:gap-0 flex-shrink-0">
                     <div className="flex gap-2 w-full sm:w-auto">
-                        <Button 
+                        <Button
                             className="w-full sm:w-auto rounded-xl font-black uppercase text-[10px] md:text-xs tracking-[0.1em] shadow-lg shadow-primary/20 hover:scale-105 active:scale-95 transition-all h-9 md:h-10"
-                            onClick={() => setIsConvertModalOpen(true)}
+                            onClick={handleConvertToInvoiceClick}
                         >
                             Convert to Invoice
                         </Button>
                     </div>
                 </DialogFooter>
 
-                <ConvertToInvoiceModal 
-                    isOpen={isConvertModalOpen} 
-                    onClose={() => setIsConvertModalOpen(false)} 
-                    order={order} 
+                <ConvertToInvoiceModal
+                    isOpen={isConvertModalOpen}
+                    onClose={() => setIsConvertModalOpen(false)}
+                    order={order}
                 />
             </DialogContent>
         </Dialog>

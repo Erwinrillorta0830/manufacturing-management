@@ -32,6 +32,33 @@ interface RawRequest {
   remarks: string;
   status: string;
   date_approved: string | null;
+  approved_by?: number | string | null;
+}
+
+interface DirectusUser {
+  user_id: number;
+  user_fname?: string;
+  user_lname?: string;
+}
+
+function extractUserIdFromToken(token: string | null | undefined): number | null {
+  if (!token) return null;
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return null;
+    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+    const json = Buffer.from(padded, "base64").toString("utf8");
+    const payload = JSON.parse(json);
+    const idVal = payload.user_id ?? payload.userId ?? payload.id ?? payload.sub;
+    if (idVal !== undefined && idVal !== null) {
+      const num = Number(idVal);
+      return !isNaN(num) && num > 0 ? num : null;
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 export async function GET() {
@@ -87,13 +114,48 @@ export async function GET() {
       });
     }
 
-    // 4. Map and join in-memory
+    // 4. Fetch approver user details for approved_by resolution
+    const approverIds = Array.from(
+      new Set(
+        rawReports
+          .map((r) => Number(r.approved_by))
+          .filter((id) => !isNaN(id) && id > 0)
+      )
+    );
+    const usersMap = new Map<number, string>();
+    if (approverIds.length > 0) {
+      try {
+        const usersRes = await fetch(
+          `${DIRECTUS_BASE}/items/user?filter[user_id][_in]=${approverIds.join(",")}&fields=user_id,user_fname,user_lname&limit=1000`,
+          {
+            headers: directusHeaders(),
+            cache: "no-store",
+          }
+        );
+        if (usersRes.ok) {
+          const usersData = await usersRes.json();
+          (usersData.data || []).forEach((u: DirectusUser) => {
+            const fullName = [u.user_fname, u.user_lname].filter(Boolean).join(" ").trim();
+            usersMap.set(u.user_id, fullName || `User #${u.user_id}`);
+          });
+        }
+      } catch (err) {
+        console.warn("Could not resolve approver user details:", err);
+      }
+    }
+
+    // 5. Map and join in-memory
     const formattedReports = rawReports.map((req) => {
       const invoiceObj = invoiceMap.get(Number(req.invoice_id)) || {
         invoice_no: "N/A",
         customer_code: "N/A",
         total_amount: 0
       };
+
+      const approverNum = req.approved_by ? Number(req.approved_by) : null;
+      const approverName = approverNum
+        ? usersMap.get(approverNum) || `User #${approverNum}`
+        : null;
 
       return {
         id: req.request_id,
@@ -102,6 +164,7 @@ export async function GET() {
         reason_code: req.reason_code || "N/A",
         remarks: req.remarks || "",
         status: req.status || "PENDING",
+        approved_by: approverName,
         date_approved: req.date_approved || null,
         invoice_no: invoiceObj.invoice_no || "N/A",
         customer_code: invoiceObj.customer_code || "N/A",
@@ -122,11 +185,13 @@ export async function GET() {
 
 export async function PATCH(req: NextRequest) {
   const cookieStore = await cookies();
-  const token = cookieStore.get("vos_access_token")?.value;
+  const token = cookieStore.get("vos_access_token")?.value || req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
 
   if (!token) {
     return NextResponse.json({ ok: false, message: "Unauthorized" }, { status: 401 });
   }
+
+  const authenticatedUserId = extractUserIdFromToken(token);
 
   try {
     const body = await req.json();
@@ -141,7 +206,14 @@ export async function PATCH(req: NextRequest) {
 
     for (const update of updates) {
       const requestId = update.requestId || update.id;
-      const auditorId = update.auditorId || 1;
+      const auditorId = authenticatedUserId || (update.auditorId && Number(update.auditorId) > 0 ? Number(update.auditorId) : null);
+
+      if (!auditorId) {
+        return NextResponse.json(
+          { ok: false, message: "Unable to identify authenticated approver user ID" },
+          { status: 400 }
+        );
+      }
 
       try {
         // 1. Fetch details of the request

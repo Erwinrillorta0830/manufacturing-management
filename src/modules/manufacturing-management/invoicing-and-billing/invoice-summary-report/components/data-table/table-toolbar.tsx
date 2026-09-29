@@ -8,7 +8,6 @@ import { Input } from "@/components/ui/input";
 import { DataTableViewOptions } from "./table-view-option";
 import { DataTableFacetedFilter } from "./table-faceted-filter";
 import { DataTableDateFilter } from "./table-date-filter";
-import { DataTableTimeFilter } from "./table-time-filter";
 
 interface DataTableToolbarProps<TData> {
   table: Table<TData>;
@@ -83,13 +82,6 @@ export function DataTableToolbar<TData>({
           <DataTableDateFilter
             column={table.getColumn("date_time")}
             title="Date Requested"
-          />
-        )}
-        {/* FACETED FILTER: For Time*/}
-        {table.getColumn("date_time") && (
-          <DataTableTimeFilter
-            column={table.getColumn("date_time")}
-            title="Time Range"
           />
         )}
 

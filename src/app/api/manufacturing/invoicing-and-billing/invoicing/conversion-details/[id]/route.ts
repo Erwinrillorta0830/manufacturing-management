@@ -261,37 +261,70 @@ export async function GET(
         }
 
         // 5. Fetch Consolidation Details for quantity pool
-        const conDetailsMap: Record<string, { product_id: unknown; ordered_quantity: number; picked_quantity: number; applied_quantity: number }> = {};
+        // Map by sales_order_detail_id for exact line-item matching, with product_id as secondary fallback
+        const conDetailsBySodId: Record<string, { product_id: unknown; sales_order_detail_id: unknown; ordered_quantity: number; picked_quantity: number; applied_quantity: number }> = {};
+        const conDetailsByPid: Record<string, { product_id: unknown; ordered_quantity: number; picked_quantity: number; applied_quantity: number }> = {};
         let totalAllocated = 0;
         let totalPicked = 0;
         
         if (consolidatorId) {
-            const cdRes = await fetch(`${DIRECTUS_BASE}/items/consolidator_details?filter[consolidator_id][_eq]=${consolidatorId}&fields=*`, {
+            const cdRes = await fetch(`${DIRECTUS_BASE}/items/consolidator_details?filter[consolidator_id][_eq]=${consolidatorId}&fields=*&limit=-1`, {
                 headers: directusHeaders()
             });
             if (cdRes.ok) {
                 const cdData = await cdRes.json();
-                (cdData.data || []).forEach((cd: { product_id: unknown; ordered_quantity: number; picked_quantity: number; applied_quantity: number }) => {
+                (cdData.data || []).forEach((cd: { product_id: unknown; sales_order_detail_id?: unknown; ordered_quantity: number; picked_quantity: number; applied_quantity: number }) => {
                     const pid = normalizeId(cd.product_id);
+                    const sodId = normalizeId(cd.sales_order_detail_id);
+
+                    if (sodId) {
+                        conDetailsBySodId[String(sodId)] = {
+                            product_id: cd.product_id,
+                            sales_order_detail_id: cd.sales_order_detail_id,
+                            ordered_quantity: Number(cd.ordered_quantity) || 0,
+                            picked_quantity: Number(cd.picked_quantity) || 0,
+                            applied_quantity: Number(cd.applied_quantity) || 0
+                        };
+                    }
                     if (pid) {
                         const pidKey = String(pid);
-                        if (!conDetailsMap[pidKey]) {
-                            conDetailsMap[pidKey] = {
+                        if (!conDetailsByPid[pidKey]) {
+                            conDetailsByPid[pidKey] = {
                                 product_id: cd.product_id,
                                 ordered_quantity: Number(cd.ordered_quantity) || 0,
                                 picked_quantity: Number(cd.picked_quantity) || 0,
                                 applied_quantity: Number(cd.applied_quantity) || 0
                             };
                         } else {
-                            conDetailsMap[pidKey].ordered_quantity += (Number(cd.ordered_quantity) || 0);
-                            conDetailsMap[pidKey].picked_quantity += (Number(cd.picked_quantity) || 0);
-                            conDetailsMap[pidKey].applied_quantity += (Number(cd.applied_quantity) || 0);
+                            conDetailsByPid[pidKey].ordered_quantity += (Number(cd.ordered_quantity) || 0);
+                            conDetailsByPid[pidKey].picked_quantity += (Number(cd.picked_quantity) || 0);
+                            conDetailsByPid[pidKey].applied_quantity += (Number(cd.applied_quantity) || 0);
                         }
                     }
-                    totalAllocated += (Number(cd.ordered_quantity) || 0);
-                    totalPicked += (Number(cd.picked_quantity) || 0);
                 });
             }
+        }
+
+        // Check existing invoiced quantities for this sales order to deduct from remaining
+        const alreadyInvoicedByPid: Record<string, number> = {};
+        try {
+            if (order.order_no) {
+                const invDetRes = await fetch(`${DIRECTUS_BASE}/items/sales_invoice_details?filter[order_id][_eq]=${encodeURIComponent(order.order_no)}&fields=product_id,quantity,invoice_no.transaction_status&limit=-1`, {
+                    headers: directusHeaders()
+                });
+                if (invDetRes.ok) {
+                    const invDetData = await invDetRes.json();
+                    (invDetData.data || []).forEach((row: { product_id: number; quantity: number; invoice_no?: { transaction_status?: string } | number | null }) => {
+                        const invStatus = typeof row.invoice_no === "object" && row.invoice_no !== null ? (row.invoice_no as { transaction_status?: string }).transaction_status : null;
+                        if (invStatus !== "Cancelled" && invStatus !== "Void") {
+                            const pKey = String(row.product_id);
+                            alreadyInvoicedByPid[pKey] = (alreadyInvoicedByPid[pKey] || 0) + Number(row.quantity || 0);
+                        }
+                    });
+                }
+            }
+        } catch (e) {
+            console.error("[Conversion API] Error checking existing sales_invoice_details:", e);
         }
 
         // 5.1 Fetch Live Product and Batch On-hand from Spring Boot API (/api/mm-product-onhand & /api/mm-batch-onhand)
@@ -360,29 +393,27 @@ export async function GET(
         // 6. Map everything together
         const isConsolidated = Boolean(consolidatorId);
 
-        const mappedItems = items.map((sod: { product_id: unknown; ordered_quantity: number; allocated_quantity: number; served_quantity?: number; unit_price: number; discount_type: string; discount_amount: number; net_amount: number }) => {
+        const mappedItems = items.map((sod: { detail_id?: unknown; product_id: unknown; ordered_quantity: number; allocated_quantity: number; served_quantity?: number; unit_price: number; discount_type: string; discount_amount: number; net_amount: number }) => {
             const pid = normalizeId(sod.product_id);
             const pidStr = pid ? String(pid) : "";
+            const sodId = normalizeId(sod.detail_id);
+            const sodIdStr = sodId ? String(sodId) : "";
             
             const pInfo = productMap[pidStr] || { name: "N/A", unit: "PCS", barcode: "" };
             const pname = pInfo.name;
             const ushortcut = pInfo.unit;
-            const cd = conDetailsMap[pidStr] || {};
+
+            // Prioritize matching by sales_order_detail_id, fallback to product_id if unconsolidated per detail
+            const cd = (sodIdStr && conDetailsBySodId[sodIdStr]) || conDetailsByPid[pidStr] || {};
             
-            const sodAllocated = Number(sod.allocated_quantity || 0) > 0 
-                ? Number(sod.allocated_quantity) 
-                : Number(sod.ordered_quantity || 0);
+            const sodAllocated = Number(sod.allocated_quantity || 0);
 
-            // In manufacturing flow, if order is "For Invoicing", it has passed picking.
-            // Ensure picked quantity for this order is at least what was allocated to it.
+            // Strictly NO fallback to sodAllocated when unconsolidated or unpicked
             const cdPicked = Number(cd.picked_quantity || 0);
-            const picked = isConsolidated && cdPicked > 0 ? cdPicked : sodAllocated;
+            const picked = isConsolidated ? cdPicked : 0;
 
-            const cdApplied = Number(cd.applied_quantity || 0);
-            const poolRem = Math.max(0, picked - cdApplied);
-
-            // Ensure remaining is at least sodAllocated if poolRem is 0 (prevents false 0 remaining in For Invoicing stage)
-            const remaining = poolRem > 0 ? Math.min(sodAllocated, poolRem) : sodAllocated;
+            const alreadyInvoiced = alreadyInvoicedByPid[pidStr] || 0;
+            const remaining = Math.max(0, picked - alreadyInvoiced);
             const conOrdered = isConsolidated && (Number(cd.ordered_quantity) || 0) > 0 ? Number(cd.ordered_quantity) : sodAllocated;
 
             return {
@@ -394,7 +425,7 @@ export async function GET(
                 allocated_quantity: sodAllocated,
                 total_allocated_quantity: conOrdered,
                 picked_quantity: picked,
-                applied_quantity: isConsolidated ? cdApplied : 0,
+                applied_quantity: alreadyInvoiced,
                 remaining_quantity: remaining,
                 onhand_quantity: productOnhandMap[pidStr] ?? null,
                 available_batches: batchOnhandMap[pidStr] || [],
@@ -407,10 +438,8 @@ export async function GET(
             };
         });
 
-        if (!isConsolidated) {
-            totalAllocated = mappedItems.reduce((sum: number, it: { total_allocated_quantity: number }) => sum + it.total_allocated_quantity, 0);
-            totalPicked = mappedItems.reduce((sum: number, it: { picked_quantity: number }) => sum + it.picked_quantity, 0);
-        }
+        totalAllocated = mappedItems.reduce((sum: number, it: { allocated_quantity: number }) => sum + it.allocated_quantity, 0);
+        totalPicked = mappedItems.reduce((sum: number, it: { picked_quantity: number }) => sum + it.picked_quantity, 0);
 
         const dtRes = await fetch(`${DIRECTUS_BASE}/items/discount_type?limit=-1&fields=*`, { headers: directusHeaders() });
         const dtData = await dtRes.json();
