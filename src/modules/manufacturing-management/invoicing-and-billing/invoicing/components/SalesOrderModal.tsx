@@ -231,13 +231,13 @@ export const SalesOrderModal: React.FC<SalesOrderModalProps> = ({ order, open, o
         },
     ];
 
-    const netAmount = order.net_amount || 0;
-    const allocatedAmount = order.allocated_amount ?? null;
-    const isAllocated = allocatedAmount !== null && allocatedAmount > 0;
-    const isFullyAllocated = isAllocated && allocatedAmount >= netAmount && netAmount > 0;
-    const allocationCoverage = netAmount > 0 && allocatedAmount !== null
-        ? Math.min(100, Math.max(0, Math.round((allocatedAmount / netAmount) * 100)))
-        : 0;
+    // const netAmount = order.net_amount || 0;
+    // const allocatedAmount = order.allocated_amount ?? null;
+    // const isAllocated = allocatedAmount !== null && allocatedAmount > 0;
+    // const isFullyAllocated = isAllocated && allocatedAmount >= netAmount && netAmount > 0;
+    // const allocationCoverage = netAmount > 0 && allocatedAmount !== null
+    //     ? Math.min(100, Math.max(0, Math.round((allocatedAmount / netAmount) * 100)))
+    //     : 0;
 
     const handleConvertToInvoiceClick = () => {
         const currentTypeId = selectedTypeId || order.receipt_type?.id?.toString();

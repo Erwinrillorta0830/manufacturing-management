@@ -156,7 +156,7 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                 const freshMap: Record<number, number> = {};
                 for (const d of b.details || []) {
                     const prodAllocs = prodAllocMap.get(d.productId) || [];
-                    const prodAllocTotal = prodAllocs.reduce((sum, a) => sum + Math.max(Number(a.quantity || 0), Number(a.availableQuantity || 0)), 0);
+                    // const prodAllocTotal = prodAllocs.reduce((sum, a) => sum + Math.max(Number(a.quantity || 0), Number(a.availableQuantity || 0)), 0);
                     // Items with no lot allocations cannot be picked unless already picked
                     if (prodAllocs.length === 0 && Number(d.pickedQuantity || 0) <= 0) {
                         freshMap[d.id] = 0;
@@ -288,7 +288,7 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
     const normalizeUom = (uom?: string | null) => (uom || "").trim().toLowerCase();
 
     // Check validation error for an individual lot allocation
-    const getLotValidationError = (productId: number, alloc: LotAllocation, allocIdx: number): string | null => {
+    const getLotValidationError = (_productId: number, _alloc: LotAllocation, _allocIdx: number): string | null => {
         // Individual lot capacity is no longer restricted; user can pick to a lot/batch even if available is less
         return null;
     };

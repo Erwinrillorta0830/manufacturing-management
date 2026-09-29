@@ -878,7 +878,7 @@ export function LotBatchSelectionModal({
           });
 
           const storedItems = Array.from(storedProductSummaryMap.values());
-          const lotStockQty = sQtyMap.get(lId) || 0;
+      
           const batchCount = bCountMap.get(lId) || 0;
           const isEmpty = storedItems.length === 0;
           const isDraftOnly = !isEmpty && totalWarehouseQty === 0 && totalDraftQty > 0;
