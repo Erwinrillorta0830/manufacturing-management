@@ -696,7 +696,13 @@ export default function ShipmentInspectionForm({
                             <p className="text-[10px] font-extrabold uppercase tracking-wider text-foreground">Receipt history</p>
                             <p className="text-[9px] text-muted-foreground">Select a row to inspect its quantities. Posted receipts are view-only.</p>
                         </div>
-                        <span className="text-[9px] font-bold text-muted-foreground">Received · Accepted · Rejected</span>
+                    </div>
+                    <div className="grid w-full grid-cols-[minmax(0,1.5fr)_80px_repeat(3,minmax(72px,0.5fr))] items-center gap-2 border-b bg-muted/40 px-3 py-1.5 text-[9px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                        <span>Receipt / Date</span>
+                        <span>Status</span>
+                        <span className="text-right">Received</span>
+                        <span className="text-right text-emerald-700">Accepted</span>
+                        <span className="text-right text-amber-700">Rejected</span>
                     </div>
                     <div className="divide-y">
                         {receiptOptions.map(option => {
@@ -707,7 +713,7 @@ export default function ShipmentInspectionForm({
                                     type="button"
                                     onClick={() => onReceiptSelection(option.key)}
                                     aria-current={isSelected ? "true" : undefined}
-                                    className={`grid w-full grid-cols-[minmax(0,1.5fr)_auto_repeat(3,minmax(72px,0.5fr))] items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-muted/40 ${isSelected ? "bg-primary/5 ring-1 ring-inset ring-primary/30" : ""}`}
+                                    className={`grid w-full grid-cols-[minmax(0,1.5fr)_80px_repeat(3,minmax(72px,0.5fr))] items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-muted/40 ${isSelected ? "bg-primary/5 ring-1 ring-inset ring-primary/30" : ""}`}
                                 >
                                     <span className="min-w-0">
                                         <span className="block truncate text-[10px] font-bold text-foreground">{option.receiptNumber}</span>
@@ -715,11 +721,13 @@ export default function ShipmentInspectionForm({
                                             {option.receiptDate || "No date"} · {option.receiptType || "Receipt"}
                                         </span>
                                     </span>
-                                    <span className={`rounded-md px-1.5 py-0.5 text-[8px] font-extrabold uppercase ${option.isCurrent
-                                        ? "bg-primary/10 text-primary"
-                                        : "bg-emerald-500/10 text-emerald-700"
-                                        }`}>
-                                        {option.isCurrent ? "Awaiting QA" : option.postingStatus || "Posted"}
+                                    <span className="min-w-0">
+                                        <span className={`inline-block rounded-md px-1.5 py-0.5 text-[8px] font-extrabold uppercase ${option.isCurrent
+                                            ? "bg-primary/10 text-primary"
+                                            : "bg-emerald-500/10 text-emerald-700"
+                                            }`}>
+                                            {option.isCurrent ? "Awaiting QA" : option.postingStatus || "Posted"}
+                                        </span>
                                     </span>
                                     <span className="text-right text-[10px] font-semibold text-foreground">{formatQuantity(option.receivedQuantity)}</span>
                                     <span className="text-right text-[10px] font-semibold text-emerald-700">{formatQuantity(option.acceptedQuantity)}</span>

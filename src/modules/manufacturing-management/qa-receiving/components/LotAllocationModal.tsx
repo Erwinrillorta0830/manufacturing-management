@@ -287,6 +287,7 @@ export function LotAllocationSection({
                                 <th scope="col" className="px-2 py-2 text-left">Batch No.</th>
                                 <th scope="col" className="px-2 py-2 text-left">Mfg Date</th>
                                 <th scope="col" className="px-2 py-2 text-left">Expiry Date</th>
+                                <th scope="col" className="px-2 py-2 text-left">QA Status</th>
                                 <th scope="col" className="px-2 py-2 text-right">Qty</th>
                             </tr>
                         </thead>
@@ -299,6 +300,7 @@ export function LotAllocationSection({
                                         <td className="px-2 py-2">{allocation.batchNumber || "-"}</td>
                                         <td className="px-2 py-2">{allocation.manufacturingDate || "-"}</td>
                                         <td className="px-2 py-2">{allocation.expirationDate || "-"}</td>
+                                        <td className="px-2 py-2 font-semibold">{allocation.qaStatus || (disposition === "rejected" ? "DAMAGED" : "GOOD")}</td>
                                         <td className="px-2 py-2 text-right font-semibold tabular-nums">{Number(allocation.quantity || 0).toLocaleString()}</td>
                                     </tr>
                                 );
