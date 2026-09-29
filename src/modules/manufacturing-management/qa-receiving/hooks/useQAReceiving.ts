@@ -35,7 +35,7 @@ interface ReceivingCommitContext {
     idempotencyKey: string;
 }
 
-function emptyLotAllocation(): ReceivingLotAllocationInput {
+function emptyLotAllocation(defaultQaStatus: "GOOD" | "DAMAGED" = "GOOD"): ReceivingLotAllocationInput {
     return {
         clientId: uuidv4(),
         allocationGroupId: uuidv4(),
@@ -44,14 +44,15 @@ function emptyLotAllocation(): ReceivingLotAllocationInput {
         manufacturingDate: "",
         expirationDate: "",
         quantity: "",
-        qaStatus: "GOOD"
+        qaStatus: defaultQaStatus
     };
 }
 
 function resizeLotAllocations(
     allocations: ReceivingLotAllocationInput[],
     targetQuantity: number,
-    seedEmptyGroup = false
+    seedEmptyGroup = false,
+    defaultQaStatus: "GOOD" | "DAMAGED" = "GOOD"
 ): ReceivingLotAllocationInput[] {
     const target = Math.max(0, Number(targetQuantity) || 0);
     if (target <= 0) return [];
@@ -73,7 +74,7 @@ function resizeLotAllocations(
         remaining = 0;
     }
     if (resized.length === 0 && seedEmptyGroup) {
-        return allocations.length > 0 ? allocations : [emptyLotAllocation()];
+        return allocations.length > 0 ? allocations : [emptyLotAllocation(defaultQaStatus)];
     }
     return resized;
 }
@@ -92,7 +93,7 @@ function hydrateStoredAllocations(
     fallback: Pick<ReceivingLotAllocationInput, "batchNumber" | "manufacturingDate" | "expirationDate">,
     defaultQaStatus: "GOOD" | "DAMAGED"
 ): ReceivingLotAllocationInput[] {
-    if (allocations?.length) {
+    if (allocations && allocations.length > 0) {
         const groupIdsByLot = new Map<string, string>();
         return allocations.map(allocation => {
             const storageLotId = String(allocation.storage_lot_id);
@@ -606,7 +607,28 @@ export function useQAReceiving({
         storageLotBatchCache.current = {};
         storageLotBatchRequestCache.current = {};
         try {
-            const fetchedLines = preloadedLineItems ?? await fetchShipmentDetails(shipment.shipment_id, controller.signal);
+            let fetchedLines = preloadedLineItems;
+            let optionsList = availableReceiptOptions;
+            let currentActiveReceipt = activeReceipt;
+
+            if (!isReplacement && (!fetchedLines || optionsList.length === 0)) {
+                try {
+                    const detail = await fetchQaReceivingDetail(shipment.shipment_id, undefined, activeReceipt?.key, controller.signal);
+                    fetchedLines = detail.lineItems;
+                    optionsList = detail.receiptOptions;
+                    currentActiveReceipt = activeReceipt || detail.selectedReceipt;
+                    setReceiptOptions(optionsList);
+                    setSelectedReceipt(currentActiveReceipt);
+                } catch {
+                    // Fallback to fetchShipmentDetails if fetchQaReceivingDetail fails
+                    if (!fetchedLines) {
+                        fetchedLines = await fetchShipmentDetails(shipment.shipment_id, controller.signal);
+                    }
+                }
+            } else if (!fetchedLines) {
+                fetchedLines = await fetchShipmentDetails(shipment.shipment_id, controller.signal);
+            }
+
             const lines = isReplacement
                 ? fetchedLines.filter(line => line.line_id === replacementContext?.purchaseOrderLineId)
                 : fetchedLines;
@@ -614,7 +636,7 @@ export function useQAReceiving({
                 throw new Error("The replacement purchase-order line could not be loaded.");
             }
             setLineItems(lines);
-            const historicalReceiptSelection = !isReplacement && Boolean(activeReceipt?.readOnly);
+            const historicalReceiptSelection = !isReplacement && Boolean(currentActiveReceipt?.readOnly);
             if (!isReplacement && (isReceived || historicalReceiptSelection)) {
                 const storedDocumentTypeId = lines
                     .map(line => line.latest_receipt?.supplier_document_type_id ?? null)
@@ -628,13 +650,6 @@ export function useQAReceiving({
                 if (l.category_type !== "RAW_MATERIAL" && l.category_type !== "PACKAGING" && l.category_type !== "FINISHED_GOODS") {
                     throw new Error(`Product ${l.product_id?.product_name || l.product_id?.product_id || l.line_id} has no valid RAW_MATERIAL, PACKAGING, or FINISHED_GOODS Category_Type.`);
                 }
-                // A partially received PO is editable for a new receipt. Do not
-                // hydrate the prior receipt's lot/batch allocations into that
-                // new draft; those quantities are historical and would make
-                // the next receipt appear over-allocated.
-                const historicalReceipt = !isReplacement && (isReceived || historicalReceiptSelection);
-                const latestReceipt = historicalReceipt ? l.latest_receipt : null;
-                const latestStorageLotId = historicalReceipt ? (latestReceipt?.storage_lot_id ?? l.lot_id ?? null) : null;
                 const isPkg = l.category_type === "PACKAGING";
                 const orderedQuantity = Number(l.quantity_ordered || 0);
 
@@ -651,12 +666,22 @@ export function useQAReceiving({
                 const currentReceiptRejectedQuantity = l.current_receipt_rejected_quantity === null || l.current_receipt_rejected_quantity === undefined
                     ? 0
                     : Math.max(0, Number(l.current_receipt_rejected_quantity));
+                const historicalReceipt = !isReplacement && (isReceived || historicalReceiptSelection);
                 const isWarehouseHandoff = !isReplacement
-                    && (!activeReceipt || activeReceipt.isCurrent)
+                    && (!currentActiveReceipt || currentActiveReceipt.isCurrent)
                     && !l.current_receipt_error
                     && currentReceiptQuantity !== null
                     && Number.isFinite(currentReceiptQuantity)
                     && currentReceiptQuantity > 0;
+                const allocationSourceReceipt = historicalReceipt ? l.latest_receipt : (isWarehouseHandoff ? (l.latest_receipt || l.warehouse_receipt ? {
+                    ...l.latest_receipt,
+                    storage_lot_id: l.latest_receipt?.storage_lot_id ?? l.lot_id ?? null,
+                    supplier_batch_number: l.latest_receipt?.supplier_batch_number || l.batch_no || l.lot_number || "",
+                    accepted_lot_allocations: l.latest_receipt?.accepted_lot_allocations,
+                    rejected_lot_allocations: l.latest_receipt?.rejected_lot_allocations
+                } : null) : null);
+                const latestReceipt = historicalReceipt ? l.latest_receipt : null;
+                const latestStorageLotId = allocationSourceReceipt ? (allocationSourceReceipt?.storage_lot_id ?? l.lot_id ?? null) : null;
                 const selectedReceivedQuantity = historicalReceipt
                     ? Number(latestReceipt?.received_quantity ?? existingReceivedQuantity)
                     : 0;
@@ -664,13 +689,16 @@ export function useQAReceiving({
                     ? Number(latestReceipt?.accepted_quantity ?? existingAcceptedQuantity)
                     : 0;
                 const initialRejectedQuantity = deriveRejectedQuantity(selectedReceivedQuantity, selectedAcceptedQuantity);
-                const fallbackBatchNumber = historicalReceipt ? latestReceipt?.supplier_batch_number || l.batch_no || l.lot_number || "" : "";
-                const fallbackManufacturingDate = historicalReceipt
-                    ? latestReceipt?.manufacturing_date || l.manufacturing_date || ""
-                    : "";
-                const fallbackExpirationDate = historicalReceipt
-                    ? latestReceipt?.expiration_date || l.expiration_date || ""
-                    : "";
+                const fallbackBatchNumber = (allocationSourceReceipt ? allocationSourceReceipt?.supplier_batch_number : null) || l.batch_no || l.lot_number || "";
+                const fallbackManufacturingDate = (allocationSourceReceipt ? allocationSourceReceipt?.manufacturing_date : null) || l.manufacturing_date || "";
+                const fallbackExpirationDate = (allocationSourceReceipt ? allocationSourceReceipt?.expiration_date : null) || l.expiration_date || "";
+
+                const targetAcceptedQuantity = historicalReceipt
+                    ? selectedAcceptedQuantity
+                    : (isWarehouseHandoff && currentReceiptAcceptedQuantity !== null ? currentReceiptAcceptedQuantity : 0);
+                const targetRejectedQuantity = historicalReceipt
+                    ? initialRejectedQuantity
+                    : (isWarehouseHandoff ? currentReceiptRejectedQuantity : 0);
                 
                 rowsInit[l.line_id] = {
                     receivedQty: isReplacement
@@ -687,7 +715,7 @@ export function useQAReceiving({
                         : historicalReceipt
                         ? selectedAcceptedQuantity
                         : isWarehouseHandoff
-                            ? currentReceiptAcceptedQuantity || 0
+                            ? (currentReceiptAcceptedQuantity !== null ? currentReceiptAcceptedQuantity : 0)
                         : isPartiallyReceived
                             ? (remainingAcceptedForLine > 0 ? remainingAcceptedForLine : 0)
                             : "",
@@ -697,39 +725,39 @@ export function useQAReceiving({
                             ? currentReceiptRejectedQuantity
                             : 0,
                     acceptedLotAllocations: hydrateStoredAllocations(
-                        latestReceipt?.accepted_lot_allocations,
+                        allocationSourceReceipt?.accepted_lot_allocations,
                         latestStorageLotId,
-                        historicalReceipt ? selectedAcceptedQuantity : 0,
+                        targetAcceptedQuantity,
                         { batchNumber: fallbackBatchNumber, manufacturingDate: fallbackManufacturingDate, expirationDate: fallbackExpirationDate },
                         "GOOD"
                     ),
                     rejectedLotAllocations: hydrateStoredAllocations(
-                        latestReceipt?.rejected_lot_allocations,
+                        allocationSourceReceipt?.rejected_lot_allocations,
                         latestStorageLotId,
-                        historicalReceipt ? initialRejectedQuantity : 0,
+                        targetRejectedQuantity,
                         { batchNumber: fallbackBatchNumber, manufacturingDate: fallbackManufacturingDate, expirationDate: fallbackExpirationDate },
                         "DAMAGED"
                     ),
-                    rejectionReason: isReplacement ? "" : latestReceipt?.rejection_reason || l.rejection_reason || "",
+                    rejectionReason: isReplacement ? "" : allocationSourceReceipt?.rejection_reason || l.rejection_reason || "",
                     isPackaging: isPkg
                 };
             });
             setInspectionRows(rowsInit);
 
-            const storedReceivingTicketNumber = (activeReceipt?.readOnly
+            const storedReceivingTicketNumber = (currentActiveReceipt?.readOnly
                 ? lines.map(line => {
                     const receipt = line.latest_receipt?.receipt_number?.trim() || "";
                     const suffix = `-${line.line_id}`;
                     return receipt.endsWith(suffix) ? receipt.slice(0, -suffix.length) : receipt;
                 })
                 : lines.map(line => line.current_receipt_number?.trim() || line.latest_receipt?.receipt_number?.trim() || ""))
-                .find(Boolean) || activeReceipt?.receiptNumber || "";
-            setReceivingTicketNumber(!isReplacement && (isReceived || Boolean(activeReceipt) || lines.some(line => line.current_receipt_quantity !== null && line.current_receipt_quantity !== undefined)) ? storedReceivingTicketNumber : "");
-            const storedReceiptDate = (activeReceipt?.readOnly
+                .find(Boolean) || currentActiveReceipt?.receiptNumber || "";
+            setReceivingTicketNumber(!isReplacement && (isReceived || Boolean(currentActiveReceipt) || lines.some(line => line.current_receipt_quantity !== null && line.current_receipt_quantity !== undefined)) ? storedReceivingTicketNumber : "");
+            const storedReceiptDate = (currentActiveReceipt?.readOnly
                 ? lines.map(line => line.latest_receipt?.receipt_date || "")
                 : lines.map(line => line.current_receipt_date || line.latest_receipt?.receipt_date || ""))
-                .find(Boolean) || activeReceipt?.receiptDate || "";
-            setReceiptDate(!isReplacement && (isReceived || Boolean(activeReceipt) || lines.some(line => line.current_receipt_quantity !== null && line.current_receipt_quantity !== undefined)) && storedReceiptDate ? storedReceiptDate : getTodayReceiptDate());
+                .find(Boolean) || currentActiveReceipt?.receiptDate || "";
+            setReceiptDate(!isReplacement && (isReceived || Boolean(currentActiveReceipt) || lines.some(line => line.current_receipt_quantity !== null && line.current_receipt_quantity !== undefined)) && storedReceiptDate ? storedReceiptDate : getTodayReceiptDate());
 
             const productIds = [...new Set(lines.map(line => Number(line.product_id?.product_id)).filter(productId => Number.isSafeInteger(productId) && productId > 0))];
             const selectedBranch = branchCatalog.find(branch => Number(branch.id) === Number(normalizedPurchaseOrderBranchId));
@@ -900,9 +928,16 @@ export function useQAReceiving({
     }, [loadDetail]);
 
     const handleReceiptSelection = useCallback((receiptKey: string) => {
-        if (!isDetailMode || !receiptKey) return;
-        void loadDetail(false, receiptKey);
-    }, [isDetailMode, loadDetail]);
+        if (!receiptKey) return;
+        if (isDetailMode) {
+            void loadDetail(false, receiptKey);
+        } else if (selectedShipment) {
+            void handleSelectShipment(selectedShipment, replacementDisposition, {
+                receiptOptions,
+                selectedReceipt: receiptOptions.find(o => o.key === receiptKey) || null
+            });
+        }
+    }, [isDetailMode, loadDetail, selectedShipment, replacementDisposition, receiptOptions, handleSelectShipment]);
 
     useEffect(() => {
         if (!isDetailMode || !detailShipmentId) return;
@@ -964,7 +999,7 @@ export function useQAReceiving({
                 updatedRow.acceptedLotAllocations = resizeLotAllocations(updatedRow.acceptedLotAllocations, accepted);
             }
             if (field === "acceptedQty" || field === "receivedQty") {
-                updatedRow.rejectedLotAllocations = resizeLotAllocations(updatedRow.rejectedLotAllocations, rejected, true);
+                updatedRow.rejectedLotAllocations = resizeLotAllocations(updatedRow.rejectedLotAllocations, rejected, true, "DAMAGED");
             }
             return {
                 ...prev,
@@ -1100,6 +1135,7 @@ export function useQAReceiving({
 
     const quantityStatus = useMemo<ReceivingQuantityStatus>(() => {
         if (lineItems.length === 0) return "PARTIAL";
+        const isHistoricalView = Boolean(selectedReceipt?.readOnly);
         const evaluation = evaluateReceivingStatus(lineItems.map(line => {
             const row = inspectionRows[line.line_id];
             const received = Number(row?.receivedQty || 0);
@@ -1108,18 +1144,20 @@ export function useQAReceiving({
                 ? Math.max(0, deriveRejectedQuantity(received, accepted))
                 : 0;
             const replacementLine = replacementDisposition?.purchaseOrderLineId === line.line_id;
+            const baseReceived = isHistoricalView ? 0 : (replacementLine ? 0 : Number(line.previously_received_quantity ?? line.quantity_received ?? 0));
+            const baseRejected = isHistoricalView ? 0 : (replacementLine ? 0 : Number(line.previously_rejected_quantity ?? line.quantity_rejected ?? 0));
             return {
                 orderedQuantity: replacementLine
                     ? replacementDisposition?.remainingQuantity || 0
                     : Number(line.quantity_ordered || 0),
-                receivedQuantity: (replacementLine ? 0 : Number(line.previously_received_quantity ?? line.quantity_received ?? 0)) + received,
-                rejectedQuantity: (replacementLine ? 0 : Number(line.previously_rejected_quantity ?? line.quantity_rejected ?? 0)) + rejected
+                receivedQuantity: baseReceived + received,
+                rejectedQuantity: baseRejected + rejected
             };
         }));
         if (evaluation.status === "Received") return "FULL";
         if (evaluation.status === "Rejected") return "REJECTED";
         return "PARTIAL";
-    }, [inspectionRows, lineItems, replacementDisposition]);
+    }, [inspectionRows, lineItems, replacementDisposition, selectedReceipt]);
 
     const receivingValidationIssues = useMemo<ReceivingValidationIssue[]>(() => {
         if (receivingIsReadOnly) return [];

@@ -945,12 +945,13 @@ export async function fetchShipmentLineItems(
     try {
         // Fetch the header first so force-closed orders can expose zero remaining intake.
         const headerRes = await fetch(
-            `${DIRECTUS_URL}/items/purchase_order/${shipmentId}?fields=purchase_order_id,force_received_at,currency_code,is_import,exchange_rate`,
+            `${DIRECTUS_URL}/items/purchase_order/${shipmentId}?fields=purchase_order_id,force_received_at,currency_code,is_import,exchange_rate,branch_id`,
             { headers, cache: "no-store" }
         );
         const header = headerRes.ok ? ((await headerRes.json()).data || {}) as Record<string, unknown> : {};
         const forceClosed = isForceReceived(header.force_received_at);
         const currency = resolveLandedCostCurrency(header);
+        const poBranchId = resolvePurchaseOrderBranchId(header);
 
         // Fetch purchase_order_products
         const popUrl = `${DIRECTUS_URL}/items/purchase_order_products?filter[purchase_order_id][_eq]=${shipmentId}&fields=*,product_id.*,product_id.unit_of_measurement.*,discount_type.*&limit=-1`;
@@ -1200,33 +1201,134 @@ export async function fetchShipmentLineItems(
                     && matchesReceiptSelection(row, lineId, options.receiptSelection!)
                 )
                 : originalReceivingData.filter(row => resolvePurchaseOrderLineId(row, popData) === lineId);
-            const latestReceipt = receiptRowsForLine
-                .sort((left, right) => {
-                    const rightDate = Date.parse(String(right.received_date || "")) || 0;
-                    const leftDate = Date.parse(String(left.received_date || "")) || 0;
-                    return rightDate - leftDate || receivingRecordId(right.purchase_order_product_id) - receivingRecordId(left.purchase_order_product_id);
-                })[0];
-            const latestReceiptId = latestReceipt ? receivingRecordId(latestReceipt.purchase_order_product_id) : 0;
-            const latestReceiptBranchId = latestReceipt ? movementRelationId(latestReceipt.branch_id, "id") : NaN;
-            const latestReceiptMovements = latestReceiptId > 0
-                ? movementData.filter(row => relationId(row.source_document_id, "purchase_order_product_id") === latestReceiptId)
+            
+            // Group rows by receipt identity so multi-lot/multi-batch receipts are aggregated together
+            const sortedReceiptRows = [...receiptRowsForLine].sort((left, right) => {
+                const rightDate = Date.parse(String(right.received_date || "")) || 0;
+                const leftDate = Date.parse(String(left.received_date || "")) || 0;
+                return rightDate - leftDate || receivingRecordId(right.purchase_order_product_id) - receivingRecordId(left.purchase_order_product_id);
+            });
+            const topReceipt = sortedReceiptRows[0];
+            const targetHeaderId = topReceipt ? relationId(topReceipt.receiving_header_id, "id") : null;
+            const targetReceiptNo = topReceipt ? String(topReceipt.receipt_no || "").trim() : "";
+            const constituentReceiptRows = topReceipt
+                ? sortedReceiptRows.filter(row => {
+                    if (targetHeaderId !== null) {
+                        return relationId(row.receiving_header_id, "id") === targetHeaderId;
+                    }
+                    if (targetReceiptNo) {
+                        return String(row.receipt_no || "").trim() === targetReceiptNo;
+                    }
+                    return receivingRecordId(row.purchase_order_product_id) === receivingRecordId(topReceipt.purchase_order_product_id);
+                })
                 : [];
-            const latestAcceptedAllocations = sumMovementAllocations(
+            const latestReceipt = topReceipt;
+            const constituentReceiptIds = constituentReceiptRows.map(row => receivingRecordId(row.purchase_order_product_id));
+            const latestReceiptBranchId = latestReceipt ? movementRelationId(latestReceipt.branch_id, "id") : NaN;
+            const targetGoodBranchId = poBranchId ?? (Number.isSafeInteger(latestReceiptBranchId) ? latestReceiptBranchId : null);
+            const latestReceiptMovements = constituentReceiptIds.length > 0
+                ? movementData.filter(row => constituentReceiptIds.includes(relationId(row.source_document_id, "purchase_order_product_id") || 0))
+                : [];
+            const movementAcceptedAllocations = sumMovementAllocations(
                 latestReceiptMovements,
-                Number.isSafeInteger(latestReceiptBranchId) ? latestReceiptBranchId : null,
+                targetGoodBranchId,
                 "match",
                 inventoryLotQaStatuses
             );
-            const rejectedAllocations = sumMovementAllocations(
+            const movementRejectedAllocations = sumMovementAllocations(
                 latestReceiptMovements,
-                Number.isSafeInteger(latestReceiptBranchId) ? latestReceiptBranchId : null,
+                targetGoodBranchId,
                 "exclude",
                 inventoryLotQaStatuses
             );
+
+            // Derive direct allocations from constituent purchase_order_receiving rows if movements are not populated
+            const directAcceptedAllocations: ReceivingLotAllocationSnapshot[] = [];
+            const directRejectedAllocations: ReceivingLotAllocationSnapshot[] = [];
+            let totalConstituentReceived = 0;
+            let totalConstituentAccepted = 0;
+            let totalConstituentRejected = 0;
+
+            for (const rRow of constituentReceiptRows) {
+                const rLotId = resolveInventoryLotId(rRow.mm_lot_id) || resolveInventoryLotId(rRow.lot_id);
+                const rBatchNo = String(rRow.batch_no || "").trim();
+                const rExpiry = rRow.expiry_date ? String(rRow.expiry_date).slice(0, 10) : null;
+                const rStatus = String(rRow.qa_status || "").trim().toUpperCase();
+                const rAllocatedQty = Number(rRow.quantity_allocated ?? 0);
+                const rReceivedQty = Number(rRow.received_quantity || 0);
+                const rRejectedQty = Number(rRow.quantity_rejected || 0);
+
+                if (rRow.quantity_allocated !== undefined && rRow.quantity_allocated !== null && Number.isFinite(rAllocatedQty) && rAllocatedQty > 0) {
+                    totalConstituentReceived += rAllocatedQty;
+                    if (rStatus && rStatus !== "GOOD") {
+                        totalConstituentRejected += rAllocatedQty;
+                        if (rLotId) {
+                            directRejectedAllocations.push({
+                                storage_lot_id: rLotId,
+                                batch_number: rBatchNo,
+                                manufacturing_date: null,
+                                expiration_date: rExpiry,
+                                quantity: rAllocatedQty,
+                                qa_status: rStatus === "REJECTED" ? "DAMAGED" : (rRow.qa_status ? String(rRow.qa_status).trim().toUpperCase() : "DAMAGED")
+                            });
+                        }
+                    } else {
+                        totalConstituentAccepted += rAllocatedQty;
+                        if (rLotId) {
+                            directAcceptedAllocations.push({
+                                storage_lot_id: rLotId,
+                                batch_number: rBatchNo,
+                                manufacturing_date: null,
+                                expiration_date: rExpiry,
+                                quantity: rAllocatedQty,
+                                qa_status: "GOOD"
+                            });
+                        }
+                    }
+                } else {
+                    totalConstituentReceived += rReceivedQty;
+                    totalConstituentRejected += rRejectedQty;
+                    const acceptedPart = Math.max(0, rReceivedQty - rRejectedQty);
+                    totalConstituentAccepted += acceptedPart;
+                    if (rLotId && acceptedPart > 0) {
+                        directAcceptedAllocations.push({
+                            storage_lot_id: rLotId,
+                            batch_number: rBatchNo,
+                            manufacturing_date: null,
+                            expiration_date: rExpiry,
+                            quantity: acceptedPart,
+                            qa_status: "GOOD"
+                        });
+                    }
+                    if (rLotId && rRejectedQty > 0) {
+                        directRejectedAllocations.push({
+                            storage_lot_id: rLotId,
+                            batch_number: rBatchNo,
+                            manufacturing_date: null,
+                            expiration_date: rExpiry,
+                            quantity: rRejectedQty,
+                            qa_status: rStatus && rStatus !== "GOOD" ? (rStatus === "REJECTED" ? "DAMAGED" : rStatus) : "DAMAGED"
+                        });
+                    }
+                }
+            }
+
+            const movementAcceptedTotal = movementAcceptedAllocations.reduce((sum, a) => sum + (Number(a.quantity) || 0), 0);
+            const directAcceptedTotal = directAcceptedAllocations.reduce((sum, a) => sum + (Number(a.quantity) || 0), 0);
+            const latestAcceptedAllocations = movementAcceptedTotal > 0 && movementAcceptedTotal >= directAcceptedTotal
+                ? movementAcceptedAllocations
+                : directAcceptedAllocations;
+
+            const movementRejectedTotal = movementRejectedAllocations.reduce((sum, a) => sum + (Number(a.quantity) || 0), 0);
+            const directRejectedTotal = directRejectedAllocations.reduce((sum, a) => sum + (Number(a.quantity) || 0), 0);
+            const rejectedAllocations = movementRejectedTotal > 0 && movementRejectedTotal >= directRejectedTotal
+                ? movementRejectedAllocations
+                : directRejectedAllocations;
+
             const latestMovementWithDate = latestReceiptMovements.find(row => Boolean(row.manufacturing_date));
-            const latestReceivedQuantity = Number(latestReceipt?.received_quantity || 0);
-            const latestRejectedQuantity = Number(latestReceipt?.quantity_rejected || 0);
-            const latestAcceptedQuantity = Math.max(0, latestReceivedQuantity - latestRejectedQuantity);
+            const latestReceivedQuantity = totalConstituentReceived || Number(latestReceipt?.received_quantity || 0);
+            const latestRejectedQuantity = totalConstituentRejected;
+            const latestAcceptedQuantity = totalConstituentAccepted || Math.max(0, latestReceivedQuantity - latestRejectedQuantity);
             const latestMmLotId = resolveInventoryLotId(latestReceipt?.mm_lot_id)
                 || latestAcceptedAllocations[0]?.storage_lot_id
                 || rejectedAllocations[0]?.storage_lot_id
