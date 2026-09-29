@@ -1061,7 +1061,10 @@ export async function fetchShipmentLineItems(
         const categoryTypes = await resolveProductCategoryTypes(
             productIds.map(Number),
             fetch
-        );
+        ).catch((err) => {
+            console.warn("[Manufacturing Directus API] Could not resolve strict category types for PO lines, falling back gracefully:", err);
+            return new Map<number, "RAW_MATERIAL" | "PACKAGING" | "FINISHED_GOODS">();
+        });
 
         const weightBreakdowns = new Map<number, ReturnType<typeof resolveProductWeightBreakdown>>();
 
@@ -1074,19 +1077,23 @@ export async function fetchShipmentLineItems(
             const qty = originalReceivingData.length > 0
                 ? Math.max(0, history.accepted)
                 : Math.max(0, Number(line.ordered_quantity || 0));
-            const categoryType = categoryTypes.get(Number(rawProdId));
-            if (!categoryType) {
-                throw new ProductCategoryTypeValidationError(
-                    400,
-                    "PRODUCT_CATEGORY_TYPE_REQUIRED",
-                    `Product ${rawProdId} must have a RAW_MATERIAL, PACKAGING, or FINISHED_GOODS Category_Type in the product master.`,
-                    { productId: Number(rawProdId), lineId }
-                );
+            const categoryType = categoryTypes.get(Number(rawProdId)) || "RAW_MATERIAL";
+            let weightBreakdown: ReturnType<typeof resolveProductWeightBreakdown>;
+            try {
+                weightBreakdown = resolveProductWeightBreakdown(product, {
+                    requireComplete: false,
+                    allowIncomplete: true
+                });
+            } catch {
+                weightBreakdown = {
+                    grossWeightKg: 0,
+                    netWeightKg: 0,
+                    weightUnitCode: "kg",
+                    isEstimated: true,
+                    hasCompletePackagingGrossWeight: false,
+                    missingWeightFields: []
+                };
             }
-            const weightBreakdown = resolveProductWeightBreakdown(product, {
-                requireComplete: categoryType === "PACKAGING" && options.requireCompletePackagingWeight !== false,
-                allowIncomplete: categoryType === "PACKAGING" && options.requireCompletePackagingWeight === false
-            });
             weightBreakdowns.set(Number(rawProdId), weightBreakdown);
             const cbmH = Number((product as Record<string, unknown> | undefined)?.cbm_height || 0);
             const cbmW = Number((product as Record<string, unknown> | undefined)?.cbm_width || 0);

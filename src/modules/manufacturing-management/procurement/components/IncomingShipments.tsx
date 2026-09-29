@@ -4,6 +4,7 @@ import { IncomingShipmentsProps } from "./incoming-shipments/types";
 import { ShipmentListSidebar } from "./incoming-shipments/ShipmentListSidebar";
 import { ShipmentDetailView } from "./incoming-shipments/ShipmentDetailView";
 import { ShipmentFormModal } from "./incoming-shipments/ShipmentFormModal";
+import PurchaseOrderDetailModal from "./incoming-shipments/PurchaseOrderDetailModal";
 import { useIncomingShipmentsForm } from "../hooks/useIncomingShipmentsForm";
 import { Globe, MapPin, Building2 } from "lucide-react";
 import { toast } from "sonner";
@@ -338,7 +339,7 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                     activeShipment={activeShipment}
                     setSelectedShipment={setSelectedShipment}
                     isSupplierForeign={isSupplierForeign}
-                    getShipmentHref={isQueueMode ? shipmentDetailHref : undefined}
+                    getShipmentHref={undefined}
                     createHref={isQueueMode && canonicalDrafting ? "/mm/incoming-shipments/create" : undefined}
                     onOpenCreateModal={() => { setIsOverridden(false); setIsModalOpen(true); }}
                 />
@@ -364,6 +365,30 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                     referenceError={isDetailMode ? referenceError : null}
                     onRetryDetail={isDetailMode ? onRetryDetail : undefined}
                     backHref={isDetailMode ? backHref : undefined}
+                />
+            )}
+
+            {isQueueMode && (
+                <PurchaseOrderDetailModal
+                    isOpen={Boolean(activeShipment)}
+                    onClose={() => setSelectedShipment(null)}
+                    activeShipment={activeShipment}
+                    loading={loading}
+                    detailLoading={detailLoading}
+                    canonicalDrafting={canonicalDrafting}
+                    paymentTerms={paymentTerms}
+                    paymentModes={paymentModes}
+                    suppliers={suppliers}
+                    branches={dynamicBranches}
+                    isSupplierForeign={isSupplierForeign}
+                    handleStartEdit={handleStartEdit}
+                    onPrintPurchaseOrder={handlePrintPurchaseOrder}
+                    printLoading={printLoading}
+                    onCancelRejectedPurchaseOrder={onCancelRejectedPurchaseOrder}
+                    lines={lines}
+                    detailError={detailError}
+                    referenceError={referenceError}
+                    onRetryDetail={onRetryDetail}
                 />
             )}
 

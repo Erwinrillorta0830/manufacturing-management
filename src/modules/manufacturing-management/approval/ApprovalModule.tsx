@@ -26,6 +26,7 @@ import { EXCHANGE_RATE_DECIMAL_SCALE, PROCUREMENT_MONEY_DECIMAL_SCALE } from "..
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { CancelPurchaseOrderDialog } from "../procurement/components/incoming-shipments/CancelPurchaseOrderDialog";
 import { formatPhtDateTime } from "./pht-date-time";
+import FinanceApprovalDetailModal from "./components/FinanceApprovalDetailModal";
 
 type QueueTab = "For Approval" | "Approved" | "Revision" | "Cancelled";
 
@@ -263,10 +264,23 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
     const [endDate, setEndDate] = useState("");
     const [pageSize, setPageSize] = useState(10);
     const [printLoading, setPrintLoading] = useState(false);
+    const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+    const [selectedModalShipmentId, setSelectedModalShipmentId] = useState<number | null>(null);
     const isDetailMode = mode === "detail";
     const dateRangeError = startDate && endDate && startDate > endDate
         ? "The end date must be on or after the start date."
         : null;
+
+    const handleOpenDetailModal = (shipmentId: number) => {
+        setSelectedModalShipmentId(shipmentId);
+        setIsDetailModalOpen(true);
+        void retryDetail(shipmentId);
+    };
+
+    const handleCloseDetailModal = () => {
+        setIsDetailModalOpen(false);
+        setSelectedModalShipmentId(null);
+    };
 
     const supplierOptions = useMemo(() => [
         { value: "", label: "All Suppliers" },
@@ -712,7 +726,7 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
                                     <button
                                         key={order.shipment_id}
                                         type="button"
-                                        onClick={() => router.push(`/mm/finance-approval/${encodeURIComponent(String(order.shipment_id))}`)}
+                                        onClick={() => handleOpenDetailModal(order.shipment_id)}
                                         className="grid w-full gap-3 p-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary md:grid-cols-[1.1fr_1.4fr_1fr_1fr_1fr_auto] md:items-center"
                                     >
                                         <span className="min-w-0">
@@ -767,6 +781,22 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
                     </>
                 )}
             </section>
+
+            <FinanceApprovalDetailModal
+                isOpen={isDetailModalOpen}
+                onClose={handleCloseDetailModal}
+                stage={stage}
+                shipment={selectedShipment}
+                shipmentLines={selectedShipmentLines}
+                approvalDetail={approvalDetail}
+                supplierName={supplierName}
+                loading={detailLoading}
+                error={detailError}
+                onRetry={() => selectedModalShipmentId && retryDetail(selectedModalShipmentId)}
+                approve={approve}
+                requestRevision={requestRevision}
+                cancel={cancel}
+            />
         </div>
     );
 }

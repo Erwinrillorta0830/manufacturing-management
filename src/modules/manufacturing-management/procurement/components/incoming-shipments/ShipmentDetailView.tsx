@@ -33,6 +33,7 @@ export interface ShipmentDetailViewProps {
     referenceError?: string | null;
     onRetryDetail?: () => void;
     backHref?: string;
+    onBack?: () => void;
 }
 
 export function ShipmentDetailView({
@@ -53,7 +54,8 @@ export function ShipmentDetailView({
     detailError = null,
     referenceError = null,
     onRetryDetail,
-    backHref
+    backHref,
+    onBack
 }: ShipmentDetailViewProps) {
     const [isCancelDialogOpen, setIsCancelDialogOpen] = React.useState(false);
     const effectiveStatus = activeShipment ? displayShipmentStatus(activeShipment, canonicalDrafting) : "Ordered";
@@ -117,24 +119,42 @@ export function ShipmentDetailView({
                                 <RotateCcw className="h-3.5 w-3.5" /> Retry
                             </button>
                         )}
-                        <Link
-                            href={backHref || "/mm/incoming-shipments"}
-                            className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold text-foreground hover:bg-muted"
-                        >
-                            <ArrowLeft className="h-3.5 w-3.5" /> Back to Incoming Shipments
-                        </Link>
+                        {onBack ? (
+                            <button
+                                type="button"
+                                onClick={onBack}
+                                className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold text-foreground hover:bg-muted"
+                            >
+                                <ArrowLeft className="h-3.5 w-3.5" /> Back to Incoming Shipments
+                            </button>
+                        ) : (
+                            <Link
+                                href={backHref || "/mm/incoming-shipments"}
+                                className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold text-foreground hover:bg-muted"
+                            >
+                                <ArrowLeft className="h-3.5 w-3.5" /> Back to Incoming Shipments
+                            </Link>
+                        )}
                     </div>
                 </div>
             ) : activeShipment ? (
                 <>
-                    {backHref !== undefined && (
+                    {onBack ? (
+                        <button
+                            type="button"
+                            onClick={onBack}
+                            className="inline-flex min-h-9 w-fit items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs font-bold text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        >
+                            <ArrowLeft className="h-3.5 w-3.5" /> Back to Incoming Shipments
+                        </button>
+                    ) : backHref !== undefined ? (
                         <Link
                             href={backHref || "/mm/incoming-shipments"}
                             className="inline-flex min-h-9 w-fit items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs font-bold text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                         >
                             <ArrowLeft className="h-3.5 w-3.5" /> Back to Incoming Shipments
                         </Link>
-                    )}
+                    ) : null}
                     {/* Header Details */}
                     <div className="w-full border-b pb-5">
                         <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">

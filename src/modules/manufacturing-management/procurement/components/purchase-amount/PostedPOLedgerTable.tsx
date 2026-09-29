@@ -262,9 +262,10 @@ export default function PostedPOLedgerTable({
 interface PurchaseAmountAuditViewProps {
     purchaseOrderId: number;
     postingSuccessPurchaseOrder?: string | null;
+    onBack?: () => void;
 }
 
-export function PurchaseAmountAuditView({ purchaseOrderId, postingSuccessPurchaseOrder }: PurchaseAmountAuditViewProps) {
+export function PurchaseAmountAuditView({ purchaseOrderId, postingSuccessPurchaseOrder, onBack }: PurchaseAmountAuditViewProps) {
     const router = useRouter();
     const successToastShown = useRef(false);
     const [loadingDetails, setLoadingDetails] = useState(true);
@@ -328,7 +329,11 @@ export function PurchaseAmountAuditView({ purchaseOrderId, postingSuccessPurchas
                 <div><h2 className="flex items-center gap-2 text-lg font-bold"><ShieldCheck className="h-5 w-5 text-emerald-600" />Posted Audit Ledger: {purchaseOrderNo}</h2><p className="text-xs text-muted-foreground">Read-only posting logs, GL mappings, landed-cost adjustments, and valuation variance.</p></div>
                 <div className="flex flex-wrap items-center gap-2">
                     <button type="button" onClick={() => void handlePrintLandedCost()} disabled={printLoading} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-primary/30 bg-primary/5 px-2.5 text-[10px] font-bold text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50">{printLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}{printLoading ? "Preparing..." : "Print landed cost"}</button>
-                    <Link href="/mm/purchase-amount" aria-label="Back to Purchase Amount landing page" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-blue-600 bg-blue-600 px-2.5 text-[10px] font-bold text-white shadow-sm transition-colors hover:border-blue-700 hover:bg-blue-700 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"><ArrowLeft className="h-3.5 w-3.5" />Back to Purchase Amount</Link>
+                    {onBack ? (
+                        <button type="button" onClick={onBack} aria-label="Back to Purchase Amount landing page" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-blue-600 bg-blue-600 px-2.5 text-[10px] font-bold text-white shadow-sm transition-colors hover:border-blue-700 hover:bg-blue-700 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"><ArrowLeft className="h-3.5 w-3.5" />Back to Purchase Amount</button>
+                    ) : (
+                        <Link href="/mm/purchase-amount" aria-label="Back to Purchase Amount landing page" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-blue-600 bg-blue-600 px-2.5 text-[10px] font-bold text-white shadow-sm transition-colors hover:border-blue-700 hover:bg-blue-700 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"><ArrowLeft className="h-3.5 w-3.5" />Back to Purchase Amount</Link>
+                    )}
                 </div>
             </div>
 
