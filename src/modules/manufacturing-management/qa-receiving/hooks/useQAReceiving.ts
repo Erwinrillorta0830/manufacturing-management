@@ -1193,8 +1193,8 @@ export function useQAReceiving({
         return issues;
     }, [inspectionRows, lineItems, overDeliveryLines, processOverDelivery, qaReadings, qaSpecificationStates, receiptDate, receivingIsReadOnly, receivingTicketNumber, replacementDisposition, selectedBranchId, supplierDocumentTypeId]);
 
-    const handleSubmitInspection = async (e: React.FormEvent) => {
-        e.preventDefault();
+    const handleSubmitInspection = async (e?: React.FormEvent) => {
+        if (e) e.preventDefault();
         if (!selectedShipment || receivingIsReadOnly) {
             return;
         }

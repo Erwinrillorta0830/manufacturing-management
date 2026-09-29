@@ -72,6 +72,7 @@ export interface PurchaseOrderPrintHeader {
     isForceReceived: boolean;
     forceReceivedAt: string;
     forceReceivedReason: string;
+    encoderName: string;
 }
 
 export interface ApprovalPrintEntry {

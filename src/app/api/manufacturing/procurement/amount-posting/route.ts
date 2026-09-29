@@ -18,7 +18,7 @@ import { isPurchaseOrderPosted } from "@/modules/manufacturing-management/procur
 import { PROCUREMENT_MONEY_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 
 function weightedAverage(
-    rows: Array<{ received_quantity?: unknown; quantity_rejected?: unknown } & Record<string, unknown>>,
+    rows: Array<{ received_quantity?: unknown; quantity_allocated?: unknown; quantity_rejected?: unknown; qa_status?: unknown } & Record<string, unknown>>,
     field: string,
     quantity: number,
     fallback: number
@@ -27,7 +27,15 @@ function weightedAverage(
     let weightedTotal = 0;
     let weightedQuantity = 0;
     for (const row of rows) {
-        const accepted = Math.max(0, Number(row.received_quantity || 0) - Number(row.quantity_rejected || 0));
+        const qaStatus = String(row.qa_status || "").toUpperCase();
+        let accepted = 0;
+        if (qaStatus === "GOOD") {
+            accepted = Math.max(0, Number(row.quantity_allocated ?? row.received_quantity ?? 0));
+        } else if (qaStatus === "DAMAGED" || qaStatus === "QUARANTINED" || qaStatus === "EXPIRED") {
+            accepted = 0;
+        } else {
+            accepted = Math.max(0, Number(row.received_quantity || 0) - Number(row.quantity_rejected ?? row.quantity_allocated ?? 0));
+        }
         const value = Number(row[field]);
         if (accepted > 0 && Number.isFinite(value)) {
             weightedTotal += accepted * value;
@@ -44,9 +52,15 @@ function buildCanonicalLineItems(snapshot: Awaited<ReturnType<typeof loadLandedC
             product_id: line.productId,
             product_name: line.productName
         };
-        const receivingRows = line.receivingRows as Array<{ received_quantity?: unknown; quantity_rejected?: unknown } & Record<string, unknown>>;
+        const receivingRows = line.receivingRows as Array<{ received_quantity?: unknown; quantity_allocated?: unknown; quantity_rejected?: unknown; qa_status?: unknown } & Record<string, unknown>>;
         const receivedQuantity = receivingRows.reduce((sum, row) => sum + Math.max(0, Number(row.received_quantity || 0)), 0);
-        const rejectedQuantity = receivingRows.reduce((sum, row) => sum + Math.max(0, Number(row.quantity_rejected || 0)), 0);
+        const rejectedQuantity = receivingRows.reduce((sum, row) => {
+            const qaStatus = String(row.qa_status || "").toUpperCase();
+            if (qaStatus === "DAMAGED" || qaStatus === "QUARANTINED" || qaStatus === "EXPIRED") {
+                return sum + Math.max(0, Number(row.quantity_allocated ?? row.received_quantity ?? 0));
+            }
+            return sum + Math.max(0, Number(row.quantity_rejected || 0));
+        }, 0);
         const allocatedExpense = weightedAverage(receivingRows, "allocated_expense_php", line.quantity, 0);
         const finalLandedUnitCost = weightedAverage(receivingRows, "final_landed_unit_cost", line.quantity, line.baseUnitCostPhp + allocatedExpense);
 
@@ -185,11 +199,87 @@ export async function GET(request: Request) {
             console.warn("[Manufacturing] Canonical landed-cost draft unavailable; using compatibility import rows.", error);
         }
 
+        // Fetch approval workflow history and resolve actor names
+        let approvalHistory: Array<{
+            history_id: number;
+            action: string;
+            approval_stage: string;
+            actor_id: number;
+            actor_name: string;
+            remarks: string;
+            from_inventory_status: number | null;
+            to_inventory_status: number | null;
+            revision_before: number;
+            revision_after: number;
+            created_at: string;
+        }> = [];
+
+        try {
+            const historyRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_approval_history?filter[purchase_order_id][_eq]=${poId}&fields=*&sort=created_at,history_id&limit=-1`, {
+                headers,
+                cache: "no-store"
+            }).catch(() => null);
+
+            if (historyRes && historyRes.ok) {
+                const historyData = await historyRes.json();
+                const rawHistory = Array.isArray(historyData?.data) ? historyData.data : [];
+
+                const actorIds = [...new Set([
+                    ...rawHistory.map((row: Record<string, unknown>) => Number(row.actor_id)),
+                    Number(purchaseOrder?.encoder_id),
+                    Number(purchaseOrder?.user_created)
+                ].filter(id => Number.isSafeInteger(id) && id > 0))];
+
+                const actorsMap = new Map<number, string>();
+                if (actorIds.length > 0) {
+                    const usersRes = await fetch(`${DIRECTUS_URL}/items/user?filter[user_id][_in]=${actorIds.join(",")}&fields=user_id,user_fname,user_mname,user_lname,user_email&limit=-1`, {
+                        headers,
+                        cache: "no-store"
+                    }).catch(() => null);
+
+                    if (usersRes && usersRes.ok) {
+                        const usersData = await usersRes.json();
+                        const users = Array.isArray(usersData?.data) ? usersData.data : [];
+                        for (const user of users) {
+                            const fullName = [user.user_fname, user.user_mname, user.user_lname]
+                                .map(part => typeof part === "string" ? part.trim() : "")
+                                .filter(Boolean)
+                                .join(" ");
+                            actorsMap.set(Number(user.user_id), fullName || user.user_email?.trim() || "Unknown user");
+                        }
+                    }
+                }
+
+                approvalHistory = rawHistory.map((row: Record<string, unknown>) => ({
+                    history_id: Number(row.history_id || row.id || 0),
+                    action: String(row.action || "Unknown Action"),
+                    approval_stage: String(row.approval_stage || "System"),
+                    actor_id: Number(row.actor_id || 0),
+                    actor_name: actorsMap.get(Number(row.actor_id)) || "Unknown user",
+                    remarks: String(row.remarks || ""),
+                    from_inventory_status: row.from_inventory_status != null ? Number(row.from_inventory_status) : null,
+                    to_inventory_status: row.to_inventory_status != null ? Number(row.to_inventory_status) : null,
+                    revision_before: Number(row.revision_before || 0),
+                    revision_after: Number(row.revision_after || 0),
+                    created_at: String(row.created_at || "")
+                }));
+
+                // If PO creator is known, resolve their display name as well
+                const creatorId = Number(purchaseOrder?.encoder_id || purchaseOrder?.user_created || 0);
+                if (creatorId > 0 && purchaseOrder) {
+                    purchaseOrder.creator_name = actorsMap.get(creatorId) || "System";
+                }
+            }
+        } catch (error) {
+            console.warn("[Manufacturing] Failed to load approval history for amount-posting audit view:", error);
+        }
+
         return NextResponse.json({
             purchaseOrder,
             lineItems,
             importExpenses,
             landedCost,
+            approvalHistory,
             chartOfAccounts,
             activeForexRate,
             expenseTypes,

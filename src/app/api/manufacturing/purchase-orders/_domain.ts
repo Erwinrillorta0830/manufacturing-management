@@ -4,7 +4,7 @@ export type PurchaseIntent = typeof PURCHASE_INTENTS[number];
 export const APPROVAL_STAGES = ["Finance"] as const;
 export type ApprovalStage = typeof APPROVAL_STAGES[number];
 
-export const APPROVAL_ACTIONS = ["Submitted", "FinanceApproved", "Revision", "Rejected", "Resubmitted", "Cancelled"] as const;
+export const APPROVAL_ACTIONS = ["Submitted", "Finance Approved", "FinanceApproved", "Revision", "Rejected", "Resubmitted", "Cancelled"] as const;
 export type ApprovalAction = typeof APPROVAL_ACTIONS[number];
 export const PURCHASE_ORDER_REVISION_ACTION: ApprovalAction = "Resubmitted";
 

@@ -35,7 +35,9 @@ interface ReceiptLineRow {
     receiving_header_id?: unknown;
     receiving_method?: unknown;
     received_quantity?: unknown;
+    quantity_allocated?: unknown;
     quantity_rejected?: unknown;
+    qa_status?: unknown;
     isPosted?: unknown;
     is_reverted?: unknown;
     is_replacement?: unknown;
@@ -105,12 +107,33 @@ function optionSortDate(option: QaReceiptOption): number {
 }
 
 function receiptTotals(rows: ReceiptLineRow[]): Pick<QaReceiptOption, "receivedQuantity" | "acceptedQuantity" | "rejectedQuantity"> {
-    const receivedQuantity = rows.reduce((sum, row) => sum + Math.max(0, Number(row.received_quantity || 0)), 0);
-    const rejectedQuantity = rows.reduce((sum, row) => sum + Math.max(0, Number(row.quantity_rejected || 0)), 0);
+    let receivedQuantity = 0;
+    let acceptedQuantity = 0;
+    let rejectedQuantity = 0;
+
+    for (const row of rows) {
+        const allocatedQty = Number(row.quantity_allocated ?? 0);
+        const qaStatus = String(row.qa_status || "").trim().toUpperCase();
+
+        if (row.quantity_allocated !== undefined && row.quantity_allocated !== null) {
+            receivedQuantity += Math.max(0, allocatedQty);
+            if (qaStatus && qaStatus !== "GOOD") {
+                rejectedQuantity += Math.max(0, allocatedQty);
+            } else {
+                acceptedQuantity += Math.max(0, allocatedQty);
+            }
+        } else {
+            const rawReceived = Math.max(0, Number(row.received_quantity || 0));
+            const rawRejected = Math.max(0, Number(row.quantity_rejected || 0));
+            receivedQuantity += rawReceived;
+            rejectedQuantity += rawRejected;
+            acceptedQuantity += Math.max(0, rawReceived - rawRejected);
+        }
+    }
 
     return {
         receivedQuantity,
-        acceptedQuantity: Math.max(0, receivedQuantity - rejectedQuantity),
+        acceptedQuantity,
         rejectedQuantity,
     };
 }
@@ -208,7 +231,7 @@ export async function fetchQaReceiptOptions(
     const receivingParams = new URLSearchParams({
         "filter[purchase_order_id][_eq]": String(purchaseOrderId),
         "filter[is_reverted][_eq]": "0",
-        fields: "purchase_order_product_id,purchase_order_line_id,receipt_no,receipt_date,received_date,receiving_header_id,receiving_header_id.id,receiving_method,received_quantity,quantity_rejected,rejected_lot_id,rejected_batch_id,isPosted,is_reverted,is_replacement",
+        fields: "purchase_order_product_id,purchase_order_line_id,receipt_no,receipt_date,received_date,receiving_header_id,receiving_header_id.id,receiving_method,received_quantity,quantity_allocated,qa_status,isPosted,is_reverted,is_replacement",
         limit: "-1"
     });
 

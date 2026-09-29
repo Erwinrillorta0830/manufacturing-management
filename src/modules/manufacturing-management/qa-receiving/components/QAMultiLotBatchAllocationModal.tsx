@@ -27,10 +27,10 @@ import {
   Plus,
   Trash2,
   AlertTriangle,
+  AlertCircle,
   Boxes,
   Tag,
   Gauge,
-  ExternalLink,
   RotateCcw,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -1976,25 +1976,37 @@ export function QAMultiLotBatchAllocationModal({
                 </div>
               </div>
 
-              {/* NO QUALIFIED STORAGE LOTS BANNER */}
-              {!hasAnyCompatibleLot && lots.length > 0 && (
-                <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-amber-900 dark:text-amber-300">
-                  <div className="flex items-center gap-2.5">
-                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                    <p className="text-xs text-muted-foreground">
-                      No active storage lots match <strong>{currentItemClassification.label}</strong> with UOM <strong>{productUomName}</strong>. You can register a new storage lot in the Lot Registry.
+              {/* NO QUALIFIED STORAGE LOTS / EMPTY STATE GUIDANCE BANNER */}
+              {(!hasAnyCompatibleLot || lots.length === 0) && (
+                <div className="p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 flex items-start gap-3 text-amber-900 dark:text-amber-300 shadow-sm">
+                  <div className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center shrink-0 mt-0.5">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs font-bold">
+                      No active storage lots available for {currentItemClassification.label} ({productUomName})
+                    </p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      There are no active storage lots configured in this branch matching UOM <strong className="text-foreground">{productUomName}</strong> and type <strong className="text-foreground">{currentItemClassification.label}</strong> (or existing lots have reached full capacity). Please notify the <strong className="text-foreground">Lot Management Administrator</strong> or <strong className="text-foreground">Warehouse Supervisor</strong> to register an active storage lot.
                     </p>
                   </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => window.open('/mm/inventory-warehousing/lot-registry', '_blank')}
-                    className="shrink-0 h-7 gap-1 text-xs font-bold bg-background border-amber-500/40 hover:bg-amber-500/10 text-amber-900 dark:text-amber-200"
-                  >
-                    <span>Lot Registry</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </Button>
+                </div>
+              )}
+
+              {/* EMPTY LOT GROUPS FALLBACK HERO */}
+              {lotGroups.length === 0 && (
+                <div className="flex flex-col items-center justify-center p-12 text-center rounded-2xl border border-dashed border-border bg-background/50 space-y-3">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center shadow-xs">
+                    <AlertCircle className="w-6 h-6" />
+                  </div>
+                  <div className="max-w-md space-y-1.5">
+                    <h4 className="text-sm font-bold text-foreground">No Storage Lot Assigned</h4>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      {lots.length === 0 || !hasAnyCompatibleLot
+                        ? `No eligible storage lots found for ${productName || 'this product'}. Please notify the person handling Lot Management to register or activate a storage lot for this branch.`
+                        : `Select a storage lot using the top controls to allocate the target quantity of ${requestedQuantity || 0} ${productUomName}.`}
+                    </p>
+                  </div>
                 </div>
               )}
 
@@ -2185,20 +2197,8 @@ export function QAMultiLotBatchAllocationModal({
                                     triggerTitle={groupLot ? `${groupLot.lot_name}${groupLot.max_batch_capacity ? ` (Cap: ${groupLot.max_batch_capacity.toLocaleString()} ${groupLot.unit_name || productUomName})` : ''}` : undefined}
                                     popoverClassName="w-[540px] max-w-[90vw]"
                                     emptyMessage={
-                                      <div className="py-4 px-2 flex flex-col items-center justify-center gap-2 text-center">
-                                        <p className="text-xs text-muted-foreground">
-                                          No qualified storage lots found for this UOM and product type.
-                                        </p>
-                                        <Button
-                                          type="button"
-                                          size="sm"
-                                          variant="outline"
-                                          onClick={() => window.open('/mm/inventory-warehousing/lot-registry', '_blank')}
-                                          className="h-7 text-[11px] gap-1 font-semibold"
-                                        >
-                                          <span>Go to Lot Registry</span>
-                                          <ExternalLink className="w-3 h-3" />
-                                        </Button>
+                                      <div className="py-4 px-2 text-center text-xs text-muted-foreground">
+                                        No qualified storage lots found for this UOM and product type.
                                       </div>
                                     }
                                     className="h-9 text-xs font-bold"

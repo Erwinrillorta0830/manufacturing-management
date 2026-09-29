@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Boxes, History, RefreshCw, RotateCcw, ShieldAlert } from "lucide-react";
 
@@ -9,6 +10,7 @@ import ShipmentInspectionForm from "./components/ShipmentInspectionForm";
 import FIFOInventoryList from "./components/FIFOInventoryList";
 import MovementPayloadModal from "./components/MovementPayloadModal";
 import QuarantineDispositions from "./components/QuarantineDispositions";
+import QaReceivingInspectionModal from "./components/QaReceivingInspectionModal";
 import type { QuarantineDisposition, Shipment } from "./types";
 
 function DetailLoadingSkeleton() {
@@ -136,20 +138,35 @@ export default function QAReceivingModule({
         loadQuarantine,
         handleCreateQuarantineDisposition,
         handleProcessQuarantineReturn,
-        handleCancelQuarantineDisposition
+        handleCancelQuarantineDisposition,
+        handleSelectShipment
     } = useQAReceiving({ mode, shipmentId, replacementDispositionId });
+
+    const [isInspectionModalOpen, setIsInspectionModalOpen] = useState(false);
 
     const selectedPurchaseOrderNumber = selectedShipment?.purchase_order_no?.trim()
         || (selectedShipment ? `PO #${selectedShipment.shipment_id}` : "");
 
     const openShipment = (shipment: Shipment) => {
-        router.push(`/mm/qa-receiving/${encodeURIComponent(String(shipment.shipment_id))}`);
+        setIsInspectionModalOpen(true);
+        void handleSelectShipment(shipment);
     };
 
     const startReplacement = async (disposition: QuarantineDisposition) => {
-        router.push(
-            `/mm/qa-receiving/${encodeURIComponent(String(disposition.purchaseOrderId))}?replacementDispositionId=${encodeURIComponent(String(disposition.id))}`
-        );
+        const matchingShipment = filteredShipments.find(s => s.shipment_id === disposition.purchaseOrderId);
+        if (matchingShipment) {
+            setIsInspectionModalOpen(true);
+            await handleSelectShipment(matchingShipment, disposition);
+        } else {
+            router.push(
+                `/mm/qa-receiving/${encodeURIComponent(String(disposition.purchaseOrderId))}?replacementDispositionId=${encodeURIComponent(String(disposition.id))}`
+            );
+        }
+    };
+
+    const handleCloseModal = () => {
+        setIsInspectionModalOpen(false);
+        clearInspection();
     };
 
     const backToQueue = () => {
@@ -378,6 +395,67 @@ export default function QAReceivingModule({
                     onProcessReturn={handleProcessQuarantineReturn}
                     onCancel={handleCancelQuarantineDisposition}
                     onStartReplacement={startReplacement}
+                />
+            )}
+
+            {!isDetailMode && (
+                <QaReceivingInspectionModal
+                    isOpen={isInspectionModalOpen}
+                    onClose={handleCloseModal}
+                    selectedShipment={selectedShipment}
+                    readOnly={readOnly}
+                    replacementDisposition={replacementDisposition}
+                    lineItems={lineItems}
+                    branches={branches}
+                    storageLotsByProductId={storageLotsByProductId}
+                    rejectedStorageLotsByProductId={rejectedStorageLotsByProductId}
+                    storageLotLookupStateByProductId={storageLotLookupStateByProductId}
+                    rejectedStorageLotLookupStateByProductId={rejectedStorageLotLookupStateByProductId}
+                    onRetryStorageLots={retryStorageLots}
+                    loadStorageLotBatches={loadStorageLotBatches}
+                    receivingTicketNumber={receivingTicketNumber}
+                    onReceiptNumberChange={handleReceiptNumberChange}
+                    receiptOptions={receiptOptions}
+                    selectedReceipt={selectedReceipt}
+                    onReceiptSelection={handleReceiptSelection}
+                    receiptDate={receiptDate}
+                    onReceiptDateChange={handleReceiptDateChange}
+                    supplierDocumentTypes={supplierDocumentTypes}
+                    loadingSupplierDocumentTypes={loadingSupplierDocumentTypes}
+                    supplierDocumentTypeError={supplierDocumentTypeError}
+                    supplierDocumentTypeId={supplierDocumentTypeId}
+                    onSupplierDocumentTypeChange={handleSupplierDocumentTypeChange}
+                    quantityStatus={quantityStatus}
+                    processOverDelivery={processOverDelivery}
+                    setProcessOverDelivery={setProcessOverDelivery}
+                    overDeliveryLines={overDeliveryLines}
+                    selectedBranchId={selectedBranchId}
+                    inspectionRows={inspectionRows}
+                    qaSpecificationStates={qaSpecificationStates}
+                    qaReadings={qaReadings}
+                    qaEvaluationResults={qaEvaluationResults}
+                    receivingPreview={receivingPreview}
+                    receivingCommitReady={receivingCommitReady}
+                    committedResult={committedResult}
+                    previewOpen={previewOpen}
+                    setPreviewOpen={setPreviewOpen}
+                    previewAcknowledged={previewAcknowledged}
+                    postingInspection={postingInspection}
+                    handleCommitReceiving={handleCommitReceiving}
+                    handleForceReceived={handleForceReceived}
+                    forceReceivedSubmitting={forceReceivedSubmitting}
+                    finishCommittedInspection={finishCommittedInspection}
+                    validatingInspection={validatingInspection}
+                    previewError={previewError}
+                    retryPreview={retryPreview}
+                    qaSubmissionBlockReason={qaSubmissionBlockReason}
+                    receivingValidationIssues={receivingValidationIssues}
+                    loadingLines={loadingLines}
+                    handleUpdateRow={handleUpdateRow}
+                    handleUpdateAllocations={handleUpdateAllocations}
+                    handleUpdateRejectedAllocations={handleUpdateRejectedAllocations}
+                    handleUpdateQaReading={handleUpdateQaReading}
+                    handleSubmitInspection={handleSubmitInspection}
                 />
             )}
         </div>

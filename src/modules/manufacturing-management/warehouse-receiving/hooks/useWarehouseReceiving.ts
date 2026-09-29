@@ -161,16 +161,26 @@ export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWa
             });
             if (action === "submit_to_qa") {
                 toast.success(`${result.poNumber} was sent to QA Receiving.`);
-                setSelectedOrder(null);
-                setQuantities({});
-                await loadQueue(1, filters);
+                if (isDetailMode) {
+                    setSelectedOrder(result);
+                    setQuantities(Object.fromEntries(result.lines.map(line => [line.lineId, String(line.currentReceivedQuantity || "")])));
+                    setReceiptNumber(result.draft?.receiptNumber || result.pendingQaReceipt?.receiptNumber || receiptNumber);
+                    setReceiptDate(result.draft?.receiptDate || result.pendingQaReceipt?.receiptDate || receiptDate);
+                    setReceiptType(result.draft?.receiptType || result.pendingQaReceipt?.receiptType || receiptType);
+                } else {
+                    setSelectedOrder(null);
+                    setQuantities({});
+                    await loadQueue(1, filters);
+                }
             } else {
                 setSelectedOrder(result);
                 setQuantities(Object.fromEntries(result.lines.map(line => [line.lineId, String(line.currentReceivedQuantity || "")])));
                 setReceiptNumber(result.draft?.receiptNumber || receiptNumber);
                 setReceiptDate(result.draft?.receiptDate || receiptDate);
                 setReceiptType(result.draft?.receiptType || receiptType);
-                await loadQueue(page, filters);
+                if (!isDetailMode) {
+                    await loadQueue(page, filters);
+                }
                 if (!options.silent) {
                     toast.success(action === "start" ? "Warehouse receiving started." : "Warehouse receiving draft saved.");
                 }
@@ -182,7 +192,7 @@ export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWa
         } finally {
             setSubmitting(null);
         }
-    }, [commandLines, filters, loadQueue, page, quantities, receiptDate, receiptNumber, receiptType, selectedOrder]);
+    }, [commandLines, filters, isDetailMode, loadQueue, page, quantities, receiptDate, receiptNumber, receiptType, selectedOrder]);
 
     const printSummary = useCallback(async () => {
         if (!selectedOrder?.draft || submitting !== null || printing) return;

@@ -185,7 +185,7 @@ async function persistedResult(
     const receiptNumbers = input.lines.map(line => receiptNumberForLine(receivingTicketNumber, line.lineId));
     const receiptParams = new URLSearchParams({
         "filter[receipt_no][_in]": receiptNumbers.join(","),
-        fields: "purchase_order_product_id,purchase_order_id,receipt_no,product_id,branch_id,mm_lot_id,lot_id,batch_no,received_quantity,quantity_rejected,rejected_lot_id,rejected_batch_id,is_over_received,over_delivery_quantity,unit_price,final_landed_unit_cost,qa_status,expiry_date,received_date,is_replacement,quarantine_disposition_id,receipt_type",
+        fields: "purchase_order_product_id,purchase_order_id,receipt_no,product_id,branch_id,mm_lot_id,batch_no,received_quantity,quantity_allocated,is_over_received,over_delivery_quantity,unit_price,final_landed_unit_cost,qa_status,expiry_date,received_date,is_replacement,quarantine_disposition_id,receipt_type",
         limit: "-1"
     });
     const [headerRows, receivingRows] = await Promise.all([
@@ -205,10 +205,8 @@ async function persistedResult(
     if (status === INVENTORY_STATUS.RECEIVED && Number(header.payment_status) !== PAYMENT_STATUS.AWAITING_PAYMENT) {
         throw new CommitError(409, "The purchase order was received but payment status is not Awaiting Payment. Reconciliation is required.");
     }
-    if (
-        receivingRows.length !== receiptNumbers.length
-        || new Set(receivingRows.map(row => String(row.receipt_no))).size !== receiptNumbers.length
-    ) {
+    const persistedReceiptNumbers = new Set(receivingRows.map(row => String(row.receipt_no)));
+    if (receiptNumbers.some(receiptNo => !persistedReceiptNumbers.has(receiptNo))) {
         throw new CommitError(409, "The purchase order status changed but its receiving records are incomplete. Reconciliation is required.");
     }
     if (input.supplierDocumentTypeId && receivingRows.some(row => relationId(row.receipt_type, "id") !== input.supplierDocumentTypeId)) {
@@ -233,15 +231,11 @@ async function persistedResult(
     }
     for (const line of input.lines) {
         const receiptNo = receiptNumberForLine(receivingTicketNumber, line.lineId);
-        const receiving = receivingRows.find(row => String(row.receipt_no) === receiptNo);
-        if (!receiving) {
+        const lineReceivingRows = receivingRows.filter(row => String(row.receipt_no) === receiptNo);
+        if (lineReceivingRows.length === 0) {
             throw new CommitError(409, `Receiving record for line ${line.lineId} could not be correlated.`);
         }
-        const receivingLineId = Number(receiving.purchase_order_product_id);
-        if (!receivingLineId) {
-            throw new CommitError(409, `Receiving record for line ${line.lineId} could not be correlated.`);
-        }
-        const isOverReceived = receiving.is_over_received === true || Number(receiving.is_over_received) === 1;
+        const isOverReceived = lineReceivingRows.some(receiving => receiving.is_over_received === true || Number(receiving.is_over_received) === 1);
         if (isOverReceived && !input.processOverDelivery) {
             throw new CommitError(422, `Over-delivery for line ${line.lineId} requires explicit processing confirmation.`);
         }
@@ -249,8 +243,14 @@ async function persistedResult(
             spec_id: reading.specId,
             actual_reading: reading.actualReading.trim()
         }));
-        if (!qaResultsMatch(expectedQa, qaRowsByReceivingId.get(receivingLineId) || [])) {
-            throw new CommitError(409, `The purchase order status changed but QA results for line ${line.lineId} are incomplete. Reconciliation is required.`);
+        for (const receiving of lineReceivingRows) {
+            const receivingLineId = Number(receiving.purchase_order_product_id);
+            if (!receivingLineId) {
+                throw new CommitError(409, `Receiving record for line ${line.lineId} could not be correlated.`);
+            }
+            if (!qaResultsMatch(expectedQa, qaRowsByReceivingId.get(receivingLineId) || [])) {
+                throw new CommitError(409, `The purchase order status changed but QA results for line ${line.lineId} are incomplete. Reconciliation is required.`);
+            }
         }
     }
     const expectedMovementCount = input.lines.reduce((count, line) =>

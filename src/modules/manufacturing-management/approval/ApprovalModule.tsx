@@ -8,7 +8,6 @@ import {
     CheckCircle2,
     Clock3,
     FileCheck2,
-    History,
     Loader2,
     Printer,
     RotateCcw,
@@ -26,6 +25,7 @@ import { EXCHANGE_RATE_DECIMAL_SCALE, PROCUREMENT_MONEY_DECIMAL_SCALE } from "..
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { CancelPurchaseOrderDialog } from "../procurement/components/incoming-shipments/CancelPurchaseOrderDialog";
 import { formatPhtDateTime } from "./pht-date-time";
+import FinanceApprovalDetailModal from "./components/FinanceApprovalDetailModal";
 
 type QueueTab = "For Approval" | "Approved" | "Revision" | "Cancelled";
 
@@ -263,10 +263,23 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
     const [endDate, setEndDate] = useState("");
     const [pageSize, setPageSize] = useState(10);
     const [printLoading, setPrintLoading] = useState(false);
+    const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+    const [selectedModalShipmentId, setSelectedModalShipmentId] = useState<number | null>(null);
     const isDetailMode = mode === "detail";
     const dateRangeError = startDate && endDate && startDate > endDate
         ? "The end date must be on or after the start date."
         : null;
+
+    const handleOpenDetailModal = (shipmentId: number) => {
+        setSelectedModalShipmentId(shipmentId);
+        setIsDetailModalOpen(true);
+        void retryDetail(shipmentId);
+    };
+
+    const handleCloseDetailModal = () => {
+        setIsDetailModalOpen(false);
+        setSelectedModalShipmentId(null);
+    };
 
     const supplierOptions = useMemo(() => [
         { value: "", label: "All Suppliers" },
@@ -555,31 +568,6 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
                         </div>
 
                         {stage === "Finance" && <RevisionSnapshotComparison detail={approvalDetail} selectedShipment={selectedShipment} currentLines={selectedShipmentLines} />}
-
-                        <div>
-                            <h3 className="mb-2 flex items-center gap-1.5 text-xs font-bold"><History className="h-4 w-4 text-primary" /> Approval history</h3>
-                            {approvalDetail.history.length === 0 ? <p className="text-xs text-muted-foreground">No workflow actions recorded.</p> : (
-                                <div className="divide-y rounded-md border">
-                                    {approvalDetail.history.map(entry => (
-                                        <div key={entry.history_id} className="flex flex-col gap-2 p-3 text-xs sm:flex-row sm:items-start sm:justify-between">
-                                            <div className="min-w-0">
-                                                <div className="flex flex-wrap items-center gap-1.5 font-semibold">
-                                                    <span>{entry.action}</span>
-                                                    <span className="text-muted-foreground">({entry.approval_stage})</span>
-                                                    {entry.action === "Resubmitted" && (
-                                                        <span className={`rounded border px-1.5 py-0.5 text-[9px] font-bold ${entry.revision_snapshot ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-amber-300 bg-amber-50 text-amber-700"}`}>
-                                                            {entry.revision_snapshot ? "Snapshot available" : "Legacy revision"}
-                                                        </span>
-                                                    )}
-                                                </div>
-                                                <div className="mt-1 whitespace-pre-wrap break-words text-[11px] text-muted-foreground">{entry.actor_name}{entry.remarks ? ` | ${entry.remarks}` : ""}</div>
-                                            </div>
-                                            <div className="shrink-0 text-left text-[10px] text-muted-foreground sm:text-right"><div>{formatPhtDateTime(entry.created_at)}</div><div className="mt-1">Revision {entry.revision_before} to {entry.revision_after}</div></div>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
                     </div>
                 )}
             </div>
@@ -712,7 +700,7 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
                                     <button
                                         key={order.shipment_id}
                                         type="button"
-                                        onClick={() => router.push(`/mm/finance-approval/${encodeURIComponent(String(order.shipment_id))}`)}
+                                        onClick={() => handleOpenDetailModal(order.shipment_id)}
                                         className="grid w-full gap-3 p-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary md:grid-cols-[1.1fr_1.4fr_1fr_1fr_1fr_auto] md:items-center"
                                     >
                                         <span className="min-w-0">
@@ -767,6 +755,26 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
                     </>
                 )}
             </section>
+
+            <FinanceApprovalDetailModal
+                isOpen={isDetailModalOpen}
+                onClose={handleCloseDetailModal}
+                stage={stage}
+                shipment={selectedShipment}
+                shipmentLines={selectedShipmentLines}
+                approvalDetail={approvalDetail}
+                supplierName={supplierName}
+                loading={detailLoading}
+                error={detailError}
+                onRetry={() => {
+                    if (selectedModalShipmentId) {
+                        void retryDetail(selectedModalShipmentId);
+                    }
+                }}
+                approve={approve}
+                requestRevision={requestRevision}
+                cancel={cancel}
+            />
         </div>
     );
 }

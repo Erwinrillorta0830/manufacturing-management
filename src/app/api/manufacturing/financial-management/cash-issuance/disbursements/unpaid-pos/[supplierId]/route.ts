@@ -110,7 +110,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
         const receivingsUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?limit=-1&filter=${encodeURIComponent(
             JSON.stringify({ purchase_order_id: { _in: poIds } })
-        )}&fields=purchase_order_id,receipt_no,receipt_date,total_amount,received_quantity,unit_price,isPosted,is_posted_amounts,is_reverted,purchase_order_product_id,product_id`;
+        )}&fields=purchase_order_id,receipt_no,receipt_date,total_amount,received_quantity,unit_price,isPosted,is_reverted,purchase_order_product_id,product_id`;
 
         const receivingsRes = await fetch(receivingsUrl, {
             headers: { Authorization: `Bearer ${DIRECTUS_TOKEN}` },

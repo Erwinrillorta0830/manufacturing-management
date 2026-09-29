@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertCircle, AlertTriangle, ArrowLeft, CheckCircle2, ClipboardCheck, Loader2, PackageCheck, Printer, RefreshCw, Search, Warehouse } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -12,6 +13,7 @@ import { Separator } from "@/components/ui/separator";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useWarehouseReceiving } from "./hooks/useWarehouseReceiving";
 import { isReceiptQuantityOverRemaining } from "./quantity-validation";
+import WarehouseReceivingDetailModal from "./components/WarehouseReceivingDetailModal";
 
 function formatAmount(value: number | null, currency: string) {
     return new Intl.NumberFormat("en-PH", { style: "currency", currency, minimumFractionDigits: 4, maximumFractionDigits: 4 }).format(Number.isFinite(value || 0) ? value || 0 : 0);
@@ -109,8 +111,21 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
         submitToQa,
         printSummary,
         retryQueue,
-        clearSelection
+        clearSelection,
+        selectOrder
     } = useWarehouseReceiving({ mode, purchaseOrderId });
+
+    const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+
+    const handleOpenOrder = async (order: (typeof orders)[number]) => {
+        setIsDetailModalOpen(true);
+        await selectOrder(order);
+    };
+
+    const handleCloseModal = () => {
+        setIsDetailModalOpen(false);
+        clearSelection();
+    };
 
     const isStarted = selectedOrder?.status === "Warehouse Receiving";
     const isContinuation = selectedOrder?.status === "Partially Received";
@@ -242,7 +257,7 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
                                                 <td className="whitespace-nowrap px-4 py-4 text-right"><span className="font-medium">{primaryTotal(order)}</span>{order.currencyCode !== "PHP" && <span className="block text-xs text-muted-foreground">{formatAmount(order.totalPhpAmount, "PHP")} base</span>}</td>
                                                 <td className="max-w-64 px-4 py-4"><span className="block truncate text-muted-foreground" title={order.remarks || undefined}>{order.remarks || "-"}</span></td>
                                                 <td className="px-4 py-4"><Badge variant="outline" className={statusClass(order.status)}>{statusLabel(order.status)}</Badge></td>
-                                                <td className="px-4 py-4 text-right"><Button size="sm" variant={order.status === "Received" ? "outline" : "default"} onClick={() => router.push(`/mm/warehouse-receiving/${order.id}`)}>{order.status === "Received" ? "View" : "Open"}</Button></td>
+                                                <td className="px-4 py-4 text-right"><Button size="sm" variant={order.status === "Received" ? "outline" : "default"} onClick={() => void handleOpenOrder(order)}>{order.status === "Received" ? "View" : "Open"}</Button></td>
                                             </tr>
                                         ))}
                                     </tbody>
@@ -253,7 +268,7 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
                                     <button
                                         key={order.id}
                                         type="button"
-                                        onClick={() => router.push(`/mm/warehouse-receiving/${order.id}`)}
+                                        onClick={() => void handleOpenOrder(order)}
                                         className="flex w-full flex-col gap-3 p-5 text-left transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none sm:flex-row sm:items-center sm:justify-between"
                                     >
                                         <div className="min-w-0">
@@ -428,6 +443,31 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
                         </CardContent>
                     </Card>
                 </div>
+            )}
+
+            {!isDetailMode && (
+                <WarehouseReceivingDetailModal
+                    isOpen={isDetailModalOpen}
+                    onClose={handleCloseModal}
+                    selectedOrder={selectedOrder}
+                    selectedLines={selectedLines}
+                    quantities={quantities}
+                    receiptNumber={receiptNumber}
+                    receiptDate={receiptDate}
+                    receiptType={receiptType}
+                    loading={detailLoading}
+                    error={detailError}
+                    submitting={submitting}
+                    printing={printing}
+                    updateQuantity={updateQuantity}
+                    setReceiptNumber={setReceiptNumber}
+                    setReceiptDate={setReceiptDate}
+                    setReceiptType={setReceiptType}
+                    start={start}
+                    saveDraft={saveDraft}
+                    submitToQa={submitToQa}
+                    printSummary={printSummary}
+                />
             )}
         </div>
     );

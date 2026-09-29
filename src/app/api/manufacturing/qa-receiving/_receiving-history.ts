@@ -7,7 +7,9 @@ export interface ReceivingHistoryReference {
     purchase_order_line_id?: unknown;
     product_id?: unknown;
     received_quantity?: unknown;
+    quantity_allocated?: unknown;
     quantity_rejected?: unknown;
+    qa_status?: unknown;
     is_replacement?: unknown;
     is_reverted?: unknown;
     isPosted?: unknown;
@@ -68,9 +70,24 @@ export function summarizeReceivingHistory(
             continue;
         }
         const totals = byLine.get(lineId) || { received: 0, rejected: 0, accepted: 0 };
-        totals.received += Math.max(0, Number(receiving.received_quantity || 0));
-        totals.rejected += Math.max(0, Number(receiving.quantity_rejected || 0));
-        totals.accepted = Math.max(0, totals.received - totals.rejected);
+        const allocatedQty = Number(receiving.quantity_allocated ?? 0);
+        const qaStatus = String(receiving.qa_status || "").trim().toUpperCase();
+
+        if (receiving.quantity_allocated !== undefined && receiving.quantity_allocated !== null) {
+            totals.received += Math.max(0, allocatedQty);
+            if (qaStatus && qaStatus !== "GOOD") {
+                totals.rejected += Math.max(0, allocatedQty);
+            } else {
+                totals.accepted += Math.max(0, allocatedQty);
+            }
+        } else {
+            const rawReceived = Math.max(0, Number(receiving.received_quantity || 0));
+            const rawRejected = Math.max(0, Number(receiving.quantity_rejected || 0));
+            totals.received += rawReceived;
+            totals.rejected += rawRejected;
+            totals.accepted += Math.max(0, rawReceived - rawRejected);
+        }
+
         byLine.set(lineId, totals);
     }
 
