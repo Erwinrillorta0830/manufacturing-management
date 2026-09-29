@@ -15,8 +15,8 @@ import LandedExpensesTable from "./LandedExpensesTable";
 import LineItemsPostingTable from "./LineItemsPostingTable";
 import LandedCostAttachments from "../LandedCostAttachments";
 import { LANDED_COST_METHOD_OPTIONS, landedCostMethodLabel } from "../../landed-cost-methods";
-import type { LandedCostAllocationRule } from "../../landed-cost-methods";
-import type { ExpenseTypeOption, LandedExpenseRow, LandedCostEngineCalculation, PurchaseOrderOption } from "./types";
+import type { LandedCostAllocationRule } from "../../types";
+import type { ExpenseTypeOption, LandedExpenseRow, HybridCalculationResult, PurchaseOrderOption } from "./types";
 
 type StepState = "Locked" | "Ready" | "Complete";
 
@@ -69,8 +69,8 @@ interface PurchaseAmountEditModalProps {
     hasInvalidExpenseRows: boolean;
     onAddExpenseRow: () => void;
     onRemoveExpenseRow: (id: string) => void;
-    onUpdateExpenseRow: (id: string, field: keyof LandedExpenseRow, value: string | number) => void;
-    calculationResult: LandedCostEngineCalculation;
+    onUpdateExpenseRow: (id: string, field: keyof LandedExpenseRow, value: LandedExpenseRow[keyof LandedExpenseRow]) => void;
+    calculationResult: HybridCalculationResult;
     canPost: boolean;
     postDisabledReason?: string;
     posting: boolean;

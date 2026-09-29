@@ -1,58 +1,13 @@
 "use client";
 
 import React, { useState } from "react";
-import { useRouter } from "next/navigation";
 import {
-    AlertTriangle,
-    ArrowLeft,
     Calculator,
-    Check,
-    CheckCircle2,
-    DollarSign,
-    Landmark
+    CheckCircle2
 } from "lucide-react";
 import { usePurchaseAmountPosting } from "../hooks/usePurchaseAmountPosting";
 import type { PurchaseAmountLandingRow, PurchaseAmountPostingModuleProps, PurchaseOrderOption } from "./purchase-amount/types";
-import ForexSubPoolHeader from "./purchase-amount/ForexSubPoolHeader";
-import LandedExpensesTable from "./purchase-amount/LandedExpensesTable";
-import LineItemsPostingTable from "./purchase-amount/LineItemsPostingTable";
-import PostedPOLedgerTable, { PurchaseAmountAuditView } from "./purchase-amount/PostedPOLedgerTable";
-import LandedCostAttachments from "./LandedCostAttachments";
-import { LANDED_COST_METHOD_OPTIONS, landedCostMethodLabel } from "../landed-cost-methods";
-
-type StepState = "Locked" | "Ready" | "Complete";
-
-interface WorkflowStepProps {
-    number: number;
-    title: string;
-    state: StepState;
-    children: React.ReactNode;
-    lockedMessage?: string;
-}
-
-function WorkflowStep({ number, title, state, children, lockedMessage }: WorkflowStepProps) {
-    const locked = state === "Locked";
-    return (
-        <section className="overflow-hidden rounded-xl border bg-card" data-testid={`purchase-amount-step-${number}`}>
-            <div className="flex items-center justify-between gap-3 border-b bg-muted/20 px-4 py-3">
-                <div className="flex items-center gap-2">
-                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-xs font-black text-primary-foreground">{number}</span>
-                    <h3 className="text-xs font-extrabold uppercase tracking-wider">{title}</h3>
-                </div>
-                <span className={`rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${state === "Complete"
-                    ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-600"
-                    : state === "Ready"
-                        ? "border-primary/20 bg-primary/5 text-primary"
-                        : "border-muted bg-muted text-muted-foreground"
-                }`}>{state}</span>
-            </div>
-            <div className="p-4">
-                {locked ? <div className="rounded-lg border border-dashed bg-muted/20 p-5 text-center text-xs text-muted-foreground">{lockedMessage || "Complete the previous step to continue."}</div> : children}
-            </div>
-        </section>
-    );
-}
-
+import PostedPOLedgerTable from "./purchase-amount/PostedPOLedgerTable";
 import PurchaseAmountEditModal from "./purchase-amount/PurchaseAmountEditModal";
 import PurchaseAmountAuditModal from "./purchase-amount/PurchaseAmountAuditModal";
 
@@ -60,17 +15,14 @@ export default function PurchaseAmountPostingModule({
     shipments,
     selectedShipment: propSelectedShipment,
     setSelectedShipment: propSetSelectedShipment,
-    pageMode = "embedded",
     purchaseOrderId: routePurchaseOrderId
 }: PurchaseAmountPostingModuleProps) {
-    const router = useRouter();
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [auditOrderId, setAuditOrderId] = useState<number | null>(null);
 
     const {
         loading,
         detailsLoading,
-        ordersLoaded,
         posting,
         successMessage,
         errorMessage,

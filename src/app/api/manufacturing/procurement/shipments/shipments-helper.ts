@@ -204,6 +204,7 @@ interface DirectusReceivingRecord {
     receiving_header_id?: number | { id: number; receiving_ticket_no?: string | null; receipt_date?: string | null } | null;
     receipt_type?: number | string | { id: number } | null;
     batch_no?: string | null;
+    lot_id?: number | string | { lot_id?: number | string } | null;
     mm_lot_id?: number | { lot_id: number } | null;
     received_quantity?: number | string | null;
     quantity_allocated?: number | string | null;
@@ -1086,12 +1087,16 @@ export async function fetchShipmentLineItems(
                 });
             } catch {
                 weightBreakdown = {
-                    grossWeightKg: 0,
+                    netWeight: null,
+                    outerCartonWeight: null,
+                    palletWeight: null,
+                    grossWeight: 0,
                     netWeightKg: 0,
+                    outerCartonWeightKg: null,
+                    palletWeightKg: null,
+                    grossWeightKg: 0,
                     weightUnitCode: "kg",
-                    isEstimated: true,
-                    hasCompletePackagingGrossWeight: false,
-                    missingWeightFields: []
+                    isComponentBased: false
                 };
             }
             weightBreakdowns.set(Number(rawProdId), weightBreakdown);

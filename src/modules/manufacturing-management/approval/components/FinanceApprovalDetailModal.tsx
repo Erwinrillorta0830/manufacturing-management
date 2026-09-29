@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import type { PurchaseOrderApprovalDetail, PurchaseOrderDecisionStage } from "../../purchase-order/types";
-import type { IncomingShipment, ShipmentLineItem, Supplier } from "../../procurement/types";
+import type { IncomingShipment, ShipmentLineItem } from "../../procurement/types";
 import RevisionSnapshotComparison from "./RevisionSnapshotComparison";
 import { downloadPurchaseOrderPrintable } from "../../purchase-order/services/purchase-order-print-api";
 import { calculatePercentageDiscount } from "../../procurement/discount-calculation";
@@ -448,7 +448,9 @@ export default function FinanceApprovalDetailModal({
                                 approve={approve}
                                 requestRevision={requestRevision}
                                 cancel={cancel}
-                                onReload={onRetry}
+                                onReload={async () => {
+                                    await onRetry();
+                                }}
                             />
 
                             <div>

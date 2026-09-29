@@ -766,7 +766,11 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
                 supplierName={supplierName}
                 loading={detailLoading}
                 error={detailError}
-                onRetry={() => selectedModalShipmentId && retryDetail(selectedModalShipmentId)}
+                onRetry={() => {
+                    if (selectedModalShipmentId) {
+                        void retryDetail(selectedModalShipmentId);
+                    }
+                }}
                 approve={approve}
                 requestRevision={requestRevision}
                 cancel={cancel}

@@ -50,8 +50,8 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
         priceTypeRules = []
     } = props;
 
-    const onServerQueryChange = serverList?.onQueryChange;
     const pathname = usePathname();
+    const onServerQueryChange = serverList?.onQueryChange;
     const searchParams = useSearchParams();
     const isQueueMode = displayMode === "queue";
     const isDetailMode = displayMode === "detail";
@@ -210,23 +210,6 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
     const hasListFilters = isQueueMode
         ? Boolean(search.trim() || supplierFilter || inventoryStatusFilter || paymentStatusFilter || startDate || endDate)
         : Boolean(search.trim() || statusFilter !== "All");
-
-    const queueReturnHref = useMemo(() => {
-        const params = new URLSearchParams();
-        if (search.trim()) params.set("search", search.trim());
-        if (supplierFilter) params.set("supplierId", supplierFilter);
-        if (inventoryStatusFilter) params.set("inventoryStatus", inventoryStatusFilter);
-        if (paymentStatusFilter) params.set("paymentStatus", paymentStatusFilter);
-        if (startDate) params.set("startDate", startDate);
-        if (endDate) params.set("endDate", endDate);
-        params.set("page", String(currentPage));
-        params.set("limit", String(itemsPerPage));
-        return `${pathname}${params.toString() ? `?${params.toString()}` : ""}`;
-    }, [currentPage, endDate, inventoryStatusFilter, itemsPerPage, pathname, paymentStatusFilter, search, startDate, supplierFilter]);
-
-    const shipmentDetailHref = (shipmentId: number) => (
-        `/mm/incoming-shipments/${shipmentId}?returnTo=${encodeURIComponent(queueReturnHref)}`
-    );
 
     const handlePrintPurchaseOrder = async () => {
         if (!activeShipment) return;

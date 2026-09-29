@@ -661,7 +661,7 @@ export async function loadPurchaseOrderPrintableData(input: {
         reference: text(purchaseOrder.reference),
         encodedAt: dateText(purchaseOrder.date_encoded),
         supplier: supplier.name,
-        supplierAddress,
+        supplierAddress: supplier.address,
         vendorClass: supplier.vendorClass,
         branch,
         paymentTerms: text(paymentTerms?.payment_name || paymentTerms?.payment_description, purchaseOrder.payment_terms ? `Payment Terms #${purchaseOrder.payment_terms}` : "N/A"),

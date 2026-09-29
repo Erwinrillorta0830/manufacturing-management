@@ -229,23 +229,6 @@ async function directusRows(path: string, message: string): Promise<Record<strin
     return bodyRows(result.body);
 }
 
-async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper: (item: T) => Promise<R>): Promise<R[]> {
-    const results = new Array<R>(items.length);
-    let nextIndex = 0;
-    const workerCount = Math.min(Math.max(1, concurrency), items.length);
-
-    async function worker() {
-        while (true) {
-            const index = nextIndex++;
-            if (index >= items.length) return;
-            results[index] = await mapper(items[index]);
-        }
-    }
-
-    await Promise.all(Array.from({ length: workerCount }, () => worker()));
-    return results;
-}
-
 async function loadOrder(purchaseOrderId: number): Promise<DirectusOrder> {
     const result = await directusJson(`/items/purchase_order/${purchaseOrderId}?fields=purchase_order_id,purchase_order_no,reference,supplier_name,branch_id,inventory_status,payment_status,workflow_revision,currency_code,total_amount,total_foreign_currency,date_approved,remark,date_encoded,warehouse_receiving_at,warehouse_received_by`);
     if (result.response.status === 404) throw new WarehouseReceivingError("Purchase order not found.", 404);
