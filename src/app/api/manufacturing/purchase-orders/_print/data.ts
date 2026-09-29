@@ -623,8 +623,8 @@ export async function loadPurchaseOrderPrintableData(input: {
     ]);
     const selectedApproval = input.historyId
         ? approvals.find(entry => entry.historyId === input.historyId) || null
-        : approvals.slice().reverse().find(entry => entry.stage === "Finance" && ["FinanceApproved", "Revision", "Rejected", "Cancelled"].includes(entry.action)) || null;
-    if (input.historyId && selectedApproval && !["FinanceApproved", "Revision", "Rejected", "Cancelled"].includes(selectedApproval.action)) {
+        : approvals.slice().reverse().find(entry => entry.stage === "Finance" && ["Finance Approved", "FinanceApproved", "Revision", "Rejected", "Cancelled"].includes(entry.action)) || null;
+    if (input.historyId && selectedApproval && !["Finance Approved", "FinanceApproved", "Revision", "Rejected", "Cancelled"].includes(selectedApproval.action)) {
         throw new PurchaseOrderPrintDataError(409, "The selected approval-history record is not a Finance decision.");
     }
     if (input.documentType === "FINANCE_DECISION" && !selectedApproval) {
@@ -649,7 +649,12 @@ export async function loadPurchaseOrderPrintableData(input: {
     if (input.documentType === "LANDED_COST" && !landedCost) {
         throw new PurchaseOrderPrintDataError(409, "No landed-cost computation is available for this purchase order.");
     }
-    const supplierAddress = supplier.address;
+    const encoderId = relationId(purchaseOrder.encoder_id || purchaseOrder.user_created, ["id", "user_id"]);
+    const encoderRow = encoderId ? await lookupRow("user", encoderId, "user_id,user_fname,user_mname,user_lname,user_email") : null;
+    const encoderName = encoderRow
+        ? [encoderRow.user_fname, encoderRow.user_mname, encoderRow.user_lname].map(candidate => text(candidate, "")).filter(Boolean).join(" ") || text(encoderRow.user_email, "Unknown user")
+        : "N/A";
+
     const header: PurchaseOrderPrintHeader = {
         id: input.purchaseOrderId,
         purchaseOrderNumber: text(purchaseOrder.purchase_order_no || purchaseOrder.purchase_order_id),
@@ -677,7 +682,8 @@ export async function loadPurchaseOrderPrintableData(input: {
         isPostedAmounts: boolean(purchaseOrder.is_posted_amounts),
         isForceReceived: Boolean(text(purchaseOrder.force_received_at, "")),
         forceReceivedAt: text(purchaseOrder.force_received_at, ""),
-        forceReceivedReason: text(purchaseOrder.force_received_reason, "")
+        forceReceivedReason: text(purchaseOrder.force_received_reason, ""),
+        encoderName
     };
     return {
         documentType: input.documentType,

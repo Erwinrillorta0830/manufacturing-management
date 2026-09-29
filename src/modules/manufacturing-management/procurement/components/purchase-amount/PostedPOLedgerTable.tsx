@@ -11,6 +11,7 @@ import {
     DollarSign,
     Eye,
     FileText,
+    History,
     Layers,
     Loader2,
     Printer,
@@ -26,6 +27,7 @@ import {
     fetchPurchaseOrderArchiveStatus,
     type PurchaseOrderArchiveStatus
 } from "../../../purchase-order/services/purchase-order-print-api";
+import { formatPhtDateTime } from "../../../approval/pht-date-time";
 import type { POLineItem, PurchaseAmountLandingRow, PurchaseOrderOption, ChartOfAccount } from "./types";
 import { PROCUREMENT_MONEY_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 
@@ -42,6 +44,23 @@ interface AuditPurchaseOrder extends PurchaseOrderOption {
     total_amount?: number | string;
     total_php_value?: number | string;
     total_foreign_currency?: number | string;
+    date_encoded?: string | null;
+    creator_name?: string | null;
+    remark?: string | null;
+}
+
+export interface AuditHistoryEntry {
+    history_id: number;
+    action: string;
+    approval_stage: string;
+    actor_id: number;
+    actor_name: string;
+    remarks: string;
+    from_inventory_status: number | null;
+    to_inventory_status: number | null;
+    revision_before: number;
+    revision_after: number;
+    created_at: string;
 }
 
 interface PODetails {
@@ -49,6 +68,7 @@ interface PODetails {
     importExpenses?: AuditExpense[];
     chartOfAccounts?: ChartOfAccount[];
     lineItems?: POLineItem[];
+    approvalHistory?: AuditHistoryEntry[];
     landedCost?: {
         computation?: {
             allocation_rule?: string | null;
@@ -408,6 +428,70 @@ export function PurchaseAmountAuditView({ purchaseOrderId, postingSuccessPurchas
                             </div>
 
                             <LandedCostAuditSummary purchaseOrderId={purchaseOrderId} compact />
+
+                            {/* Audit and Workflow History - Displays when PO is Posted & Capitalized */}
+                            <div className="space-y-2">
+                                <h4 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                                    <History className="h-3.5 w-3.5 text-primary" />
+                                    Audit and Workflow History
+                                </h4>
+                                <div className="overflow-hidden rounded-xl border bg-background text-xs">
+                                    <table className="w-full text-left">
+                                        <thead className="border-b bg-muted/50 text-[10px] font-bold uppercase text-muted-foreground">
+                                            <tr>
+                                                <th className="p-2.5">Action &amp; Stage</th>
+                                                <th className="p-2.5">User / Actor</th>
+                                                <th className="p-2.5">Remarks</th>
+                                                <th className="p-2.5 text-right">Date &amp; Time (PHT)</th>
+                                                <th className="p-2.5 text-right">Revision</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y">
+                                            {/* Initial PO Encoding Entry */}
+                                            <tr className="bg-muted/10">
+                                                <td className="p-2.5">
+                                                    <span className="font-semibold text-foreground">Purchase Order Encoded</span>
+                                                    <span className="ml-1 text-[11px] text-muted-foreground">(Procurement)</span>
+                                                </td>
+                                                <td className="p-2.5 font-medium text-foreground">
+                                                    {purchaseOrder?.creator_name || "Preparer"}
+                                                </td>
+                                                <td className="p-2.5 text-muted-foreground">
+                                                    {purchaseOrder?.remark || "Initial purchase-order creation and encoding."}
+                                                </td>
+                                                <td className="p-2.5 text-right font-mono text-[11px] text-muted-foreground tabular-nums">
+                                                    {formatPhtDateTime(purchaseOrder?.date_encoded)}
+                                                </td>
+                                                <td className="p-2.5 text-right font-mono text-[11px] text-muted-foreground">
+                                                    Initial
+                                                </td>
+                                            </tr>
+
+                                            {/* Workflow Approval History Entries */}
+                                            {poDetails.approvalHistory?.map((entry, index) => (
+                                                <tr key={`${entry.history_id}-${index}`}>
+                                                    <td className="p-2.5">
+                                                        <span className="font-semibold text-foreground">{entry.action}</span>
+                                                        <span className="ml-1 text-[11px] text-muted-foreground">({entry.approval_stage})</span>
+                                                    </td>
+                                                    <td className="p-2.5 font-medium text-foreground">
+                                                        {entry.actor_name || "Unknown user"}
+                                                    </td>
+                                                    <td className="p-2.5 text-muted-foreground">
+                                                        {entry.remarks || "—"}
+                                                    </td>
+                                                    <td className="p-2.5 text-right font-mono text-[11px] text-muted-foreground tabular-nums">
+                                                        {formatPhtDateTime(entry.created_at)}
+                                                    </td>
+                                                    <td className="p-2.5 text-right font-mono text-[11px] text-muted-foreground">
+                                                        Revision {entry.revision_before} to {entry.revision_after}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
                         </div>
                     ) : <div className="p-8 text-center text-xs font-bold text-red-500">Failed to load audit ledger details for this purchase order.</div>}
             </div>

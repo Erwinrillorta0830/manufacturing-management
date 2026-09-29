@@ -531,15 +531,6 @@ async function renderFinanceDocument(doc: PdfDocument, data: PurchaseOrderPrinta
         money(line.discountAmount, data.purchaseOrder.currencyCode, doc),
         money(line.netAmount, data.purchaseOrder.currencyCode, doc)
     ]));
-    y = drawSectionTitle(doc, "Approval history", y);
-    y = await renderTable(doc, y, ["Action", "Stage", "Actor", "Remarks", "Created", "Revision"], data.approvals.map(entry => [
-        entry.action,
-        entry.stage,
-        entry.actor,
-        entry.remarks || "N/A",
-        displayDate(entry.createdAt),
-        `${entry.revisionBefore} -> ${entry.revisionAfter}`
-    ]));
     return y;
 }
 
@@ -680,6 +671,30 @@ async function renderLandedCostDocument(doc: PdfDocument, data: PurchaseOrderPri
         money(allocation.finalLandedUnitCost, "PHP", doc),
         allocation.allocationPercent == null ? "N/A" : `${allocation.allocationPercent.toFixed(4)}%`
     ]));
+
+    // Audit and workflow history
+    const auditRows: Array<[string, string, string, string, string, string]> = [
+        [
+            "Purchase Order Encoded",
+            "Procurement",
+            data.purchaseOrder.encoderName || "Preparer",
+            data.purchaseOrder.remark || "Initial purchase-order creation",
+            displayDate(data.purchaseOrder.encodedAt),
+            "Initial"
+        ],
+        ...data.approvals.map((entry): [string, string, string, string, string, string] => [
+            entry.action,
+            entry.stage,
+            entry.actor,
+            entry.remarks || "—",
+            displayDate(entry.createdAt),
+            `Revision ${entry.revisionBefore} -> ${entry.revisionAfter}`
+        ])
+    ];
+
+    y = drawSectionTitle(doc, "Audit and workflow history", y);
+    y = await renderTable(doc, y, ["Action", "Stage", "User / Actor", "Remarks", "Date & time (PHT)", "Revision"], auditRows);
+
     if (landedCost.attachments.length > 0) {
         y = drawSectionTitle(doc, "Supporting computation files", y);
         setPdfFont(doc).setFontSize(8);

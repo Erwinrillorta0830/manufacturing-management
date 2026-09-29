@@ -846,7 +846,7 @@ async function startWarehouseReceiving(order: DirectusOrder, command: WarehouseR
         if (!Number.isSafeInteger(createdHeaderId) || createdHeaderId <= 0) throw new WarehouseReceivingError("Directus did not return the warehouse receiving draft ID.", 503);
         await writeWorkflowHistory({
             purchaseOrderId,
-            action: "WarehouseReceivingStarted",
+            action: "Warehouse Receiving Started",
             actorId,
             fromStatus: currentStatus,
             toStatus: INVENTORY_STATUS.WAREHOUSE_RECEIVING,
@@ -890,7 +890,7 @@ async function submitWarehouseReceiving(order: DirectusOrder, command: Warehouse
             patchHeader(headerIdValue, { workflow_revision: nextRevision }),
             writeWorkflowHistory({
                 purchaseOrderId,
-                action: "WarehouseReceivingSubmittedToQa",
+                action: "Warehouse Receiving Submitted to QA",
                 actorId,
                 fromStatus: currentStatus,
                 toStatus: INVENTORY_STATUS.QA_RECEIVING,

@@ -1,7 +1,7 @@
 import { INVENTORY_STATUS, paymentStatusAllowsReceivingHandoff } from "../procurement/_domain";
 
 export const FORCE_RECEIVED_REASON_MAX_LENGTH = 500;
-export const FORCE_RECEIVED_ACTION = "ForceReceived";
+export const FORCE_RECEIVED_ACTION = "Force Received";
 export const FORCE_RECEIVED_STAGE = "System";
 export const FORCE_RECEIVED_IDEMPOTENCY_KEY_PATTERN =
     /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

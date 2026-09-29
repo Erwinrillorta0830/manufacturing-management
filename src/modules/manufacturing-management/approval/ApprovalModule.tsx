@@ -8,7 +8,6 @@ import {
     CheckCircle2,
     Clock3,
     FileCheck2,
-    History,
     Loader2,
     Printer,
     RotateCcw,
@@ -569,31 +568,6 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
                         </div>
 
                         {stage === "Finance" && <RevisionSnapshotComparison detail={approvalDetail} selectedShipment={selectedShipment} currentLines={selectedShipmentLines} />}
-
-                        <div>
-                            <h3 className="mb-2 flex items-center gap-1.5 text-xs font-bold"><History className="h-4 w-4 text-primary" /> Approval history</h3>
-                            {approvalDetail.history.length === 0 ? <p className="text-xs text-muted-foreground">No workflow actions recorded.</p> : (
-                                <div className="divide-y rounded-md border">
-                                    {approvalDetail.history.map(entry => (
-                                        <div key={entry.history_id} className="flex flex-col gap-2 p-3 text-xs sm:flex-row sm:items-start sm:justify-between">
-                                            <div className="min-w-0">
-                                                <div className="flex flex-wrap items-center gap-1.5 font-semibold">
-                                                    <span>{entry.action}</span>
-                                                    <span className="text-muted-foreground">({entry.approval_stage})</span>
-                                                    {entry.action === "Resubmitted" && (
-                                                        <span className={`rounded border px-1.5 py-0.5 text-[9px] font-bold ${entry.revision_snapshot ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-amber-300 bg-amber-50 text-amber-700"}`}>
-                                                            {entry.revision_snapshot ? "Snapshot available" : "Legacy revision"}
-                                                        </span>
-                                                    )}
-                                                </div>
-                                                <div className="mt-1 whitespace-pre-wrap break-words text-[11px] text-muted-foreground">{entry.actor_name}{entry.remarks ? ` | ${entry.remarks}` : ""}</div>
-                                            </div>
-                                            <div className="shrink-0 text-left text-[10px] text-muted-foreground sm:text-right"><div>{formatPhtDateTime(entry.created_at)}</div><div className="mt-1">Revision {entry.revision_before} to {entry.revision_after}</div></div>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
                     </div>
                 )}
             </div>
