@@ -1098,9 +1098,13 @@ export default function ShipmentInspectionForm({
                                             </div>
                                         )}
                                         {acceptedVal > 0 && lineStorageLotLookup.status === "loaded" && lineStorageLots.length === 0 && (
-                                            <p className="text-[9px] font-semibold text-amber-700" role="alert">
-                                                No active storage lots match {lotBranchLabel} / {lotUomLabel}. Empty or vacant locations remain valid targets; shelf/bay and FEFO shelf assignments are not required by the receiving lookup.
-                                            </p>
+                                            <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-[10px] text-amber-800 dark:text-amber-300" role="alert">
+                                                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 mt-0.5" />
+                                                <div className="space-y-0.5">
+                                                    <p className="font-bold">No active storage lots found for {lotBranchLabel} ({lotUomLabel}).</p>
+                                                    <p className="text-muted-foreground">Please notify your Lot Management Administrator or Warehouse Supervisor to register or activate a storage lot before assigning stock.</p>
+                                                </div>
+                                            </div>
                                         )}
                                         {acceptedVal > 0 && (
                                             <QAProductItemsAllocationTable
@@ -1166,11 +1170,17 @@ export default function ShipmentInspectionForm({
                                                     </div>
                                                 )}
                                                 {lineRejectedStorageLotLookup.status === "loaded" && lineRejectedStorageLots.length === 0 && (
-                                                    <p className="text-[9px] font-semibold text-amber-700" role="alert">
-                                                        {hasConfiguredBadOrderBranch
-                                                            ? "No compatible storage lots are available on the configured Bad Order branch. Standard Empty / Vacant lots are valid targets; the lot category flag is not required. Lots must match this product's UOM and product scope and have available capacity."
-                                                            : "The receiving branch has no active Bad Order / quarantine branch configured, so rejected quantity cannot be mapped to storage lots."}
-                                                    </p>
+                                                    <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-[10px] text-amber-800 dark:text-amber-300" role="alert">
+                                                        <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 mt-0.5" />
+                                                        <div className="space-y-0.5">
+                                                            <p className="font-bold">No compatible Bad Order storage lots available.</p>
+                                                            <p className="text-muted-foreground">
+                                                                {hasConfiguredBadOrderBranch
+                                                                    ? "No active storage lots with matching UOM and product type are configured on the Bad Order branch. Please notify Lot Management to configure a Bad Order lot."
+                                                                    : "The receiving branch has no active Bad Order branch configured. Please notify Administration."}
+                                                            </p>
+                                                        </div>
+                                                    </div>
                                                 )}
                                                 <LotAllocationSection
                                                     branchId={Number(lineRejectedStorageLots[0]?.allocation_branch_id || lineRejectedStorageLots[0]?.branch_id || configuredBadStockBranchId(branches.find(branch => Number(branch.id) === Number(selectedBranchId || selectedShipment.branch_id))) || 0) || undefined}

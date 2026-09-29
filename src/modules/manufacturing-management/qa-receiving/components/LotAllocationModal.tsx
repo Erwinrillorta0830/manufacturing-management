@@ -311,9 +311,15 @@ export function LotAllocationSection({
                 <button
                     type="button"
                     onClick={() => setOpen(true)}
-                    className={`h-8 whitespace-nowrap rounded-lg border bg-background px-2.5 text-[10px] font-extrabold hover:bg-muted ${tone.text} ${tone.border}`}
+                    className={`h-8 whitespace-nowrap rounded-lg border bg-background px-2.5 text-[10px] font-extrabold hover:bg-muted ${storageLots.length === 0 && allocations.length === 0 ? "border-amber-500/50 text-amber-700 bg-amber-500/5 hover:bg-amber-500/10" : `${tone.text} ${tone.border}`}`}
                 >
-                    {readOnly ? "View allocated lots" : allocations.length === 0 ? "* Assign Lot & Batch" : "Manage lot allocation"}
+                    {readOnly
+                        ? "View allocated lots"
+                        : storageLots.length === 0 && allocations.length === 0
+                            ? "⚠️ No Lot Available (Notify Admin)"
+                            : allocations.length === 0
+                                ? "* Assign Lot & Batch"
+                                : "Manage lot allocation"}
                 </button>
                 <div className={`text-[10px] font-bold ${Math.abs(total - expectedQuantity) > 1e-9 ? "text-red-600" : tone.text}`}>
                     {tone.label} allocated: {total.toLocaleString()} / {expectedQuantity.toLocaleString()}
