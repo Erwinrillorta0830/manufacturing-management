@@ -204,9 +204,9 @@ interface DirectusReceivingRecord {
     receiving_header_id?: number | { id: number; receiving_ticket_no?: string | null; receipt_date?: string | null } | null;
     receipt_type?: number | string | { id: number } | null;
     batch_no?: string | null;
-    lot_id?: number | { lot_id: number } | null;
     mm_lot_id?: number | { lot_id: number } | null;
     received_quantity?: number | string | null;
+    quantity_allocated?: number | string | null;
     quantity_rejected?: number | string | null;
     is_replacement?: boolean | number | null;
     is_over_received?: boolean | number | null;
@@ -979,11 +979,11 @@ export async function fetchShipmentLineItems(
 
         // Manufacturing dates are persisted on inventory movements. Resolve them through
         // the receiving-record IDs instead of substituting the inventory lot creation date.
-        const receivingUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,receipt_no,receipt_date,receiving_header_id,receiving_header_id.id,receiving_header_id.receiving_ticket_no,receiving_header_id.receipt_date,batch_no,mm_lot_id,lot_id,receipt_type,received_quantity,quantity_rejected,isPosted,is_reverted,is_replacement,is_over_received,over_delivery_quantity,expiry_date,rejection_reason,qa_status,branch_id,received_date,receiving_method&limit=-1`;
+        const receivingUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,receipt_no,receipt_date,receiving_header_id,receiving_header_id.id,receiving_header_id.receiving_ticket_no,receiving_header_id.receipt_date,batch_no,mm_lot_id,receipt_type,received_quantity,quantity_allocated,isPosted,is_reverted,is_replacement,is_over_received,over_delivery_quantity,expiry_date,rejection_reason,qa_status,branch_id,received_date,receiving_method&limit=-1`;
         let receivingRes = await fetch(receivingUrl, { headers, cache: "no-store" });
         if (!receivingRes.ok) {
             receivingRes = await fetch(
-                `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,receipt_no,receipt_date,batch_no,mm_lot_id,lot_id,receipt_type,received_quantity,quantity_rejected,isPosted,is_reverted,is_replacement,expiry_date,rejection_reason,qa_status,branch_id,received_date,receiving_method,receiving_header_id,receiving_header_id.id,receiving_header_id.receiving_ticket_no,receiving_header_id.receipt_date&limit=-1`,
+                `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,receipt_no,receipt_date,batch_no,mm_lot_id,receipt_type,received_quantity,quantity_allocated,isPosted,is_reverted,is_replacement,expiry_date,rejection_reason,qa_status,branch_id,received_date,receiving_method,receiving_header_id,receiving_header_id.id,receiving_header_id.receiving_ticket_no,receiving_header_id.receipt_date&limit=-1`,
                 { headers, cache: "no-store" }
             );
         }

@@ -18,7 +18,7 @@ import { isPurchaseOrderPosted } from "@/modules/manufacturing-management/procur
 import { PROCUREMENT_MONEY_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 
 function weightedAverage(
-    rows: Array<{ received_quantity?: unknown; quantity_rejected?: unknown } & Record<string, unknown>>,
+    rows: Array<{ received_quantity?: unknown; quantity_allocated?: unknown; quantity_rejected?: unknown; qa_status?: unknown } & Record<string, unknown>>,
     field: string,
     quantity: number,
     fallback: number
@@ -27,7 +27,15 @@ function weightedAverage(
     let weightedTotal = 0;
     let weightedQuantity = 0;
     for (const row of rows) {
-        const accepted = Math.max(0, Number(row.received_quantity || 0) - Number(row.quantity_rejected || 0));
+        const qaStatus = String(row.qa_status || "").toUpperCase();
+        let accepted = 0;
+        if (qaStatus === "GOOD") {
+            accepted = Math.max(0, Number(row.quantity_allocated ?? row.received_quantity ?? 0));
+        } else if (qaStatus === "DAMAGED" || qaStatus === "QUARANTINED" || qaStatus === "EXPIRED") {
+            accepted = 0;
+        } else {
+            accepted = Math.max(0, Number(row.received_quantity || 0) - Number(row.quantity_rejected ?? row.quantity_allocated ?? 0));
+        }
         const value = Number(row[field]);
         if (accepted > 0 && Number.isFinite(value)) {
             weightedTotal += accepted * value;
@@ -44,9 +52,15 @@ function buildCanonicalLineItems(snapshot: Awaited<ReturnType<typeof loadLandedC
             product_id: line.productId,
             product_name: line.productName
         };
-        const receivingRows = line.receivingRows as Array<{ received_quantity?: unknown; quantity_rejected?: unknown } & Record<string, unknown>>;
+        const receivingRows = line.receivingRows as Array<{ received_quantity?: unknown; quantity_allocated?: unknown; quantity_rejected?: unknown; qa_status?: unknown } & Record<string, unknown>>;
         const receivedQuantity = receivingRows.reduce((sum, row) => sum + Math.max(0, Number(row.received_quantity || 0)), 0);
-        const rejectedQuantity = receivingRows.reduce((sum, row) => sum + Math.max(0, Number(row.quantity_rejected || 0)), 0);
+        const rejectedQuantity = receivingRows.reduce((sum, row) => {
+            const qaStatus = String(row.qa_status || "").toUpperCase();
+            if (qaStatus === "DAMAGED" || qaStatus === "QUARANTINED" || qaStatus === "EXPIRED") {
+                return sum + Math.max(0, Number(row.quantity_allocated ?? row.received_quantity ?? 0));
+            }
+            return sum + Math.max(0, Number(row.quantity_rejected || 0));
+        }, 0);
         const allocatedExpense = weightedAverage(receivingRows, "allocated_expense_php", line.quantity, 0);
         const finalLandedUnitCost = weightedAverage(receivingRows, "final_landed_unit_cost", line.quantity, line.baseUnitCostPhp + allocatedExpense);
 

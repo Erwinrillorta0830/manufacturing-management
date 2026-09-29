@@ -15,7 +15,6 @@ type DirectusReceiving = {
     received_quantity?: string | number | null;
     unit_price?: string | number | null;
     isPosted?: unknown;
-    is_posted_amounts?: unknown;
     is_reverted?: unknown;
     product_id?: { product_id?: unknown; id?: unknown } | number | string | null;
     purchase_order_product_id?: { purchase_order_product_id?: unknown; id?: unknown } | number | string | null;
@@ -159,7 +158,6 @@ export async function findTaggedPurchaseOrderReferences(
 
 export function isPostedReceivingAmount(row: DirectusReceiving): boolean {
     return asNumber(row.isPosted) === 1
-        && asNumber(row.is_posted_amounts) === 1
         && asNumber(row.is_reverted) !== 1;
 }
 
@@ -225,7 +223,7 @@ export async function findUnpostedPurchaseOrderReferences(
 
     const receivingQuery = new URLSearchParams({
         "filter[purchase_order_id][_in]": poIds.join(","),
-        fields: "purchase_order_id,receipt_no,isPosted,is_posted_amounts,is_reverted",
+        fields: "purchase_order_id,receipt_no,isPosted,is_reverted",
         limit: "-1",
     });
     const receivingResponse = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?${receivingQuery.toString()}`, {

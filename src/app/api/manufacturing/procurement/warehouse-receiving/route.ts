@@ -295,7 +295,7 @@ async function loadReceivingRows(purchaseOrderId: number): Promise<DirectusRecei
     const params = new URLSearchParams({
         "filter[purchase_order_id][_eq]": String(purchaseOrderId),
         "filter[is_reverted][_eq]": "0",
-        fields: "purchase_order_product_id,purchase_order_id,purchase_order_line_id,receiving_header_id,product_id,branch_id,receipt_no,receipt_date,received_date,received_quantity,quantity_rejected,isPosted,is_reverted,is_replacement,receiving_method,receipt_type,qa_status",
+        fields: "purchase_order_product_id,purchase_order_id,purchase_order_line_id,receiving_header_id,product_id,branch_id,receipt_no,receipt_date,received_date,received_quantity,quantity_allocated,isPosted,is_reverted,is_replacement,receiving_method,receipt_type,qa_status",
         limit: "-1",
         sort: "purchase_order_product_id"
     });
@@ -700,7 +700,7 @@ async function validateWarehouseLines(order: DirectusOrder, command: WarehouseRe
     return validated;
 }
 
-async function persistWarehouseDraft(order: DirectusOrder, command: WarehouseRequest) {
+async function persistWarehouseDraft(order: DirectusOrder, command: WarehouseRequest, options: { skipBuildView?: boolean } = {}) {
     const purchaseOrderId = relationId(order.purchase_order_id, ["purchase_order_id", "id"]) || 0;
     const header = await findWarehouseHeader(purchaseOrderId, workflowRevision(order));
     if (!header) throw new WarehouseReceivingError("The warehouse receiving draft could not be found. Start Warehouse Receiving again.", 409);
@@ -728,7 +728,7 @@ async function persistWarehouseDraft(order: DirectusOrder, command: WarehouseReq
             receipt_type: metadata.receiptType,
             quantity_status: metadata.receiptType === "full" ? "FULL" : "PARTIAL"
         });
-        for (const item of validated) {
+        await Promise.all(validated.map(async item => {
             const receiptRow = existingByLine.get(item.line.lineId);
             const payload = {
                 purchase_order_id: purchaseOrderId,
@@ -740,7 +740,7 @@ async function persistWarehouseDraft(order: DirectusOrder, command: WarehouseReq
                 receipt_date: metadata.receiptDate,
                 received_date: null,
                 received_quantity: item.quantity,
-                quantity_rejected: 0,
+                quantity_allocated: 0,
                 isPosted: 0,
                 is_reverted: 0,
                 receiving_method: "WAREHOUSE",
@@ -748,7 +748,6 @@ async function persistWarehouseDraft(order: DirectusOrder, command: WarehouseReq
                 qa_status: "Pending",
                 batch_no: null,
                 mm_lot_id: null,
-                lot_id: null,
                 expiry_date: null,
                 unit_price: item.line.unitPrice,
                 discounted_amount: item.line.discountedAmount,
@@ -778,7 +777,7 @@ async function persistWarehouseDraft(order: DirectusOrder, command: WarehouseReq
                 if (!Number.isSafeInteger(createdId) || createdId <= 0) throw new WarehouseReceivingError("Directus did not return the warehouse receiving line ID.", 503);
                 createdIds.push(createdId);
             }
-        }
+        }));
     } catch (error) {
         await patchHeader(headerIdValue, priorHeader).catch(() => undefined);
         for (const snapshot of [...updatedSnapshots].reverse()) {
@@ -787,6 +786,7 @@ async function persistWarehouseDraft(order: DirectusOrder, command: WarehouseReq
         for (const id of [...createdIds].reverse()) await deleteReceivingRow(id).catch(() => undefined);
         throw error;
     }
+    if (options.skipBuildView) return null as unknown as ReturnType<typeof buildOrderView>;
     return buildOrderView(await loadOrder(purchaseOrderId));
 }
 
@@ -873,7 +873,7 @@ async function submitWarehouseReceiving(order: DirectusOrder, command: Warehouse
     if (currentStatus !== INVENTORY_STATUS.WAREHOUSE_RECEIVING) {
         throw new WarehouseReceivingError("The purchase order must be in Warehouse Receiving before it can be sent to QA.", 409);
     }
-    await persistWarehouseDraft(order, command);
+    await persistWarehouseDraft(order, command, { skipBuildView: true });
     const nextRevision = currentRevision + 1;
     const previousWarehouseReceivedBy = relationId(order.warehouse_received_by, ["id", "user_id"]);
     const updated = await patchPurchaseOrderConditionally(purchaseOrderId, currentStatus, currentRevision, {
@@ -886,17 +886,19 @@ async function submitWarehouseReceiving(order: DirectusOrder, command: Warehouse
     if (!header) throw new WarehouseReceivingError("The warehouse receiving draft could not be found after handoff.", 503);
     const headerIdValue = Number(header.id);
     try {
-        await patchHeader(headerIdValue, { workflow_revision: nextRevision });
-        await writeWorkflowHistory({
-            purchaseOrderId,
-            action: "WarehouseReceivingSubmittedToQa",
-            actorId,
-            fromStatus: currentStatus,
-            toStatus: INVENTORY_STATUS.QA_RECEIVING,
-            revisionBefore: currentRevision,
-            revisionAfter: nextRevision,
-            remarks: "Warehouse receipt completed and submitted to QA Receiving."
-        });
+        await Promise.all([
+            patchHeader(headerIdValue, { workflow_revision: nextRevision }),
+            writeWorkflowHistory({
+                purchaseOrderId,
+                action: "WarehouseReceivingSubmittedToQa",
+                actorId,
+                fromStatus: currentStatus,
+                toStatus: INVENTORY_STATUS.QA_RECEIVING,
+                revisionBefore: currentRevision,
+                revisionAfter: nextRevision,
+                remarks: "Warehouse receipt completed and submitted to QA Receiving."
+            })
+        ]);
     } catch (error) {
         await patchHeader(headerIdValue, { workflow_revision: currentRevision }).catch(() => undefined);
         await patchPurchaseOrderConditionally(purchaseOrderId, INVENTORY_STATUS.QA_RECEIVING, nextRevision, {
@@ -921,17 +923,7 @@ export async function GET(request: Request) {
             }
             return NextResponse.json({ data: await buildOrderView(order) });
         }
-        const params = new URLSearchParams({
-            "filter[inventory_status][_in]": WAREHOUSE_RECEIVING_QUEUE_INVENTORY_STATUS_IDS.join(","),
-            fields: "purchase_order_id,purchase_order_no,reference,supplier_name,branch_id,inventory_status,payment_status,workflow_revision,currency_code,total_amount,total_foreign_currency,date_approved,remark,date_encoded,warehouse_receiving_at,warehouse_received_by",
-            limit: "-1",
-            sort: "-date_approved,-date_encoded"
-        });
-        const orders = await directusRows(`/items/purchase_order?${params.toString()}`, "Unable to load the Warehouse Receiving queue.") as DirectusOrder[];
-        // Each view loads lines, receipts, headers, supplier, and branch data. Limit
-        // concurrent view construction so a large completed-receipts queue does not
-        // overwhelm the Directus connection pool.
-        const views = await mapWithConcurrency(orders, 4, order => buildOrderView(order));
+
         const search = (searchParams.get("search") || "").trim().toLowerCase();
         const supplierId = Number(searchParams.get("supplierId") || 0);
         const status = (searchParams.get("status") || "").trim();
@@ -940,19 +932,104 @@ export async function GET(request: Request) {
         if (dateFrom && dateTo && dateFrom > dateTo) {
             throw new WarehouseReceivingError("Date Approved range is invalid: the start date must be on or before the end date.", 400);
         }
+
+        const params = new URLSearchParams({
+            "filter[inventory_status][_in]": WAREHOUSE_RECEIVING_QUEUE_INVENTORY_STATUS_IDS.join(","),
+            fields: "purchase_order_id,purchase_order_no,reference,supplier_name,branch_id,inventory_status,payment_status,workflow_revision,currency_code,total_amount,total_foreign_currency,date_approved,remark,date_encoded,warehouse_receiving_at,warehouse_received_by",
+            limit: "-1",
+            sort: "-date_approved,-date_encoded"
+        });
+
+        const orders = await directusRows(`/items/purchase_order?${params.toString()}`, "Unable to load the Warehouse Receiving queue.") as DirectusOrder[];
+
+        // Extract distinct supplier and branch IDs to batch-fetch names
+        const supplierIds = [...new Set(
+            orders
+                .map(order => relationId(order.supplier_name, ["id", "supplier_id"]))
+                .filter((id): id is number => id !== null)
+        )];
+        const branchIds = [...new Set(
+            orders
+                .map(order => relationId(order.branch_id, ["id", "branch_id"]))
+                .filter((id): id is number => id !== null)
+        )];
+
+        const [suppliers, branches] = await Promise.all([
+            supplierIds.length === 0
+                ? []
+                : directusRows(`/items/suppliers?filter[id][_in]=${supplierIds.join(",")}&fields=id,supplier_name&limit=-1`, "Unable to load suppliers."),
+            branchIds.length === 0
+                ? []
+                : directusRows(`/items/branches?filter[id][_in]=${branchIds.join(",")}&fields=id,branch_name,branch_code,isActive&limit=-1`, "Unable to load branches.")
+        ]);
+
+        const supplierMap = new Map<number, string>();
+        for (const s of suppliers) {
+            const sid = relationId(s.id, ["id", "supplier_id"]);
+            if (sid) supplierMap.set(sid, String(s.supplier_name || `Supplier #${sid}`));
+        }
+
+        const branchMap = new Map<number, { id: number; name: string; code: string }>();
+        for (const b of branches) {
+            const bid = relationId(b.id, ["id", "branch_id"]);
+            if (bid) {
+                branchMap.set(bid, {
+                    id: bid,
+                    name: String(b.branch_name || ""),
+                    code: String(b.branch_code || "")
+                });
+            }
+        }
+
+        const queueItems = orders.map(order => {
+            const pId = relationId(order.purchase_order_id, ["purchase_order_id", "id"]) || 0;
+            const sId = relationId(order.supplier_name, ["id", "supplier_id"]);
+            const bId = relationId(order.branch_id, ["id", "branch_id"]) || 0;
+            const branchInfo = branchMap.get(bId) || { id: bId, name: "", code: "" };
+            const supplierName = sId ? (supplierMap.get(sId) || `Supplier #${sId}`) : "Unknown supplier";
+
+            return {
+                id: pId,
+                poNumber: String(order.purchase_order_no || order.reference || `PO-${pId}`),
+                purchaseOrderNumber: String(order.purchase_order_no || ""),
+                referenceNumber: order.reference ? String(order.reference) : null,
+                supplierName,
+                supplierId: sId,
+                branch: branchInfo,
+                branchId: bId,
+                status: inventoryStatusToPurchaseOrderStatus(statusId(order), Number(order.payment_status)) as string,
+                inventoryStatus: statusId(order) as InventoryStatusId,
+                workflowRevision: workflowRevision(order),
+                currencyCode: String(order.currency_code || "PHP").trim().toUpperCase(),
+                totalAmount: numberValue(order.total_amount),
+                totalPhpAmount: numberValue(order.total_amount),
+                totalForeignAmount: order.total_foreign_currency == null ? null : numberValue(order.total_foreign_currency),
+                dateApproved: order.date_approved ? String(order.date_approved) : null,
+                warehouseReceivingAt: order.warehouse_receiving_at ? String(order.warehouse_receiving_at) : null,
+                warehouseReceivedBy: relationId(order.warehouse_received_by, ["id", "user_id"]),
+                remarks: String(order.remark || "").trim(),
+                lines: [],
+                receiptHistory: [],
+                draft: null,
+                pendingQaReceipt: null
+            };
+        });
+
         const supplierOptions = [...new Map(
-            views
-                .filter(view => view.supplierId !== null)
-                .map(view => [view.supplierId as number, { id: view.supplierId as number, name: view.supplierName }])
+            queueItems
+                .filter(item => item.supplierId !== null)
+                .map(item => [item.supplierId as number, { id: item.supplierId as number, name: item.supplierName }])
         ).values()].sort((left, right) => left.name.localeCompare(right.name));
-        const filtered = views.filter(view => {
-            const approvedDate = view.dateApproved?.slice(0, 10) || null;
-            return (!search || `${view.poNumber} ${view.purchaseOrderNumber} ${view.referenceNumber || ""} ${view.supplierName} ${view.remarks} ${view.status}`.toLowerCase().includes(search))
-                && (!supplierId || view.supplierId === supplierId)
-                && (!status || status === "ALL" || view.status === status)
+
+        const filtered = queueItems.filter(item => {
+            const approvedDate = item.dateApproved?.slice(0, 10) || null;
+            return (!search || `${item.poNumber} ${item.purchaseOrderNumber} ${item.referenceNumber || ""} ${item.supplierName} ${item.remarks} ${item.status}`.toLowerCase().includes(search))
+                && (!supplierId || item.supplierId === supplierId)
+                && (!status || status === "ALL" || item.status === status)
                 && (!dateFrom || (approvedDate !== null && approvedDate >= dateFrom))
                 && (!dateTo || (approvedDate !== null && approvedDate <= dateTo));
         });
+
         const page = Math.max(1, Number(searchParams.get("page") || 1));
         const limit = Math.min(100, Math.max(1, Number(searchParams.get("limit") || 25)));
         const start = (page - 1) * limit;
