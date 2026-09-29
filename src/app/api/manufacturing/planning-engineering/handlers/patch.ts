@@ -63,7 +63,7 @@ async function productionTargetResponse(jobOrderId: number | string): Promise<Ne
     const numericId = positiveInteger(jobOrderId);
     if (!numericId) return null;
     const [jobOrderResponse, yieldResponse] = await Promise.all([
-        fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${numericId}?fields=job_order_id,job_order_no,target_quantity,quantity,actual_quantity_produced,completed_quantity`, { headers, cache: "no-store" }),
+        fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${numericId}?fields=job_order_id,job_order_no,target_quantity,completed_quantity,rejected_quantity,actual_quantity_produced`, { headers, cache: "no-store" }),
         fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${numericId}&fields=yield_quantity,commit_status&limit=-1`, { headers, cache: "no-store" })
     ]);
     if (!jobOrderResponse.ok || !yieldResponse.ok) {
@@ -80,7 +80,7 @@ async function productionTargetResponse(jobOrderId: number | string): Promise<Ne
     }
     const yields = yieldPayload.data;
     if (hasReachedProductionTarget(
-        jobOrder.target_quantity ?? jobOrder.quantity,
+        jobOrder.target_quantity ?? 0,
         committedGoodOutputOrAggregate(yields, goodOutputAggregateFallback(jobOrder.actual_quantity_produced, jobOrder.completed_quantity))
     )) {
         return NextResponse.json({

@@ -18,7 +18,7 @@ export const format12Hour = (hour: number) => {
  * Formats internal ID keys into readable labels
  */
 export const formatFilterId = (id: string) => {
-  if (id === "date_time") return "Time Range";
+  if (id === "date_time") return "Date Range";
   return id
     .split("_")
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))

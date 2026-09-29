@@ -7,6 +7,7 @@ interface ApiInvoiceItem {
   invoice_no?: string | number | null;
   sales_order_id?: string | number | null;
   customer_code?: string | null;
+  customer_name?: string | null;
   total_amount?: number | null;
   reason_code?: string | null;
   remarks?: string | null;
@@ -30,7 +31,8 @@ export function useSummaryData() {
         date_time: item.date_approved || null,
         original_invoice: String(item.invoice_no || "N/A"),
         sales_order_no: String(item.sales_order_id || "N/A"),
-        customer_name: item.customer_code || "Unknown Customer",
+        customer_name: item.customer_name || item.customer_code || "-",
+        customer_code: item.customer_code || undefined,
         amount: Number(item.total_amount) || 0,
         defect_reason: item.reason_code || "Uncategorized",
         csr_remarks: item.remarks || null,

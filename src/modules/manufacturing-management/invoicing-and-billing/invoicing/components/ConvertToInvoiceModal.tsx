@@ -104,7 +104,7 @@ export const ConvertToInvoiceModal: React.FC<ConvertToInvoiceModalProps> = ({
     const autoDistributeAllItems = React.useCallback((data: ConversionData, discounts: DiscountType[]) => {
         const availableItems = data.items.filter(item => {
             const hasAlloc = Number(item.allocated_quantity || item.total_allocated_quantity || 0) > 0;
-            const hasPool = (item.remaining_quantity ?? 0) > 0 || Number(item.allocated_quantity || 0) > 0;
+            const hasPool = Number(item.remaining_quantity || 0) > 0;
             return hasAlloc && hasPool;
         });
 
@@ -121,7 +121,7 @@ export const ConvertToInvoiceModal: React.FC<ConvertToInvoiceModalProps> = ({
             const receiptItems: ReceiptItem[] = chunk
                 .map(item => {
                     const ordered = item.allocated_quantity || 0;
-                    const poolRemaining = (item.remaining_quantity ?? 0) > 0 ? item.remaining_quantity : ordered;
+                    const poolRemaining = Number(item.remaining_quantity || 0);
                     const autoQty = Math.min(ordered, poolRemaining);
                     
                     const dt = discounts.find(d => Number(d.id) === Number(item.discount_type));
@@ -422,13 +422,13 @@ export const ConvertToInvoiceModal: React.FC<ConvertToInvoiceModalProps> = ({
         }
 
         const ordered = convItem.allocated_quantity || 0;
-        const poolRemaining = (convItem.remaining_quantity ?? 0) > 0 ? convItem.remaining_quantity : ordered;
+        const poolRemaining = Number(convItem.remaining_quantity || 0);
 
         const isRecycledOrder = (order.existing_invoices && order.existing_invoices.length > 0) || !!order.existing_invoice_no;
         const isVoidOrder = order.void_invoices && order.void_invoices.length > 0;
         
         if (isRecycledOrder && !isVoidOrder) {
-            const availableQty = (convItem.picked_quantity || ordered) - (convItem.applied_quantity || 0);
+            const availableQty = Number(convItem.picked_quantity || 0) - Number(convItem.applied_quantity || 0);
             if (newQty > 0 && availableQty < ordered && poolRemaining < ordered) {
                 toast.error("Cannot add item: Remaining quantity is insufficient for the ordered quantity.", {
                     duration: 4000,
@@ -842,9 +842,7 @@ export const ConvertToInvoiceModal: React.FC<ConvertToInvoiceModalProps> = ({
             }, 0);
 
             // pool_remaining = actual warehouse picked items minus those already in official receipts (applied_quantity)
-            const pool_rem = (item.remaining_quantity ?? 0) > 0 
-                ? item.remaining_quantity 
-                : Math.max(0, item.allocated_quantity);
+            const pool_rem = Number(item.remaining_quantity || 0);
 
             return {
                 ...item,
@@ -2054,12 +2052,13 @@ export const ConvertToInvoiceModal: React.FC<ConvertToInvoiceModalProps> = ({
             <ReceiptTemplateEditor 
                 isOpen={isTemplateEditorOpen}
                 initialTemplate={orTemplate || DEFAULT_TEMPLATE}
+                receiptTypeName={order?.receipt_type?.type || receiptTypes.find(rt => rt.id.toString() === selectedTypeId)?.type}
                 onClose={() => setIsTemplateEditorOpen(false)}
                 onSave={async (newTemplate) => {
                     try {
-                        const typeId = order?.receipt_type?.id;
+                        const typeId = order?.receipt_type?.id || (selectedTypeId ? Number(selectedTypeId) : null);
                         if (!typeId) {
-                            toast.error("Cannot save template: Receipt Type ID is missing.");
+                            toast.error("Please select a receipt type in the invoice creation modal.");
                             return;
                         }
                         await InvoicingService.saveTemplate(typeId, newTemplate);

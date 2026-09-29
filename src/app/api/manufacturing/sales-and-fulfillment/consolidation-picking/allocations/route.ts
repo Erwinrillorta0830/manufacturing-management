@@ -22,6 +22,7 @@ export interface LotAllocationDetail {
     orderId?: number;
     orderNo?: string;
     customerName?: string;
+    availableQuantity?: number;
 }
 
 export async function GET(req: NextRequest) {
@@ -235,11 +236,11 @@ export async function GET(req: NextRequest) {
             ...batchProductIds,
         ])];
 
-        // Fetch products, mm_lots, mm_inventory_lots, and Spring Boot batch on-hand
-        const [prodRes, lotRes, invLotRes, springBatchRes] = await Promise.all([
+        // Fetch products, mm_lots, mm_inventory_lots, units, and Spring Boot batch on-hand
+        const [prodRes, lotRes, invLotRes, unitsRes, springBatchRes] = await Promise.all([
             productIds.length > 0
                 ? fetch(
-                      `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,product_name,product_code&limit=-1`,
+                      `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,product_name,product_code,unit_of_measurement&limit=-1`,
                       { headers: directusHeaders, cache: "no-store" }
                   ).catch(() => null)
                 : Promise.resolve(null),
@@ -249,6 +250,10 @@ export async function GET(req: NextRequest) {
             ).catch(() => null),
             fetch(
                 `${DIRECTUS_URL}/items/mm_inventory_lots?limit=-1&fields=*`,
+                { headers: directusHeaders, cache: "no-store" }
+            ).catch(() => null),
+            fetch(
+                `${DIRECTUS_URL}/items/units?limit=-1&fields=unit_id,unit_name,unit_shortcut`,
                 { headers: directusHeaders, cache: "no-store" }
             ).catch(() => null),
             (async () => {
@@ -272,13 +277,37 @@ export async function GET(req: NextRequest) {
             })(),
         ]);
 
+        const unitMap = new Map<number, string>();
+        if (unitsRes && unitsRes.ok) {
+            const unitsJson = await unitsRes.json();
+            const unitsData: Array<Record<string, unknown>> = Array.isArray(unitsJson) ? unitsJson : unitsJson?.data || [];
+            for (const u of unitsData) {
+                const uid = Number(u.unit_id || u.id);
+                const uname = String(u.unit_shortcut || u.unit_name || "").trim();
+                if (uid && uname) unitMap.set(uid, uname);
+            }
+        }
+
         const productNameMap = new Map<number, string>();
+        const productUnitMap = new Map<number, string>();
         if (prodRes && prodRes.ok) {
-            const prodData: { product_id: number; product_name: string }[] = (await prodRes.json()).data || [];
-            for (const p of prodData) productNameMap.set(Number(p.product_id), p.product_name);
+            const prodData: Array<Record<string, unknown>> = (await prodRes.json()).data || [];
+            for (const p of prodData) {
+                const pId = Number(p.product_id);
+                productNameMap.set(pId, String(p.product_name || ""));
+                const rawUom = p.unit_of_measurement;
+                let uomName = "";
+                if (typeof rawUom === "object" && rawUom !== null) {
+                    uomName = String((rawUom as { unit_shortcut?: string; unit_name?: string }).unit_shortcut || (rawUom as { unit_name?: string }).unit_name || "");
+                } else if (rawUom) {
+                    uomName = unitMap.get(Number(rawUom)) || "";
+                }
+                if (uomName) productUnitMap.set(pId, uomName);
+            }
         }
 
         const lotNameMap = new Map<number, string>();
+        const lotUnitMap = new Map<number, string>();
         if (lotRes && lotRes.ok) {
             const lotJson = await lotRes.json();
             const lotData: Array<Record<string, unknown>> = Array.isArray(lotJson) ? lotJson : lotJson?.data || [];
@@ -286,6 +315,15 @@ export async function GET(req: NextRequest) {
                 const lid = Number(l.lot_id || l.id);
                 const lname = String(l.lot_name || l.name || l.lot_number || "").trim();
                 if (lid && lname) lotNameMap.set(lid, lname);
+
+                const rawUnit = l.unit_id !== undefined && l.unit_id !== null ? l.unit_id : l.uom_id;
+                let uName = "";
+                if (typeof rawUnit === "object" && rawUnit !== null) {
+                    uName = String((rawUnit as { unit_shortcut?: string; unit_name?: string }).unit_shortcut || (rawUnit as { unit_name?: string }).unit_name || "");
+                } else if (rawUnit) {
+                    uName = unitMap.get(Number(rawUnit)) || "";
+                }
+                if (lid && uName) lotUnitMap.set(lid, uName);
             }
         }
 
@@ -300,6 +338,7 @@ export async function GET(req: NextRequest) {
             quantity: number;
             inventoryCondition: string;
             branchId?: number;
+            unit?: string;
         };
 
         const invLotMap = new Map<number, BatchMeta>();
@@ -335,6 +374,7 @@ export async function GET(req: NextRequest) {
                     quantity: qty,
                     inventoryCondition: cond,
                     branchId: branchIdVal || undefined,
+                    unit: lotUnitMap.get(lotId) || productUnitMap.get(pId) || undefined,
                 };
 
                 if (invId) invLotMap.set(invId, meta);
@@ -349,6 +389,8 @@ export async function GET(req: NextRequest) {
             }
         }
 
+        const batchOnhandMap = new Map<string, number>();
+
         // Process Spring Boot batch onhand for enrichment
         if (springBatchRes && springBatchRes.ok) {
             try {
@@ -358,7 +400,7 @@ export async function GET(req: NextRequest) {
                     const sbInvId = Number(sb.inventoryLotId ?? sb.inventory_lot_id ?? sb.id ?? 0);
                     const sbLotId = Number(sb.lotId ?? sb.mmLotId ?? sb.lot_id ?? sb.mm_lot_id ?? 0);
                     const sbPId = Number(sb.productId ?? sb.product_id ?? 0);
-                    const sbBatchNo = String(sb.batchNo ?? sb.batch_no ?? "LOT-N/A");
+                    const sbBatchNo = String(sb.batchNo ?? sb.batch_no ?? "LOT-N/A").trim();
                     const sbExp = (sb.expirationDate || sb.expiration_date || sb.expiryDate || sb.expiry_date || null) as string | null;
                     const sbMfg = (sb.manufacturingDate || sb.manufacturing_date || null) as string | null;
                     const sbQty = Number(sb.availableQuantity ?? sb.available_quantity ?? sb.onhandQuantity ?? sb.onhand_quantity ?? sb.quantity ?? 0);
@@ -368,6 +410,14 @@ export async function GET(req: NextRequest) {
                     // Strictly filter by branch if targetBranchId is present
                     if (targetBranchId > 0 && sbBranchId > 0 && sbBranchId !== targetBranchId) {
                         continue;
+                    }
+
+                    if (sbPId && sbBatchNo && sbBatchNo !== "LOT-N/A") {
+                        const normBatch = sbBatchNo.toLowerCase();
+                        if (sbLotId) batchOnhandMap.set(`${sbPId}:${sbLotId}:${normBatch}`, sbQty);
+                        if (!batchOnhandMap.has(`${sbPId}:${normBatch}`)) {
+                            batchOnhandMap.set(`${sbPId}:${normBatch}`, sbQty);
+                        }
                     }
 
                     const meta: BatchMeta = {
@@ -381,9 +431,27 @@ export async function GET(req: NextRequest) {
                         quantity: sbQty,
                         inventoryCondition: sbCond,
                         branchId: sbBranchId || targetBranchId || undefined,
+                        unit: lotUnitMap.get(sbLotId) || productUnitMap.get(sbPId) || undefined,
                     };
 
-                    if (sbInvId && !invLotMap.has(sbInvId)) invLotMap.set(sbInvId, meta);
+                    if (sbInvId) {
+                        if (invLotMap.has(sbInvId)) {
+                            const existingMeta = invLotMap.get(sbInvId)!;
+                            existingMeta.quantity = sbQty;
+                            if (!existingMeta.lotId && sbLotId) existingMeta.lotId = sbLotId;
+                            if (existingMeta.lotName === "Unknown" && lotNameMap.has(sbLotId)) {
+                                existingMeta.lotName = lotNameMap.get(sbLotId)!;
+                            }
+                            if (existingMeta.batchNo === "LOT-N/A" && sbBatchNo !== "LOT-N/A") {
+                                existingMeta.batchNo = sbBatchNo;
+                            }
+                            if (!existingMeta.expiryDate && sbExp) existingMeta.expiryDate = sbExp;
+                            if (!existingMeta.unit && meta.unit) existingMeta.unit = meta.unit;
+                        } else {
+                            invLotMap.set(sbInvId, meta);
+                        }
+                    }
+
                     if (sbPId) {
                         const list = productBatchMap.get(sbPId) || [];
                         const existingIdx = list.findIndex((b) => b.batchNo === sbBatchNo && b.lotId === sbLotId);
@@ -436,7 +504,25 @@ export async function GET(req: NextRequest) {
             const expiryDate = batchInfo?.expiryDate || (resLotObj?.expiry_date as string | null) || (resLotObj?.expiration_date as string | null) || null;
             const manufacturingDate = batchInfo?.manufacturingDate || (resLotObj?.manufacturing_date as string | null) || null;
 
-            const key = `${productId}:${detailId}:${lotId}:${batchNo}:${expiryDate || ""}`;
+            // Resolve actual available quantity from invLotMap, batchOnhandMap, or productBatchMap
+            const normBatch = batchNo.trim().toLowerCase();
+            let lotAvailableQty = Number(batchInfo?.quantity ?? 0);
+            if (lotAvailableQty <= 0) {
+                if (lotId && batchOnhandMap.has(`${productId}:${lotId}:${normBatch}`)) {
+                    lotAvailableQty = batchOnhandMap.get(`${productId}:${lotId}:${normBatch}`)!;
+                } else if (batchOnhandMap.has(`${productId}:${normBatch}`)) {
+                    lotAvailableQty = batchOnhandMap.get(`${productId}:${normBatch}`)!;
+                } else {
+                    const matchedBatch = productBatchMap.get(productId)?.find((b) =>
+                        (lotId && b.lotId === lotId && b.batchNo.trim().toLowerCase() === normBatch) ||
+                        b.batchNo.trim().toLowerCase() === normBatch
+                    );
+                    lotAvailableQty = Number(matchedBatch?.quantity ?? 0);
+                }
+            }
+
+            // Key groups reservations for the same product & lot & batch & expiryDate into one card
+            const key = `${productId}:${lotId}:${batchNo}:${expiryDate || ""}`;
             const existing = allocationMap.get(key);
             const qty = Number(reservation.quantity || 0);
             const isResPicked = reservation.status === "Picked";
@@ -449,12 +535,21 @@ export async function GET(req: NextRequest) {
                 if (resId && existing.reservationIds && !existing.reservationIds.includes(resId)) {
                     existing.reservationIds.push(resId);
                 }
+                if (orderNo && existing.orderNo && !existing.orderNo.includes(orderNo)) {
+                    existing.orderNo = `${existing.orderNo}, ${orderNo}`;
+                }
+                if (customerName && existing.customerName && !existing.customerName.includes(customerName)) {
+                    existing.customerName = `${existing.customerName}, ${customerName}`;
+                }
                 if (existing.pickedQuantity >= existing.quantity && existing.quantity > 0) {
                     existing.status = "Picked";
                 } else if (existing.pickedQuantity > 0) {
                     existing.status = "Partial";
                 } else {
                     existing.status = "Reserved";
+                }
+                if (lotAvailableQty > 0 && (!existing.availableQuantity || existing.availableQuantity <= 0)) {
+                    existing.availableQuantity = lotAvailableQty;
                 }
             } else {
                 allocationMap.set(key, {
@@ -474,6 +569,7 @@ export async function GET(req: NextRequest) {
                     orderId: orderId || undefined,
                     orderNo: orderNo || undefined,
                     customerName,
+                    availableQuantity: lotAvailableQty,
                 });
             }
         }
@@ -497,6 +593,7 @@ export async function GET(req: NextRequest) {
             inventoryCondition: string;
             branchId?: number;
             branchName?: string;
+            unit?: string;
         }> = [];
 
         const seenBatchKeys = new Set<string>();
@@ -523,6 +620,7 @@ export async function GET(req: NextRequest) {
                     inventoryCondition: b.inventoryCondition || "GOOD",
                     branchId: b.branchId || targetBranchId || undefined,
                     branchName: targetBranchName || undefined,
+                    unit: b.unit || productUnitMap.get(pId) || undefined,
                 });
             }
         }

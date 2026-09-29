@@ -41,7 +41,7 @@ export async function GET(request: Request) {
             fetch(`${DIRECTUS_URL}/items/mm_lots?limit=-1&_t=${timestamp}`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/user?limit=-1&fields=user_id,user_fname,user_lname&_t=${timestamp}`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/units?limit=-1&fields=unit_id,unit_name,unit_shortcut&_t=${timestamp}`, { headers, cache: "no-store" }).catch(() => null),
-            fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,description,product_name,product_code,barcode,cost_per_unit,price_per_unit,estimated_unit_cost&_t=${timestamp}`, { headers, cache: "no-store" }).catch(() => null),
+            fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,description,product_name,product_code,barcode,cost_per_unit,price_per_unit,estimated_unit_cost,product_type,product_type.*,product_category.category_name&_t=${timestamp}`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${SPRING_API_BASE}/api/mm-inventory-movements/all`, { headers: reqHeaders, cache: "no-store" }).catch(() => null),
             fetch(`${SPRING_API_BASE}/api/mm-batch-onhand/all`, { headers: reqHeaders, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/branches?limit=-1&fields=id,branch_name,branch_code&_t=${timestamp}`, { headers, cache: "no-store" }).catch(() => null)
@@ -158,10 +158,20 @@ export async function GET(request: Request) {
             }
         }
 
-        let productsList: { product_id: number; product_name?: string; sku_code?: string; product_code?: string; unit_cost?: number }[] = [];
+        let productsList: {
+            product_id: number;
+            product_name?: string;
+            sku_code?: string;
+            product_code?: string;
+            unit_cost?: number;
+            product_type?: unknown;
+            productType?: unknown;
+            category_name?: string;
+            productCategory?: string;
+        }[] = [];
         let pRes = productsRes;
         if (!pRes || !pRes.ok) {
-            pRes = await fetch(`${DIRECTUS_URL}/items/products?limit=-1`, { headers, cache: "no-store" }).catch(() => null);
+            pRes = await fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,description,product_name,product_code,barcode,cost_per_unit,price_per_unit,estimated_unit_cost,product_type,product_type.*,product_category.category_name`, { headers, cache: "no-store" }).catch(() => null);
         }
         if (pRes && pRes.ok) {
             try {
@@ -174,11 +184,18 @@ export async function GET(request: Request) {
                         : 0;
                     const desc = String(p.description || "").trim();
                     const name = String(p.product_name || p.name || p.title || "").trim();
+                    const categoryName = typeof p.product_category === "object" && p.product_category !== null
+                        ? (p.product_category as { category_name?: string }).category_name
+                        : undefined;
                     return {
                         product_id: Number(p.product_id ?? p.id ?? 0),
                         product_name: desc || name,
                         sku_code: String(p.product_code || p.barcode || "").trim(),
-                        unit_cost: unitCost
+                        unit_cost: unitCost,
+                        product_type: p.product_type,
+                        productType: p.product_type,
+                        category_name: categoryName,
+                        productCategory: categoryName
                     };
                 });
             } catch (err) {
@@ -439,19 +456,32 @@ export async function GET(request: Request) {
             let productId = 0;
             let productName = "";
             let itemCode = String(row.item_code || "");
+            let productType: unknown = undefined;
+            let productCategory: unknown = undefined;
             if (row.product_id) {
                 if (typeof row.product_id === "object" && row.product_id !== null) {
                     const pObj = row.product_id as Record<string, unknown>;
                     productId = Number(pObj.product_id ?? pObj.id ?? 0);
                     productName = String(pObj.description || pObj.product_name || pObj.name || pObj.title || "").trim();
                     itemCode = itemCode || String(pObj.sku_code || pObj.product_code || pObj.barcode || pObj.code || pObj.sku || "").trim();
+                    productType = pObj.product_type ?? pObj.productType;
+                    productCategory = pObj.product_category ?? pObj.productCategory;
                 } else {
                     productId = Number(row.product_id);
                     const matchedP = productsList.find((p) => Number(p.product_id) === productId);
                     if (matchedP) {
                         productName = matchedP.product_name || "";
                         itemCode = itemCode || matchedP.sku_code || "";
+                        productType = matchedP.productType;
+                        productCategory = matchedP.productCategory;
                     }
+                }
+            }
+            if (!productType && productId > 0) {
+                const matchedP = productsList.find((p) => Number(p.product_id) === productId);
+                if (matchedP) {
+                    productType = matchedP.productType;
+                    productCategory = matchedP.productCategory;
                 }
             }
 
@@ -573,6 +603,8 @@ export async function GET(request: Request) {
                 sourceType: row.source_type ? String(row.source_type) : undefined,
                 sourceReference: row.source_reference ? String(row.source_reference) : undefined,
                 remarks: String(row.remarks || ""),
+                productType,
+                productCategory,
                 createdAt: String(row.created_at || ""),
                 updatedAt: String(row.updated_at || ""),
                 createdBy,
@@ -671,6 +703,10 @@ export async function GET(request: Request) {
                 emittedBranchBatchKeys.add(baseKey);
                 if (mfgNorm || expNorm) emittedBranchBatchDateKeys.add(dateKey);
 
+                const matchedPForMv = productsList.find((p) => Number(p.product_id) === productId);
+                const productType = matchedPForMv?.productType || (matchedRaw && typeof matchedRaw.product_id === "object" && matchedRaw.product_id !== null ? (matchedRaw.product_id as Record<string, unknown>).product_type : undefined);
+                const productCategory = matchedPForMv?.productCategory || (matchedRaw && typeof matchedRaw.product_id === "object" && matchedRaw.product_id !== null ? (matchedRaw.product_id as Record<string, unknown>).product_category : undefined);
+
                 mappedBatches.push({
                     batchId: synthIdCounter--,
                     inventoryLotId: mv.invId,
@@ -695,6 +731,8 @@ export async function GET(request: Request) {
                     sourceType: "INVENTORY_MOVEMENT",
                     sourceReference: matchedRaw?.source_reference ? String(matchedRaw.source_reference) : undefined,
                     remarks,
+                    productType,
+                    productCategory,
                     createdAt: String(matchedRaw?.created_at || new Date().toISOString()),
                     updatedAt: String(matchedRaw?.updated_at || new Date().toISOString()),
                     createdBy: "System",
@@ -763,6 +801,8 @@ export async function GET(request: Request) {
                     sourceType: "INVENTORY_MOVEMENT",
                     sourceReference: mv.referenceNo,
                     remarks: mv.remarks || "",
+                    productType: matchedP?.productType,
+                    productCategory: matchedP?.productCategory,
                     createdAt: mv.postedAt || new Date().toISOString(),
                     updatedAt: mv.postedAt || new Date().toISOString(),
                     createdBy: "System",
@@ -827,6 +867,8 @@ export async function GET(request: Request) {
                     sourceType: "INVENTORY_MOVEMENT",
                     sourceReference: mv.referenceNo,
                     remarks: mv.remarks || "",
+                    productType: matchedP?.productType,
+                    productCategory: matchedP?.productCategory,
                     createdAt: mv.postedAt || new Date().toISOString(),
                     updatedAt: mv.postedAt || new Date().toISOString(),
                     createdBy: "System",

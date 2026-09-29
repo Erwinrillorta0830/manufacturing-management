@@ -145,19 +145,15 @@ export function ReleasedJobQueue({
                         />
                     </div>
 
-                    <select
-                        aria-label="Status filter"
-                        className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm lg:w-[160px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0"
-                        value={statusFilter}
-                        onChange={(event) => setStatusFilter(event.target.value)}
-                    >
-                        <option value="All">All Statuses</option>
-                        {statusOptions.map((status) => (
-                            <option key={status.value} value={status.value}>
-                                {status.label}
-                            </option>
-                        ))}
-                    </select>
+                    <div className="w-full min-w-0 lg:w-[200px]">
+                        <SearchableSelect
+                            options={[{ value: "All", label: "All Statuses" }, ...statusOptions]}
+                            value={statusFilter}
+                            onValueChange={setStatusFilter}
+                            placeholder="All Statuses"
+                            className="h-9 text-sm"
+                        />
+                    </div>
 
                     <select
                         id="branchFilter"

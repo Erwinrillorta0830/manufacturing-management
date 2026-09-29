@@ -25,7 +25,7 @@ export type JobOrderJourneyStage =
     | "done"
     | "cancelled";
 
-export type JobOrderJourneyStepId = "scheduled" | "materials" | "production" | "qa" | "done";
+export type JobOrderJourneyStepId = "scheduled" | "materials" | "picked" | "production" | "qa" | "done";
 
 export type JobOrderJourneyStepState = "complete" | "current" | "upcoming" | "exception";
 
@@ -77,6 +77,11 @@ const STEP_TEMPLATES: Array<Pick<JobOrderJourneyStep, "id" | "label" | "descript
         description: "Staging materials from the Main Store to the floor bin."
     },
     {
+        id: "picked",
+        label: "Picked",
+        description: "Materials are staged on the floor; ready to start production."
+    },
+    {
         id: "production",
         label: "Production",
         description: "Shop-floor execution and shift runs."
@@ -96,10 +101,10 @@ const STEP_TEMPLATES: Array<Pick<JobOrderJourneyStep, "id" | "label" | "descript
 const STAGE_INDEX: Record<Exclude<JobOrderJourneyStage, "cancelled">, number> = {
     scheduled: 0,
     materials: 1,
-    ready: 1,
-    production: 2,
-    qa: 3,
-    done: 4
+    ready: 2,
+    production: 3,
+    qa: 4,
+    done: 5
 };
 
 const STAGE_LABELS: Record<JobOrderJourneyStage, string> = {
@@ -177,12 +182,7 @@ function stepStates(currentIndex: number, stage: JobOrderJourneyStage): JobOrder
     }
     return STEP_TEMPLATES.map((step, index) => {
         if (index < currentIndex) return { ...step, state: "complete" as const };
-        if (index === currentIndex) {
-            // A fully staged Job Order is "between" materials and production:
-            // show materials as complete and production as the next step.
-            if (stage === "ready" && step.id === "materials") return { ...step, state: "complete" as const };
-            return { ...step, state: "current" as const };
-        }
+        if (index === currentIndex) return { ...step, state: "current" as const };
         return { ...step, state: "upcoming" as const };
     });
 }

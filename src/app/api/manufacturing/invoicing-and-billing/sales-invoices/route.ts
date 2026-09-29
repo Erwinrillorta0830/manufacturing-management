@@ -9,6 +9,7 @@ interface DirectusInvoiceDetail {
     unit_price?: number | string;
     gross_amount?: number | string;
     discount_amount?: number | string;
+    discount_type?: number | string | null;
     total_amount?: number | string;
 }
 
@@ -90,6 +91,156 @@ interface PaymentHistoryItem {
     date: string;
 }
 
+async function fetchCollectionDataForInvoices(invoiceIds: number[]): Promise<{
+    docNoMap: Map<number, string>;
+    paidMap: Map<number, number>;
+}> {
+    const docNoMap = new Map<number, string>();
+    const paidMap = new Map<number, number>();
+    if (!invoiceIds || invoiceIds.length === 0) return { docNoMap, paidMap };
+
+    const chunkSize = 50;
+
+    console.log("[fetchCollectionDataForInvoices] Input invoiceIds:", invoiceIds);
+
+    for (let i = 0; i < invoiceIds.length; i += chunkSize) {
+        const chunk = invoiceIds.slice(i, i + chunkSize);
+        const chunkEsc = chunk.join(",");
+
+        const singleId = chunk.length === 1 ? chunk[0] : null;
+
+        try {
+            // Query BOTH collection_invoices and collection_details in parallel using both _in and _eq to cover Directus field types
+            const fetchPromises: Promise<Response>[] = [
+                fetch(`${DIRECTUS_URL}/items/collection_invoices?filter[invoice_id][_in]=${chunkEsc}&limit=-1&fields=id,collection_id,invoice_id,amount,type`, { headers, cache: "no-store" }),
+                fetch(`${DIRECTUS_URL}/items/collection_details?filter[invoice_id][_in]=${chunkEsc}&limit=-1&fields=id,collection_id,invoice_id,amount,payment_method`, { headers, cache: "no-store" })
+            ];
+
+            if (singleId !== null) {
+                fetchPromises.push(
+                    fetch(`${DIRECTUS_URL}/items/collection_invoices?filter[invoice_id][_eq]=${singleId}&limit=-1&fields=id,collection_id,invoice_id,amount,type`, { headers, cache: "no-store" }),
+                    fetch(`${DIRECTUS_URL}/items/collection_details?filter[invoice_id][_eq]=${singleId}&limit=-1&fields=id,collection_id,invoice_id,amount,payment_method`, { headers, cache: "no-store" })
+                );
+            }
+
+            const [ciResIn, cdResIn, ciResEq, cdResEq] = await Promise.all(fetchPromises);
+            const ciData: Record<string, unknown>[] = [];
+            const cdData: Record<string, unknown>[] = [];
+
+            if (ciResIn?.ok) ciData.push(...(((await ciResIn.json()).data) || []));
+            if (ciResEq?.ok) ciData.push(...(((await ciResEq.json()).data) || []));
+            if (cdResIn?.ok) cdData.push(...(((await cdResIn.json()).data) || []));
+            if (cdResEq?.ok) cdData.push(...(((await cdResEq.json()).data) || []));
+
+            console.log(`[fetchCollectionDataForInvoices] chunk ${chunkEsc}: ciData count=${ciData.length}, cdData count=${cdData.length}`);
+            if (ciData.length > 0) console.log("[fetchCollectionDataForInvoices] ciData:", ciData);
+            if (cdData.length > 0) console.log("[fetchCollectionDataForInvoices] cdData:", cdData);
+
+            // Normalize raw allocation records
+            const rawAllocations: { invoice_id: number; collection_id: number; amount: number }[] = [];
+            const seenPair = new Set<string>();
+
+            // Process collection_invoices records
+            for (const row of ciData) {
+                const invId = typeof row.invoice_id === "object" && row.invoice_id !== null
+                    ? Number((row.invoice_id as Record<string, unknown>).invoice_id || (row.invoice_id as Record<string, unknown>).id)
+                    : Number(row.invoice_id);
+                const colId = typeof row.collection_id === "object" && row.collection_id !== null
+                    ? Number((row.collection_id as Record<string, unknown>).id)
+                    : Number(row.collection_id);
+
+                if (invId && colId && !isNaN(invId) && !isNaN(colId)) {
+                    const key = `${invId}-${colId}-${row.id || "c"}`;
+                    if (!seenPair.has(key)) {
+                        seenPair.add(key);
+                        rawAllocations.push({
+                            invoice_id: invId,
+                            collection_id: colId,
+                            amount: Number(row.amount || 0)
+                        });
+                    }
+                }
+            }
+
+            // Process collection_details records (avoid duplicating if already tracked from collection_invoices)
+            for (const row of cdData) {
+                const invId = typeof row.invoice_id === "object" && row.invoice_id !== null
+                    ? Number((row.invoice_id as Record<string, unknown>).invoice_id || (row.invoice_id as Record<string, unknown>).id)
+                    : Number(row.invoice_id);
+                const colId = typeof row.collection_id === "object" && row.collection_id !== null
+                    ? Number((row.collection_id as Record<string, unknown>).id)
+                    : Number(row.collection_id);
+
+                if (invId && colId && !isNaN(invId) && !isNaN(colId)) {
+                    if (!seenPair.has(`${invId}-${colId}`)) {
+                        seenPair.add(`${invId}-${colId}`);
+                        rawAllocations.push({
+                            invoice_id: invId,
+                            collection_id: colId,
+                            amount: Number(row.amount || 0)
+                        });
+                    }
+                }
+            }
+
+            console.log("[fetchCollectionDataForInvoices] rawAllocations:", rawAllocations);
+
+            // Fetch collection headers for all unique collection_ids
+            const uniqueColIds = Array.from(new Set(rawAllocations.map(a => a.collection_id)));
+            console.log("[fetchCollectionDataForInvoices] uniqueColIds:", uniqueColIds);
+
+            if (uniqueColIds.length > 0) {
+                const colRes = await fetch(
+                    `${DIRECTUS_URL}/items/collection?filter[id][_in]=${uniqueColIds.join(",")}&limit=-1&fields=id,docNo,isPosted,isCancelled`,
+                    { headers, cache: "no-store" }
+                );
+
+                if (colRes.ok) {
+                    const colHeaders: Record<string, unknown>[] = (await colRes.json()).data || [];
+                    console.log("[fetchCollectionDataForInvoices] colHeaders:", colHeaders);
+                    const postedMap = new Map<number, string>();
+
+                    colHeaders.forEach((c) => {
+                        const id = Number(c.id);
+                        const isPosted = c.isPosted === true || c.isPosted === 1 || c.isPosted === "1" || (typeof c.isPosted === "object" && c.isPosted !== null && (c.isPosted as { data?: number[] }).data?.[0] === 1);
+                        const isCancelled = c.isCancelled === true || c.isCancelled === 1 || c.isCancelled === "1" || (typeof c.isCancelled === "object" && c.isCancelled !== null && (c.isCancelled as { data?: number[] }).data?.[0] === 1);
+                        const docNo = String(c.docNo || "").trim();
+
+                        if (id && isPosted && !isCancelled && docNo) {
+                            postedMap.set(id, docNo);
+                        }
+                    });
+
+                    console.log("[fetchCollectionDataForInvoices] postedMap:", Array.from(postedMap.entries()));
+
+                    // Assign posted collection references and aggregate paid amounts
+                    for (const alloc of rawAllocations) {
+                        const docNo = postedMap.get(alloc.collection_id);
+                        if (docNo) {
+                            const existingDocNo = docNoMap.get(alloc.invoice_id);
+                            if (!existingDocNo) {
+                                docNoMap.set(alloc.invoice_id, docNo);
+                            } else if (!existingDocNo.split(", ").includes(docNo)) {
+                                docNoMap.set(alloc.invoice_id, `${existingDocNo}, ${docNo}`);
+                            }
+                            const cur = paidMap.get(alloc.invoice_id) || 0;
+                            paidMap.set(alloc.invoice_id, cur + alloc.amount);
+                        }
+                    }
+                } else {
+                    console.error("[fetchCollectionDataForInvoices] Failed to fetch collection items:", colRes.status, await colRes.text());
+                }
+            }
+        } catch (err) {
+            console.error("[Sales Invoices] Error resolving collection data chunk:", err);
+        }
+    }
+
+    console.log("[fetchCollectionDataForInvoices] Final docNoMap:", Array.from(docNoMap.entries()), "paidMap:", Array.from(paidMap.entries()));
+
+    return { docNoMap, paidMap };
+}
+
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
@@ -163,43 +314,72 @@ export async function GET(request: Request) {
                 };
             };
 
-            const formattedDetails = details.map(d => ({
-                id: d.detail_id || d.product_id,
-                invoice_no: d.invoice_no,
-                order_id: parsedId,
-                product: formatProduct(Number(d.product_id)),
-                quantity: Number(d.quantity || 0),
-                unit_price: Number(d.unit_price || 0),
-                gross_amount: Number(d.gross_amount || 0),
-                discount_amount: Number(d.discount_amount || 0),
-                net_amount: Number(d.total_amount || 0)
-            }));
+            const formattedDetails = details.map(d => {
+                const lineNet = Number(d.total_amount || 0);
+                const lineGross = Number(d.gross_amount || 0);
+                const lineDiscount = Number(d.discount_amount || 0);
+                const lineVat = lineNet > 0 ? Math.round(((lineNet / 1.12) * 0.12) * 100) / 100 : 0;
+                return {
+                    id: d.detail_id || d.product_id,
+                    invoice_no: d.invoice_no,
+                    order_id: parsedId,
+                    product: formatProduct(Number(d.product_id)),
+                    quantity: Number(d.quantity || 0),
+                    unit_price: Number(d.unit_price || 0),
+                    gross_amount: lineGross,
+                    discount_type: d.discount_type ? (typeof d.discount_type === "number" ? `Type #${d.discount_type}` : String(d.discount_type)) : null,
+                    discount_amount: lineDiscount,
+                    tax_amount: lineVat,
+                    net_amount: lineNet
+                };
+            });
 
             let pdfRecord: Record<string, unknown> | null = null;
+            let collectionPostingDocNo: string | null = null;
+            let collectionPaidAmount = 0;
+            let invoiceRecord: Record<string, unknown> | null = null;
+
             if (!isReturn) {
                 try {
-                    const pdfRes = await fetch(
-                        `${DIRECTUS_URL}/items/sales_invoice_pdf?filter[sales_invoice_id][_eq]=${parsedId}&fields=id,sales_invoice_id,receipt_numbers,pdf_file,page,width_mm,height_mm,created_at&sort=-id&limit=1`,
-                        { headers, cache: "no-store" }
-                    );
+                    const [invSingleRes, colData, pdfRes] = await Promise.all([
+                        fetch(`${DIRECTUS_URL}/items/sales_invoice/${parsedId}?fields=invoice_id,payment_status,net_amount,total_amount,transaction_status`, { headers, cache: "no-store" }),
+                        fetchCollectionDataForInvoices([parsedId]),
+                        fetch(`${DIRECTUS_URL}/items/sales_invoice_pdf?filter[sales_invoice_id][_eq]=${parsedId}&limit=1`, { headers, cache: "no-store" })
+                    ]);
+
+                    if (invSingleRes.ok) {
+                        invoiceRecord = (await invSingleRes.json()).data || null;
+                    }
+                    collectionPostingDocNo = colData.docNoMap.get(parsedId) || null;
+                    collectionPaidAmount = colData.paidMap.get(parsedId) || 0;
+
                     if (pdfRes.ok) {
                         const pdfJson = await pdfRes.json();
-                        const rawPdf = pdfJson.data?.[0] || null;
-                        if (rawPdf) {
-                            const rawFile = rawPdf.pdf_file;
-                            const fileId = typeof rawFile === "object" && rawFile !== null ? (rawFile as { id?: string }).id : rawFile;
-                            pdfRecord = {
-                                ...rawPdf,
-                                pdf_file: fileId || null,
-                            };
-                        }
+                        pdfRecord = pdfJson.data?.[0] || null;
                     }
-                } catch (pdfErr) {
-                    console.error("Error fetching sales_invoice_pdf:", pdfErr);
+
+                    console.log(`[Single Invoice #${parsedId}] collectionPostingDocNo:`, collectionPostingDocNo, "collectionPaidAmount:", collectionPaidAmount, "invoiceRecord:", invoiceRecord);
+                } catch (e) {
+                    console.error("Error fetching single sales_invoice details:", e);
                 }
             }
 
-            return NextResponse.json({ details: formattedDetails, pdf: pdfRecord });
+            const netAmount = Number(invoiceRecord?.net_amount || invoiceRecord?.total_amount || 0);
+            const rawPaymentStatus = String(invoiceRecord?.payment_status || "").trim().toLowerCase();
+            const isMarkedPaid = rawPaymentStatus === "paid";
+            const paid = isMarkedPaid ? Math.max(collectionPaidAmount, netAmount) : collectionPaidAmount;
+            const balance = Math.max(0, netAmount - paid);
+            const status = isMarkedPaid || (paid >= netAmount && netAmount > 0) ? "Paid" : paid > 0 ? "Partially Paid" : "Unpaid";
+
+            return NextResponse.json({
+                details: formattedDetails,
+                pdf: pdfRecord,
+                collection_posting_ref: collectionPostingDocNo,
+                paid_amount: paid,
+                balance: balance,
+                status: status,
+                is_paid: isMarkedPaid || (paid >= netAmount && netAmount > 0)
+            });
         }
 
         const pageParam = searchParams.get("page");
@@ -466,6 +646,12 @@ export async function GET(request: Request) {
             };
         };
 
+        // 7b. Fetch Collection Details & Collections to map posted docNo and paid amounts
+        const invIds = invoices.map((inv) => Number(inv.invoice_id)).filter(Boolean);
+        const { docNoMap: invoiceCollectionMap, paidMap: invoicePaidMap } = invIds.length > 0
+            ? await fetchCollectionDataForInvoices(invIds)
+            : { docNoMap: new Map<number, string>(), paidMap: new Map<number, number>() };
+
         // 8. Format FM Report documents
         const dataList: Record<string, unknown>[] = [];
         const detailsMap: Record<number, Record<string, unknown>[]> = {};
@@ -512,6 +698,9 @@ export async function GET(request: Request) {
 
             let paid = 0;
             let paymentHistory: PaymentHistoryItem[] = [];
+            const rawPaymentStatus = String(inv.payment_status || "").trim().toLowerCase();
+            const isMarkedPaid = rawPaymentStatus === "paid";
+
             if (inv.payment_status) {
                 try {
                     const parsed = JSON.parse(inv.payment_status);
@@ -520,18 +709,39 @@ export async function GET(request: Request) {
                         paid = parsed.reduce((sum: number, p: PaymentHistoryItem) => sum + Number(p.amount || 0), 0);
                     }
                 } catch {
-                    // Ignore non-JSON legacy values
+                    // Ignore non-JSON legacy values (e.g. "Paid", "Unpaid")
                 }
             }
+
+            const postedDocNo = invoiceCollectionMap.get(invId) || null;
+            const postedPaid = invoicePaidMap.get(invId) || 0;
 
             const netAmount = Number(inv.net_amount || inv.total_amount || 0);
             const grossAmount = Number(inv.gross_amount || inv.total_amount || 0);
             const vatAmount = Number(inv.vat_amount || 0);
             const discountAmount = Number(inv.discount_amount || 0);
 
+            // If marked as "Paid" or collections cover net amount
+            if (isMarkedPaid) {
+                paid = Math.max(paid, postedPaid, netAmount);
+            } else {
+                paid = Math.max(paid, postedPaid);
+            }
+
+            // Synthesize payment history entry if posted collection exists and paymentHistory is empty
+            if (postedDocNo && paymentHistory.length === 0 && paid > 0) {
+                paymentHistory.push({
+                    amount: paid,
+                    method: "Collection Posting",
+                    reference: postedDocNo,
+                    date: inv.invoice_date || inv.created_date || new Date().toISOString(),
+                });
+            }
+
+            const isPaid = isMarkedPaid || (paid >= netAmount && netAmount > 0);
             const displayStatus = (inv.transaction_status === "Cancelled" || transactionStatus === "Cancelled")
                 ? "Cancelled"
-                : paid >= netAmount && netAmount > 0
+                : isPaid
                     ? "Paid"
                     : paid > 0 ? "Partially Paid" : "Unpaid";
 
@@ -569,21 +779,30 @@ export async function GET(request: Request) {
                 balance: Math.max(0, netAmount - paid),
                 status: displayStatus,
                 payment_history: paymentHistory,
+                collection_posting_ref: invoiceCollectionMap.get(invId) || null,
                 remarks: inv.remarks || ""
             });
 
             if (includeDetails) {
                 const matchingDetails = invoiceDetails.filter((d) => Number(d.invoice_no) === invId);
-                detailsMap[invId] = matchingDetails.map((d) => ({
-                    id: d.detail_id || d.product_id,
-                    order_id: invId,
-                    product: formatProduct(Number(d.product_id)),
-                    quantity: Number(d.quantity || 0),
-                    unit_price: Number(d.unit_price || 0),
-                    gross_amount: Number(d.gross_amount || 0),
-                    discount_amount: Number(d.discount_amount || 0),
-                    net_amount: Number(d.total_amount || 0)
-                }));
+                detailsMap[invId] = matchingDetails.map((d) => {
+                    const lineNet = Number(d.total_amount || 0);
+                    const lineGross = Number(d.gross_amount || 0);
+                    const lineDiscount = Number(d.discount_amount || 0);
+                    const lineVat = lineNet > 0 ? Math.round(((lineNet / 1.12) * 0.12) * 100) / 100 : 0;
+                    return {
+                        id: d.detail_id || d.product_id,
+                        order_id: invId,
+                        product: formatProduct(Number(d.product_id)),
+                        quantity: Number(d.quantity || 0),
+                        unit_price: Number(d.unit_price || 0),
+                        gross_amount: lineGross,
+                        discount_type: d.discount_type ? (typeof d.discount_type === "number" ? `Type #${d.discount_type}` : String(d.discount_type)) : null,
+                        discount_amount: lineDiscount,
+                        tax_amount: lineVat,
+                        net_amount: lineNet
+                    };
+                });
             }
         });
 

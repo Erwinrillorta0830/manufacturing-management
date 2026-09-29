@@ -31,6 +31,11 @@ export async function fetchSalesInvoices(params: FetchSalesInvoicesParams | bool
 export async function fetchSalesInvoiceDetails(invoiceId: number): Promise<{
     details: SalesInvoiceDetail[];
     pdf: SalesInvoicePdf | null;
+    collection_posting_ref?: string | null;
+    paid_amount?: number;
+    balance?: number;
+    status?: string;
+    is_paid?: boolean;
 }> {
     const res = await fetch(`${API_BASE}?invoiceId=${invoiceId}`, { cache: "no-store" });
     if (!res.ok) {
@@ -41,5 +46,11 @@ export async function fetchSalesInvoiceDetails(invoiceId: number): Promise<{
     return {
         details: json.details || [],
         pdf: json.pdf || null,
+        collection_posting_ref: json.collection_posting_ref ?? null,
+        paid_amount: json.paid_amount,
+        balance: json.balance,
+        status: json.status,
+        is_paid: json.is_paid,
     };
 }
+
