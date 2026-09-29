@@ -99,8 +99,15 @@ export const columns: ColumnDef<InvoiceReportRow>[] = [
       );
     },
     cell: ({ row }) => (
-      <div className="max-w-37.5 truncate font-medium lg:max-w-62.5">
-        {row.original.customer_name}
+      <div className="flex flex-col">
+        <span className="max-w-37.5 truncate font-medium text-foreground lg:max-w-62.5">
+          {row.original.customer_name || "—"}
+        </span>
+        {row.original.customer_code && (
+          <span className="text-[10px] text-muted-foreground font-mono">
+            {row.original.customer_code}
+          </span>
+        )}
       </div>
     ),
   },

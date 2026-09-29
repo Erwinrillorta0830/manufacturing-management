@@ -417,21 +417,23 @@ export async function PATCH(req: NextRequest) {
 
                     if (invoiceIds.length > 0) {
                         const sodRes = await fetch(
-                            `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_in]=${invoiceIds.join(",")}&fields=detail_id,product_id&limit=-1`,
+                            `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_in]=${invoiceIds.join(",")}&fields=detail_id,order_id,product_id,ordered_quantity,quantity&limit=-1`,
                             { headers: directusHeaders, cache: "no-store" }
                         );
                         if (sodRes.ok) {
-                            const sodList: { detail_id: number; product_id: number }[] = ((await sodRes.json()).data || [])
-                                .map((row: { detail_id: number; product_id: number }) => ({
+                            const sodList: { detail_id: number; order_id: number; product_id: number; ordered_quantity: number }[] = ((await sodRes.json()).data || [])
+                                .map((row: { detail_id: number; order_id: number; product_id: number; ordered_quantity?: number; quantity?: number }) => ({
                                     detail_id: Number(row.detail_id),
+                                    order_id: Number(row.order_id),
                                     product_id: Number(row.product_id),
+                                    ordered_quantity: Number(row.ordered_quantity ?? row.quantity ?? 0),
                                 }))
                                 .filter((d: { detail_id: number; product_id: number }) => Boolean(d.detail_id));
-                            const detailIds = sodList.map((d: { detail_id: number; product_id: number }) => d.detail_id);
+                            const detailIds = sodList.map((d) => d.detail_id);
 
                             if (detailIds.length > 0) {
                                 const soRes = await fetch(
-                                    `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${detailIds.join(",")}&filter[status][_in]=Reserved,Picked&limit=-1`,
+                                    `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${detailIds.join(",")}&filter[status][_in]=Reserved,Picked,Consumed&limit=-1`,
                                     { headers: directusHeaders, cache: "no-store" }
                                 );
                                 if (soRes.ok) {
@@ -441,15 +443,23 @@ export async function PATCH(req: NextRequest) {
                                         sales_order_detail_id?: number;
                                         product_id?: number;
                                         inventory_lot_id?: unknown;
+                                        lot_id?: number;
+                                        batch_no?: string;
                                         reserved_quantity?: number;
                                         quantity?: number;
+                                        picked_quantity?: number;
                                         status?: string;
                                     }> = (await soRes.json()).data || [];
 
                                     const lotPickedItems = Array.isArray(body.lotPickedItems) ? body.lotPickedItems : null;
 
                                     if (lotPickedItems && lotPickedItems.length > 0) {
-                                        // Precise per-lot item processing
+                                        // Track allocated picked quantity per sales order detail
+                                        const detailAllocatedMap = new Map<number, number>();
+
+                                        // Pass 1: Process lots that belong to existing reservations
+                                        const remainingItemsWithBudget: Array<{ item: typeof lotPickedItems[0]; budget: number }> = [];
+
                                         for (const item of lotPickedItems) {
                                             let budget = Number(item.pickedQuantity || 0);
                                             const itemResIds = (item.reservationIds || []).map(Number);
@@ -462,6 +472,9 @@ export async function PATCH(req: NextRequest) {
                                                     const resQty = Number(r.reserved_quantity ?? r.quantity ?? 0);
                                                     const pickedPart = Math.min(budget, resQty);
                                                     budget = Math.max(0, budget - pickedPart);
+
+                                                    const sodId = Number(r.sales_order_detail_id);
+                                                    detailAllocatedMap.set(sodId, (detailAllocatedMap.get(sodId) || 0) + pickedPart);
 
                                                     const patchRes = await fetch(`${DIRECTUS_URL}/items/sales_order_reservation/${rId}`, {
                                                         method: "PATCH",
@@ -486,22 +499,65 @@ export async function PATCH(req: NextRequest) {
                                                         }).catch(() => null);
                                                     }
                                                 }
-                                            } else if (Number(item.pickedQuantity || 0) > 0) {
-                                                // Additional floor-picked lot not in original reservation
-                                                const matchDetail = sodList.find((d) => Number(d.product_id) === Number(item.productId));
-                                                if (matchDetail) {
+                                            }
+
+                                            // If there is still budget remaining or it is a newly added floor lot
+                                            if (budget > 0) {
+                                                remainingItemsWithBudget.push({ item, budget });
+                                            }
+                                        }
+
+                                        // Pass 2: Allocate floor-picked / surplus lots to details that still have deficits
+                                        for (const { item, budget: initialBudget } of remainingItemsWithBudget) {
+                                            let budget = initialBudget;
+                                            const matchingDetails = sodList.filter((d) => d.product_id === Number(item.productId));
+
+                                            // First satisfy details with deficits (ordered_quantity > allocated)
+                                            for (const d of matchingDetails) {
+                                                if (budget <= 0) break;
+                                                const curAlloc = detailAllocatedMap.get(d.detail_id) || 0;
+                                                const deficit = Math.max(0, d.ordered_quantity - curAlloc);
+                                                if (deficit <= 0) continue;
+
+                                                const allocQty = Math.min(budget, deficit);
+                                                budget -= allocQty;
+                                                detailAllocatedMap.set(d.detail_id, curAlloc + allocQty);
+
+                                                // Check if reservation already exists for this detail and inventory lot
+                                                const existingRes = reservations.find((r) => {
+                                                    const rSod = Number(r.sales_order_detail_id);
+                                                    const rawInv = typeof r.inventory_lot_id === "object" && r.inventory_lot_id !== null
+                                                        ? (r.inventory_lot_id as { id?: number; inventory_lot_id?: number }).id || (r.inventory_lot_id as { id?: number; inventory_lot_id?: number }).inventory_lot_id
+                                                        : r.inventory_lot_id;
+                                                    return rSod === d.detail_id && Number(rawInv || 0) === Number(item.inventoryLotId || 0);
+                                                });
+
+                                                if (existingRes) {
+                                                    const exId = Number(existingRes.id || existingRes.reservation_id);
+                                                    await fetch(`${DIRECTUS_URL}/items/sales_order_reservation/${exId}`, {
+                                                        method: "PATCH",
+                                                        headers: directusHeaders,
+                                                        body: JSON.stringify({
+                                                            picked_quantity: allocQty,
+                                                            reserved_quantity: Math.max(Number(existingRes.reserved_quantity || 0), allocQty),
+                                                            status: "Picked",
+                                                            modified_date: phNow,
+                                                            modified_by: userId,
+                                                        }),
+                                                    }).catch(() => null);
+                                                } else {
                                                     await fetch(`${DIRECTUS_URL}/items/sales_order_reservation`, {
                                                         method: "POST",
                                                         headers: directusHeaders,
                                                         body: JSON.stringify({
-                                                            sales_order_detail_id: matchDetail.detail_id,
+                                                            sales_order_detail_id: d.detail_id,
                                                             product_id: item.productId,
                                                             inventory_lot_id: item.inventoryLotId || null,
                                                             lot_id: item.lotId || null,
                                                             batch_no: item.batchNo || "LOT-N/A",
-                                                            reserved_quantity: Number(item.pickedQuantity || 0),
-                                                            quantity: Number(item.pickedQuantity || 0),
-                                                            picked_quantity: Number(item.pickedQuantity || 0),
+                                                            reserved_quantity: allocQty,
+                                                            quantity: allocQty,
+                                                            picked_quantity: allocQty,
                                                             status: "Picked",
                                                             created_by: userId,
                                                             created_at: phNow,
@@ -510,6 +566,57 @@ export async function PATCH(req: NextRequest) {
                                                         }),
                                                     }).catch(() => null);
                                                 }
+                                            }
+
+                                            // If budget remains after satisfying all deficits (unexpected overpick surplus), assign to last detail
+                                            if (budget > 0 && matchingDetails.length > 0) {
+                                                const fallbackDetail = matchingDetails[matchingDetails.length - 1];
+                                                const curAlloc = detailAllocatedMap.get(fallbackDetail.detail_id) || 0;
+                                                detailAllocatedMap.set(fallbackDetail.detail_id, curAlloc + budget);
+
+                                                const existingRes = reservations.find((r) => {
+                                                    const rSod = Number(r.sales_order_detail_id);
+                                                    const rawInv = typeof r.inventory_lot_id === "object" && r.inventory_lot_id !== null
+                                                        ? (r.inventory_lot_id as { id?: number; inventory_lot_id?: number }).id || (r.inventory_lot_id as { id?: number; inventory_lot_id?: number }).inventory_lot_id
+                                                        : r.inventory_lot_id;
+                                                    return rSod === fallbackDetail.detail_id && Number(rawInv || 0) === Number(item.inventoryLotId || 0);
+                                                });
+
+                                                if (existingRes) {
+                                                    const exId = Number(existingRes.id || existingRes.reservation_id);
+                                                    await fetch(`${DIRECTUS_URL}/items/sales_order_reservation/${exId}`, {
+                                                        method: "PATCH",
+                                                        headers: directusHeaders,
+                                                        body: JSON.stringify({
+                                                            picked_quantity: Number(existingRes.picked_quantity || 0) + budget,
+                                                            reserved_quantity: Number(existingRes.reserved_quantity || 0) + budget,
+                                                            status: "Picked",
+                                                            modified_date: phNow,
+                                                            modified_by: userId,
+                                                        }),
+                                                    }).catch(() => null);
+                                                } else {
+                                                    await fetch(`${DIRECTUS_URL}/items/sales_order_reservation`, {
+                                                        method: "POST",
+                                                        headers: directusHeaders,
+                                                        body: JSON.stringify({
+                                                            sales_order_detail_id: fallbackDetail.detail_id,
+                                                            product_id: item.productId,
+                                                            inventory_lot_id: item.inventoryLotId || null,
+                                                            lot_id: item.lotId || null,
+                                                            batch_no: item.batchNo || "LOT-N/A",
+                                                            reserved_quantity: budget,
+                                                            quantity: budget,
+                                                            picked_quantity: budget,
+                                                            status: "Picked",
+                                                            created_by: userId,
+                                                            created_at: phNow,
+                                                            modified_by: userId,
+                                                            modified_date: phNow,
+                                                        }),
+                                                    }).catch(() => null);
+                                                }
+                                                budget = 0;
                                             }
                                         }
                                     } else {

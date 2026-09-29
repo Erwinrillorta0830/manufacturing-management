@@ -62,19 +62,63 @@ export async function GET(request: NextRequest) {
     const pageData = await springRes.json();
     const rawItems: RawReportItem[] = pageData.content || [];
 
-    const formattedContent = rawItems.map((item) => ({
-      request_id: item.requestId,
-      invoice_id: item.invoiceId,
-      sales_order_id: item.salesOrderId,
-      reason_code: item.reasonCode,
-      remarks: item.remarks,
-      status: item.status,
-      date_approved: item.dateApproved,
-      invoice_no: item.invoiceNo,
-      total_amount: item.totalAmount,
-      customer_code: item.customerCode,
-      approver_name: item.approverName || null, // 🚀 FIX: Map it here!
-    }));
+    // Enrich customer names from Directus customer registry
+    const customerCodes = Array.from(
+      new Set(
+        rawItems
+          .map((item) => (item.customerCode || (item as unknown as Record<string, string>).customer_code || "").trim())
+          .filter(Boolean)
+      )
+    );
+
+    const customerMap = new Map<string, string>();
+    if (customerCodes.length > 0) {
+      const DIRECTUS_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "").replace(/\/+$/, "");
+      const DIRECTUS_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "";
+      const directusHeaders: Record<string, string> = { "Content-Type": "application/json" };
+      if (DIRECTUS_TOKEN) directusHeaders.Authorization = `Bearer ${DIRECTUS_TOKEN}`;
+
+      try {
+        const custRes = await fetch(
+          `${DIRECTUS_BASE}/items/customer?filter[customer_code][_in]=${customerCodes.join(",")}&fields=customer_code,customer_name&limit=1000`,
+          {
+            headers: directusHeaders,
+            cache: "no-store",
+          }
+        );
+        if (custRes.ok) {
+          const custData = await custRes.json();
+          (custData.data || []).forEach((c: { customer_code: string; customer_name: string }) => {
+            if (c.customer_code && c.customer_name) {
+              customerMap.set(c.customer_code, c.customer_name);
+            }
+          });
+        }
+      } catch (err) {
+        console.warn("Could not enrich customer names from Directus:", err);
+      }
+    }
+
+    const formattedContent = rawItems.map((item) => {
+      const rawCode = (item.customerCode || (item as unknown as Record<string, string>).customer_code || "").trim();
+      const springCustName = ((item as unknown as Record<string, string>).customerName || (item as unknown as Record<string, string>).customer_name || "").trim();
+      const customerName = springCustName || customerMap.get(rawCode) || rawCode || "-";
+
+      return {
+        request_id: item.requestId,
+        invoice_id: item.invoiceId,
+        sales_order_id: item.salesOrderId,
+        reason_code: item.reasonCode,
+        remarks: item.remarks,
+        status: item.status,
+        date_approved: item.dateApproved,
+        invoice_no: item.invoiceNo,
+        total_amount: item.totalAmount,
+        customer_code: rawCode,
+        customer_name: customerName,
+        approver_name: item.approverName || null,
+      };
+    });
 
     return NextResponse.json({
       content: formattedContent,

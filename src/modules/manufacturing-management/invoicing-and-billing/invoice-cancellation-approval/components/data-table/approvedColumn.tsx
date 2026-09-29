@@ -97,6 +97,24 @@ export const approvedColumns: ColumnDef<InvoiceRow>[] = [
     },
   },
   {
+    accessorKey: "approved_by",
+    header: ({ column }) => (
+      <DataTableColumnHeader column={column} label="Approved By" />
+    ),
+    meta: { label: "Approved By" },
+    cell: ({ row }) => {
+      const approver = row.original.approved_by;
+      if (!approver || approver === "N/A") {
+        return <span className="text-muted-foreground italic text-xs">—</span>;
+      }
+      return (
+        <span className="text-xs font-medium text-foreground">
+          {approver}
+        </span>
+      );
+    },
+  },
+  {
     accessorKey: "date_approved",
     header: ({ column }) => (
       <DataTableColumnHeader column={column} label="Date Approved" />
@@ -106,7 +124,7 @@ export const approvedColumns: ColumnDef<InvoiceRow>[] = [
       const date = row.original.date_approved;
       if (!date)
         return (
-          <span className="text-muted-foreground italic text-xs">N/A</span>
+          <span className="text-muted-foreground italic text-xs">—</span>
         );
 
       return (

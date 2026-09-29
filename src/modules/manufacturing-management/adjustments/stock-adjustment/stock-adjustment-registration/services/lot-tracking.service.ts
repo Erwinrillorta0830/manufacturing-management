@@ -976,7 +976,7 @@ export function buildLotStoredProductSummaryMap(
       if (bLotId === lId) {
         const pId = Number(b.productId || b.product_id || 0);
         const ohQty = Number(b.onhandQuantity || b.available_quantity || 0);
-        if (pId > 0 && ohQty > 0) {
+        if (pId > 0 && ohQty !== 0) {
           const meta = productMetaMap.get(pId);
           const entry = productQtyMap.get(pId) || {
             name: b.productName || b.product_name || meta?.name,
@@ -1078,7 +1078,7 @@ export function buildLotStoredProductSummaryMap(
     let primaryClass: ProductClassification | undefined = undefined;
 
     productQtyMap.forEach((info, pId) => {
-      if (info.qty > 0) {
+      if (info.qty !== 0) {
         totalQty += info.qty;
         totalWarehouseQty += info.warehouseQty;
         totalDraftQty += info.draftQty;
@@ -1113,7 +1113,7 @@ export function buildLotStoredProductSummaryMap(
     });
 
     const storedItems = Array.from(storedProductSummaryMap.values());
-    const isEmpty = totalQty <= 0 || storedItems.length === 0;
+    const isEmpty = storedItems.length === 0;
     const isDraftOnly = !isEmpty && totalWarehouseQty === 0 && totalDraftQty > 0;
 
     const distinctLabels = Array.from(

@@ -16,7 +16,9 @@ export interface SalesInvoiceDetail {
     quantity: number;
     unit_price: number;
     gross_amount: number;
+    discount_type?: string | number | null;
     discount_amount: number;
+    tax_amount?: number;
     net_amount: number;
 }
 
@@ -67,6 +69,7 @@ export interface SalesInvoiceHeader {
     balance: number;
     status: "Unpaid" | "Paid" | "Partially Paid" | "Overdue" | "Cancelled";
     payment_history: PaymentRecord[];
+    collection_posting_ref?: string | null;
     remarks: string;
 }
 

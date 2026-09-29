@@ -18,6 +18,7 @@ interface Props {
     onClose: () => void;
     onSave: (template: ORTemplate) => void;
     initialTemplate?: ORTemplate;
+    receiptTypeName?: string | null;
 }
 
 export const DEFAULT_TEMPLATE: ORTemplate = {
@@ -96,7 +97,7 @@ export const MARIKINA_TEMPLATE: ORTemplate = {
     }
 };
 
-export const ReceiptTemplateEditor: React.FC<Props> = ({ isOpen, onClose, onSave, initialTemplate }) => {
+export const ReceiptTemplateEditor: React.FC<Props> = ({ isOpen, onClose, onSave, initialTemplate, receiptTypeName }) => {
     const [template, setTemplate] = useState<ORTemplate>(DEFAULT_TEMPLATE);
     const [activeField, setActiveField] = useState<string | null>(null);
     const [zoom, setZoom] = useState(1);
@@ -307,7 +308,9 @@ export const ReceiptTemplateEditor: React.FC<Props> = ({ isOpen, onClose, onSave
                             <div className="p-1.5 bg-primary/10 rounded-lg">
                                 <Type className="w-5 h-5 text-primary" />
                             </div>
-                            Official Receipt Template Designer
+                            {receiptTypeName?.trim()
+                                ? `${receiptTypeName.trim()} Template Designer`
+                                : "No Receipt Type Template Designer"}
                         </div>
                         <div className="flex items-center gap-4 mr-8">
                             <div className="flex items-center gap-2 bg-muted rounded-lg p-1">

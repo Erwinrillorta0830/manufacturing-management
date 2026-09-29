@@ -72,10 +72,31 @@ export default function InvoiceCancellationApprovalPage() {
         ? pendingAction.data
         : [pendingAction.data];
 
-    // 🚀 Perfectly typed! Maps the UI Row to the exact ApprovalParams interface
+    // Dynamically resolve current user ID from session token
+    let currentUserId = 0;
+    if (typeof document !== "undefined") {
+      const match = document.cookie.match(/vos_access_token=([^;]+)/);
+      const token = match ? match[1] : (typeof localStorage !== "undefined" ? localStorage.getItem("token") : null);
+      if (token) {
+        try {
+          const parts = token.split(".");
+          if (parts.length >= 2) {
+            const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+            const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+            const payload = JSON.parse(atob(padded));
+            const idVal = payload.user_id ?? payload.userId ?? payload.id ?? payload.sub;
+            if (idVal) currentUserId = Number(idVal) || 0;
+          }
+        } catch {
+          // ignore parsing error
+        }
+      }
+    }
+
+    // Maps the UI Row to the ApprovalParams interface with genuine auditorId
     const paramsArray: ApprovalParams[] = itemsToProcess.map((item) => ({
       requestId: item.id,
-      auditorId: 1,
+      auditorId: currentUserId,
       rejectionReason: pendingAction.type === "REJECT" ? "Rejected via Audit UI" : undefined,
     }));
 

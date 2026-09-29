@@ -49,24 +49,39 @@ export function useSalesInvoices() {
     }, [loadInvoices]);
 
     const loadInvoiceDetails = useCallback(async (invoiceId: number) => {
-        if (detailsMap[invoiceId] && pdfMap[invoiceId] !== undefined) return;
+        if (loadingDetails[invoiceId]) return;
         setLoadingDetails((prev) => ({ ...prev, [invoiceId]: true }));
         try {
-            const { details, pdf } = await fetchSalesInvoiceDetails(invoiceId);
+            const res = await fetchSalesInvoiceDetails(invoiceId);
             console.log(
                 `%c[Sales Invoice #${invoiceId}] Loaded line items and saved PDF:`,
                 "color: #0284c7; font-weight: bold;",
-                { details, pdf }
+                res
             );
-            setDetailsMap((prev) => ({ ...prev, [invoiceId]: details }));
-            setPdfMap((prev) => ({ ...prev, [invoiceId]: pdf }));
+            setDetailsMap((prev) => ({ ...prev, [invoiceId]: res.details }));
+            setPdfMap((prev) => ({ ...prev, [invoiceId]: res.pdf }));
+            if (res.collection_posting_ref !== undefined || res.status || res.paid_amount !== undefined) {
+                setInvoices((prev) =>
+                    prev.map((inv) =>
+                        inv.invoice_id === invoiceId
+                            ? {
+                                ...inv,
+                                collection_posting_ref: res.collection_posting_ref !== undefined ? res.collection_posting_ref : inv.collection_posting_ref,
+                                paid_amount: res.paid_amount !== undefined ? res.paid_amount : inv.paid_amount,
+                                balance: res.balance !== undefined ? res.balance : inv.balance,
+                                status: (res.status as SalesInvoiceHeader["status"]) || inv.status,
+                            }
+                            : inv
+                    )
+                );
+            }
         } catch (err) {
             const msg = err instanceof Error ? err.message : `Failed to load details for Invoice #${invoiceId}.`;
             toast.error(msg);
         } finally {
             setLoadingDetails((prev) => ({ ...prev, [invoiceId]: false }));
         }
-    }, [detailsMap, pdfMap]);
+    }, [loadingDetails]);
 
     const metrics = useMemo<FMInvoiceMetrics>(() => {
         return invoices.reduce<FMInvoiceMetrics>(

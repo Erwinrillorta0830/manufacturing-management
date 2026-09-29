@@ -82,6 +82,7 @@ interface ReconciliationRowItemProps {
     dynamicStatus: FulfillmentStatus;
     onFulfilledQtyChange: (originalIndex: number, newFulfilledQty: number) => void;
     onReturnedQtyChange: (originalIndex: number, newReturnedQty: number) => void;
+    onConcernToggle: (originalIndex: number, hasConcern: boolean) => void;
     onOpenAllocationModal: (originalIndex: number) => void;
 }
 
@@ -92,11 +93,20 @@ const ReconciliationRowItem = React.memo(function ReconciliationRowItem({
     dynamicStatus,
     onFulfilledQtyChange,
     onReturnedQtyChange,
+    onConcernToggle,
     onOpenAllocationModal,
 }: ReconciliationRowItemProps) {
     const invoicedQty = item.invoiced_quantity;
     const targetQty = (invoicedQty !== undefined && invoicedQty !== null ? invoicedQty : item.ordered_quantity) ?? 0;
-    const variance = targetQty - (item.received_quantity + item.returned_quantity);
+
+    const isFulfilledWithConcerns = dynamicStatus === "Fulfilled with Concerns";
+    const isConcernActive = isFulfilledWithConcerns && Boolean(item.has_concern);
+
+    // Variance calculation:
+    // When "Fulfilled with Concerns": Variance = Ordered Quantity - Delivered Quantity - Returned Quantity
+    const variance = isFulfilledWithConcerns
+        ? item.ordered_quantity - item.received_quantity - item.returned_quantity
+        : targetQty - (item.received_quantity + item.returned_quantity);
     const isBalanced = variance === 0;
 
     const isFulfilledWithReturns = dynamicStatus === "Fulfilled with Returns";
@@ -106,7 +116,7 @@ const ReconciliationRowItem = React.memo(function ReconciliationRowItem({
     const [rawReturnQty, setRawReturnQty] = useState<string>("");
     const [isReturnFocused, setIsReturnFocused] = useState<boolean>(false);
 
-    // Fulfilled Input state (editable when dynamicStatus is "Fulfilled with Returns")
+    // Fulfilled Input state (editable when dynamicStatus is "Fulfilled with Returns" OR isConcernActive)
     const [rawFulfilledQty, setRawFulfilledQty] = useState<string>("");
     const [isFulfilledFocused, setIsFulfilledFocused] = useState<boolean>(false);
 
@@ -144,7 +154,7 @@ const ReconciliationRowItem = React.memo(function ReconciliationRowItem({
             if (val !== "") {
                 const parsed = parseInt(val, 10);
                 if (!isNaN(parsed)) {
-                    const allowed = isFulfilledWithReturns || isUnfulfilledReturns
+                    const allowed = isFulfilledWithReturns || isUnfulfilledReturns || isConcernActive
                         ? Math.max(0, parsed)
                         : Math.max(0, Math.min(parsed, targetQty));
                     onReturnedQtyChange(originalIndex, allowed);
@@ -160,7 +170,7 @@ const ReconciliationRowItem = React.memo(function ReconciliationRowItem({
             onReturnedQtyChange(originalIndex, 0);
         } else {
             const parsed = parseInt(rawReturnQty, 10);
-            const allowed = isFulfilledWithReturns || isUnfulfilledReturns
+            const allowed = isFulfilledWithReturns || isUnfulfilledReturns || isConcernActive
                 ? Math.max(0, parsed)
                 : Math.max(0, Math.min(parsed, targetQty));
             setRawReturnQty(allowed === 0 ? "" : String(allowed));
@@ -168,7 +178,7 @@ const ReconciliationRowItem = React.memo(function ReconciliationRowItem({
         }
     };
 
-    // Handlers for Fulfilled input (editable for Fulfilled with Returns)
+    // Handlers for Fulfilled input (editable for Fulfilled with Returns OR when concern is active)
     const handleFulfilledFocus = (e: React.FocusEvent<HTMLInputElement>) => {
         setIsFulfilledFocused(true);
         setRawFulfilledQty(item.received_quantity === 0 ? "" : String(item.received_quantity));
@@ -199,7 +209,9 @@ const ReconciliationRowItem = React.memo(function ReconciliationRowItem({
     const handleFulfilledBlur = () => {
         setIsFulfilledFocused(false);
         if (rawFulfilledQty === "" || isNaN(parseInt(rawFulfilledQty, 10))) {
-            const fallback = Math.max(0, targetQty - item.returned_quantity);
+            const fallback = isConcernActive
+                ? 0
+                : Math.max(0, targetQty - item.returned_quantity);
             setRawFulfilledQty(fallback === 0 ? "" : String(fallback));
             onFulfilledQtyChange(originalIndex, fallback);
         } else {
@@ -211,7 +223,38 @@ const ReconciliationRowItem = React.memo(function ReconciliationRowItem({
     };
 
     return (
-        <tr key={item.detail_id || originalIndex} className="hover:bg-muted/10 transition-colors">
+        <tr
+            key={item.detail_id || originalIndex}
+            className={`transition-colors ${
+                isConcernActive
+                    ? "bg-amber-500/5 hover:bg-amber-500/10 dark:bg-amber-500/10 dark:hover:bg-amber-500/15"
+                    : "hover:bg-muted/10"
+            }`}
+        >
+            {/* Concern Toggle Column (Active when dynamicStatus === "Fulfilled with Concerns") */}
+            {isFulfilledWithConcerns && (
+                <td className="p-3.5 text-center align-middle">
+                    <button
+                        type="button"
+                        disabled={effectiveReadOnly}
+                        onClick={() => onConcernToggle(originalIndex, !item.has_concern)}
+                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all border cursor-pointer ${
+                            item.has_concern
+                                ? "bg-amber-500/20 border-amber-500/40 text-amber-700 dark:text-amber-300 shadow-2xs"
+                                : "bg-muted/40 border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+                        } ${effectiveReadOnly ? "opacity-50 cursor-not-allowed" : ""}`}
+                        title={
+                            item.has_concern
+                                ? "Product flagged with concern (click to clear)"
+                                : "Click to select and record a concern on this product"
+                        }
+                    >
+                        <AlertTriangle className={`h-3 w-3 shrink-0 ${item.has_concern ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground/60"}`} />
+                        <span>{item.has_concern ? "Concern" : "None"}</span>
+                    </button>
+                </td>
+            )}
+
             {/* Product Info */}
             <td className="p-3.5 align-middle">
                 <span className="font-bold text-foreground block text-xs">{item.product_name}</span>
@@ -251,13 +294,13 @@ const ReconciliationRowItem = React.memo(function ReconciliationRowItem({
                 )}
             </td>
 
-            {/* Fulfilled Input */}
+            {/* Fulfilled / Delivered Input */}
             <td className="p-3.5 text-center align-middle">
                 {effectiveReadOnly ? (
                     <span className="font-black text-sm text-emerald-600 dark:text-emerald-400">
                         {isUnfulfilledReturns ? 0 : item.received_quantity}
                     </span>
-                ) : isFulfilledWithReturns ? (
+                ) : (isFulfilledWithReturns || isConcernActive) ? (
                     <input
                         type="number"
                         min={0}
@@ -268,7 +311,7 @@ const ReconciliationRowItem = React.memo(function ReconciliationRowItem({
                         onChange={handleFulfilledChange}
                         onBlur={handleFulfilledBlur}
                         className="w-20 h-8 text-center bg-background border border-emerald-500/40 focus:border-emerald-500 rounded-lg px-2 text-xs font-black text-foreground outline-none shadow-xs"
-                        title="Fulfilled quantity received by customer"
+                        title="Delivered quantity received by customer"
                     />
                 ) : isUnfulfilledReturns ? (
                     <span className="font-black text-sm text-muted-foreground select-none">
@@ -300,7 +343,7 @@ const ReconciliationRowItem = React.memo(function ReconciliationRowItem({
                             Auto from SR
                         </span>
                     </div>
-                ) : isUnfulfilledReturns ? (
+                ) : (isUnfulfilledReturns || isConcernActive) ? (
                     <input
                         type="number"
                         min={0}
@@ -311,7 +354,7 @@ const ReconciliationRowItem = React.memo(function ReconciliationRowItem({
                         onChange={handleReturnChange}
                         onBlur={handleReturnBlur}
                         className="w-20 h-8 text-center bg-background border border-rose-500/40 focus:border-rose-500 rounded-lg px-2 text-xs font-black text-foreground outline-none shadow-xs"
-                        title="Manual returned quantity"
+                        title="Returned quantity from customer"
                     />
                 ) : (
                     <span className="font-black text-sm text-muted-foreground select-none">
@@ -326,7 +369,7 @@ const ReconciliationRowItem = React.memo(function ReconciliationRowItem({
                     <span className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-700 dark:text-blue-300 bg-blue-500/10 border border-blue-500/20 px-2.5 py-1 rounded-full shadow-2xs">
                         Handled by Sales Return
                     </span>
-                ) : isUnfulfilledReturns && item.returned_quantity > 0 && item.reservations && item.reservations.length > 0 ? (
+                ) : (isUnfulfilledReturns || isConcernActive) && item.returned_quantity > 0 && item.reservations && item.reservations.length > 0 ? (
                     <div className="flex flex-col items-center gap-1">
                         {!effectiveReadOnly && (
                             <button
@@ -367,10 +410,15 @@ const ReconciliationRowItem = React.memo(function ReconciliationRowItem({
                         <CheckCircle2 className="h-4 w-4" />
                         0 OK
                     </span>
-                ) : (
-                    <span className="inline-flex items-center gap-1 text-rose-500 font-bold text-xs px-2 py-0.5 rounded-md bg-rose-500/10">
+                ) : variance > 0 ? (
+                    <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400 font-bold text-xs px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20" title={`Variance: ${variance} unfulfilled units`}>
                         <AlertTriangle className="h-3.5 w-3.5" />
-                        {variance > 0 ? `-${variance}` : `+${Math.abs(variance)}`}
+                        {variance}
+                    </span>
+                ) : (
+                    <span className="inline-flex items-center gap-1 text-rose-500 font-bold text-xs px-2 py-0.5 rounded-md bg-rose-500/10 border border-rose-500/20" title={`Surplus: ${Math.abs(variance)} excess units`}>
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                        +{Math.abs(variance)}
                     </span>
                 )}
             </td>
@@ -1118,6 +1166,8 @@ export default function ProductReconciliationModal({
                 : item.ordered_quantity;
             const newReceivedQty = dynamicStatus === "Unfulfilled / Returns"
                 ? 0
+                : dynamicStatus === "Fulfilled with Concerns"
+                ? item.received_quantity
                 : Math.max(0, targetQty - newReturnedQty);
 
             next[originalIndex] = {
@@ -1129,6 +1179,39 @@ export default function ProductReconciliationModal({
             return next;
         });
     }, [dynamicStatus]);
+
+    const handleConcernToggle = useCallback((originalIndex: number, hasConcern: boolean) => {
+        setLineItems((prev) => {
+            const next = [...prev];
+            const item = next[originalIndex];
+            if (!item) return prev;
+            const targetQty = item.invoiced_quantity !== undefined && item.invoiced_quantity !== null
+                ? item.invoiced_quantity
+                : item.ordered_quantity;
+
+            if (hasConcern) {
+                next[originalIndex] = {
+                    ...item,
+                    has_concern: true,
+                    line_status: "Fulfilled with Concerns",
+                };
+            } else {
+                const updatedReservations = (item.reservations || []).map((r) => ({
+                    ...r,
+                    returned_quantity: 0,
+                }));
+                next[originalIndex] = {
+                    ...item,
+                    has_concern: false,
+                    received_quantity: targetQty,
+                    returned_quantity: 0,
+                    line_status: "Fulfilled",
+                    reservations: updatedReservations,
+                };
+            }
+            return next;
+        });
+    }, []);
 
     const handleConfirmLotAllocation = (updatedReservations: LineItemReservation[]) => {
         if (allocationModalItemIndex === null) return;
@@ -1260,6 +1343,8 @@ export default function ProductReconciliationModal({
                 status = "Unfulfilled / Returns";
             } else if (ret > 0 && dynamicStatus === "Fulfilled with Returns") {
                 status = "Fulfilled with Returns";
+            } else if (dynamicStatus === "Fulfilled with Concerns") {
+                status = item.has_concern ? "Fulfilled with Concerns" : "Fulfilled";
             } else if (dynamicStatus) {
                 status = dynamicStatus as LineStatus;
             } else {
@@ -1707,10 +1792,13 @@ export default function ProductReconciliationModal({
                                     <table className="w-full text-left border-collapse text-xs">
                                         <thead>
                                             <tr className="border-b bg-muted/40 text-[10px] uppercase font-black text-muted-foreground tracking-wider">
+                                                {dynamicStatus === "Fulfilled with Concerns" && (
+                                                    <th className="p-3.5 text-center w-24 text-amber-600 dark:text-amber-400">Concern</th>
+                                                )}
                                                 <th className="p-3.5">Product / Item</th>
                                                 <th className="p-3.5 text-center w-20 text-muted-foreground" title="Original customer order quantity">Ordered</th>
                                                 <th className="p-3.5 text-center w-20 text-sky-600 dark:text-sky-400" title="Billed & loaded quantity for this delivery clearance">Invoiced</th>
-                                                <th className="p-3.5 text-center w-28 text-emerald-600 dark:text-emerald-400">Fulfilled</th>
+                                                <th className="p-3.5 text-center w-28 text-emerald-600 dark:text-emerald-400">Delivered</th>
                                                 <th className="p-3.5 text-center w-28 text-rose-600 dark:text-rose-400">Returned</th>
                                                 <th className="p-3.5 text-center w-40 text-amber-600 dark:text-amber-400">Batch Allocation</th>
                                                 <th className="p-3.5 text-center w-24">Variance</th>
@@ -1720,7 +1808,7 @@ export default function ProductReconciliationModal({
                                             {filteredLineItemsWithIndex.length === 0 ? (
                                                 <tr>
                                                     <td
-                                                        colSpan={7}
+                                                        colSpan={dynamicStatus === "Fulfilled with Concerns" ? 8 : 7}
                                                         className="p-8 text-center text-muted-foreground text-xs font-semibold"
                                                     >
                                                         No products matching &quot;{searchQuery}&quot; found.
@@ -1736,6 +1824,7 @@ export default function ProductReconciliationModal({
                                                         dynamicStatus={dynamicStatus}
                                                         onFulfilledQtyChange={handleFulfilledQtyChange}
                                                         onReturnedQtyChange={handleReturnedQtyChange}
+                                                        onConcernToggle={handleConcernToggle}
                                                         onOpenAllocationModal={setAllocationModalItemIndex}
                                                     />
                                                 ))

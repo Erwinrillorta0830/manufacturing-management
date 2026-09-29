@@ -39,18 +39,24 @@ export default function SalesInvoiceDetailModal({
     const [downloadingPdf, setDownloadingPdf] = useState(false);
     const iframeRef = useRef<HTMLIFrameElement>(null);
 
+    const collectionPostingRef = invoice?.collection_posting_ref?.trim() || null;
+
     useEffect(() => {
         if (isOpen && invoice) {
             console.group(
-                `%c[Sales Invoice Record] Invoice #${invoice.invoice_id} (${invoice.invoice_no || "No Invoice No"})`,
-                "color: #2563eb; font-weight: bold; font-size: 12px;"
+                `%c[Sales Invoice Detail Modal Opened] Invoice #${invoice.invoice_id} (${invoice.invoice_no || "No Invoice No"})`,
+                "color: #7c3aed; font-weight: 900; font-size: 13px;"
             );
-            console.log("%cInvoice Header Record:", "font-weight: bold; color: #0284c7;", invoice);
-            console.log("%cLine Items Details:", "font-weight: bold; color: #0284c7;", invoiceDetails);
-            console.log("%cSaved PDF Record:", "font-weight: bold; color: #0284c7;", pdf);
+            console.log("%c[Modal Debug] invoice.collection_posting_ref:", "color: #059669; font-weight: bold;", invoice.collection_posting_ref);
+            console.log("%c[Modal Debug] computed collectionPostingRef:", "color: #059669; font-weight: bold;", collectionPostingRef);
+            console.log("%c[Modal Debug] invoice.paid_amount:", "color: #2563eb;", invoice.paid_amount, "invoice.balance:", invoice.balance, "invoice.status:", invoice.status);
+            console.log("%c[Modal Debug] invoice.payment_history:", "color: #2563eb;", invoice.payment_history);
+            console.log("%c[Modal Debug] full invoice header:", "color: #4b5563;", invoice);
+            console.log("%c[Modal Debug] line items details:", "color: #4b5563;", invoiceDetails);
+            console.log("%c[Modal Debug] saved pdf record:", "color: #4b5563;", pdf);
             console.groupEnd();
         }
-    }, [isOpen, invoice, invoiceDetails, pdf]);
+    }, [isOpen, invoice, collectionPostingRef, invoiceDetails, pdf]);
 
     if (!isOpen || !invoice) return null;
 
@@ -59,6 +65,14 @@ export default function SalesInvoiceDetailModal({
     const vatAmount = Number(invoice.vat_amount);
     const paidAmount = Number(invoice.paid_amount);
     const remainingBalance = Math.max(0, netAmount - paidAmount);
+
+    const formatCurrency = (amount: number | string | null | undefined) => {
+        if (amount === null || amount === undefined || isNaN(Number(amount))) return "—";
+        return `₱${Number(amount).toLocaleString(undefined, {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        })}`;
+    };
 
     const handleDownloadSavedPdf = async () => {
         if (!pdf?.pdf_file) {
@@ -216,7 +230,7 @@ export default function SalesInvoiceDetailModal({
                                             Gross Billed
                                         </span>
                                         <h4 className="text-xl font-black text-foreground">
-                                            ₱{grossAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                            {formatCurrency(grossAmount)}
                                         </h4>
                                         <span className="text-[10px] text-muted-foreground">Before Tax / Deductions</span>
                                     </div>
@@ -226,7 +240,7 @@ export default function SalesInvoiceDetailModal({
                                             VAT Amount (12%)
                                         </span>
                                         <h4 className="text-xl font-black text-blue-600">
-                                            ₱{vatAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                            {formatCurrency(vatAmount)}
                                         </h4>
                                         <span className="text-[10px] text-muted-foreground">Value Added Tax</span>
                                     </div>
@@ -236,7 +250,7 @@ export default function SalesInvoiceDetailModal({
                                             Net Invoice Total
                                         </span>
                                         <h4 className="text-2xl font-black text-primary">
-                                            ₱{netAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                            {formatCurrency(netAmount)}
                                         </h4>
                                         <span className="text-[10px] font-medium text-muted-foreground">Total Revenue Amount</span>
                                     </div>
@@ -246,7 +260,7 @@ export default function SalesInvoiceDetailModal({
                                             Remaining Balance
                                         </span>
                                         <h4 className={`text-2xl font-black ${remainingBalance > 0 ? "text-rose-600" : "text-emerald-600"}`}>
-                                            ₱{remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                            {formatCurrency(remainingBalance)}
                                         </h4>
                                         <span className="text-[10px] text-muted-foreground">
                                             {remainingBalance > 0 ? "Pending Collection" : "Fully Settled"}
@@ -324,6 +338,16 @@ export default function SalesInvoiceDetailModal({
                                                     {invoice.transaction_status || "Prepared"}
                                                 </span>
                                             </div>
+                                             <div className="flex items-center justify-between">
+                                                <span className="text-muted-foreground font-semibold">Collection Posting Ref:</span>
+                                                {collectionPostingRef ? (
+                                                    <span className="font-bold text-emerald-600 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded text-[11px] font-mono">
+                                                        {collectionPostingRef}
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-muted-foreground font-mono text-xs">-</span>
+                                                )}
+                                            </div>
                                             <div className="flex items-center justify-between">
                                                 <span className="text-muted-foreground font-semibold">Invoice Date:</span>
                                                 <span className="font-medium text-foreground">{new Date(invoice.invoice_date).toLocaleDateString()}</span>
@@ -368,35 +392,61 @@ export default function SalesInvoiceDetailModal({
                                                         <th className="p-3.5 text-right">Qty</th>
                                                         <th className="p-3.5 text-right">Unit Price</th>
                                                         <th className="p-3.5 text-right">Gross Total</th>
+                                                        <th className="p-3.5 text-center">Discount Type</th>
+                                                        <th className="p-3.5 text-right">Discount</th>
+                                                        <th className="p-3.5 text-right">VAT (12%)</th>
                                                         <th className="p-3.5 text-right">Net Amount</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody className="divide-y">
-                                                    {invoiceDetails.map((detail, idx) => (
-                                                        <tr key={detail.id || idx} className="hover:bg-muted/10 transition-colors">
-                                                            <td className="p-3.5 font-bold text-foreground">
-                                                                {detail.product?.description || "N/A"}
-                                                            </td>
-                                                            <td className="p-3.5 text-muted-foreground font-mono">
-                                                                {detail.product?.product_code || "N/A"}
-                                                            </td>
-                                                            <td className="p-3.5 text-center font-medium">
-                                                                {detail.product?.uom}
-                                                            </td>
-                                                            <td className="p-3.5 text-right font-black">
-                                                                {detail.quantity}
-                                                            </td>
-                                                            <td className="p-3.5 text-right">
-                                                                ₱{Number(detail.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                                            </td>
-                                                            <td className="p-3.5 text-right">
-                                                                ₱{Number(detail.gross_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                                            </td>
-                                                            <td className="p-3.5 text-right font-black text-foreground">
-                                                                ₱{Number(detail.net_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                                            </td>
-                                                        </tr>
-                                                    ))}
+                                                    {invoiceDetails.map((detail, idx) => {
+                                                        const lineNet = Number(detail.net_amount || 0);
+                                                        const lineVat = detail.tax_amount !== undefined && detail.tax_amount !== null
+                                                            ? Number(detail.tax_amount)
+                                                            : (vatAmount > 0 && lineNet > 0 ? (lineNet / 1.12) * 0.12 : 0);
+                                                        const lineDiscount = Number(detail.discount_amount || 0);
+
+                                                        return (
+                                                            <tr key={detail.id || idx} className="hover:bg-muted/10 transition-colors">
+                                                                <td className="p-3.5 font-bold text-foreground">
+                                                                    {detail.product?.description || "N/A"}
+                                                                </td>
+                                                                <td className="p-3.5 text-muted-foreground font-mono">
+                                                                    {detail.product?.product_code || "N/A"}
+                                                                </td>
+                                                                <td className="p-3.5 text-center font-medium">
+                                                                    {detail.product?.uom}
+                                                                </td>
+                                                                <td className="p-3.5 text-right font-black">
+                                                                    {detail.quantity}
+                                                                </td>
+                                                                <td className="p-3.5 text-right">
+                                                                    {formatCurrency(detail.unit_price)}
+                                                                </td>
+                                                                <td className="p-3.5 text-right">
+                                                                    {formatCurrency(detail.gross_amount)}
+                                                                </td>
+                                                                <td className="p-3.5 text-center text-muted-foreground">
+                                                                    {detail.discount_type ? (
+                                                                        <span className="bg-muted px-2 py-0.5 rounded text-[10px] font-bold">
+                                                                            {String(detail.discount_type)}
+                                                                        </span>
+                                                                    ) : (
+                                                                        "—"
+                                                                    )}
+                                                                </td>
+                                                                <td className="p-3.5 text-right font-semibold text-rose-600">
+                                                                    {lineDiscount > 0 ? `-${formatCurrency(lineDiscount)}` : "—"}
+                                                                </td>
+                                                                <td className="p-3.5 text-right text-blue-600 font-semibold">
+                                                                    {lineVat > 0 ? formatCurrency(lineVat) : "—"}
+                                                                </td>
+                                                                <td className="p-3.5 text-right font-black text-foreground">
+                                                                    {formatCurrency(detail.net_amount)}
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    })}
                                                 </tbody>
                                             </table>
                                         )}
@@ -431,7 +481,7 @@ export default function SalesInvoiceDetailModal({
                                                                 {pay.reference || "N/A"}
                                                             </td>
                                                             <td className="p-3.5 text-right font-black text-emerald-600">
-                                                                ₱{Number(pay.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                                {formatCurrency(pay.amount)}
                                                             </td>
                                                         </tr>
                                                     ))}
@@ -656,6 +706,7 @@ export default function SalesInvoiceDetailModal({
                                     <div><span className="font-bold">Salesman:</span> {invoice.salesman_name || "Unassigned"} ({invoice.salesman_code || "N/A"})</div>
                                     <div><span className="font-bold">Branch:</span> {invoice.branch_name || "N/A"}</div>
                                     <div><span className="font-bold">Terms:</span> {invoice.payment_term_name || "N/A"}</div>
+                                    <div><span className="font-bold">Collection Posting Ref:</span> {collectionPostingRef || "-"}</div>
                                     <div><span className="font-bold">Invoice Date:</span> {new Date(invoice.invoice_date).toLocaleDateString()}</div>
                                     <div><span className="font-bold">Due Date:</span> {invoice.due_date ? new Date(invoice.due_date).toLocaleDateString() : "N/A"}</div>
                                     <div><span className="font-bold">Days Elapsed:</span> {daysElapsed}</div>
@@ -676,21 +727,35 @@ export default function SalesInvoiceDetailModal({
                                             <th className="p-2 border-r border-gray-400 text-center">UOM</th>
                                             <th className="p-2 border-r border-gray-400 text-right">Qty</th>
                                             <th className="p-2 border-r border-gray-400 text-right">Unit Price</th>
+                                            <th className="p-2 border-r border-gray-400 text-center">Discount Type</th>
+                                            <th className="p-2 border-r border-gray-400 text-right">Discount</th>
+                                            <th className="p-2 border-r border-gray-400 text-right">VAT (12%)</th>
                                             <th className="p-2 text-right">Net Amount</th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {invoiceDetails.map((detail, idx) => (
-                                            <tr key={idx} className="border-b border-gray-300">
-                                                <td className="p-2 border-r border-gray-300 font-mono text-[10px]">{idx + 1}</td>
-                                                <td className="p-2 border-r border-gray-300 font-bold">{detail.product?.description || `Product #${detail.id}`}</td>
-                                                <td className="p-2 border-r border-gray-300 font-mono">{detail.product?.product_code || "N/A"}</td>
-                                                <td className="p-2 border-r border-gray-300 text-center">{detail.product?.uom}</td>
-                                                <td className="p-2 border-r border-gray-300 text-right font-bold">{detail.quantity}</td>
-                                                <td className="p-2 border-r border-gray-300 text-right">₱{Number(detail.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                                                <td className="p-2 text-right font-black">₱{Number(detail.net_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                                            </tr>
-                                        ))}
+                                        {invoiceDetails.map((detail, idx) => {
+                                            const lineNet = Number(detail.net_amount || 0);
+                                            const lineVat = detail.tax_amount !== undefined && detail.tax_amount !== null
+                                                ? Number(detail.tax_amount)
+                                                : (vatAmount > 0 && lineNet > 0 ? (lineNet / 1.12) * 0.12 : 0);
+                                            const lineDiscount = Number(detail.discount_amount || 0);
+
+                                            return (
+                                                <tr key={idx} className="border-b border-gray-300">
+                                                    <td className="p-2 border-r border-gray-300 font-mono text-[10px]">{idx + 1}</td>
+                                                    <td className="p-2 border-r border-gray-300 font-bold">{detail.product?.description || `Product #${detail.id}`}</td>
+                                                    <td className="p-2 border-r border-gray-300 font-mono">{detail.product?.product_code || "N/A"}</td>
+                                                    <td className="p-2 border-r border-gray-300 text-center">{detail.product?.uom}</td>
+                                                    <td className="p-2 border-r border-gray-300 text-right font-bold">{detail.quantity}</td>
+                                                    <td className="p-2 border-r border-gray-300 text-right">{formatCurrency(detail.unit_price)}</td>
+                                                    <td className="p-2 border-r border-gray-300 text-center">{detail.discount_type ? String(detail.discount_type) : "—"}</td>
+                                                    <td className="p-2 border-r border-gray-300 text-right">{lineDiscount > 0 ? `-${formatCurrency(lineDiscount)}` : "—"}</td>
+                                                    <td className="p-2 border-r border-gray-300 text-right">{lineVat > 0 ? formatCurrency(lineVat) : "—"}</td>
+                                                    <td className="p-2 text-right font-black">{formatCurrency(detail.net_amount)}</td>
+                                                </tr>
+                                            );
+                                        })}
                                     </tbody>
                                 </table>
                             </div>
@@ -700,23 +765,23 @@ export default function SalesInvoiceDetailModal({
                                 <div className="w-72 border border-gray-400 text-xs p-3 space-y-1 bg-gray-50">
                                     <div className="flex justify-between">
                                         <span className="font-semibold">Gross Subtotal:</span>
-                                        <span>₱{grossAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                        <span>{formatCurrency(grossAmount)}</span>
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="font-semibold">VAT Amount (12%):</span>
-                                        <span>₱{vatAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                        <span>{formatCurrency(vatAmount)}</span>
                                     </div>
                                     <div className="flex justify-between border-t border-gray-400 pt-1 font-black text-sm">
                                         <span>Net Billed Total:</span>
-                                        <span>₱{netAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                        <span>{formatCurrency(netAmount)}</span>
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="font-semibold">Payments Received:</span>
-                                        <span>₱{paidAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                        <span>{formatCurrency(paidAmount)}</span>
                                     </div>
                                     <div className="flex justify-between border-t border-gray-400 pt-1 font-black text-sm">
                                         <span>Balance Due:</span>
-                                        <span>₱{remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                        <span>{formatCurrency(remainingBalance)}</span>
                                     </div>
                                 </div>
                             </div>

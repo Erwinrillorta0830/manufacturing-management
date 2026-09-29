@@ -293,14 +293,14 @@ async function getRouteJobOrderContext(taskId: number): Promise<RouteJobOrderCon
 
 async function assertProductionTargetNotReached(jobOrderId: number, jobOrderNo: string): Promise<void> {
     const [jobOrderPayload, yieldPayload] = await Promise.all([
-        directusRequest<{ data?: { target_quantity?: unknown; quantity?: unknown; actual_quantity_produced?: unknown; completed_quantity?: unknown } }>(
-            `/items/manufacturing_job_orders/${jobOrderId}?fields=job_order_id,target_quantity,quantity,actual_quantity_produced,completed_quantity`
+        directusRequest<{ data?: { target_quantity?: unknown; actual_quantity_produced?: unknown; completed_quantity?: unknown; rejected_quantity?: unknown } }>(
+            `/items/manufacturing_job_orders/${jobOrderId}?fields=job_order_id,target_quantity,completed_quantity,rejected_quantity,actual_quantity_produced`
         ),
         directusRequest<{ data?: Array<{ yield_quantity?: unknown; commit_status?: unknown }> }>(
             `/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${jobOrderId}&fields=yield_quantity,commit_status&limit=-1`
         )
     ]);
-    const target = Number(jobOrderPayload?.data?.target_quantity ?? jobOrderPayload?.data?.quantity ?? 0);
+    const target = Number(jobOrderPayload?.data?.target_quantity ?? 0);
     if (!jobOrderPayload?.data || !Array.isArray(yieldPayload?.data)) {
         throw new DirectusRouteOperatorError(502, "The Job Order production target could not be verified.", "PRODUCTION_TARGET_UNAVAILABLE");
     }

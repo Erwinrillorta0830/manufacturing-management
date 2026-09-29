@@ -501,7 +501,7 @@ export async function recordWipTopUp(request: Request): Promise<NextResponse> {
     }
 
     const jobOrder = await directusRequest<any>(
-        `/items/manufacturing_job_orders/${input.jobOrderId}?fields=job_order_id,job_order_no,status,branch_id,product_id,primary_work_center_id,target_quantity,quantity,actual_quantity_produced,completed_quantity`,
+        `/items/manufacturing_job_orders/${input.jobOrderId}?fields=job_order_id,job_order_no,status,branch_id,product_id,primary_work_center_id,target_quantity,completed_quantity,rejected_quantity,actual_quantity_produced`,
         `Load Job Order ${input.jobOrderId}`
     );
     const status = normalizeJobOrderStatus(jobOrder?.status);
@@ -515,7 +515,7 @@ export async function recordWipTopUp(request: Request): Promise<NextResponse> {
         `/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${input.jobOrderId}&fields=yield_quantity,commit_status&limit=-1`,
         `Check production target for Job Order ${input.jobOrderId}`
     );
-    const targetQuantity = Number(jobOrder?.target_quantity ?? jobOrder?.quantity ?? 0);
+    const targetQuantity = Number(jobOrder?.target_quantity ?? 0);
     if (hasReachedProductionTarget(targetQuantity, committedGoodOutputOrAggregate(
         yieldRows,
         goodOutputAggregateFallback(jobOrder.actual_quantity_produced, jobOrder.completed_quantity)
