@@ -79,8 +79,9 @@ export function usePurchaseOrderApproval(
         }
     }, [isDetailMode, stage]);
 
-    const loadDetail = useCallback(async () => {
-        if (!isDetailMode || !purchaseOrderId) return;
+    const loadDetail = useCallback(async (orderId?: number) => {
+        const targetId = orderId ?? purchaseOrderId;
+        if (!targetId) return;
 
         detailController.current?.abort();
         const controller = new AbortController();
@@ -91,7 +92,7 @@ export function usePurchaseOrderApproval(
         setSelectedShipmentLines([]);
         setApprovalDetail(null);
         try {
-            const response = await fetchFinanceApprovalDetail(purchaseOrderId, controller.signal);
+            const response = await fetchFinanceApprovalDetail(targetId, controller.signal);
             if (controller.signal.aborted) return;
             setSelectedShipment(response.data.shipment);
             setSelectedShipmentLines(response.data.lineItems);
@@ -104,7 +105,7 @@ export function usePurchaseOrderApproval(
         } finally {
             if (!controller.signal.aborted) setDetailLoading(false);
         }
-    }, [isDetailMode, purchaseOrderId]);
+    }, [purchaseOrderId]);
 
     useEffect(() => {
         if (!isDetailMode) return;

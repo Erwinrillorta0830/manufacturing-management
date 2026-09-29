@@ -293,14 +293,16 @@ export async function fetchQuarantineDisposition(id: number): Promise<Quarantine
 
 async function fetchSourceReceivingVariants(id: number): Promise<SourceReceiving[]> {
     const receiving = await directusItem(
-        `/items/purchase_order_receiving/${id}?fields=purchase_order_product_id,purchase_order_id,purchase_order_line_id,product_id,branch_id,mm_lot_id,lot_id,batch_no,expiry_date,received_quantity,quantity_rejected,rejected_lot_id,rejected_batch_id,rejection_reason,receipt_no,qa_status`,
+        `/items/purchase_order_receiving/${id}?fields=purchase_order_product_id,purchase_order_id,purchase_order_line_id,product_id,branch_id,mm_lot_id,batch_no,expiry_date,received_quantity,quantity_allocated,rejection_reason,receipt_no,qa_status`,
         "The source QA receiving record could not be found."
     );
     const sourceReceivingId = relationId(receiving.purchase_order_product_id, "purchase_order_product_id") || id;
     const purchaseOrderId = relationId(receiving.purchase_order_id, "purchase_order_id");
     let purchaseOrderLineId = relationId(receiving.purchase_order_line_id, "purchase_order_product_id");
     const productId = relationId(receiving.product_id, "product_id");
-    const rejectedQuantity = finiteQuantity(receiving.quantity_rejected);
+    const qaStatus = String(receiving.qa_status || "").toUpperCase();
+    const isRejectedStatus = qaStatus === "DAMAGED" || qaStatus === "QUARANTINED" || qaStatus === "EXPIRED";
+    const rejectedQuantity = isRejectedStatus ? finiteQuantity(receiving.quantity_allocated || receiving.received_quantity) : 0;
     if (!purchaseOrderId || !productId || rejectedQuantity <= 0) {
         throw new QuarantineDispositionError(422, "The source receiving record does not contain a rejected quarantine quantity.");
     }
@@ -457,7 +459,7 @@ function mapStock(source: SourceReceiving, availableQuantity: number): Quarantin
 export async function listQuarantineStock(): Promise<{ stock: QuarantineStock[]; dispositions: QuarantineDisposition[] }> {
     const [receivingRows, allDispositions] = await Promise.all([
         directusRows(
-            "/items/purchase_order_receiving?filter[quantity_rejected][_gt]=0&filter[is_reverted][_eq]=0&fields=purchase_order_product_id&limit=-1",
+            "/items/purchase_order_receiving?filter[qa_status][_in]=DAMAGED,QUARANTINED,EXPIRED&filter[is_reverted][_eq]=0&fields=purchase_order_product_id&limit=-1",
             "Unable to load rejected QA receiving records."
         ),
         fetchDispositions()

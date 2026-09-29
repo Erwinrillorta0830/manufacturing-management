@@ -243,7 +243,6 @@ export function usePurchaseOrder({ mode = "queue", shipmentId, onCreated }: UseP
         detailController.current = controller;
         setDetailLoading(true);
         setDetailError(null);
-        setSelectedShipment(null);
         setSelectedShipmentLines([]);
 
         try {
@@ -261,6 +260,17 @@ export function usePurchaseOrder({ mode = "queue", shipmentId, onCreated }: UseP
             if (!controller.signal.aborted) setDetailLoading(false);
         }
     }, [shipmentId]);
+
+    const handleSelectShipment = useCallback((shipment: IncomingShipment | null) => {
+        if (!shipment) {
+            setSelectedShipment(null);
+            setSelectedShipmentLines([]);
+            setDetailError(null);
+            return;
+        }
+        setSelectedShipment(shipment);
+        void loadDetail(shipment.shipment_id);
+    }, [loadDetail]);
 
     useEffect(() => {
         if (isDetailMode) {
@@ -529,7 +539,7 @@ export function usePurchaseOrder({ mode = "queue", shipmentId, onCreated }: UseP
         loading, listLoading, detailLoading, listError, detailError, referenceError,
         suppliers, shipments, rawMaterials, supplierLinkedProducts, paymentModes, paymentTerms, priceTypeRules, jobOrders,
         listMeta, loadShipments, retryList: () => loadShipments(lastQuery.current), retryDetail: () => loadDetail(),
-        selectedShipment, setSelectedShipment, selectedShipmentLines,
+        selectedShipment, setSelectedShipment: handleSelectShipment, selectedShipmentLines,
         isShipmentModalOpen, setIsShipmentModalOpen,
         shipmentForm, setShipmentForm, shipmentLinesForm, setShipmentLinesForm,
         handleCreateShipment, handleEditShipment, handleCancelRejectedShipment, handleUpdateShipmentStatus

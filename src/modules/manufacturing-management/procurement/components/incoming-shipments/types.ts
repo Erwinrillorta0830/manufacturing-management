@@ -1,5 +1,6 @@
 import React from "react";
-import { IncomingShipment, ShipmentLineItem, Supplier, RawMaterial, LinkedProduct, PurchaseOrderPaymentMode, PurchaseOrderPriceTypeRule } from "../../types";
+import type { IncomingShipment, ShipmentLineItem, Supplier, RawMaterial, LinkedProduct, PurchaseOrderPaymentMode, PurchaseOrderPriceTypeRule } from "../../types";
+export type { IncomingShipment, ShipmentLineItem, Supplier, RawMaterial, LinkedProduct, PurchaseOrderPaymentMode, PurchaseOrderPriceTypeRule };
 import type { PurchaseOrderListQuery } from "../../../purchase-order/types";
 import type { PurchaseOrderDiscountSource } from "../../../purchase-order/types";
 import { normalizeProductRelationId } from "../../product-relation";

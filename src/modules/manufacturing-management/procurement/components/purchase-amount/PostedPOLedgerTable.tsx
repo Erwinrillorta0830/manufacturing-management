@@ -11,6 +11,7 @@ import {
     DollarSign,
     Eye,
     FileText,
+    History,
     Layers,
     Loader2,
     Printer,
@@ -26,6 +27,7 @@ import {
     fetchPurchaseOrderArchiveStatus,
     type PurchaseOrderArchiveStatus
 } from "../../../purchase-order/services/purchase-order-print-api";
+import { formatPhtDateTime } from "../../../approval/pht-date-time";
 import type { POLineItem, PurchaseAmountLandingRow, PurchaseOrderOption, ChartOfAccount } from "./types";
 import { PROCUREMENT_MONEY_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 
@@ -42,6 +44,23 @@ interface AuditPurchaseOrder extends PurchaseOrderOption {
     total_amount?: number | string;
     total_php_value?: number | string;
     total_foreign_currency?: number | string;
+    date_encoded?: string | null;
+    creator_name?: string | null;
+    remark?: string | null;
+}
+
+export interface AuditHistoryEntry {
+    history_id: number;
+    action: string;
+    approval_stage: string;
+    actor_id: number;
+    actor_name: string;
+    remarks: string;
+    from_inventory_status: number | null;
+    to_inventory_status: number | null;
+    revision_before: number;
+    revision_after: number;
+    created_at: string;
 }
 
 interface PODetails {
@@ -49,6 +68,7 @@ interface PODetails {
     importExpenses?: AuditExpense[];
     chartOfAccounts?: ChartOfAccount[];
     lineItems?: POLineItem[];
+    approvalHistory?: AuditHistoryEntry[];
     landedCost?: {
         computation?: {
             allocation_rule?: string | null;
@@ -262,9 +282,10 @@ export default function PostedPOLedgerTable({
 interface PurchaseAmountAuditViewProps {
     purchaseOrderId: number;
     postingSuccessPurchaseOrder?: string | null;
+    onBack?: () => void;
 }
 
-export function PurchaseAmountAuditView({ purchaseOrderId, postingSuccessPurchaseOrder }: PurchaseAmountAuditViewProps) {
+export function PurchaseAmountAuditView({ purchaseOrderId, postingSuccessPurchaseOrder, onBack }: PurchaseAmountAuditViewProps) {
     const router = useRouter();
     const successToastShown = useRef(false);
     const [loadingDetails, setLoadingDetails] = useState(true);
@@ -328,7 +349,11 @@ export function PurchaseAmountAuditView({ purchaseOrderId, postingSuccessPurchas
                 <div><h2 className="flex items-center gap-2 text-lg font-bold"><ShieldCheck className="h-5 w-5 text-emerald-600" />Posted Audit Ledger: {purchaseOrderNo}</h2><p className="text-xs text-muted-foreground">Read-only posting logs, GL mappings, landed-cost adjustments, and valuation variance.</p></div>
                 <div className="flex flex-wrap items-center gap-2">
                     <button type="button" onClick={() => void handlePrintLandedCost()} disabled={printLoading} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-primary/30 bg-primary/5 px-2.5 text-[10px] font-bold text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50">{printLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}{printLoading ? "Preparing..." : "Print landed cost"}</button>
-                    <Link href="/mm/purchase-amount" aria-label="Back to Purchase Amount landing page" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-blue-600 bg-blue-600 px-2.5 text-[10px] font-bold text-white shadow-sm transition-colors hover:border-blue-700 hover:bg-blue-700 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"><ArrowLeft className="h-3.5 w-3.5" />Back to Purchase Amount</Link>
+                    {onBack ? (
+                        <button type="button" onClick={onBack} aria-label="Back to Purchase Amount landing page" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-blue-600 bg-blue-600 px-2.5 text-[10px] font-bold text-white shadow-sm transition-colors hover:border-blue-700 hover:bg-blue-700 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"><ArrowLeft className="h-3.5 w-3.5" />Back to Purchase Amount</button>
+                    ) : (
+                        <Link href="/mm/purchase-amount" aria-label="Back to Purchase Amount landing page" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-blue-600 bg-blue-600 px-2.5 text-[10px] font-bold text-white shadow-sm transition-colors hover:border-blue-700 hover:bg-blue-700 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"><ArrowLeft className="h-3.5 w-3.5" />Back to Purchase Amount</Link>
+                    )}
                 </div>
             </div>
 
@@ -403,6 +428,70 @@ export function PurchaseAmountAuditView({ purchaseOrderId, postingSuccessPurchas
                             </div>
 
                             <LandedCostAuditSummary purchaseOrderId={purchaseOrderId} compact />
+
+                            {/* Audit and Workflow History - Displays when PO is Posted & Capitalized */}
+                            <div className="space-y-2">
+                                <h4 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                                    <History className="h-3.5 w-3.5 text-primary" />
+                                    Audit and Workflow History
+                                </h4>
+                                <div className="overflow-hidden rounded-xl border bg-background text-xs">
+                                    <table className="w-full text-left">
+                                        <thead className="border-b bg-muted/50 text-[10px] font-bold uppercase text-muted-foreground">
+                                            <tr>
+                                                <th className="p-2.5">Action &amp; Stage</th>
+                                                <th className="p-2.5">User / Actor</th>
+                                                <th className="p-2.5">Remarks</th>
+                                                <th className="p-2.5 text-right">Date &amp; Time (PHT)</th>
+                                                <th className="p-2.5 text-right">Revision</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y">
+                                            {/* Initial PO Encoding Entry */}
+                                            <tr className="bg-muted/10">
+                                                <td className="p-2.5">
+                                                    <span className="font-semibold text-foreground">Purchase Order Encoded</span>
+                                                    <span className="ml-1 text-[11px] text-muted-foreground">(Procurement)</span>
+                                                </td>
+                                                <td className="p-2.5 font-medium text-foreground">
+                                                    {purchaseOrder?.creator_name || "Preparer"}
+                                                </td>
+                                                <td className="p-2.5 text-muted-foreground">
+                                                    {purchaseOrder?.remark || "Initial purchase-order creation and encoding."}
+                                                </td>
+                                                <td className="p-2.5 text-right font-mono text-[11px] text-muted-foreground tabular-nums">
+                                                    {formatPhtDateTime(purchaseOrder?.date_encoded)}
+                                                </td>
+                                                <td className="p-2.5 text-right font-mono text-[11px] text-muted-foreground">
+                                                    Initial
+                                                </td>
+                                            </tr>
+
+                                            {/* Workflow Approval History Entries */}
+                                            {poDetails.approvalHistory?.map((entry, index) => (
+                                                <tr key={`${entry.history_id}-${index}`}>
+                                                    <td className="p-2.5">
+                                                        <span className="font-semibold text-foreground">{entry.action}</span>
+                                                        <span className="ml-1 text-[11px] text-muted-foreground">({entry.approval_stage})</span>
+                                                    </td>
+                                                    <td className="p-2.5 font-medium text-foreground">
+                                                        {entry.actor_name || "Unknown user"}
+                                                    </td>
+                                                    <td className="p-2.5 text-muted-foreground">
+                                                        {entry.remarks || "—"}
+                                                    </td>
+                                                    <td className="p-2.5 text-right font-mono text-[11px] text-muted-foreground tabular-nums">
+                                                        {formatPhtDateTime(entry.created_at)}
+                                                    </td>
+                                                    <td className="p-2.5 text-right font-mono text-[11px] text-muted-foreground">
+                                                        Revision {entry.revision_before} to {entry.revision_after}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
                         </div>
                     ) : <div className="p-8 text-center text-xs font-bold text-red-500">Failed to load audit ledger details for this purchase order.</div>}
             </div>

@@ -4,6 +4,7 @@ import { IncomingShipmentsProps } from "./incoming-shipments/types";
 import { ShipmentListSidebar } from "./incoming-shipments/ShipmentListSidebar";
 import { ShipmentDetailView } from "./incoming-shipments/ShipmentDetailView";
 import { ShipmentFormModal } from "./incoming-shipments/ShipmentFormModal";
+import PurchaseOrderDetailModal from "./incoming-shipments/PurchaseOrderDetailModal";
 import { useIncomingShipmentsForm } from "../hooks/useIncomingShipmentsForm";
 import { Globe, MapPin, Building2 } from "lucide-react";
 import { toast } from "sonner";
@@ -49,8 +50,8 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
         priceTypeRules = []
     } = props;
 
-    const onServerQueryChange = serverList?.onQueryChange;
     const pathname = usePathname();
+    const onServerQueryChange = serverList?.onQueryChange;
     const searchParams = useSearchParams();
     const isQueueMode = displayMode === "queue";
     const isDetailMode = displayMode === "detail";
@@ -210,23 +211,6 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
         ? Boolean(search.trim() || supplierFilter || inventoryStatusFilter || paymentStatusFilter || startDate || endDate)
         : Boolean(search.trim() || statusFilter !== "All");
 
-    const queueReturnHref = useMemo(() => {
-        const params = new URLSearchParams();
-        if (search.trim()) params.set("search", search.trim());
-        if (supplierFilter) params.set("supplierId", supplierFilter);
-        if (inventoryStatusFilter) params.set("inventoryStatus", inventoryStatusFilter);
-        if (paymentStatusFilter) params.set("paymentStatus", paymentStatusFilter);
-        if (startDate) params.set("startDate", startDate);
-        if (endDate) params.set("endDate", endDate);
-        params.set("page", String(currentPage));
-        params.set("limit", String(itemsPerPage));
-        return `${pathname}${params.toString() ? `?${params.toString()}` : ""}`;
-    }, [currentPage, endDate, inventoryStatusFilter, itemsPerPage, pathname, paymentStatusFilter, search, startDate, supplierFilter]);
-
-    const shipmentDetailHref = (shipmentId: number) => (
-        `/mm/incoming-shipments/${shipmentId}?returnTo=${encodeURIComponent(queueReturnHref)}`
-    );
-
     const handlePrintPurchaseOrder = async () => {
         if (!activeShipment) return;
         try {
@@ -338,7 +322,7 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                     activeShipment={activeShipment}
                     setSelectedShipment={setSelectedShipment}
                     isSupplierForeign={isSupplierForeign}
-                    getShipmentHref={isQueueMode ? shipmentDetailHref : undefined}
+                    getShipmentHref={undefined}
                     createHref={isQueueMode && canonicalDrafting ? "/mm/incoming-shipments/create" : undefined}
                     onOpenCreateModal={() => { setIsOverridden(false); setIsModalOpen(true); }}
                 />
@@ -364,6 +348,30 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                     referenceError={isDetailMode ? referenceError : null}
                     onRetryDetail={isDetailMode ? onRetryDetail : undefined}
                     backHref={isDetailMode ? backHref : undefined}
+                />
+            )}
+
+            {isQueueMode && (
+                <PurchaseOrderDetailModal
+                    isOpen={Boolean(activeShipment)}
+                    onClose={() => setSelectedShipment(null)}
+                    activeShipment={activeShipment}
+                    loading={loading}
+                    detailLoading={detailLoading}
+                    canonicalDrafting={canonicalDrafting}
+                    paymentTerms={paymentTerms}
+                    paymentModes={paymentModes}
+                    suppliers={suppliers}
+                    branches={dynamicBranches}
+                    isSupplierForeign={isSupplierForeign}
+                    handleStartEdit={handleStartEdit}
+                    onPrintPurchaseOrder={handlePrintPurchaseOrder}
+                    printLoading={printLoading}
+                    onCancelRejectedPurchaseOrder={onCancelRejectedPurchaseOrder}
+                    lines={lines}
+                    detailError={detailError}
+                    referenceError={referenceError}
+                    onRetryDetail={onRetryDetail}
                 />
             )}
 

@@ -648,7 +648,19 @@ export async function loadLandedCostSnapshot(
         const product = products.get(productId) || {};
         const weight = resolveProductWeightBreakdown(product, { requireComplete: categoryType === "PACKAGING" });
         const lineReceipts = activeReceivingRows.filter(row => resolvePurchaseOrderLineId(row, lineRows) === key);
-        const quantity = lineReceipts.reduce((sum, row) => Math.max(0, sum + asNumber(row.received_quantity) - asNumber(row.quantity_rejected)), 0);
+        const quantity = lineReceipts.reduce((sum, row) => {
+            const qaStatus = String(row.qa_status || "").toUpperCase();
+            if (qaStatus === "GOOD") {
+                const allocated = asNumber(row.quantity_allocated ?? row.received_quantity);
+                return sum + allocated;
+            }
+            if (qaStatus === "DAMAGED" || qaStatus === "QUARANTINED" || qaStatus === "EXPIRED") {
+                return sum;
+            }
+            const received = asNumber(row.received_quantity);
+            const rejected = asNumber(row.quantity_rejected ?? row.quantity_allocated);
+            return sum + Math.max(0, received - rejected);
+        }, 0);
         if (quantity <= 0) continue;
         const pricing = resolveLandedCostLinePricing({ purchaseOrderLine: line, receipts: lineReceipts, currency });
         const transactionUnitPrice = pricing.transactionUnitPrice;
@@ -1466,13 +1478,11 @@ export async function finalizeLandedCost(input: {
                 if (!receivingId) continue;
                 receivingBefore.set(receivingId, {
                     allocated_expense_php: receiving.allocated_expense_php,
-                    final_landed_unit_cost: receiving.final_landed_unit_cost,
-                    is_posted_amounts: receiving.is_posted_amounts
+                    final_landed_unit_cost: receiving.final_landed_unit_cost
                 });
                 await patchRow("purchase_order_receiving", receivingId, {
                     allocated_expense_php: normalizeProcurementMoney(line.addedUnitCost),
-                    final_landed_unit_cost: normalizeProcurementMoney(line.finalLandedUnitCost),
-                    is_posted_amounts: 1
+                    final_landed_unit_cost: normalizeProcurementMoney(line.finalLandedUnitCost)
                 });
                 rollback.push(() => patchRow("purchase_order_receiving", receivingId, receivingBefore.get(receivingId) || {}).then(() => undefined));
             }

@@ -199,6 +199,7 @@ export function usePurchaseAmountPosting(
     initialPurchaseOrderId?: number | null
 ) {
     const [loading, setLoading] = useState(true);
+    const [detailsLoading, setDetailsLoading] = useState(false);
     const [ordersLoaded, setOrdersLoaded] = useState(false);
     const [posting, setPosting] = useState(false);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -310,11 +311,12 @@ export function usePurchaseAmountPosting(
             pricingFingerprintRef.current = null;
             setLastSyncedAt(null);
             setChangedLineIds([]);
+            setDetailsLoading(false);
             return;
         }
 
         let active = true;
-        setLoading(true);
+        setDetailsLoading(true);
         setErrorMessage(null);
         setSuccessMessage(null);
         setAllocationRule("");
@@ -382,7 +384,7 @@ export function usePurchaseAmountPosting(
                 if (active) setErrorMessage((error as Error).message || "Failed to load PO amount posting details.");
             })
             .finally(() => {
-                if (active) setLoading(false);
+                if (active) setDetailsLoading(false);
             });
 
         return () => {
@@ -689,6 +691,7 @@ export function usePurchaseAmountPosting(
 
     return {
         loading,
+        detailsLoading,
         ordersLoaded,
         posting,
         successMessage,

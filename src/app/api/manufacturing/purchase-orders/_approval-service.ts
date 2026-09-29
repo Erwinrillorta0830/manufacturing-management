@@ -518,7 +518,7 @@ async function submitPurchaseOrderApprovalUnlocked(
         ? "Revision"
         : command.action === "cancel"
             ? "Cancelled"
-            : "FinanceApproved";
+            : "Finance Approved";
     const historyResponse = await procurementDirectusFetch("/items/purchase_order_approval_history", {
         method: "POST",
         body: JSON.stringify({

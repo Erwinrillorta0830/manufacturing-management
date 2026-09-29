@@ -49,11 +49,11 @@ async function loadLines(shipmentId: number) {
 
 async function loadReceiving(shipmentId: number) {
     let { response, body } = await directusJson(
-        `/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,received_quantity,quantity_rejected,is_replacement&limit=-1`
+        `/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,received_quantity,quantity_allocated,qa_status,is_replacement&limit=-1`
     );
     if (!response.ok) {
         ({ response, body } = await directusJson(
-            `/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,received_quantity,quantity_rejected,is_replacement&limit=-1`
+            `/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,received_quantity,quantity_allocated,qa_status,is_replacement&limit=-1`
         ));
     }
     if (!response.ok) throw new ForceReceivedError("Unable to load receiving history.", 503);
@@ -62,7 +62,7 @@ async function loadReceiving(shipmentId: number) {
 
 async function loadForceReceivedHistory(shipmentId: number) {
     const { response, body } = await directusJson(
-        `/items/purchase_order_approval_history?filter[purchase_order_id][_eq]=${shipmentId}&filter[action][_eq]=${FORCE_RECEIVED_ACTION}&fields=history_id,action,remarks,revision_snapshot,actor_id,created_at&sort=-history_id,-created_at&limit=1`
+        `/items/purchase_order_approval_history?filter[purchase_order_id][_eq]=${shipmentId}&filter[action][_in]=Force Received,ForceReceived&fields=history_id,action,remarks,revision_snapshot,actor_id,created_at&sort=-history_id,-created_at&limit=1`
     );
     if (!response.ok) throw new ForceReceivedError("Unable to load force-received history.", 503);
     return rows(body)[0] || null;

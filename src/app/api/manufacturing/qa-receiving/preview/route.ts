@@ -272,8 +272,8 @@ async function loadConfiguredBadStockBranch(source: DirectusBranch): Promise<Dir
 }
 
 async function loadReceivingHistoryResponse(shipmentId: number): Promise<Response> {
-    const withLinePath = `/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,received_quantity,quantity_rejected,is_replacement,receiving_method,isPosted&limit=-1`;
-    const fallbackPath = `/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,received_quantity,quantity_rejected,is_replacement,receiving_method,isPosted&limit=-1`;
+    const withLinePath = `/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,received_quantity,quantity_allocated,qa_status,is_replacement,receiving_method,isPosted&limit=-1`;
+    const fallbackPath = `/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,received_quantity,quantity_allocated,qa_status,is_replacement,receiving_method,isPosted&limit=-1`;
 
     try {
         const response = await procurementDirectusFetch(withLinePath);
