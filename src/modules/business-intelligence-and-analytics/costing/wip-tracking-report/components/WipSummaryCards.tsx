@@ -83,13 +83,13 @@ export function WipSummaryCards({
         },
         {
             title: "Avg Output Yield",
-            value: `${summary.average_quantity_progress_percent ?? summary.average_stage_progress_percent}%`,
+            value: `${summary.average_material_yield_percent ?? summary.average_quantity_progress_percent ?? 100}%`,
             subtitle: "Average production yield",
             icon: TrendingUp,
             iconColor: "text-teal-500 dark:text-teal-400",
             bgColor: "bg-teal-500/10",
             showProgress: true,
-            progressPercent: Math.min(100, summary.average_quantity_progress_percent ?? summary.average_stage_progress_percent)
+            progressPercent: Math.min(100, summary.average_material_yield_percent ?? summary.average_quantity_progress_percent ?? 100)
         },
         {
             title: "Delayed / At Risk",
@@ -102,12 +102,12 @@ export function WipSummaryCards({
             onClick: onDelayedToggle
         },
         {
-            title: "Floor WIP Volume",
-            value: summary.total_wip_materials_volume.toLocaleString(),
-            subtitle: "Raw materials in WIP",
+            title: "Floor WIP Value",
+            value: `₱${(summary.total_floor_wip_value || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`,
+            subtitle: "Total monetary WIP value",
             icon: PackageSearch,
-            iconColor: "text-cyan-500 dark:text-cyan-400",
-            bgColor: "bg-cyan-500/10"
+            iconColor: "text-emerald-500 dark:text-emerald-400",
+            bgColor: "bg-emerald-500/10"
         }
     ];
 

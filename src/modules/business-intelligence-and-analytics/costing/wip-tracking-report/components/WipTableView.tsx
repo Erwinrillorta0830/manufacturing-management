@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { WipJobOrder } from "../types";
+import { WipJobOrder, WipDetailTab } from "../types";
 import { JOB_ORDER_STATUS } from "../job-order-status";
 
 interface WipTableViewProps {
@@ -21,7 +21,7 @@ interface WipTableViewProps {
     pageSize: number;
     onPageChange: (page: number) => void;
     onPageSizeChange: (size: number) => void;
-    onOpenDetail: (job: WipJobOrder, tab?: "stages" | "materials") => void;
+    onOpenDetail: (job: WipJobOrder, tab?: WipDetailTab) => void;
 }
 
 export function WipTableView({
@@ -110,27 +110,31 @@ export function WipTableView({
                     <table className="w-full text-left text-xs border-collapse">
                         <thead className="sticky top-0 z-20 bg-muted/95 backdrop-blur-xs border-b border-border/80 shadow-xs">
                             <tr className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                                <th className="py-3 px-3.5 w-[220px] bg-muted/95 backdrop-blur-xs">Job Order & Location</th>
-                                <th className="py-3 px-3.5 w-[260px] bg-muted/95 backdrop-blur-xs">Product</th>
-                                <th className="py-3 px-3 w-[200px] bg-muted/95 backdrop-blur-xs">Status & Timeline</th>
-                                <th className="py-3 px-3 w-[280px] bg-muted/95 backdrop-blur-xs">Production Output & Yield</th>
-                                <th className="py-3 px-3.5 w-[110px] text-right bg-muted/95 backdrop-blur-xs">Actions</th>
+                                <th className="py-3 px-3.5 w-[190px] bg-muted/95 backdrop-blur-xs">Run & Branch</th>
+                                <th className="py-3 px-3.5 w-[210px] bg-muted/95 backdrop-blur-xs">Product</th>
+                                <th className="py-3 px-3 w-[160px] bg-muted/95 backdrop-blur-xs">Status & Schedule</th>
+                                <th className="py-3 px-3 w-[160px] bg-muted/95 backdrop-blur-xs">Current WIP</th>
+                                <th className="py-3 px-3 w-[100px] text-center bg-muted/95 backdrop-blur-xs">Residence (h)</th>
+                                <th className="py-3 px-3 w-[110px] bg-muted/95 backdrop-blur-xs">WIP Value</th>
+                                <th className="py-3 px-3 w-[180px] bg-muted/95 backdrop-blur-xs">Rate Attainment</th>
+                                <th className="py-3 px-3 w-[190px] bg-muted/95 backdrop-blur-xs">Output & Yield</th>
+                                <th className="py-3 px-3.5 w-[90px] text-right bg-muted/95 backdrop-blur-xs">Actions</th>
                             </tr>
                         </thead>
 
                         <tbody className="divide-y divide-border/50 font-sans">
                             {isLoading ? (
                                 <tr>
-                                    <td colSpan={5} className="py-16 text-center text-muted-foreground">
+                                    <td colSpan={9} className="py-16 text-center text-muted-foreground">
                                         <div className="flex flex-col items-center justify-center gap-2">
                                             <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                                            <span className="text-xs">Loading active WIP jobs and stage queues...</span>
+                                            <span className="text-xs">Loading active WIP jobs and continuous line queues...</span>
                                         </div>
                                     </td>
                                 </tr>
                             ) : paginatedJobs.length === 0 ? (
                                 <tr>
-                                    <td colSpan={5} className="py-14 text-center text-muted-foreground">
+                                    <td colSpan={9} className="py-14 text-center text-muted-foreground">
                                         <div className="flex flex-col items-center justify-center gap-1.5">
                                             <Layers className="h-8 w-8 text-muted-foreground/50 mb-1" />
                                             <p className="text-sm font-semibold text-foreground">No active WIP orders found</p>
@@ -153,7 +157,7 @@ export function WipTableView({
                                             onClick={() => onOpenDetail(job, "stages")}
                                             className="hover:bg-muted/30 transition-colors group cursor-pointer"
                                         >
-                                            {/* 1. Job Order & Location */}
+                                            {/* 1. Run & Branch */}
                                             <td className="py-3 px-3.5 align-top">
                                                 <div className="space-y-0.5">
                                                     <span className="font-mono text-xs font-bold text-foreground block group-hover:text-primary transition-colors">
@@ -180,7 +184,7 @@ export function WipTableView({
                                                 </div>
                                             </td>
 
-                                            {/* 3. Status & Timeline */}
+                                            {/* 3. Status & Schedule */}
                                             <td className="py-3 px-3 align-top">
                                                 <div className="space-y-1">
                                                     <div>{renderStatusBadge(job.status)}</div>
@@ -200,43 +204,116 @@ export function WipTableView({
                                                 </div>
                                             </td>
 
-                                            {/* 4. Production Output & Yield */}
-                                            <td className="py-3 px-3 align-bottom">
-                                                <div className="space-y-1.5">
-                                                    <div className="font-mono text-xs">
-                                                        <strong className="font-bold text-foreground">
-                                                            {job.actual_quantity_produced.toLocaleString()}
-                                                        </strong>
-                                                        <span className="text-muted-foreground"> / {job.target_quantity.toLocaleString()} {job.uom_name}</span>
-                                                        <div className="flex items-center justify-between text-[10px] font-mono font-medium mt-0.5">
-                                                            <span className="text-muted-foreground">Output Yield</span>
-                                                            {qtyProgress > 100 ? (
-                                                                <span className="font-bold text-amber-600 dark:text-amber-400">
-                                                                    {qtyProgress}% (Over-run)
-                                                                </span>
-                                                            ) : (
-                                                                <span className="font-bold text-foreground">
-                                                                    {qtyProgress}%
-                                                                </span>
-                                                            )}
-                                                        </div>
+                                            {/* 4. Current WIP Level */}
+                                            <td className="py-3 px-3 align-top">
+                                                <div className="space-y-1">
+                                                    <div className="font-mono text-xs font-semibold text-foreground">
+                                                        {job.current_wip_quantity.toLocaleString()} {job.uom_name}
                                                     </div>
                                                     <div className="space-y-1">
-                                                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                                                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted/80 relative">
                                                             <div
                                                                 className={`h-full rounded-full transition-all duration-300 ${
-                                                                    qtyProgress > 100
+                                                                    job.wip_level_status === "in_range"
+                                                                        ? "bg-emerald-500"
+                                                                        : job.wip_level_status === "below_target"
                                                                         ? "bg-amber-500"
-                                                                        : "bg-blue-600 dark:bg-blue-400"
+                                                                        : "bg-rose-500"
                                                                 }`}
-                                                                style={{ width: `${Math.min(100, Math.max(0, qtyProgress))}%` }}
+                                                                style={{
+                                                                    width: `${Math.min(100, Math.max(5, (job.current_wip_quantity / (job.target_quantity || 1)) * 100))}%`
+                                                                }}
                                                             />
+                                                        </div>
+                                                        <div className="text-[10px] font-medium">
+                                                            {job.wip_level_status === "in_range" ? (
+                                                                <span className="text-emerald-600 dark:text-emerald-400">In range</span>
+                                                            ) : job.wip_level_status === "below_target" ? (
+                                                                <span className="text-amber-600 dark:text-amber-400">Below target</span>
+                                                            ) : (
+                                                                <span className="text-rose-600 dark:text-rose-400">Above target</span>
+                                                            )}
                                                         </div>
                                                     </div>
                                                 </div>
                                             </td>
 
-                                            {/* 5. Actions */}
+                                            {/* 5. Residence (h) */}
+                                            <td className="py-3 px-3 align-top text-center font-mono text-xs">
+                                                {job.residence_hours !== null && job.residence_hours > 0 ? (
+                                                    <span className="font-medium text-foreground">{job.residence_hours}h</span>
+                                                ) : (
+                                                    <span className="text-muted-foreground">—</span>
+                                                )}
+                                            </td>
+
+                                            {/* 6. WIP Value */}
+                                            <td className="py-3 px-3 align-top font-mono text-xs">
+                                                <span className="font-semibold text-foreground">
+                                                    ₱{job.wip_value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                                                </span>
+                                            </td>
+
+                                            {/* 7. Rate Attainment */}
+                                            <td className="py-3 px-3 align-top">
+                                                {job.rated_capacity_per_hour > 0 && job.actual_throughput_rate > 0 ? (
+                                                    <div className="space-y-1">
+                                                        <div className="font-mono text-xs font-semibold text-foreground">
+                                                            {job.actual_throughput_rate.toLocaleString()} / {job.rated_capacity_per_hour.toLocaleString()} <span className="text-[10px] text-muted-foreground font-normal">{job.uom_name}/h</span>
+                                                        </div>
+                                                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted/80">
+                                                            <div
+                                                                className="h-full rounded-full bg-emerald-500 transition-all duration-300"
+                                                                style={{ width: `${Math.min(100, Math.max(0, job.rate_attainment_percent))}%` }}
+                                                            />
+                                                        </div>
+                                                        <div className="text-[10px] font-mono text-muted-foreground">
+                                                            {job.rate_attainment_percent}% of rated capacity
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <div className="space-y-1">
+                                                        <div className="font-mono text-xs text-muted-foreground">
+                                                            0 / {job.rated_capacity_per_hour > 0 ? `${job.rated_capacity_per_hour.toLocaleString()} ${job.uom_name}/h` : "—"}
+                                                        </div>
+                                                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted/50">
+                                                            <div className="h-full rounded-full bg-muted-foreground/30 w-0" />
+                                                        </div>
+                                                        <div className="text-[10px] font-mono text-muted-foreground">
+                                                            0% of rated capacity
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </td>
+
+                                            {/* 8. Output & Yield */}
+                                            <td className="py-3 px-3 align-top">
+                                                <div className="space-y-1">
+                                                    <div className="font-mono text-xs">
+                                                        <strong className="font-bold text-foreground">
+                                                            {job.actual_quantity_produced.toLocaleString()}
+                                                        </strong>
+                                                        <span className="text-muted-foreground"> / {job.target_quantity.toLocaleString()} {job.uom_name}</span>
+                                                    </div>
+                                                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted/80">
+                                                        <div
+                                                            className={`h-full rounded-full transition-all duration-300 ${
+                                                                qtyProgress > 100
+                                                                    ? "bg-amber-500"
+                                                                    : "bg-blue-600 dark:bg-blue-400"
+                                                            }`}
+                                                            style={{ width: `${Math.min(100, Math.max(0, qtyProgress))}%` }}
+                                                        />
+                                                    </div>
+                                                    <div className="text-[10px] font-mono font-medium text-muted-foreground">
+                                                        <span>{qtyProgress}% output</span>
+                                                        <span className="mx-1">•</span>
+                                                        <span>{job.material_yield_percent}% yield</span>
+                                                    </div>
+                                                </div>
+                                            </td>
+
+                                            {/* 9. Actions */}
                                             <td className="py-3 px-3.5 align-top text-right">
                                                 <div className="flex items-center justify-end gap-1.5">
                                                     <Button
@@ -244,7 +321,7 @@ export function WipTableView({
                                                         size="sm"
                                                         onClick={(e: React.MouseEvent) => {
                                                             e.stopPropagation();
-                                                            onOpenDetail(job, "stages");
+                                                            onOpenDetail(job, "overview");
                                                         }}
                                                         className="h-7 px-2 text-[11px] font-medium border-border/80 hover:bg-muted/60"
                                                     >
