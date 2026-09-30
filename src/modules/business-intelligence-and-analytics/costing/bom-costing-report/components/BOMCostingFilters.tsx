@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import {
     ChevronsUpDown,
     Layers,
@@ -72,19 +72,26 @@ export default function BOMCostingFilters({
     const [isProductOpen, setIsProductOpen] = useState(false);
 
     // Format raw input string based on whether UOM is discrete (e.g. PCS) or continuous
-    const formatInitialQty = (qty: number, _uom?: string): string => {
+    const formatInitialQty = (qty: number, uom?: string): string => {
         if (!qty || qty <= 0) return "1.0000";
+        if (uom && isDiscreteUom(uom) && Number.isInteger(qty)) {
+            return String(qty);
+        }
         return Number(qty).toFixed(4);
     };
 
+    const [prevTargetQuantity, setPrevTargetQuantity] = useState(targetQuantity);
+    const [prevUomName, setPrevUomName] = useState(selectedVersion?.uom_name);
     const [rawQtyInput, setRawQtyInput] = useState<string>(
         formatInitialQty(targetQuantity, selectedVersion?.uom_name)
     );
 
     // Synchronize local input string when external targetQuantity or version changes
-    useEffect(() => {
+    if (targetQuantity !== prevTargetQuantity || selectedVersion?.uom_name !== prevUomName) {
+        setPrevTargetQuantity(targetQuantity);
+        setPrevUomName(selectedVersion?.uom_name);
         setRawQtyInput(formatInitialQty(targetQuantity, selectedVersion?.uom_name));
-    }, [targetQuantity, selectedVersion?.uom_name]);
+    }
 
     // Handle quantity typing with auto-selection & blur fallback
     const handleQtyChange = (e: React.ChangeEvent<HTMLInputElement>) => {

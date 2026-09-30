@@ -1,7 +1,5 @@
 "use client";
 
-import React from "react";
-import { motion } from "framer-motion";
 import {
     Dialog,
     DialogContent,
@@ -16,18 +14,13 @@ import { Badge } from "@/components/ui/badge";
 import { 
     Layers, 
     PackageSearch, 
-    CheckCircle2, 
     ShieldCheck, 
     User, 
     AlertTriangle,
     Building2,
-    Calendar,
     Clock,
     Activity,
-    History,
-    TrendingUp,
-    Gauge,
-    Boxes
+    History
 } from "lucide-react";
 import { WipJobOrder, WipDetailTab } from "../types";
 

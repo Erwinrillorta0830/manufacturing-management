@@ -42,7 +42,7 @@ export default function BOMCostingSensitivityTab({ data }: BOMCostingSensitivity
     }, [tree]);
 
     // Recalculate simulated extended batch cost in real-time
-    const { baselineBatchCost, simulatedBatchCost, costVariance, variancePct } = useMemo(() => {
+    const { simulatedBatchCost, costVariance, variancePct } = useMemo(() => {
         const baseline = summary.totalBatchCost > 0
             ? summary.totalBatchCost
             : (summary.totalMaterialCost + summary.directLaborCost + summary.mfgOverheadCost);

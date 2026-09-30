@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from "react";
 import { motion } from "framer-motion";
-import { Clock, BarChart3, PieChart as PieIcon } from "lucide-react";
+import { Clock, BarChart3 } from "lucide-react";
 import {
     ResponsiveContainer,
     PieChart,
@@ -21,6 +21,8 @@ import { formatStandardCurrency } from "./BOMCostingTreeTable";
 interface BOMCostingAnalyticsTabProps {
     data: BOMCostingReportData;
 }
+
+type TooltipValue = number | string | Array<number | string>;
 
 const CATEGORY_COLORS = {
     raw_material: "#3b82f6", // Blue
@@ -210,10 +212,10 @@ export default function BOMCostingAnalyticsTab({ data }: BOMCostingAnalyticsTabP
                                         ))}
                                     </Pie>
                                     <RechartsTooltip
-                                        formatter={((val: any) => [
+                                        formatter={(val: TooltipValue) => [
                                             `${formatStandardCurrency(Number(val) || 0, 4)} (${categoryBreakdown.total > 0 ? (((Number(val) || 0) / categoryBreakdown.total) * 100).toFixed(4) : "0.0000"}%)`,
                                             "Extended Cost"
-                                        ]) as any}
+                                        ]}
                                         contentStyle={{
                                             backgroundColor: "hsl(var(--popover))",
                                             borderColor: "hsl(var(--border))",
@@ -317,10 +319,14 @@ export default function BOMCostingAnalyticsTab({ data }: BOMCostingAnalyticsTabP
                                         tickFormatter={(val: number) => `${val}`}
                                     />
                                     <RechartsTooltip
-                                        formatter={((val: any, _name: any, props: any) => [
-                                            `${(Number(val) || 0).toFixed(4)}% (${formatStandardCurrency(props?.payload?.cost || 0, 4)})`,
-                                            props?.payload?.fullName || "Share"
-                                        ]) as any}
+                                        formatter={(
+                                            val: TooltipValue,
+                                            _name: number | string,
+                                            item: { payload?: { cost?: number; fullName?: string } }
+                                        ) => [
+                                            `${(Number(val) || 0).toFixed(4)}% (${formatStandardCurrency(item?.payload?.cost || 0, 4)})`,
+                                            String(item?.payload?.fullName || "Share")
+                                        ]}
                                         contentStyle={{
                                             backgroundColor: "hsl(var(--popover))",
                                             borderColor: "hsl(var(--border))",

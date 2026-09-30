@@ -7,7 +7,8 @@ import {
     WipOperatorAssignment,
     WipSummaryMetrics,
     WorkCenterQueueSummary,
-    WipMasterData
+    WipMasterData,
+    WipTransaction
 } from "@/modules/business-intelligence-and-analytics/costing/wip-tracking-report/types";
 import { normalizeJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/business-intelligence-and-analytics/costing/wip-tracking-report/job-order-status";
 
@@ -140,6 +141,10 @@ interface DirectusProduct {
     unit_of_measurement?: number | string;
     standard_cost?: number | string;
     cost_per_unit?: number | string;
+    category?: string;
+    product_category?: string;
+    item_group?: string;
+    category_name?: string;
 }
 
 interface DirectusBranch {
@@ -703,14 +708,14 @@ export async function GET(req: NextRequest) {
                 : (remainingOutput === 0 ? 0 : null);
 
             // Lot number & Category
-            const lotNumber = (jo as any).lot_number || 
+            const lotNumber = jo.lot_number || 
                 (wipMaterials.find((m) => m.lot_name || m.batch_no)?.lot_name) || 
                 (wipMaterials.find((m) => m.batch_no)?.batch_no) || 
                 null;
-            const prodCat = (prod as any)?.category || (prod as any)?.product_category || (prod as any)?.item_group || (prod as any)?.category_name || "Continuous Process";
+            const prodCat = prod?.category || prod?.product_category || prod?.item_group || prod?.category_name || "Continuous Process";
 
             // Synthetic WIP Event Transactions
-            const transactions: any[] = [];
+            const transactions: WipTransaction[] = [];
             wipMaterials.forEach((m, idx) => {
                 if (m.staged_quantity > 0 || m.issued_to_wip_quantity > 0) {
                     transactions.push({

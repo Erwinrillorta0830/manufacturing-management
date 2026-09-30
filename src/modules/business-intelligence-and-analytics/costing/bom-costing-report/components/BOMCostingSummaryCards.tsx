@@ -17,7 +17,7 @@ interface BOMCostingSummaryCardsProps {
 }
 
 export default function BOMCostingSummaryCards({ data }: BOMCostingSummaryCardsProps) {
-    const { summary, targetProduct } = data;
+    const { summary } = data;
 
     const totalBatchCost = summary.totalBatchCost > 0 ? summary.totalBatchCost : summary.totalMaterialCost;
     const directMaterials = summary.totalMaterialCost;

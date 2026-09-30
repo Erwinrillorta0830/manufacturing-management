@@ -72,8 +72,14 @@ export const isDiscreteUom = (uom: string): boolean => {
     ].includes(norm);
 };
 
-export const formatUomQuantity = (val: number, _uom?: string): string => {
+export const formatUomQuantity = (val: number, uom?: string): string => {
     const num = Number(val) || 0;
+    if (uom && isDiscreteUom(uom) && Number.isInteger(num)) {
+        return new Intl.NumberFormat("en-US", {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 4
+        }).format(num);
+    }
     return new Intl.NumberFormat("en-US", {
         minimumFractionDigits: 4,
         maximumFractionDigits: 4
@@ -208,25 +214,25 @@ export default function BOMCostingTreeTable({ data }: BOMCostingTreeTableProps) 
         return <span className="text-xs text-muted-foreground">-</span>;
     };
 
-    // Filter predicate for search and category
-    const matchesFilter = (node: BOMCostNode): boolean => {
-        if (selectedCategory !== "all") {
-            if (node.materialClassification !== selectedCategory) {
-                return false;
-            }
-        }
-        if (searchQuery.trim()) {
-            const q = searchQuery.toLowerCase();
-            const nameMatch = node.productName.toLowerCase().includes(q);
-            const codeMatch = (node.productCode || "").toLowerCase().includes(q);
-            const opMatch = (node.operationName || "").toLowerCase().includes(q);
-            return nameMatch || codeMatch || opMatch;
-        }
-        return true;
-    };
-
     // Filter tree recursively or return flat list based on rollupMode
     const filteredNodes = useMemo(() => {
+        // Filter predicate for search and category
+        const matchesFilter = (node: BOMCostNode): boolean => {
+            if (selectedCategory !== "all") {
+                if (node.materialClassification !== selectedCategory) {
+                    return false;
+                }
+            }
+            if (searchQuery.trim()) {
+                const q = searchQuery.toLowerCase();
+                const nameMatch = node.productName.toLowerCase().includes(q);
+                const codeMatch = (node.productCode || "").toLowerCase().includes(q);
+                const opMatch = (node.operationName || "").toLowerCase().includes(q);
+                return nameMatch || codeMatch || opMatch;
+            }
+            return true;
+        };
+
         if (rollupMode === "flattened") {
             const flat: BOMCostNode[] = [];
             const flatten = (nodes: BOMCostNode[]) => {

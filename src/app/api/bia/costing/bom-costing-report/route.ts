@@ -730,7 +730,7 @@ export async function GET(req: NextRequest) {
                 // Standard direct labor allowance if no routes or positions exist
                 const stdLaborRate = 65.0;
                 const stdHours = 1;
-                const lineCost = round4(stdLaborRate * batchScalingFactor);
+                const lineCost = round4(stdLaborRate * stdHours * batchScalingFactor);
                 totalLaborCost = lineCost;
 
                 laborNodes.push({
@@ -746,10 +746,10 @@ export async function GET(req: NextRequest) {
                     inventoryRule: "-",
                     routeSequence: 1,
                     operationName: "Unknown",
-                    baseRequiredQty: 1,
-                    scaledRequiredQty: batchScalingFactor,
+                    baseRequiredQty: stdHours,
+                    scaledRequiredQty: stdHours * batchScalingFactor,
                     wastagePercent: 0,
-                    effectiveQty: batchScalingFactor,
+                    effectiveQty: stdHours * batchScalingFactor,
                     wastageQty: 0,
                     uomName: "HRS",
                     unitCost: stdLaborRate,

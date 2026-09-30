@@ -10,8 +10,7 @@ import {
     Loader2,
     Table,
     PieChart,
-    TrendingUp,
-    PlusCircle
+    TrendingUp
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
