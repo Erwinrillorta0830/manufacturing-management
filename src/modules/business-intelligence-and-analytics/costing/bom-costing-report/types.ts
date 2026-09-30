@@ -1,5 +1,7 @@
-export type MaterialClassification = "finished_good" | "sub_assembly" | "raw_material" | "packaging";
-export type InventoryRule = "FEFO" | "FIFO" | "N/A";
+export type MaterialClassification = "finished_good" | "sub_assembly" | "raw_material" | "packaging" | "labor" | "overhead";
+export type InventoryRule = "FEFO" | "FIFO" | "N/A" | "-";
+export type HierarchyRollupMode = "multi-level" | "flattened";
+export type ComponentCategoryFilter = "all" | "raw_material" | "packaging" | "labor" | "overhead";
 
 export interface ProductOption {
     product_id: number;
@@ -71,6 +73,9 @@ export interface TargetProductSummary {
 export interface BOMCostingSummary {
     totalNetMaterialCost: number;
     totalMaterialCost: number;
+    directLaborCost: number;
+    mfgOverheadCost: number;
+    totalBatchCost: number;
     costPerUnit: number;
     totalWastageCost: number;
     effectiveWastageIncreasePct: number;
@@ -79,6 +84,10 @@ export interface BOMCostingSummary {
     packagingCost: number;
     subAssembliesCost: number;
     maxDepth: number;
+    materialsSharePct: number;
+    laborSharePct: number;
+    overheadSharePct: number;
+    scrapImpactPct: number;
 }
 
 export interface BOMCostingReportData {

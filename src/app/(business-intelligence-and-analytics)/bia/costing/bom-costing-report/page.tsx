@@ -16,8 +16,8 @@ import BOMCostingReportModule from "@/modules/business-intelligence-and-analytic
 export const dynamic = "force-dynamic";
 
 export const metadata = {
-    title: "Bill of Materials (BOM) Costing Report | VOS ERP",
-    description: "Multi-level breakdown of component quantities and unit material costs required per product."
+    title: "BOM Standard Costing Report | VOS ERP",
+    description: "Multi-level standard cost breakdown of ingredients, packaging, process labor, and overhead per batch."
 };
 
 const COOKIE_NAME = "vos_access_token";
@@ -102,7 +102,7 @@ export default async function BOMCostingReportPage() {
                                 <BreadcrumbSeparator className="hidden sm:block shrink-0" />
                                 <BreadcrumbItem className="min-w-0 overflow-hidden">
                                     <BreadcrumbPage className="truncate max-w-[56vw] sm:max-w-[60vw] md:max-w-none">
-                                        BOM Costing Report
+                                        BOM Standard Costing Report
                                     </BreadcrumbPage>
                                 </BreadcrumbItem>
                             </BreadcrumbList>
