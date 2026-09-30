@@ -52,6 +52,7 @@ const STATUS_BY_KEY = new Map<string, CanonicalJobOrderStatus>([
     ["production completed", JOB_ORDER_STATUS.PRODUCTION_COMPLETED],
     ["finished", JOB_ORDER_STATUS.PRODUCTION_COMPLETED],
     ["for qa and reconciliation", JOB_ORDER_STATUS.FOR_QA_RECONCILIATION],
+    ["for qa & reconciliation", JOB_ORDER_STATUS.FOR_QA_RECONCILIATION],
     ["completed", JOB_ORDER_STATUS.FOR_QA_RECONCILIATION],
     ["closed", JOB_ORDER_STATUS.CLOSED],
     ["cancelled", JOB_ORDER_STATUS.CANCELLED],
@@ -62,6 +63,7 @@ const STATUS_BY_KEY = new Map<string, CanonicalJobOrderStatus>([
 function statusKey(value: unknown): string {
     return String(value ?? "")
         .trim()
+        .replace(/&/g, "and")
         .replace(/[\\_-]+/g, " ")
         .replace(/\s+/g, " ")
         .toLowerCase();

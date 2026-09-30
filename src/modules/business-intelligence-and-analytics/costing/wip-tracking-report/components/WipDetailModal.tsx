@@ -132,13 +132,13 @@ export function WipDetailModal({
                             <div className="border-l border-border/70 pl-3">
                                 <span className="text-muted-foreground block text-[10px] uppercase font-sans font-semibold">Planned Hours</span>
                                 <span className="font-bold text-foreground text-sm">
-                                    {job.total_planned_hours}h
+                                    {job.total_planned_hours > 0 ? `${job.total_planned_hours}h` : "—"}
                                 </span>
                             </div>
                             <div className="border-l border-border/70 pl-3">
                                 <span className="text-muted-foreground block text-[10px] uppercase font-sans font-semibold">Actual Hours</span>
-                                <span className={`font-bold text-sm ${job.total_actual_hours > job.total_planned_hours ? "text-rose-600 dark:text-rose-400" : "text-foreground"}`}>
-                                    {job.total_actual_hours}h
+                                <span className={`font-bold text-sm ${job.total_actual_hours > 0 && job.total_actual_hours > job.total_planned_hours ? "text-rose-600 dark:text-rose-400" : "text-foreground"}`}>
+                                    {job.total_actual_hours > 0 ? `${job.total_actual_hours}h` : "—"}
                                 </span>
                             </div>
                             <div className="border-l border-border/70 pl-3">
@@ -148,9 +148,9 @@ export function WipDetailModal({
                                 </span>
                             </div>
                             <div className="border-l border-border/70 pl-3">
-                                <span className="text-muted-foreground block text-[10px] uppercase font-sans font-semibold">Floor Volume</span>
+                                <span className="text-muted-foreground block text-[10px] uppercase font-sans font-semibold">Floor Output</span>
                                 <span className="font-bold text-cyan-600 dark:text-cyan-400 text-sm">
-                                    {job.total_wip_remaining_quantity.toLocaleString()}
+                                    {job.actual_quantity_produced.toLocaleString()} {job.uom_name}
                                 </span>
                             </div>
                         </div>
@@ -300,20 +300,12 @@ export function WipDetailModal({
                                                     </Badge>
                                                 </div>
 
-                                                {/* Work Center */}
-                                                <div className="text-xs font-medium text-muted-foreground">
-                                                    Line / Center:{" "}
-                                                    <span className="text-foreground font-semibold">
-                                                        {stage.work_center_name}
-                                                    </span>
-                                                </div>
-
                                                 {/* Hours Breakdown */}
                                                 <div className="grid grid-cols-2 gap-2 rounded-lg bg-background/80 p-2.5 text-xs border border-border/50 font-mono">
                                                     <div>
                                                         <span className="text-muted-foreground block text-[10px] uppercase">Planned</span>
                                                         <span className="font-semibold text-foreground">
-                                                            {stage.total_planned_hours}h
+                                                            {stage.total_planned_hours > 0 ? `${stage.total_planned_hours}h` : "—"}
                                                         </span>
                                                         <span className="text-[10px] text-muted-foreground block">
                                                             ({stage.planned_setup_hours}s / {stage.planned_run_hours}r)
@@ -322,10 +314,12 @@ export function WipDetailModal({
                                                     <div>
                                                         <span className="text-muted-foreground block text-[10px] uppercase">Actual</span>
                                                         <span className={`font-semibold ${hasOverrun ? "text-rose-600 dark:text-rose-400" : "text-foreground"}`}>
-                                                            {stage.total_actual_hours}h
+                                                            {stage.total_actual_hours > 0 ? `${stage.total_actual_hours}h` : "—"}
                                                         </span>
                                                         <span className="text-[10px] text-muted-foreground block">
-                                                            ({stage.actual_setup_hours}s / {stage.actual_run_hours}r)
+                                                            {stage.total_actual_hours > 0
+                                                                ? `(${stage.actual_setup_hours}s / ${stage.actual_run_hours}r)`
+                                                                : "Continuous Flow"}
                                                         </span>
                                                     </div>
                                                 </div>

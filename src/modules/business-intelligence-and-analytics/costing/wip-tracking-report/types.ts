@@ -104,6 +104,7 @@ export interface WipSummaryMetrics {
     jobs_picked_ready: number;
     jobs_in_qa: number;
     average_stage_progress_percent: number;
+    average_quantity_progress_percent?: number;
     total_wip_materials_volume: number;
     delayed_jobs_count: number;
 }

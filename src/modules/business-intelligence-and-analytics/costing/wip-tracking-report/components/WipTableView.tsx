@@ -110,19 +110,18 @@ export function WipTableView({
                     <table className="w-full text-left text-xs border-collapse">
                         <thead className="sticky top-0 z-20 bg-muted/95 backdrop-blur-xs border-b border-border/80 shadow-xs">
                             <tr className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                                <th className="py-3 px-3.5 w-[180px] bg-muted/95 backdrop-blur-xs">Job Order & Location</th>
-                                <th className="py-3 px-3.5 w-[220px] bg-muted/95 backdrop-blur-xs">Product</th>
-                                <th className="py-3 px-3 w-[160px] bg-muted/95 backdrop-blur-xs">Status & Timeline</th>
-                                <th className="py-3 px-3 w-[260px] bg-muted/95 backdrop-blur-xs">Current Stage & Progress</th>
-                                <th className="py-3 px-3 w-[180px] bg-muted/95 backdrop-blur-xs">Production Output</th>
-                                <th className="py-3 px-3.5 w-[120px] text-right bg-muted/95 backdrop-blur-xs">Actions</th>
+                                <th className="py-3 px-3.5 w-[220px] bg-muted/95 backdrop-blur-xs">Job Order & Location</th>
+                                <th className="py-3 px-3.5 w-[260px] bg-muted/95 backdrop-blur-xs">Product</th>
+                                <th className="py-3 px-3 w-[200px] bg-muted/95 backdrop-blur-xs">Status & Timeline</th>
+                                <th className="py-3 px-3 w-[280px] bg-muted/95 backdrop-blur-xs">Production Output & Yield</th>
+                                <th className="py-3 px-3.5 w-[110px] text-right bg-muted/95 backdrop-blur-xs">Actions</th>
                             </tr>
                         </thead>
 
                         <tbody className="divide-y divide-border/50 font-sans">
                             {isLoading ? (
                                 <tr>
-                                    <td colSpan={6} className="py-16 text-center text-muted-foreground">
+                                    <td colSpan={5} className="py-16 text-center text-muted-foreground">
                                         <div className="flex flex-col items-center justify-center gap-2">
                                             <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
                                             <span className="text-xs">Loading active WIP jobs and stage queues...</span>
@@ -131,7 +130,7 @@ export function WipTableView({
                                 </tr>
                             ) : paginatedJobs.length === 0 ? (
                                 <tr>
-                                    <td colSpan={6} className="py-14 text-center text-muted-foreground">
+                                    <td colSpan={5} className="py-14 text-center text-muted-foreground">
                                         <div className="flex flex-col items-center justify-center gap-1.5">
                                             <Layers className="h-8 w-8 text-muted-foreground/50 mb-1" />
                                             <p className="text-sm font-semibold text-foreground">No active WIP orders found</p>
@@ -143,7 +142,6 @@ export function WipTableView({
                                 </tr>
                             ) : (
                                 paginatedJobs.map((job, idx) => {
-                                    const stageProgress = job.stage_progress_percent;
                                     const qtyProgress = job.quantity_progress_percent;
 
                                     return (
@@ -202,57 +200,7 @@ export function WipTableView({
                                                 </div>
                                             </td>
 
-                                            {/* 4. Current Stage & Progress */}
-                                            <td className="py-3 px-3 align-top">
-                                                {job.current_stage ? (
-                                                    <div className="space-y-1.5">
-                                                        <div>
-                                                            <span className="text-xs font-semibold text-foreground block line-clamp-1" title={job.current_stage.operation_name}>
-                                                                {job.current_stage.operation_name}
-                                                            </span>
-                                                            <span className="text-[11px] text-muted-foreground block line-clamp-1">
-                                                                Work Center: <span className="text-foreground/90">{job.current_stage.work_center_name || job.primary_work_center_name || "—"}</span>
-                                                            </span>
-                                                        </div>
-                                                        <div
-                                                            onClick={(e: React.MouseEvent) => {
-                                                                e.stopPropagation();
-                                                                onOpenDetail(job, "stages");
-                                                            }}
-                                                            className="w-full text-left space-y-1 group/bar hover:opacity-80 transition-opacity cursor-pointer"
-                                                            title="Click to view stage details"
-                                                        >
-                                                            <div className="flex items-center justify-between text-[10px] font-mono">
-                                                                <span className="text-muted-foreground">
-                                                                    Step {job.completed_stages_count}/{job.total_stages}
-                                                                </span>
-                                                                <span className="font-bold text-foreground">
-                                                                    {stageProgress}%
-                                                                </span>
-                                                            </div>
-                                                            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                                                                <div
-                                                                    className="h-full rounded-full bg-primary transition-all duration-300 group-hover/bar:bg-primary/80"
-                                                                    style={{ width: `${stageProgress}%` }}
-                                                                />
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                ) : (
-                                                    <div className="space-y-1">
-                                                        <span className="text-[11px] text-muted-foreground italic block">
-                                                            No active stages
-                                                        </span>
-                                                        {job.total_stages > 0 && (
-                                                            <div className="text-[10px] font-mono text-muted-foreground">
-                                                                {job.completed_stages_count}/{job.total_stages} steps ({stageProgress}%)
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                )}
-                                            </td>
-
-                                            {/* 5. Production Output */}
+                                            {/* 4. Production Output & Yield */}
                                             <td className="py-3 px-3 align-bottom">
                                                 <div className="space-y-1.5">
                                                     <div className="font-mono text-xs">
@@ -260,23 +208,35 @@ export function WipTableView({
                                                             {job.actual_quantity_produced.toLocaleString()}
                                                         </strong>
                                                         <span className="text-muted-foreground"> / {job.target_quantity.toLocaleString()} {job.uom_name}</span>
-                                                        <div className="flex items-center justify-end text-[10px] font-mono font-medium text-muted-foreground">
-                                                            <span>{qtyProgress}% output</span>
+                                                        <div className="flex items-center justify-between text-[10px] font-mono font-medium mt-0.5">
+                                                            <span className="text-muted-foreground">Output Yield</span>
+                                                            {qtyProgress > 100 ? (
+                                                                <span className="font-bold text-amber-600 dark:text-amber-400">
+                                                                    {qtyProgress}% (Over-run)
+                                                                </span>
+                                                            ) : (
+                                                                <span className="font-bold text-foreground">
+                                                                    {qtyProgress}%
+                                                                </span>
+                                                            )}
                                                         </div>
                                                     </div>
                                                     <div className="space-y-1">
                                                         <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
                                                             <div
-                                                                className="h-full rounded-full bg-blue-600 dark:bg-blue-400 transition-all duration-300"
-                                                                style={{ width: `${qtyProgress}%` }}
+                                                                className={`h-full rounded-full transition-all duration-300 ${
+                                                                    qtyProgress > 100
+                                                                        ? "bg-amber-500"
+                                                                        : "bg-blue-600 dark:bg-blue-400"
+                                                                }`}
+                                                                style={{ width: `${Math.min(100, Math.max(0, qtyProgress))}%` }}
                                                             />
                                                         </div>
-
                                                     </div>
                                                 </div>
                                             </td>
 
-                                            {/* 6. Actions */}
+                                            {/* 5. Actions */}
                                             <td className="py-3 px-3.5 align-top text-right">
                                                 <div className="flex items-center justify-end gap-1.5">
                                                     <Button
