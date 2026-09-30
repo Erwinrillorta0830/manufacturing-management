@@ -176,15 +176,15 @@ export function WipWorkCenterBoardView({
                                                 </div>
                                             )}
 
-                                            {/* Overall Progress Bar */}
+                                            {/* Output Yield Progress Bar */}
                                             <div className="space-y-1">
                                                 <div className="flex items-center justify-between text-[10px] font-mono text-muted-foreground">
-                                                    <span>Stage Completion</span>
-                                                    <span className="font-bold text-foreground">
-                                                        {job.stage_progress_percent}%
+                                                    <span>Output Yield</span>
+                                                    <span className={`font-bold ${job.quantity_progress_percent > 100 ? "text-amber-600 dark:text-amber-400" : "text-foreground"}`}>
+                                                        {job.quantity_progress_percent}%
                                                     </span>
                                                 </div>
-                                                <Progress value={job.stage_progress_percent} className="h-1.5" />
+                                                <Progress value={Math.min(100, Math.max(0, job.quantity_progress_percent))} className="h-1.5" />
                                             </div>
 
                                             {/* Footer details & modal triggers */}

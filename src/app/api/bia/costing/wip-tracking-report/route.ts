@@ -462,9 +462,27 @@ export async function GET(req: NextRequest) {
             const canonicalStatus = normalizeJobOrderStatus(rawStatus) || rawStatus || "Planned";
 
             // Stages for this JO, sorted by sequence_order
-            const stages = (routesByJobId.get(joId) || []).sort(
+            const rawStages = (routesByJobId.get(joId) || []).sort(
                 (a, b) => a.sequence_order - b.sequence_order
             );
+
+            // In continuous manufacturing, operations happen concurrently rather than sequentially.
+            // If the job order is completed (Production Completed, Closed, For QA Reconciliation),
+            // all continuous routing stations are reconciled as Completed/Satisfied.
+            const isJoCompleted =
+                canonicalStatus === JOB_ORDER_STATUS.PRODUCTION_COMPLETED ||
+                canonicalStatus === JOB_ORDER_STATUS.CLOSED ||
+                canonicalStatus === JOB_ORDER_STATUS.FOR_QA_RECONCILIATION;
+
+            const stages: WipRouteStage[] = rawStages.map((s) => {
+                if (isJoCompleted) {
+                    return {
+                        ...s,
+                        status: "Completed"
+                    };
+                }
+                return s;
+            });
 
             const totalStages = stages.length;
             const completedStages = stages.filter(
@@ -488,9 +506,16 @@ export async function GET(req: NextRequest) {
             const completedQty = Number(jo.completed_quantity || 0);
             const rejectedQty = Number(jo.rejected_quantity || 0);
 
-            const qtyProgressPercent = targetQty > 0
-                ? Math.min(100, Math.round((producedQty / targetQty) * 100))
-                : 0;
+            // Uncapped percentage output yield with decimal precision for small outputs (e.g., 1 / 3,000 = 0.03%)
+            let qtyProgressPercent = 0;
+            if (targetQty > 0) {
+                const rawYield = (producedQty / targetQty) * 100;
+                if (rawYield > 0 && rawYield < 1) {
+                    qtyProgressPercent = Math.round(rawYield * 100) / 100;
+                } else {
+                    qtyProgressPercent = Math.round(rawYield * 10) / 10;
+                }
+            }
 
             const totalPlannedHours = roundHours(
                 stages.reduce((acc, s) => acc + s.total_planned_hours, 0)
@@ -717,6 +742,12 @@ export async function GET(req: NextRequest) {
               )
             : 0;
 
+        const avgQtyProgress = totalActive > 0
+            ? Math.round(
+                  (activeJobsPool.reduce((sum, j) => sum + j.quantity_progress_percent, 0) / totalActive) * 10
+              ) / 10
+            : 0;
+
         const totalWipVolume = roundQty(
             activeJobsPool.reduce((sum, j) => sum + j.total_wip_remaining_quantity, 0)
         );
@@ -728,6 +759,7 @@ export async function GET(req: NextRequest) {
             jobs_picked_ready: pickedReady,
             jobs_in_qa: inQa,
             average_stage_progress_percent: avgProgress,
+            average_quantity_progress_percent: avgQtyProgress,
             total_wip_materials_volume: totalWipVolume,
             delayed_jobs_count: delayedCount
         };

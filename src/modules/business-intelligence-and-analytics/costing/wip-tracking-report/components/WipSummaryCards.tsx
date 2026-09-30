@@ -82,14 +82,14 @@ export function WipSummaryCards({
             onClick: () => onStatusClick(JOB_ORDER_STATUS.FOR_QA_RECONCILIATION)
         },
         {
-            title: "Avg Stage Progress",
-            value: `${summary.average_stage_progress_percent}%`,
-            subtitle: "Average completion rate",
+            title: "Avg Output Yield",
+            value: `${summary.average_quantity_progress_percent ?? summary.average_stage_progress_percent}%`,
+            subtitle: "Average production yield",
             icon: TrendingUp,
             iconColor: "text-teal-500 dark:text-teal-400",
             bgColor: "bg-teal-500/10",
             showProgress: true,
-            progressPercent: summary.average_stage_progress_percent
+            progressPercent: Math.min(100, summary.average_quantity_progress_percent ?? summary.average_stage_progress_percent)
         },
         {
             title: "Delayed / At Risk",
