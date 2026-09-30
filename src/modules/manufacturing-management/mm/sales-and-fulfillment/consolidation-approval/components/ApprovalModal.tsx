@@ -93,15 +93,72 @@ export function ApprovalModal({
 
     const activeBatch = fullBatch || batch;
 
-    // Group allocations by product
+    // Group allocations by product and combine identical lot/batch cards
     const allocationsByProduct = useMemo(() => {
-        const map = new Map<number, LotAllocation[]>();
+        const prodGroupMap = new Map<number, Map<string, LotAllocation>>();
+
         for (const a of allocations) {
-            const list = map.get(a.productId) || [];
-            list.push(a);
-            map.set(a.productId, list);
+            if (!prodGroupMap.has(a.productId)) {
+                prodGroupMap.set(a.productId, new Map<string, LotAllocation>());
+            }
+            const lotBatchMap = prodGroupMap.get(a.productId)!;
+            const normBatch = (a.batchNo || "LOT-N/A").trim().toLowerCase();
+            const lotKey = `${a.inventoryLotId || a.lotId || "0"}:${normBatch}:${a.expiryDate || ""}`;
+
+            const plannedQty = Number(a.quantity || 0);
+            const pickedQty = a.pickedQuantity !== undefined
+                ? Number(a.pickedQuantity)
+                : (a.status === "Picked" ? plannedQty : 0);
+
+            const existing = lotBatchMap.get(lotKey);
+            if (existing) {
+                existing.quantity = (Number(existing.quantity) || 0) + plannedQty;
+                existing.pickedQuantity = (Number(existing.pickedQuantity) || 0) + pickedQty;
+
+                if (a.reservationIds && a.reservationIds.length > 0) {
+                    const mergedResIds = new Set([
+                        ...(existing.reservationIds || []),
+                        ...a.reservationIds,
+                    ]);
+                    existing.reservationIds = Array.from(mergedResIds);
+                }
+
+                if (a.orderNo) {
+                    const existingOrders = existing.orderNo ? existing.orderNo.split(", ") : [];
+                    const newOrders = a.orderNo.split(", ");
+                    const mergedOrders = Array.from(new Set([...existingOrders, ...newOrders])).filter(Boolean);
+                    existing.orderNo = mergedOrders.join(", ");
+                }
+
+                if (a.customerName) {
+                    const existingCusts = existing.customerName ? existing.customerName.split(", ") : [];
+                    const newCusts = a.customerName.split(", ");
+                    const mergedCusts = Array.from(new Set([...existingCusts, ...newCusts])).filter(Boolean);
+                    existing.customerName = mergedCusts.join(", ");
+                }
+
+                if (existing.pickedQuantity >= existing.quantity && existing.quantity > 0) {
+                    existing.status = "Picked";
+                } else if (existing.pickedQuantity > 0) {
+                    existing.status = "Partial";
+                } else {
+                    existing.status = "Reserved";
+                }
+            } else {
+                lotBatchMap.set(lotKey, {
+                    ...a,
+                    quantity: plannedQty,
+                    pickedQuantity: pickedQty,
+                    status: a.status || (pickedQty >= plannedQty && plannedQty > 0 ? "Picked" : (pickedQty > 0 ? "Partial" : "Reserved")),
+                });
+            }
         }
-        return map;
+
+        const resultMap = new Map<number, LotAllocation[]>();
+        for (const [pId, lotBatchMap] of prodGroupMap.entries()) {
+            resultMap.set(pId, Array.from(lotBatchMap.values()));
+        }
+        return resultMap;
     }, [allocations]);
 
     const consolidatedProducts = useMemo(() => {
@@ -284,7 +341,9 @@ export function ApprovalModal({
                             <span className="text-[11px] font-bold uppercase tracking-wider">Linked Orders</span>
                             <FileText className="h-3.5 w-3.5" />
                         </div>
-                        <p className="text-xl font-black tabular-nums text-foreground">{batch.invoices?.length || 1}</p>
+                        <p className="text-xl font-black tabular-nums text-foreground">
+                            {activeBatch.invoices?.length || (activeBatch as { invoiceCount?: number }).invoiceCount || 0}
+                        </p>
                     </div>
 
                     <div className="rounded-xl border border-border/50 bg-background/80 p-3 shadow-sm backdrop-blur">
@@ -362,7 +421,7 @@ export function ApprovalModal({
 
                                     return (
                                         <motion.div
-                                            key={prodItem.productName}
+                                            key={`${prodItem.productId}-${prodItem.productCode}`}
                                             layout
                                             initial={{ opacity: 0, y: 8 }}
                                             animate={{ opacity: 1, y: 0 }}
@@ -481,7 +540,7 @@ export function ApprovalModal({
 
                                                                 return (
                                                                     <div
-                                                                        key={`${alloc.batchNo}-${idx}`}
+                                                                        key={`${alloc.inventoryLotId || alloc.lotId}-${alloc.batchNo}-${idx}`}
                                                                         className="rounded-xl border border-emerald-500/40 bg-emerald-500/5 dark:bg-emerald-950/15 p-2.5 text-xs transition-all shadow-2xs"
                                                                     >
                                                                         <div className="flex items-center justify-between font-bold text-foreground">
