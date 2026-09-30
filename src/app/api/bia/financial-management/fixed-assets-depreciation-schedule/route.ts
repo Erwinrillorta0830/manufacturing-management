@@ -32,14 +32,14 @@ function getDirectusHeaders(): Record<string, string> {
     return h;
 }
 
-interface SpringBootDepreciation {
-    asset_id?: number | string | null;
-    id?: number | string | null;
-    [key: string]: unknown;
+interface LiveAssetYield {
+    totalProductionUnits: number;
+    productionDepreciation: number;
+    remainingCapacity: number | null;
 }
 
-async function fetchSpringBootDepreciation(): Promise<Map<number, SpringBootDepreciation>> {
-    const yieldMap = new Map<number, SpringBootDepreciation>();
+async function fetchSpringBootDepreciation(): Promise<Map<number, LiveAssetYield>> {
+    const yieldMap = new Map<number, LiveAssetYield>();
 
     if (!SPRING_API_BASE_URL) return yieldMap;
 
@@ -66,11 +66,38 @@ async function fetchSpringBootDepreciation(): Promise<Map<number, SpringBootDepr
                         continue;
                     }
 
-                    const depreciation = item as SpringBootDepreciation;
-                    const id = Number(depreciation.asset_id ?? depreciation.id);
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const d = item as any;
+                    const id = Number(d.assetId ?? d.asset_id ?? d.id);
 
                     if (!Number.isNaN(id) && id > 0) {
-                        yieldMap.set(id, depreciation);
+                        const units = Number(
+                            d.productionUnits ??
+                            d.production_units ??
+                            d.actualUnitsProduced ??
+                            d.actual_units_produced ??
+                            0
+                        );
+                        const prodDep = Number(d.productionDepreciation ?? d.production_depreciation ?? 0);
+                        const remCap =
+                            d.remainingProductionCapacity != null
+                                ? Number(d.remainingProductionCapacity)
+                                : d.remaining_production_capacity != null
+                                ? Number(d.remaining_production_capacity)
+                                : null;
+
+                        const existing = yieldMap.get(id);
+                        if (existing) {
+                            existing.totalProductionUnits += units;
+                            existing.productionDepreciation += prodDep;
+                            if (remCap !== null) existing.remainingCapacity = remCap;
+                        } else {
+                            yieldMap.set(id, {
+                                totalProductionUnits: units,
+                                productionDepreciation: prodDep,
+                                remainingCapacity: remCap
+                            });
+                        }
                     }
                 }
             }
@@ -83,6 +110,72 @@ async function fetchSpringBootDepreciation(): Promise<Map<number, SpringBootDepr
     }
 
     return yieldMap;
+}
+
+async function fetchDirectusDepreciationViews(
+    directusHeaders: Record<string, string>
+): Promise<Map<number, LiveAssetYield>> {
+    const directusYieldMap = new Map<number, LiveAssetYield>();
+    if (!DIRECTUS_URL) return directusYieldMap;
+
+    try {
+        const [sumRes, detRes] = await Promise.all([
+            fetch(`${DIRECTUS_URL}/items/vw_asset_depreciation_summary?limit=-1`, {
+                headers: directusHeaders,
+                cache: "no-store"
+            }).catch(() => null),
+            fetch(`${DIRECTUS_URL}/items/vw_asset_depreciation?limit=-1`, {
+                headers: directusHeaders,
+                cache: "no-store"
+            }).catch(() => null)
+        ]);
+
+        if (sumRes && sumRes.ok) {
+            const sumJson = await sumRes.json();
+            const sumData = Array.isArray(sumJson.data) ? sumJson.data : [];
+            for (const s of sumData) {
+                const id = Number(s.asset_id ?? s.assetId ?? s.id);
+                if (!isNaN(id) && id > 0) {
+                    const units = Number(s.total_production_units ?? s.production_units ?? s.productionUnits ?? 0);
+                    const prodDep = Number(s.total_depreciation ?? s.production_depreciation ?? s.productionDepreciation ?? 0);
+                    directusYieldMap.set(id, {
+                        totalProductionUnits: units,
+                        productionDepreciation: prodDep,
+                        remainingCapacity: null
+                    });
+                }
+            }
+        }
+
+        if (detRes && detRes.ok) {
+            const detJson = await detRes.json();
+            const detData = Array.isArray(detJson.data) ? detJson.data : [];
+            for (const d of detData) {
+                const id = Number(d.asset_id ?? d.assetId ?? d.id);
+                if (!isNaN(id) && id > 0) {
+                    const units = Number(d.production_units ?? d.productionUnits ?? 0);
+                    const prodDep = Number(d.depreciation_amount ?? d.production_depreciation ?? 0);
+                    const existing = directusYieldMap.get(id);
+                    if (existing) {
+                        if (existing.totalProductionUnits === 0 && units > 0) {
+                            existing.totalProductionUnits = units;
+                            existing.productionDepreciation = prodDep;
+                        }
+                    } else {
+                        directusYieldMap.set(id, {
+                            totalProductionUnits: units,
+                            productionDepreciation: prodDep,
+                            remainingCapacity: null
+                        });
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        console.warn("[Fixed Assets Depreciation] Directus view fetch notice:", e);
+    }
+
+    return directusYieldMap;
 }
 
 export async function GET(req: NextRequest) {
@@ -120,8 +213,8 @@ export async function GET(req: NextRequest) {
 
         const directusHeaders = getDirectusHeaders();
 
-        // Concurrently fetch assets, departments, users, and SpringBoot live yield view
-        const [assetsRes, deptRes, usersRes, springYieldMap] = await Promise.all([
+        // Concurrently fetch assets, departments, users, SpringBoot live yield, and Directus view fallback
+        const [assetsRes, deptRes, usersRes, springYieldMap, directusYieldMap] = await Promise.all([
             fetch(
                 `${DIRECTUS_URL}/items/assets_and_equipment?limit=-1&sort=-id&fields=*,item_id.id,item_id.item_name,item_id.item_type.id,item_id.item_type.type_name,department.department_id,department.department_name,production_unit_id.unit_id,production_unit_id.unit_name,production_unit_id.unit_shortcut`,
                 { headers: directusHeaders, cache: "no-store" }
@@ -134,7 +227,8 @@ export async function GET(req: NextRequest) {
                 headers: directusHeaders,
                 cache: "no-store"
             }).catch(() => null),
-            fetchSpringBootDepreciation()
+            fetchSpringBootDepreciation(),
+            fetchDirectusDepreciationViews(directusHeaders)
         ]);
 
         if (!assetsRes.ok) {
@@ -232,11 +326,19 @@ export async function GET(req: NextRequest) {
             const prodUnitName = raw.production_unit_id?.unit_name || "Units";
             const prodUnitShortcut = raw.production_unit_id?.unit_shortcut || "units";
 
-            // Live SpringBoot / MySQL view linkage
-            const liveYield = springYieldMap.get(id);
-            const actualUnitsProduced = liveYield?.production_units
-                ? Number(liveYield.production_units)
-                : openingUnits;
+            // Live SpringBoot / MySQL view linkage + Directus view fallback + Raw asset fields
+            const liveYield = springYieldMap.get(id) || directusYieldMap.get(id);
+            const actualUnitsProduced =
+                liveYield && liveYield.totalProductionUnits > 0
+                    ? liveYield.totalProductionUnits
+                    : Number(
+                          raw.actual_units_produced ??
+                          raw.actualUnitsProduced ??
+                          raw.production_units ??
+                          raw.productionUnits ??
+                          openingUnits ??
+                          0
+                      );
 
             let metrics: CalculatedDepreciationMetrics;
             if (depreciationMethod === "Units of Production") {

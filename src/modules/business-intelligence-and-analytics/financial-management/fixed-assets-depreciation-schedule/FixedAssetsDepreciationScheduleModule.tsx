@@ -2,11 +2,13 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
+import { motion, AnimatePresence } from "framer-motion";
 import {
- 
     AlertCircle,
- 
-    Layers
+    Layers,
+    LayoutDashboard,
+    TableProperties,
+    BarChart2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import DepreciationSummaryCards from "./components/DepreciationSummaryCards";
@@ -14,18 +16,28 @@ import DepreciationFilters from "./components/DepreciationFilters";
 import DepreciationScheduleTable from "./components/DepreciationScheduleTable";
 import AssetAmortizationModal from "./components/AssetAmortizationModal";
 import DepreciationExport from "./components/DepreciationExport";
+import DepreciationAnalyticsTab from "./components/DepreciationAnalyticsTab";
 import { fetchDepreciationSchedule } from "./services/depreciationService";
 import {
     AssetDepreciationRecord,
     DepreciationScheduleSummary,
     DepartmentOption,
     DepreciationFiltersState,
- 
 } from "./types";
 import { formatDateString } from "./utils/depreciationCalculations";
 
+type ActiveTab = "summary" | "schedule" | "analytics";
+
+const TABS: { id: ActiveTab; label: string; icon: React.ElementType }[] = [
+    { id: "summary", label: "Summary", icon: LayoutDashboard },
+    { id: "schedule", label: "Schedule", icon: TableProperties },
+    { id: "analytics", label: "Analytics", icon: BarChart2 },
+];
+
 export default function FixedAssetsDepreciationScheduleModule() {
     const todayStr = new Date().toISOString().split("T")[0];
+
+    const [activeTab, setActiveTab] = useState<ActiveTab>("summary");
 
     const [filters, setFilters] = useState<DepreciationFiltersState>({
         asOfDate: todayStr,
@@ -35,7 +47,7 @@ export default function FixedAssetsDepreciationScheduleModule() {
         assetType: "ALL",
         depreciationMethod: "ALL",
         departmentId: "ALL",
-        statusFilter: "ALL"
+        statusFilter: "ALL",
     });
 
     const [assets, setAssets] = useState<AssetDepreciationRecord[]>([]);
@@ -46,7 +58,8 @@ export default function FixedAssetsDepreciationScheduleModule() {
     const [error, setError] = useState<string | null>(null);
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-    const [selectedAssetForSchedule, setSelectedAssetForSchedule] = useState<AssetDepreciationRecord | null>(null);
+    const [selectedAssetForSchedule, setSelectedAssetForSchedule] =
+        useState<AssetDepreciationRecord | null>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
 
     // Data loader
@@ -63,7 +76,8 @@ export default function FixedAssetsDepreciationScheduleModule() {
                 const response = await fetchDepreciationSchedule(filters);
 
                 if (!response.ok) {
-                    const msg = response.error || "Failed to load fixed asset depreciation schedule";
+                    const msg =
+                        response.error || "Failed to load fixed asset depreciation schedule";
                     setError(msg);
                     toast.error(msg);
                     return;
@@ -80,7 +94,8 @@ export default function FixedAssetsDepreciationScheduleModule() {
                     toast.success("Depreciation schedule recalculated successfully.");
                 }
             } catch (err: unknown) {
-                const msg = err instanceof Error ? err.message : "Error connecting to server";
+                const msg =
+                    err instanceof Error ? err.message : "Error connecting to server";
                 setError(msg);
                 toast.error(msg);
             } finally {
@@ -102,7 +117,7 @@ export default function FixedAssetsDepreciationScheduleModule() {
     ) => {
         setFilters((prev) => ({
             ...prev,
-            [key]: value
+            [key]: value,
         }));
     };
 
@@ -115,7 +130,7 @@ export default function FixedAssetsDepreciationScheduleModule() {
             assetType: "ALL",
             depreciationMethod: "ALL",
             departmentId: "ALL",
-            statusFilter: "ALL"
+            statusFilter: "ALL",
         });
         toast.info("Filters reset to default.");
     };
@@ -144,7 +159,8 @@ export default function FixedAssetsDepreciationScheduleModule() {
                                 Fixed Asset Depreciation Schedule
                             </h1>
                             <p className="text-xs text-muted-foreground mt-0.5">
-                                Capitalized asset acquisition cost, salvage values, periodic expense, and net book value (NBV) for balance sheet and audit reporting.
+                                Capitalized asset acquisition cost, salvage values, periodic expense,
+                                and net book value (NBV) for balance sheet and audit reporting.
                             </p>
                         </div>
                     </div>
@@ -183,13 +199,38 @@ export default function FixedAssetsDepreciationScheduleModule() {
                 </div>
             )}
 
-            {/* Top KPI Metrics Cards */}
-            <DepreciationSummaryCards
-                summary={summary}
-                isLoading={isLoading}
-            />
+            {/* ── Tab Navigation ── */}
+            <div className="relative flex gap-1 rounded-xl border border-border bg-muted/40 p-1">
+                {TABS.map((tab) => {
+                    const Icon = tab.icon;
+                    const isActive = activeTab === tab.id;
+                    return (
+                        <button
+                            key={tab.id}
+                            onClick={() => setActiveTab(tab.id)}
+                            className={[
+                                "relative flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                                isActive
+                                    ? "text-foreground"
+                                    : "text-muted-foreground hover:text-foreground",
+                            ].join(" ")}
+                        >
+                            {/* Animated background pill */}
+                            {isActive && (
+                                <motion.span
+                                    layoutId="tab-pill"
+                                    className="absolute inset-0 rounded-lg bg-background shadow-sm"
+                                    transition={{ type: "spring", stiffness: 380, damping: 35 }}
+                                />
+                            )}
+                            <Icon className="relative h-3.5 w-3.5 shrink-0" />
+                            <span className="relative">{tab.label}</span>
+                        </button>
+                    );
+                })}
+            </div>
 
-            {/* Filter Toolbar (As-of Date, Comboboxes, Search, Recalculate) */}
+            {/* ── Shared Filters (visible on all tabs) ── */}
             <DepreciationFilters
                 filters={filters}
                 departments={departments}
@@ -199,12 +240,62 @@ export default function FixedAssetsDepreciationScheduleModule() {
                 isRefreshing={isRefreshing}
             />
 
-            {/* Main Interactive Table */}
-            <DepreciationScheduleTable
-                assets={assets}
-                isLoading={isLoading}
-                onSelectAssetForSchedule={handleOpenScheduleModal}
-            />
+            {/* ── Tab Content with AnimatePresence ── */}
+            <AnimatePresence mode="wait">
+                {activeTab === "summary" && (
+                    <motion.div
+                        key="summary"
+                        initial={{ opacity: 0, y: 12 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -8 }}
+                        transition={{ duration: 0.22, ease: "easeOut" }}
+                        className="space-y-4"
+                    >
+                        {/* KPI Cards */}
+                        <DepreciationSummaryCards
+                            summary={summary}
+                            isLoading={isLoading}
+                        />
+
+                        {/* Grouped Asset Table */}
+                        <DepreciationScheduleTable
+                            assets={assets}
+                            isLoading={isLoading}
+                            onSelectAssetForSchedule={handleOpenScheduleModal}
+                            summary={summary}
+                        />
+                    </motion.div>
+                )}
+
+                {activeTab === "schedule" && (
+                    <motion.div
+                        key="schedule"
+                        initial={{ opacity: 0, y: 12 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -8 }}
+                        transition={{ duration: 0.22, ease: "easeOut" }}
+                    >
+                        <DepreciationScheduleTable
+                            assets={assets}
+                            isLoading={isLoading}
+                            onSelectAssetForSchedule={handleOpenScheduleModal}
+                            summary={summary}
+                        />
+                    </motion.div>
+                )}
+
+                {activeTab === "analytics" && (
+                    <motion.div
+                        key="analytics"
+                        initial={{ opacity: 0, y: 12 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -8 }}
+                        transition={{ duration: 0.22, ease: "easeOut" }}
+                    >
+                        <DepreciationAnalyticsTab assets={assets} summary={summary} />
+                    </motion.div>
+                )}
+            </AnimatePresence>
 
             {/* Drill-down Amortization Modal */}
             <AssetAmortizationModal

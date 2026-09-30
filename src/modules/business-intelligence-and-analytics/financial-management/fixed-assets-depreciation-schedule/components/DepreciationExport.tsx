@@ -98,12 +98,19 @@ export default function DepreciationExport({
                 a.current_period_depreciation.toFixed(2),
                 a.ending_accumulated_depreciation.toFixed(2),
                 a.net_book_value.toFixed(2),
-                `${a.depreciated_percent.toFixed(1)}%`,
+                a.depreciated_percent !== null && a.depreciated_percent !== undefined
+                    ? `${a.depreciated_percent.toFixed(2)}%`
+                    : "N/A",
                 `"${a.status}"`
             ]);
 
             // Summary row at the bottom for Balance Sheet verification
             if (summary) {
+                const summaryDeprPercent =
+                    summary.total_depreciable_base > 0
+                        ? `${((summary.total_ending_accum_depreciation / summary.total_depreciable_base) * 100).toFixed(2)}%`
+                        : "N/A";
+
                 rows.push([
                     '"--- BALANCE SHEET TOTALS ---"',
                     "",
@@ -123,7 +130,7 @@ export default function DepreciationExport({
                     summary.total_current_period_depreciation.toFixed(2),
                     summary.total_ending_accum_depreciation.toFixed(2),
                     summary.total_net_book_value.toFixed(2),
-                    "",
+                    summaryDeprPercent,
                     ""
                 ]);
             }

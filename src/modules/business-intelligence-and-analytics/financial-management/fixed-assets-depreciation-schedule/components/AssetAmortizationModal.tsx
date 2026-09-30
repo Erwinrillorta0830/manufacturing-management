@@ -72,28 +72,60 @@ export default function AssetAmortizationModal({
     const startIndex = (currentPage - 1) * pageSize;
     const paginatedSchedule = detail.schedule.slice(startIndex, startIndex + pageSize);
 
-    const handleExportCsv = () => {
-        const headers = [
-            "Period",
-            "Period Start",
-            "Period End",
-            "Opening NBV",
-            "Depreciation Expense",
-            "Ending Accumulated Depreciation",
-            "Ending NBV",
-            "% Depreciated"
-        ];
+    const isUOP = asset.depreciation_method === "Units of Production";
 
-        const rows = detail.schedule.map((r) => [
-            `"${r.period_label}"`,
-            r.period_start_date,
-            r.period_end_date,
-            r.opening_nbv.toFixed(2),
-            r.depreciation_expense.toFixed(2),
-            r.ending_accumulated_depreciation.toFixed(2),
-            r.ending_nbv.toFixed(2),
-            `${r.percent_depreciated.toFixed(1)}%`
-        ]);
+    const handleExportCsv = () => {
+        const headers = isUOP
+            ? [
+                  "Period",
+                  "Period Start",
+                  "Period End",
+                  "Opening NBV",
+                  "Units Produced",
+                  "Depreciation Expense",
+                  "Ending Accumulated Depreciation",
+                  "Ending NBV",
+                  "% Depreciated"
+              ]
+            : [
+                  "Period",
+                  "Period Start",
+                  "Period End",
+                  "Opening NBV",
+                  "Depreciation Expense",
+                  "Ending Accumulated Depreciation",
+                  "Ending NBV",
+                  "% Depreciated"
+              ];
+
+        const rows = detail.schedule.map((r) =>
+            isUOP
+                ? [
+                      `"${r.period_label}"`,
+                      r.period_start_date,
+                      r.period_end_date,
+                      r.opening_nbv.toFixed(2),
+                      String(r.production_units_period || 0),
+                      r.depreciation_expense.toFixed(2),
+                      r.ending_accumulated_depreciation.toFixed(2),
+                      r.ending_nbv.toFixed(2),
+                      r.percent_depreciated !== null && r.percent_depreciated !== undefined
+                          ? `${r.percent_depreciated.toFixed(2)}%`
+                          : "N/A"
+                  ]
+                : [
+                      `"${r.period_label}"`,
+                      r.period_start_date,
+                      r.period_end_date,
+                      r.opening_nbv.toFixed(2),
+                      r.depreciation_expense.toFixed(2),
+                      r.ending_accumulated_depreciation.toFixed(2),
+                      r.ending_nbv.toFixed(2),
+                      r.percent_depreciated !== null && r.percent_depreciated !== undefined
+                          ? `${r.percent_depreciated.toFixed(2)}%`
+                          : "N/A"
+                  ]
+        );
 
         const bom = "\uFEFF";
         const csvContent = bom + [headers.join(","), ...rows.map((e) => e.join(","))].join("\r\n");
@@ -125,7 +157,7 @@ export default function AssetAmortizationModal({
                                     Asset Depreciation Amortization Schedule
                                 </DialogTitle>
                                 <DialogDescription className="text-xs text-muted-foreground">
-                                    Audit trail and projected period-by-period carrying values for {asset.item_name}
+                                    Audit trail and period-by-period carrying values for {asset.item_name}
                                 </DialogDescription>
                             </div>
                         </div>
@@ -221,7 +253,11 @@ export default function AssetAmortizationModal({
                                 </p>
                             </div>
                             <div>
-                                <span className="text-muted-foreground">Useful Life</span>
+                                <span className="text-muted-foreground">
+                                    {asset.depreciation_method === "Units of Production"
+                                        ? "Lifetime Capacity"
+                                        : "Useful Life"}
+                                </span>
                                 <p className="font-semibold font-mono text-foreground text-sm">
                                     {asset.depreciation_method === "Straight Line"
                                         ? `${asset.life_span_years} Years`
@@ -229,7 +265,7 @@ export default function AssetAmortizationModal({
                                 </p>
                             </div>
                             <div>
-                                <span className="text-muted-foreground">Ending Accum. Depr.</span>
+                                <span className="text-muted-foreground">Accumulated Depreciation</span>
                                 <p className="font-semibold font-mono text-rose-600 dark:text-rose-400 text-sm">
                                     {formatCurrency(asset.ending_accumulated_depreciation)}
                                 </p>
@@ -280,6 +316,9 @@ export default function AssetAmortizationModal({
                                     <tr>
                                         <th className="px-3.5 py-2.5 font-medium">Period</th>
                                         <th className="px-3.5 py-2.5 font-medium text-right">Opening NBV</th>
+                                        {isUOP && (
+                                            <th className="px-3.5 py-2.5 font-medium text-right">Units Produced</th>
+                                        )}
                                         <th className="px-3.5 py-2.5 font-medium text-right">Depreciation Expense</th>
                                         <th className="px-3.5 py-2.5 font-medium text-right">Accumulated Depr.</th>
                                         <th className="px-3.5 py-2.5 font-medium text-right">Ending NBV</th>
@@ -294,7 +333,7 @@ export default function AssetAmortizationModal({
                                             animate={{ opacity: 1, y: 0 }}
                                             transition={{ duration: 0.2 }}
                                         >
-                                            <td colSpan={6} className="px-3.5 py-8 text-center text-muted-foreground">
+                                            <td colSpan={isUOP ? 7 : 6} className="px-3.5 py-8 text-center text-muted-foreground">
                                                 No amortization periods calculated for this asset.
                                             </td>
                                         </motion.tr>
@@ -322,7 +361,12 @@ export default function AssetAmortizationModal({
                                                 <td className="px-3.5 py-2.5 text-right font-mono">
                                                     {formatCurrency(row.opening_nbv)}
                                                 </td>
-                                                <td className="px-3.5 py-2.5 text-right font-mono text-rose-600 dark:text-rose-400">
+                                                {isUOP && (
+                                                    <td className="px-3.5 py-2.5 text-right font-mono font-medium text-foreground">
+                                                        {(row.production_units_period || 0).toLocaleString()} {asset.production_unit_shortcut || "units"}
+                                                    </td>
+                                                )}
+                                                <td className="px-3.5 py-2.5 text-right font-mono text-rose-600 dark:text-rose-400 font-medium">
                                                     {formatCurrency(row.depreciation_expense)}
                                                 </td>
                                                 <td className="px-3.5 py-2.5 text-right font-mono">
@@ -331,18 +375,8 @@ export default function AssetAmortizationModal({
                                                 <td className="px-3.5 py-2.5 text-right font-mono text-emerald-600 dark:text-emerald-400 font-semibold">
                                                     {formatCurrency(row.ending_nbv)}
                                                 </td>
-                                                <td className="px-3.5 py-2.5 text-right font-mono">
-                                                    <div className="flex items-center justify-end gap-2">
-                                                        <span>{formatPercent(row.percent_depreciated)}</span>
-                                                        <div className="h-1.5 w-12 rounded-full bg-muted overflow-hidden">
-                                                            <motion.div
-                                                                className="h-full bg-primary"
-                                                                initial={{ width: 0 }}
-                                                                animate={{ width: `${Math.min(100, row.percent_depreciated)}%` }}
-                                                                transition={{ duration: 0.35, delay: i * 0.02 + 0.08 }}
-                                                            />
-                                                        </div>
-                                                    </div>
+                                                <td className="px-3.5 py-2.5 text-right font-mono font-medium">
+                                                    {formatPercent(row.percent_depreciated)}
                                                 </td>
                                             </motion.tr>
                                         ))

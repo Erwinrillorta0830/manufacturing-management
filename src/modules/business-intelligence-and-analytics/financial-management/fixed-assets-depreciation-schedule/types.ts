@@ -84,7 +84,7 @@ export interface AssetDepreciationRecord {
     current_period_depreciation: number;
     ending_accumulated_depreciation: number;
     net_book_value: number;
-    depreciated_percent: number;
+    depreciated_percent: number | null;
     status: AssetReportingStatus;
     is_fully_depreciated: boolean;
     months_in_service: number;
@@ -118,7 +118,7 @@ export interface AmortizationScheduleRow {
     ending_nbv: number;
     production_units_period?: number;
     is_cutoff_period: boolean;
-    percent_depreciated: number;
+    percent_depreciated: number | null;
 }
 
 export interface AssetAmortizationAuditTrail {
@@ -147,4 +147,20 @@ export interface DepreciationApiResponse {
         totalCount: number;
     };
     error?: string;
+}
+
+export type ScheduleGroupingMode = "category" | "department" | "none";
+
+export interface AssetDepreciationGroup {
+    key: string;
+    title: string;
+    count: number;
+    totalAcquisitionCost: number;
+    totalSalvageValue: number;
+    totalBeginningAccumDepreciation: number;
+    totalCurrentPeriodDepreciation: number;
+    totalEndingAccumDepreciation: number;
+    totalNetBookValue: number;
+    avgDepreciatedPercent: number | null;
+    assets: AssetDepreciationRecord[];
 }
