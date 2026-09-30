@@ -210,43 +210,50 @@ export async function POST(req: NextRequest) {
             const postPickedResIds = Array.isArray(body.pickedReservationIds) ? body.pickedReservationIds : null;
             const postPickedLotIds = Array.isArray(body.pickedLotIds) ? body.pickedLotIds : null;
 
-            if (postPickedResIds || postPickedLotIds) {
-                if (invoiceDetailIds.length > 0) {
-                    const [soRes, siRes] = await Promise.all([
-                        fetch(
-                            `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${invoiceDetailIds.join(",")}&filter[status][_in]=Reserved,Picked&limit=-1&fields=reservation_id,id,inventory_lot_id,status`,
-                            { headers: directusHeaders, cache: "no-store" }
-                        ),
-                        fetch(
-                            `${DIRECTUS_URL}/items/sales_invoice_reservation?filter[sales_invoice_detail_id][_in]=${invoiceDetailIds.join(",")}&filter[status][_in]=Reserved,Picked&limit=-1&fields=id,inventory_lot_id,status`,
-                            { headers: directusHeaders, cache: "no-store" }
-                        ),
-                    ]);
+            if (invoiceDetailIds.length > 0) {
+                const [soRes, siRes] = await Promise.all([
+                    fetch(
+                        `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${invoiceDetailIds.join(",")}&filter[status][_in]=Reserved,Picked&limit=-1&fields=reservation_id,id,inventory_lot_id,status,reserved_quantity,picked_quantity`,
+                        { headers: directusHeaders, cache: "no-store" }
+                    ),
+                    fetch(
+                        `${DIRECTUS_URL}/items/sales_invoice_reservation?filter[sales_invoice_detail_id][_in]=${invoiceDetailIds.join(",")}&filter[status][_in]=Reserved,Picked&limit=-1&fields=id,inventory_lot_id,status`,
+                        { headers: directusHeaders, cache: "no-store" }
+                    ),
+                ]);
 
-                    if (soRes.ok) {
-                        const soData = (await soRes.json()).data || [];
-                        for (const r of soData) {
-                            const rId = Number(r.reservation_id || r.id);
-                            const rawInv = typeof r.inventory_lot_id === "object" && r.inventory_lot_id !== null
-                                ? (r.inventory_lot_id as { id?: number; inventory_lot_id?: number }).id || (r.inventory_lot_id as { id?: number; inventory_lot_id?: number }).inventory_lot_id
-                                : r.inventory_lot_id;
-                            const invId = Number(rawInv || 0);
-                            const isPicked = (postPickedResIds && postPickedResIds.includes(rId)) || (postPickedLotIds && postPickedLotIds.includes(invId));
+                if (soRes.ok) {
+                    const soData = (await soRes.json()).data || [];
+                    for (const r of soData) {
+                        const rId = Number(r.reservation_id || r.id);
+                        const rawInv = typeof r.inventory_lot_id === "object" && r.inventory_lot_id !== null
+                            ? (r.inventory_lot_id as { id?: number; inventory_lot_id?: number }).id || (r.inventory_lot_id as { id?: number; inventory_lot_id?: number }).inventory_lot_id
+                            : r.inventory_lot_id;
+                        const invId = Number(rawInv || 0);
+                        const hasExplicitLists = Boolean(postPickedResIds || postPickedLotIds);
+                        const isPicked = hasExplicitLists
+                            ? Boolean((postPickedResIds && postPickedResIds.includes(rId)) || (postPickedLotIds && postPickedLotIds.includes(invId)))
+                            : true; // On batch complete, default active reservations to Picked
 
-                            const nextStatus = isPicked ? "Picked" : "Reserved";
-                            if (r.status !== nextStatus) {
-                                await fetch(`${DIRECTUS_URL}/items/sales_order_reservation/${rId}`, {
-                                    method: "PATCH",
-                                    headers: directusHeaders,
-                                    body: JSON.stringify({
-                                        status: nextStatus,
-                                        updated_by: userId,
-                                        updated_at: phNow,
-                                    }),
-                                }).catch(() => null);
-                            }
+                        const nextStatus = isPicked ? "Picked" : "Reserved";
+                        const resQty = Number(r.reserved_quantity || 0);
+                        const currentPickedQty = Number(r.picked_quantity || 0);
+                        const nextPickedQty = isPicked ? (currentPickedQty > 0 ? currentPickedQty : resQty) : 0;
+
+                        if (r.status !== nextStatus || (isPicked && currentPickedQty <= 0 && resQty > 0)) {
+                            await fetch(`${DIRECTUS_URL}/items/sales_order_reservation/${rId}`, {
+                                method: "PATCH",
+                                headers: directusHeaders,
+                                body: JSON.stringify({
+                                    status: nextStatus,
+                                    picked_quantity: nextPickedQty,
+                                    updated_by: userId,
+                                    updated_at: phNow,
+                                }),
+                            }).catch(() => null);
                         }
                     }
+                }
 
                     if (siRes.ok) {
                         const siData = (await siRes.json()).data || [];
@@ -273,7 +280,6 @@ export async function POST(req: NextRequest) {
                         }
                     }
                 }
-            }
 
             // 2. Update all consolidator_details with picked_by and picked_at
             for (const d of details) {
@@ -417,16 +423,16 @@ export async function PATCH(req: NextRequest) {
 
                     if (invoiceIds.length > 0) {
                         const sodRes = await fetch(
-                            `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_in]=${invoiceIds.join(",")}&fields=detail_id,order_id,product_id,ordered_quantity,quantity&limit=-1`,
+                            `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_in]=${invoiceIds.join(",")}&fields=detail_id,order_id,product_id,ordered_quantity&limit=-1`,
                             { headers: directusHeaders, cache: "no-store" }
                         );
                         if (sodRes.ok) {
                             const sodList: { detail_id: number; order_id: number; product_id: number; ordered_quantity: number }[] = ((await sodRes.json()).data || [])
-                                .map((row: { detail_id: number; order_id: number; product_id: number; ordered_quantity?: number; quantity?: number }) => ({
+                                .map((row: { detail_id: number; order_id: number; product_id: number; ordered_quantity?: number }) => ({
                                     detail_id: Number(row.detail_id),
                                     order_id: Number(row.order_id),
                                     product_id: Number(row.product_id),
-                                    ordered_quantity: Number(row.ordered_quantity ?? row.quantity ?? 0),
+                                    ordered_quantity: Number(row.ordered_quantity ?? 0),
                                 }))
                                 .filter((d: { detail_id: number; product_id: number }) => Boolean(d.detail_id));
                             const detailIds = sodList.map((d) => d.detail_id);
@@ -482,8 +488,8 @@ export async function PATCH(req: NextRequest) {
                                                         body: JSON.stringify({
                                                             picked_quantity: pickedPart,
                                                             status: pickedPart >= resQty && resQty > 0 ? "Picked" : "Reserved",
-                                                            modified_date: phNow,
-                                                            modified_by: userId,
+                                                            updated_at: phNow,
+                                                            updated_by: userId,
                                                         }),
                                                     }).catch(() => null);
 
@@ -493,8 +499,8 @@ export async function PATCH(req: NextRequest) {
                                                             headers: directusHeaders,
                                                             body: JSON.stringify({
                                                                 status: pickedPart >= resQty && resQty > 0 ? "Picked" : "Reserved",
-                                                                modified_date: phNow,
-                                                                modified_by: userId,
+                                                                updated_at: phNow,
+                                                                updated_by: userId,
                                                             }),
                                                         }).catch(() => null);
                                                     }
@@ -541,8 +547,8 @@ export async function PATCH(req: NextRequest) {
                                                             picked_quantity: allocQty,
                                                             reserved_quantity: Math.max(Number(existingRes.reserved_quantity || 0), allocQty),
                                                             status: "Picked",
-                                                            modified_date: phNow,
-                                                            modified_by: userId,
+                                                            updated_at: phNow,
+                                                            updated_by: userId,
                                                         }),
                                                     }).catch(() => null);
                                                 } else {
@@ -553,16 +559,13 @@ export async function PATCH(req: NextRequest) {
                                                             sales_order_detail_id: d.detail_id,
                                                             product_id: item.productId,
                                                             inventory_lot_id: item.inventoryLotId || null,
-                                                            lot_id: item.lotId || null,
-                                                            batch_no: item.batchNo || "LOT-N/A",
                                                             reserved_quantity: allocQty,
-                                                            quantity: allocQty,
                                                             picked_quantity: allocQty,
                                                             status: "Picked",
                                                             created_by: userId,
                                                             created_at: phNow,
-                                                            modified_by: userId,
-                                                            modified_date: phNow,
+                                                            updated_by: userId,
+                                                            updated_at: phNow,
                                                         }),
                                                     }).catch(() => null);
                                                 }
@@ -591,8 +594,8 @@ export async function PATCH(req: NextRequest) {
                                                             picked_quantity: Number(existingRes.picked_quantity || 0) + budget,
                                                             reserved_quantity: Number(existingRes.reserved_quantity || 0) + budget,
                                                             status: "Picked",
-                                                            modified_date: phNow,
-                                                            modified_by: userId,
+                                                            updated_at: phNow,
+                                                            updated_by: userId,
                                                         }),
                                                     }).catch(() => null);
                                                 } else {
@@ -603,16 +606,13 @@ export async function PATCH(req: NextRequest) {
                                                             sales_order_detail_id: fallbackDetail.detail_id,
                                                             product_id: item.productId,
                                                             inventory_lot_id: item.inventoryLotId || null,
-                                                            lot_id: item.lotId || null,
-                                                            batch_no: item.batchNo || "LOT-N/A",
                                                             reserved_quantity: budget,
-                                                            quantity: budget,
                                                             picked_quantity: budget,
                                                             status: "Picked",
                                                             created_by: userId,
                                                             created_at: phNow,
-                                                            modified_by: userId,
-                                                            modified_date: phNow,
+                                                            updated_by: userId,
+                                                            updated_at: phNow,
                                                         }),
                                                     }).catch(() => null);
                                                 }
@@ -639,8 +639,8 @@ export async function PATCH(req: NextRequest) {
                                                     body: JSON.stringify({
                                                         picked_quantity: resQty,
                                                         status: "Picked",
-                                                        modified_date: phNow,
-                                                        modified_by: userId,
+                                                        updated_at: phNow,
+                                                        updated_by: userId,
                                                     }),
                                                 }).catch(() => null);
                                             } else if (!isPicked && r.status === "Picked") {
@@ -650,8 +650,8 @@ export async function PATCH(req: NextRequest) {
                                                     body: JSON.stringify({
                                                         picked_quantity: 0,
                                                         status: "Reserved",
-                                                        modified_date: phNow,
-                                                        modified_by: userId,
+                                                        updated_at: phNow,
+                                                        updated_by: userId,
                                                     }),
                                                 }).catch(() => null);
                                             }

@@ -29,16 +29,6 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog";
-import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import type { InvoiceConsolidation, PickingSavePayload, AvailableLotBatchItem } from "../../shared/consolidation-types";
 import {
     fetchAllocationsWithBatches,
@@ -105,7 +95,7 @@ export function getLotOrderLabels(
 }
 
 export function getLotKey(productId: number, alloc: LotAllocation, idx: number): string {
-    return `${productId}:${alloc.batchNo || alloc.lotName}:${alloc.inventoryLotId || alloc.lotId || idx}:${idx}`;
+    return `${productId}:${alloc.batchNo || alloc.lotName}:${alloc.quantity}:${alloc.inventoryLotId || alloc.lotId || idx}:${idx}`;
 }
 
 export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Props) {
@@ -119,9 +109,6 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
     const [completing, setCompleting] = useState(false);
     const [printing, setPrinting] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
-    const [rawInputs, setRawInputs] = useState<Record<string, string>>({});
-    const [validationErrorsModalOpen, setValidationErrorsModalOpen] = useState(false);
-    const [pendingValidationErrors, setPendingValidationErrors] = useState<Array<{ productId: number; productName: string; message: string }>>([]);
 
     // Initialize local picked quantities & lot selections from batch details
     useEffect(() => {
@@ -156,12 +143,12 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                 const freshMap: Record<number, number> = {};
                 for (const d of b.details || []) {
                     const prodAllocs = prodAllocMap.get(d.productId) || [];
-                    // const prodAllocTotal = prodAllocs.reduce((sum, a) => sum + Math.max(Number(a.quantity || 0), Number(a.availableQuantity || 0)), 0);
-                    // Items with no lot allocations cannot be picked unless already picked
-                    if (prodAllocs.length === 0 && Number(d.pickedQuantity || 0) <= 0) {
+                    const prodAllocTotal = prodAllocs.reduce((sum, a) => sum + Number(a.quantity || 0), 0);
+                    // Items with no lot allocations cannot be picked
+                    if (prodAllocs.length === 0 || prodAllocTotal <= 0) {
                         freshMap[d.id] = 0;
                     } else {
-                        freshMap[d.id] = Number(d.pickedQuantity || 0);
+                        freshMap[d.id] = Math.min(Number(d.pickedQuantity || 0), prodAllocTotal);
                     }
                 }
                 setPickedQtys(freshMap);
@@ -193,7 +180,7 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
     const allocationsByProduct = useMemo(() => {
         const map = new Map<number, LotAllocation[]>();
         for (const a of allocations) {
-            if (Number(a.quantity || 0) <= 0 && Number(a.availableQuantity || 0) <= 0) continue;
+            if (Number(a.quantity || 0) <= 0) continue;
             const list = map.get(a.productId) || [];
             list.push(a);
             map.set(a.productId, list);
@@ -284,75 +271,26 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
         );
     }, [consolidatedProducts, searchQuery]);
 
-    // Helper to normalize UOM strings for comparison
-    const normalizeUom = (uom?: string | null) => (uom || "").trim().toLowerCase();
-
-    // Check validation error for an individual lot allocation
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const getLotValidationError = (productId: number, alloc: LotAllocation, allocIdx: number): string | null => {
-        // Individual lot capacity is no longer restricted; user can pick to a lot/batch even if available is less
-        return null;
-    };
-
-    // Check all validation errors across products and lots
-    const getValidationErrors = (): Array<{ productId: number; productName: string; message: string }> => {
-        const errors: Array<{ productId: number; productName: string; message: string }> = [];
-
-        for (const prodItem of consolidatedProducts) {
-            let totalProdPicked = 0;
-            const prodAllocs = allocationsByProduct.get(prodItem.productId) || [];
-
-            for (let i = 0; i < prodAllocs.length; i++) {
-                const alloc = prodAllocs[i];
-                const key = getLotKey(prodItem.productId, alloc, i);
-                const picked = lotPickedQtys[key] !== undefined ? Number(lotPickedQtys[key]) : Number(alloc.pickedQuantity || 0);
-                totalProdPicked += picked;
-
-                const lotErr = getLotValidationError(prodItem.productId, alloc, i);
-                if (lotErr) {
-                    errors.push({
-                        productId: prodItem.productId,
-                        productName: prodItem.productName,
-                        message: `${alloc.lotName || alloc.batchNo || "Lot"}: ${lotErr}`,
-                    });
-                }
-            }
-
-            if (prodItem.totalOrdered > 0 && totalProdPicked > prodItem.totalOrdered) {
-                errors.push({
-                    productId: prodItem.productId,
-                    productName: prodItem.productName,
-                    message: `Total picked (${totalProdPicked}) exceeds ordered quantity (${prodItem.totalOrdered})`,
-                });
-            }
-        }
-
-        return errors;
-    };
-
-    // Helper to distribute total picked from lots across underlying details
+    // Helper to distribute total picked from lots across underlying details (capped at maxQty)
     const updateDetailPickedFromLots = (productId: number, maxQty: number, totalProductPicked: number) => {
         const item = consolidatedProducts.find((p) => p.productId === productId);
-        if (!item || item.details.length === 0) return;
-        let budget = totalProductPicked;
+        if (!item) return;
+        let budget = Math.min(maxQty, totalProductPicked);
         const newPickedMap = { ...pickedQtys };
-        for (let i = 0; i < item.details.length; i++) {
-            const d = item.details[i];
+        for (const d of item.details) {
             const dMax = Number(d.orderedQuantity || 0);
-            if (i === item.details.length - 1) {
-                newPickedMap[d.id] = budget;
-            } else {
-                const assign = Math.min(budget, dMax);
-                newPickedMap[d.id] = assign;
-                budget -= assign;
-            }
+            const assign = Math.min(budget, dMax);
+            newPickedMap[d.id] = assign;
+            budget -= assign;
         }
         setPickedQtys(newPickedMap);
     };
 
+
     // Click on individual batch/lot card to pick / unpick for consolidated product
     const handleToggleLotPick = (productId: number, maxQty: number, alloc: LotAllocation, allocIdx: number) => {
         const key = getLotKey(productId, alloc, allocIdx);
+        const lotCapacity = Number(alloc.quantity || 0);
         const currentLotPicked = Number(lotPickedQtys[key] || 0);
 
         const prodAllocs = allocationsByProduct.get(productId) || [];
@@ -370,20 +308,13 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
             // Unpick
             nextLotPicked = 0;
         } else {
-            // Pick up to remaining demand (even if lot capacity is less)
+            // Pick up to remaining demand or lot capacity
             if (remainingDemand <= 0) {
                 toast.info(`Total demand for this product (${maxQty}) has already been picked.`);
                 return;
             }
-            nextLotPicked = remainingDemand;
+            nextLotPicked = Math.min(lotCapacity, remainingDemand);
         }
-
-        // Clear raw input buffer for this lot
-        setRawInputs((prev) => {
-            const next = { ...prev };
-            delete next[key];
-            return next;
-        });
 
         const nextLotMap = {
             ...lotPickedQtys,
@@ -395,7 +326,7 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
         updateDetailPickedFromLots(productId, maxQty, totalProductPicked);
     };
 
-    // Direct quantity input on individual batch/lot card - enforce total demand
+    // Direct quantity input on individual batch/lot card
     const handleLotPickedQtyChange = (
         productId: number,
         maxQty: number,
@@ -404,6 +335,7 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
         val: number
     ) => {
         const key = getLotKey(productId, alloc, allocIdx);
+        const lotCapacity = Number(alloc.quantity || 0);
 
         const prodAllocs = allocationsByProduct.get(productId) || [];
         let otherLotsPicked = 0;
@@ -414,13 +346,13 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
         }
 
         const remainingDemand = Math.max(0, maxQty - otherLotsPicked);
+        const allowedForThisLot = Math.min(lotCapacity, remainingDemand);
 
-        let nextQty = isNaN(val) ? 0 : val;
-        // User cannot exceed total demand
-        if (nextQty > remainingDemand && maxQty > 0) {
-            toast.info(`Capped at ${remainingDemand} to not exceed total demand of ${maxQty}`);
-            nextQty = remainingDemand;
+        if (val > allowedForThisLot && allowedForThisLot < lotCapacity) {
+            toast.info(`Capped at ${allowedForThisLot} to not exceed total demand of ${maxQty}`);
         }
+
+        const nextQty = Math.max(0, Math.min(allowedForThisLot, isNaN(val) ? 0 : val));
 
         const nextLotMap = {
             ...lotPickedQtys,
@@ -454,13 +386,6 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
             return;
         }
 
-        // UOM validation: verify candidate matches current product's UOM
-        const prodItem = consolidatedProducts.find((p) => p.productId === productId);
-        if (prodItem && prodItem.unit && candidate.unit && normalizeUom(prodItem.unit) !== normalizeUom(candidate.unit)) {
-            toast.error(`Cannot add batch with unit "${candidate.unit}". Product unit is "${prodItem.unit}".`);
-            return;
-        }
-
         // Check if already in allocations
         const exists = allocations.some(
             (a) =>
@@ -482,7 +407,6 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
             expiryDate: candidate.expiryDate,
             manufacturingDate: null,
             quantity: candidate.availableQuantity,
-            availableQuantity: candidate.availableQuantity,
             pickedQuantity: 0,
             inventoryLotId: candidate.inventoryLotId || invLotId,
             reservationIds: [], // Empty reservationIds indicates an added floor-picked lot
@@ -560,10 +484,13 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
             const payload: PickingSavePayload = {
                 batchId: activeBatch.id,
                 quantities: (activeBatch.details || []).map((d) => {
+                    const prodAllocs = allocationsByProduct.get(d.productId) || [];
+                    const totalAlloc = prodAllocs.reduce((sum, a) => sum + Number(a.quantity || 0), 0);
+                    const safeCap = Math.min(Number(d.orderedQuantity || 0), totalAlloc);
                     const rawPicked = pickedQtys[d.id] ?? Number(d.pickedQuantity || 0);
                     return {
                         detailId: d.id,
-                        pickedQuantity: rawPicked,
+                        pickedQuantity: Math.min(Math.max(0, rawPicked), safeCap),
                     };
                 }),
                 pickedReservationIds,
@@ -605,10 +532,13 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
             await savePickedQuantities({
                 batchId: activeBatch.id,
                 quantities: (activeBatch.details || []).map((d) => {
+                    const prodAllocs = allocationsByProduct.get(d.productId) || [];
+                    const totalAlloc = prodAllocs.reduce((sum, a) => sum + Number(a.quantity || 0), 0);
+                    const safeCap = Math.min(Number(d.orderedQuantity || 0), totalAlloc);
                     const rawPicked = pickedQtys[d.id] ?? Number(d.pickedQuantity || 0);
                     return {
                         detailId: d.id,
-                        pickedQuantity: rawPicked,
+                        pickedQuantity: Math.min(Math.max(0, rawPicked), safeCap),
                     };
                 }),
                 pickedReservationIds,
@@ -634,13 +564,6 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
         if (!activeBatch) return;
         if (totalPicked === 0) {
             toast.error("Cannot complete picking with 0 units picked.");
-            return;
-        }
-
-        const validationErrors = getValidationErrors();
-        if (validationErrors.length > 0) {
-            setPendingValidationErrors(validationErrors);
-            setValidationErrorsModalOpen(true);
             return;
         }
 
@@ -745,8 +668,7 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
     if (!activeBatch) return null;
 
     return (
-        <>
-            <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+        <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
             <DialogContent className="max-w-[95vw] sm:max-w-6xl lg:max-w-7xl max-h-[92vh] flex flex-col p-0 gap-0 overflow-hidden rounded-2xl border bg-background shadow-2xl">
                 {/* Header */}
                 <DialogHeader className="p-5 border-b bg-card shrink-0">
@@ -857,17 +779,13 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                             const effectiveMaxPickable = Math.min(maxQty, totalAllocated);
                             const isItemDone = !hasNoAllocation && effectiveMaxPickable > 0 && currentPicked >= effectiveMaxPickable;
 
-                            const prodUom = normalizeUom(prodItem.unit);
-
                             // Available warehouse batches for this product that haven't been added yet and have available stock (> 0)
                             // Strictly filtered to the consolidation batch's respective branch
-                            // Strictly filtered to lots/batches with the same UOM as the product
                             const availableForProduct = availableBatches.filter(
                                 (b) =>
                                     b.productId === prodItem.productId &&
                                     Number(b.availableQuantity || 0) > 0 &&
-                                    (!b.branchId || !activeBatch?.branchId || Number(b.branchId) === Number(activeBatch.branchId)) &&
-                                    (!prodUom || !b.unit || normalizeUom(b.unit) === prodUom)
+                                    (!b.branchId || !activeBatch?.branchId || Number(b.branchId) === Number(activeBatch.branchId))
                             );
                             const unallocatedBatches = availableForProduct.filter((b) => {
                                 return !prodAllocations.some(
@@ -882,11 +800,9 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                                 .map((b) => ({
                                     value: `${b.inventoryLotId || 0}:${b.batchNo}:${b.lotId}`,
                                     label: `${b.lotName || `Lot #${b.lotId}`} - Batch: ${b.batchNo || "N/A"}`,
-                                    subLabel: `${branchLabel} | Available: ${b.availableQuantity} ${b.unit || prodItem.unit || ""} | Exp: ${b.expiryDate ? new Date(b.expiryDate).toLocaleDateString() : "No Expiry"}`,
-                                    badge: `${b.availableQuantity} ${b.unit || prodItem.unit || "avail"}`.trim(),
+                                    subLabel: `${branchLabel} | Available: ${b.availableQuantity} | Exp: ${b.expiryDate ? new Date(b.expiryDate).toLocaleDateString() : "No Expiry"}`,
+                                    badge: `${b.availableQuantity} avail`,
                                 }));
-
-                            const isOverPicked = maxQty > 0 && currentPicked > maxQty;
 
                             return (
                                 <motion.div
@@ -896,9 +812,7 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                                     animate={{ opacity: 1, y: 0 }}
                                     transition={{ delay: Math.min(index * 0.03, 0.3), duration: 0.2 }}
                                     className={`rounded-xl border p-4 transition-all shadow-2xs ${
-                                        isOverPicked
-                                            ? "border-destructive/80 bg-destructive/5 dark:bg-destructive/10 ring-1 ring-destructive/30"
-                                            : hasNoAllocation
+                                        hasNoAllocation
                                             ? "border-amber-300/60 bg-amber-50/15 dark:border-amber-900/30 dark:bg-amber-950/10"
                                             : isItemDone
                                             ? "border-emerald-300/80 bg-emerald-50/25 dark:border-emerald-900/50 dark:bg-emerald-950/15"
@@ -912,16 +826,14 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                                                 animate={{ scale: isItemDone ? [1, 1.15, 1] : 1 }}
                                                 transition={{ duration: 0.25 }}
                                                 className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
-                                                    isOverPicked
-                                                        ? "bg-destructive/15 text-destructive"
-                                                        : hasNoAllocation
+                                                    hasNoAllocation
                                                         ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400"
                                                         : isItemDone
                                                         ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400"
                                                         : "bg-muted text-muted-foreground"
                                                 }`}
                                             >
-                                                {isOverPicked ? <AlertCircle className="h-5 w-5" /> : hasNoAllocation ? <AlertCircle className="h-5 w-5" /> : isItemDone ? <Check className="h-5 w-5" /> : <Package className="h-5 w-5" />}
+                                                {hasNoAllocation ? <AlertCircle className="h-5 w-5" /> : isItemDone ? <Check className="h-5 w-5" /> : <Package className="h-5 w-5" />}
                                             </motion.div>
                                             <div className="min-w-0">
                                                 <div className="flex items-center gap-2 flex-wrap">
@@ -962,12 +874,7 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
 
                                         {/* Status Badge */}
                                         <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-                                            {isOverPicked ? (
-                                                <Badge variant="outline" className="text-xs font-bold px-3 py-1 bg-destructive/10 text-destructive border-destructive/40 flex items-center gap-1.5">
-                                                    <AlertCircle className="h-3.5 w-3.5" />
-                                                    Over-Demand ({currentPicked} / {maxQty})
-                                                </Badge>
-                                            ) : isItemDone ? (
+                                            {isItemDone ? (
                                                 <Badge variant="outline" className="text-xs font-bold px-3 py-1 bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800 flex items-center gap-1.5">
                                                     <Check className="h-3.5 w-3.5" />
                                                     Picked
@@ -1016,28 +923,18 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                                                 {prodAllocations.map((alloc, idx) => {
                                                     const lotKey = getLotKey(prodItem.productId, alloc, idx);
                                                     const lotCapacity = Number(alloc.quantity || 0);
-                                                    const lotAvailable = alloc.availableQuantity !== undefined ? Number(alloc.availableQuantity) : lotCapacity;
                                                     const currentLotPicked = Number(lotPickedQtys[lotKey] || 0);
                                                     const isFloorLot = !alloc.reservationIds || alloc.reservationIds.length === 0;
 
-                                                    const lotError = getLotValidationError(prodItem.productId, alloc, idx);
-                                                    const hasLotError = Boolean(lotError);
-
-                                                    const isFull = !hasLotError && currentLotPicked > 0 && (currentPicked >= maxQty || (lotAvailable > 0 && currentLotPicked >= lotAvailable) || (lotCapacity > 0 && currentLotPicked >= lotCapacity));
-                                                    const isPartial = !hasLotError && currentLotPicked > 0 && !isFull;
-
-                                                    const inputValue = rawInputs[lotKey] !== undefined
-                                                        ? rawInputs[lotKey]
-                                                        : (currentLotPicked === 0 ? "" : String(currentLotPicked));
+                                                    const isFull = currentLotPicked === lotCapacity && lotCapacity > 0;
+                                                    const isPartial = currentLotPicked > 0 && currentLotPicked < lotCapacity;
 
                                                     return (
                                                         <motion.div
                                                             key={idx}
                                                             whileHover={{ scale: 1.005, y: -1 }}
                                                             className={`flex items-center justify-between text-xs p-2.5 rounded-xl border transition-all text-left ${
-                                                                hasLotError
-                                                                    ? "border-destructive bg-destructive/5 dark:bg-destructive/10 text-foreground ring-1 ring-destructive/40 shadow-xs"
-                                                                    : isFull
+                                                                isFull
                                                                     ? "border-emerald-500 bg-emerald-500/10 text-foreground dark:bg-emerald-500/15 dark:border-emerald-500 shadow-xs"
                                                                     : isPartial
                                                                     ? "border-amber-500/60 bg-amber-500/10 text-foreground dark:bg-amber-500/15 dark:border-amber-500/50 shadow-xs"
@@ -1050,7 +947,7 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                                                             >
                                                                 <div className="flex items-center gap-1.5 flex-wrap">
                                                                     <span className={`font-bold truncate text-xs ${
-                                                                        hasLotError ? "text-destructive font-black" : isFull ? "text-emerald-700 dark:text-emerald-300" : isPartial ? "text-amber-700 dark:text-amber-300" : "text-foreground"
+                                                                        isFull ? "text-emerald-700 dark:text-emerald-300" : isPartial ? "text-amber-700 dark:text-amber-300" : "text-foreground"
                                                                     }`}>
                                                                         Lot: {alloc.lotName || alloc.batchNo || "Unknown"}
                                                                     </span>
@@ -1067,19 +964,10 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                                                                     {alloc.expiryDate && (
                                                                         <span>Exp: {alloc.expiryDate}</span>
                                                                     )}
-                                                                    <span className="text-[10px] text-muted-foreground/80 font-sans">
-                                                                        (Avail: {lotAvailable} {prodItem.unit})
-                                                                    </span>
                                                                 </div>
-                                                                {hasLotError && (
-                                                                    <div className="text-[10px] text-destructive font-semibold flex items-center gap-1 mt-1">
-                                                                        <AlertCircle className="h-3 w-3 shrink-0" />
-                                                                        <span>{lotError}</span>
-                                                                    </div>
-                                                                )}
                                                             </div>
 
-                                                            {/* Editable Picked Quantity input & Actions - Denominator removed */}
+                                                            {/* Editable Picked Quantity input & Actions */}
                                                             <div
                                                                 className="flex items-center gap-1.5 shrink-0 ml-2"
                                                                 onClick={(e) => e.stopPropagation()}
@@ -1090,44 +978,35 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                                                                 <div className="flex items-center gap-1">
                                                                     <Input
                                                                         type="number"
-                                                                        value={inputValue}
+                                                                        min={0}
+                                                                        max={isFloorLot ? undefined : lotCapacity}
+                                                                        value={currentLotPicked === 0 ? "" : currentLotPicked}
                                                                         placeholder="0"
-                                                                        onFocus={(e) => {
-                                                                            e.currentTarget.select();
-                                                                        }}
-                                                                        onClick={(e) => {
-                                                                            (e.target as HTMLInputElement).select();
-                                                                        }}
+                                                                        onFocus={(e) => e.currentTarget.select()}
+                                                                        onClick={(e) => (e.target as HTMLInputElement).select()}
                                                                         onBlur={(e) => {
-                                                                            const raw = e.target.value.trim();
-                                                                            setRawInputs((prev) => {
-                                                                                const next = { ...prev };
-                                                                                delete next[lotKey];
-                                                                                return next;
-                                                                            });
-                                                                            if (raw === "" || raw === "-" || isNaN(Number(raw))) {
+                                                                            if (e.target.value === "" || isNaN(Number(e.target.value))) {
                                                                                 handleLotPickedQtyChange(prodItem.productId, maxQty, alloc, idx, 0);
-                                                                            } else {
-                                                                                handleLotPickedQtyChange(prodItem.productId, maxQty, alloc, idx, parseInt(raw, 10));
                                                                             }
                                                                         }}
                                                                         onChange={(e) => {
                                                                             const raw = e.target.value;
-                                                                            setRawInputs((prev) => ({ ...prev, [lotKey]: raw }));
-                                                                            if (raw !== "" && raw !== "-" && !isNaN(Number(raw))) {
-                                                                                handleLotPickedQtyChange(prodItem.productId, maxQty, alloc, idx, parseInt(raw, 10));
-                                                                            }
+                                                                            const val = raw === "" ? 0 : parseInt(raw, 10);
+                                                                            handleLotPickedQtyChange(prodItem.productId, maxQty, alloc, idx, val);
                                                                         }}
-                                                                        className={`h-7 w-16 text-center font-mono font-bold text-xs rounded-lg px-1 transition-all ${
-                                                                            hasLotError
-                                                                                ? "border-destructive text-destructive bg-destructive/10 ring-1 ring-destructive/40 focus-visible:ring-destructive font-black"
-                                                                                : isFull
+                                                                        className={`h-7 w-14 text-center font-mono font-bold text-xs rounded-lg px-1 transition-all ${
+                                                                            isFull
                                                                                 ? "border-emerald-500 bg-emerald-500/20 text-emerald-900 dark:text-emerald-100 font-black focus-visible:ring-emerald-500"
                                                                                 : isPartial
                                                                                 ? "border-amber-500 bg-amber-500/20 text-amber-900 dark:text-amber-100 font-bold focus-visible:ring-amber-500"
                                                                                 : "border-border bg-background/90"
                                                                         }`}
                                                                     />
+                                                                    {!isFloorLot && (
+                                                                        <span className="text-xs font-mono font-bold text-muted-foreground whitespace-nowrap">
+                                                                            / {lotCapacity} units
+                                                                        </span>
+                                                                    )}
                                                                 </div>
                                                                 <Button
                                                                     type="button"
@@ -1264,59 +1143,5 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                 </div>
             </DialogContent>
         </Dialog>
-
-        {/* Validation Warnings Confirmation Modal */}
-        <AlertDialog open={validationErrorsModalOpen} onOpenChange={setValidationErrorsModalOpen}>
-            <AlertDialogContent className="max-w-lg rounded-2xl">
-                <AlertDialogHeader>
-                    <div className="flex items-center gap-2 text-amber-600 dark:text-amber-500 font-bold">
-                        <AlertCircle className="h-5 w-5 shrink-0" />
-                        <AlertDialogTitle className="text-lg">Validation Warnings Detected</AlertDialogTitle>
-                    </div>
-                    <AlertDialogDescription className="text-xs text-muted-foreground pt-1">
-                        The following discrepancies were detected in your picked quantities. Do you want to proceed and complete picking anyway?
-                    </AlertDialogDescription>
-                </AlertDialogHeader>
-
-                <div className="max-h-56 overflow-y-auto border rounded-xl p-3 bg-muted/30 space-y-2 text-xs">
-                    {pendingValidationErrors.map((err, idx) => (
-                        <div key={idx} className="flex items-start gap-2 text-foreground">
-                            <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500 mt-1.5 shrink-0" />
-                            <div>
-                                <span className="font-semibold">{err.productName}: </span>
-                                <span className="text-muted-foreground">{err.message}</span>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-
-                <AlertDialogFooter className="gap-2 sm:gap-2">
-                    <AlertDialogCancel
-                        disabled={completing}
-                        className="rounded-xl font-bold cursor-pointer"
-                    >
-                        Review & Correct
-                    </AlertDialogCancel>
-                    <AlertDialogAction
-                        disabled={completing}
-                        onClick={async (e) => {
-                            e.preventDefault();
-                            setValidationErrorsModalOpen(false);
-                            await executeCompletePicking();
-                        }}
-                        className="rounded-xl font-bold bg-amber-600 hover:bg-amber-700 text-white cursor-pointer"
-                    >
-                        {completing ? (
-                            <>
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Completing...
-                            </>
-                        ) : (
-                            "Proceed & Complete"
-                        )}
-                    </AlertDialogAction>
-                </AlertDialogFooter>
-            </AlertDialogContent>
-        </AlertDialog>
-    </>
     );
 }
