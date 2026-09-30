@@ -127,7 +127,7 @@ export function useMachineDepreciationOverhead(): UseMachineDepreciationOverhead
   // Load filter options once on mount
   useEffect(() => {
     const ctrl = new AbortController();
-    setFilterOptionsLoading(true);
+    queueMicrotask(() => setFilterOptionsLoading(true));
     fetchDepreciationFilters(ctrl.signal)
       .then(setFilterOptions)
       .catch((err) => {
@@ -143,8 +143,10 @@ export function useMachineDepreciationOverhead(): UseMachineDepreciationOverhead
   useEffect(() => {
     if (activeTab !== "overview" && overviewTrigger === 0) return;
     const ctrl = new AbortController();
-    setOverviewLoading(true);
-    setOverviewError(null);
+    queueMicrotask(() => {
+      setOverviewLoading(true);
+      setOverviewError(null);
+    });
     fetchDepreciationOverview(filters, ctrl.signal)
       .then(setOverviewData)
       .catch((err) => {
@@ -160,8 +162,10 @@ export function useMachineDepreciationOverhead(): UseMachineDepreciationOverhead
   useEffect(() => {
     if (activeTab !== "machines" && machinesTrigger === 0) return;
     const ctrl = new AbortController();
-    setMachinesLoading(true);
-    setMachinesError(null);
+    queueMicrotask(() => {
+      setMachinesLoading(true);
+      setMachinesError(null);
+    });
     fetchDepreciationMachines(filters, ctrl.signal)
       .then(setMachinesData)
       .catch((err) => {
@@ -177,8 +181,10 @@ export function useMachineDepreciationOverhead(): UseMachineDepreciationOverhead
   useEffect(() => {
     if (activeTab !== "job-orders" && jobOrdersTrigger === 0) return;
     const ctrl = new AbortController();
-    setJobOrdersLoading(true);
-    setJobOrdersError(null);
+    queueMicrotask(() => {
+      setJobOrdersLoading(true);
+      setJobOrdersError(null);
+    });
     fetchDepreciationJobOrders(filters, ctrl.signal)
       .then(setJobOrdersData)
       .catch((err) => {
@@ -194,8 +200,10 @@ export function useMachineDepreciationOverhead(): UseMachineDepreciationOverhead
   useEffect(() => {
     if (activeTab !== "details" && detailsTrigger === 0) return;
     const ctrl = new AbortController();
-    setDetailsLoading(true);
-    setDetailsError(null);
+    queueMicrotask(() => {
+      setDetailsLoading(true);
+      setDetailsError(null);
+    });
     fetchDepreciationDetails(filters, detailsPage, 20, ctrl.signal)
       .then(setDetailsData)
       .catch((err) => {

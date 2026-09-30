@@ -11,7 +11,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
-import { ArrowUpDown, AlertCircle, RefreshCw, BarChart2, Search, Filter } from "lucide-react";
+import { ArrowUpDown, AlertCircle, RefreshCw, BarChart2, Search } from "lucide-react";
 import type { MachineRow } from "../types";
 import { pesoFmt, numFmt, fmtPesoAxis } from "./OverviewTab";
 
@@ -42,13 +42,44 @@ function SkeletonRow() {
   );
 }
 
+function SortHeader({
+  k,
+  label,
+  align = "left",
+  sortKey,
+  onSort,
+}: {
+  k: SortKey;
+  label: string;
+  align?: "left" | "right";
+  sortKey: SortKey;
+  onSort: (key: SortKey) => void;
+}) {
+  const isActive = sortKey === k;
+  return (
+    <th
+      onClick={() => onSort(k)}
+      className={`px-3 py-2.5 font-semibold text-muted-foreground cursor-pointer select-none hover:text-foreground transition-colors whitespace-nowrap text-xs ${
+        align === "right" ? "text-right" : "text-left"
+      }`}
+    >
+      <div className={`inline-flex items-center gap-1 ${align === "right" ? "justify-end" : "justify-start"}`}>
+        <span>{label}</span>
+        <ArrowUpDown
+          className={`h-3 w-3 ${isActive ? "text-primary font-bold" : "text-muted-foreground/40"}`}
+        />
+      </div>
+    </th>
+  );
+}
+
 export function MachineAnalysisTab({ data, loading, error, onRefetch }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("productionOutput");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [hideIdle, setHideIdle] = useState(true);
   const [search, setSearch] = useState("");
 
-  const rows = data?.rows ?? [];
+  const rows = useMemo(() => data?.rows ?? [], [data?.rows]);
 
   // Filter idle and search query
   const filtered = useMemo(() => {
@@ -90,24 +121,6 @@ export function MachineAnalysisTab({ data, loading, error, onRefetch }: Props) {
     }
   }
 
-  function SortHeader({ k, label, align = "left" }: { k: SortKey; label: string; align?: "left" | "right" }) {
-    const isActive = sortKey === k;
-    return (
-      <th
-        onClick={() => handleSort(k)}
-        className={`px-3 py-2.5 font-semibold text-muted-foreground cursor-pointer select-none hover:text-foreground transition-colors whitespace-nowrap text-xs ${
-          align === "right" ? "text-right" : "text-left"
-        }`}
-      >
-        <div className={`inline-flex items-center gap-1 ${align === "right" ? "justify-end" : "justify-start"}`}>
-          <span>{label}</span>
-          <ArrowUpDown
-            className={`h-3 w-3 ${isActive ? "text-primary font-bold" : "text-muted-foreground/40"}`}
-          />
-        </div>
-      </th>
-    );
-  }
 
   const idleCount = rows.filter((r) => r.productionOutput <= 0 && r.periodDepreciation <= 0).length;
 
@@ -184,13 +197,13 @@ export function MachineAnalysisTab({ data, loading, error, onRefetch }: Props) {
           <table className="w-full text-xs">
             <thead className="sticky top-0 z-10 bg-muted/90 backdrop-blur border-b border-border shadow-xs">
               <tr>
-                <SortHeader k="machineName" label="Machine" align="left" />
-                <SortHeader k="depreciableBase" label="Depreciable Base" align="right" />
-                <SortHeader k="lifetimeCapacity" label="Lifetime Capacity" align="right" />
-                <SortHeader k="productionOutput" label="Production Output" align="right" />
-                <SortHeader k="ratePerUnit" label="Rate / Unit" align="right" />
-                <SortHeader k="periodDepreciation" label="Period Depreciation" align="right" />
-                <SortHeader k="capacityUsedPercent" label="Capacity Used" align="right" />
+                <SortHeader k="machineName" label="Machine" align="left" sortKey={sortKey} onSort={handleSort} />
+                <SortHeader k="depreciableBase" label="Depreciable Base" align="right" sortKey={sortKey} onSort={handleSort} />
+                <SortHeader k="lifetimeCapacity" label="Lifetime Capacity" align="right" sortKey={sortKey} onSort={handleSort} />
+                <SortHeader k="productionOutput" label="Production Output" align="right" sortKey={sortKey} onSort={handleSort} />
+                <SortHeader k="ratePerUnit" label="Rate / Unit" align="right" sortKey={sortKey} onSort={handleSort} />
+                <SortHeader k="periodDepreciation" label="Period Depreciation" align="right" sortKey={sortKey} onSort={handleSort} />
+                <SortHeader k="capacityUsedPercent" label="Capacity Used" align="right" sortKey={sortKey} onSort={handleSort} />
               </tr>
             </thead>
             <tbody className="divide-y divide-border/60">

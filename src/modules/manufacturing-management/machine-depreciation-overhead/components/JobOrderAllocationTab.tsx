@@ -39,7 +39,7 @@ function SkeletonRow() {
 export function JobOrderAllocationTab({ data, loading, error, onRefetch }: Props) {
   const [search, setSearch] = useState("");
   const kpis = data?.kpis;
-  const rows = data?.rows ?? [];
+  const rows = useMemo(() => data?.rows ?? [], [data?.rows]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

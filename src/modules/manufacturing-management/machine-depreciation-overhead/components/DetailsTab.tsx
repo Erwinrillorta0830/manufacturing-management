@@ -31,7 +31,7 @@ function SkeletonRow() {
 export function DetailsTab({ data, loading, error, page, onPageChange, onRefetch }: Props) {
   const [search, setSearch] = useState("");
 
-  const rows = data?.rows ?? [];
+  const rows = useMemo(() => data?.rows ?? [], [data?.rows]);
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
