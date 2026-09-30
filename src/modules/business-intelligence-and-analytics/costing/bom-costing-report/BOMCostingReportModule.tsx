@@ -7,7 +7,10 @@ import {
     AlertTriangle,
     RefreshCw,
     Layers,
-    Loader2
+    Loader2,
+    Table,
+    PieChart,
+    TrendingUp
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -15,11 +18,15 @@ import BOMCostingFilters from "./components/BOMCostingFilters";
 import BOMCostingSummaryCards from "./components/BOMCostingSummaryCards";
 import BOMCostingTreeTable from "./components/BOMCostingTreeTable";
 import BOMCostingExport from "./components/BOMCostingExport";
+import BOMCostingAnalyticsTab from "./components/BOMCostingAnalyticsTab";
+import BOMCostingSensitivityTab from "./components/BOMCostingSensitivityTab";
 import {
     ProductOption,
     VersionOption,
     BOMCostingReportData
 } from "./types";
+
+type ViewTab = "table" | "analytics" | "sensitivity";
 
 export default function BOMCostingReportModule() {
     const [products, setProducts] = useState<ProductOption[]>([]);
@@ -28,6 +35,7 @@ export default function BOMCostingReportModule() {
     const [selectedVersion, setSelectedVersion] = useState<VersionOption | null>(null);
     const [targetQuantity, setTargetQuantity] = useState<number>(1);
     const [reportData, setReportData] = useState<BOMCostingReportData | null>(null);
+    const [activeTab, setActiveTab] = useState<ViewTab>("table");
 
     const [isLoadingProducts, setIsLoadingProducts] = useState(false);
     const [isLoadingVersions, setIsLoadingVersions] = useState(false);
@@ -83,7 +91,6 @@ export default function BOMCostingReportModule() {
             setVersions(verList);
 
             if (verList.length > 0) {
-                // Pick primary or active version
                 const primary = verList.find(v => v.is_primary) || verList.find(v => v.status.toLowerCase() === "active") || verList[0];
                 setSelectedVersion(primary);
                 setTargetQuantity(primary.base_quantity || 1);
@@ -106,10 +113,10 @@ export default function BOMCostingReportModule() {
         setReportData(null);
     };
 
-    // 4. Generate BOM Costing Report
+    // 4. Generate BOM Standard Costing Report
     const handleGenerate = async () => {
         if (!selectedProduct || !selectedVersion) {
-            toast.error("Please select a target product and manufacturing version.");
+            toast.error("Please select a target finished product assembly and manufacturing revision.");
             return;
         }
 
@@ -122,14 +129,14 @@ export default function BOMCostingReportModule() {
             const resJson = await res.json();
 
             if (!res.ok || !resJson.ok) {
-                const msg = resJson.error || "Failed to generate BOM Costing Report.";
+                const msg = resJson.error || "Failed to generate BOM Standard Costing Report.";
                 setErrorMessage(msg);
                 toast.error(msg);
                 return;
             }
 
             setReportData(resJson.data);
-            toast.success(`BOM Costing generated for ${resJson.data.targetProduct.product_name} (${resJson.data.summary.totalComponentsCount} components decomposed).`);
+            toast.success(`Standard Costing generated for ${resJson.data.targetProduct.product_name} (${resJson.data.summary.totalComponentsCount} components decomposed).`);
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : "Error generating report";
             setErrorMessage(msg);
@@ -160,16 +167,17 @@ export default function BOMCostingReportModule() {
                     </div>
                     <div>
                         <h1 className="text-lg font-bold tracking-tight text-foreground">
-                            Bill of Materials (BOM) Costing Report
+                            BOM Standard Costing Report
                         </h1>
                         <p className="text-xs text-muted-foreground">
-                            Multi-level breakdown of component quantities and unit material costs required per product.
+                            Multi-level standard cost breakdown of ingredients, packaging, process labor, and overhead per batch.
                         </p>
                     </div>
                 </div>
 
                 <div className="flex items-center gap-2">
                     <BOMCostingExport data={reportData} />
+         
                 </div>
             </div>
 
@@ -237,9 +245,9 @@ export default function BOMCostingReportModule() {
                             </div>
                         </div>
                         <div className="space-y-1">
-                            <div className="text-sm font-semibold text-foreground">Calculating Bill of Materials Costing...</div>
+                            <div className="text-sm font-semibold text-foreground">Calculating BOM Standard Costing...</div>
                             <p className="text-xs text-muted-foreground max-w-sm">
-                                Traversing recipe structure, computing scrap allowances, and rolling up component unit valuations.
+                                Traversing routing sequences, computing scrap allowances, labor hours, and rolling up component valuations.
                             </p>
                         </div>
                     </motion.div>
@@ -252,8 +260,61 @@ export default function BOMCostingReportModule() {
                         transition={{ duration: 0.25 }}
                         className="space-y-4"
                     >
+                        {/* 5 Summary Metric Cards */}
                         <BOMCostingSummaryCards data={reportData} />
-                        <BOMCostingTreeTable data={reportData} />
+
+                        {/* Sub-navigation tabs: Standard Cost Tree Table | Share & Cost Analytics | Commodity Sensitivity */}
+                        <div className="flex items-center gap-2 border-b pb-2">
+                            <button
+                                type="button"
+                                onClick={() => setActiveTab("table")}
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                                    activeTab === "table"
+                                        ? "bg-primary text-primary-foreground shadow-xs"
+                                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                                }`}
+                            >
+                                <Table className="h-3.5 w-3.5" />
+                                Standard Cost Tree Table
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setActiveTab("analytics")}
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                                    activeTab === "analytics"
+                                        ? "bg-primary text-primary-foreground shadow-xs"
+                                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                                }`}
+                            >
+                                <PieChart className="h-3.5 w-3.5" />
+                                Share & Cost Analytics
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setActiveTab("sensitivity")}
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                                    activeTab === "sensitivity"
+                                        ? "bg-primary text-primary-foreground shadow-xs"
+                                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                                }`}
+                            >
+                                <TrendingUp className="h-3.5 w-3.5" />
+                                Commodity Sensitivity
+                            </button>
+                        </div>
+
+                        {/* Tab Content */}
+                        {activeTab === "table" && (
+                            <BOMCostingTreeTable data={reportData} />
+                        )}
+
+                        {activeTab === "analytics" && (
+                            <BOMCostingAnalyticsTab data={reportData} />
+                        )}
+
+                        {activeTab === "sensitivity" && (
+                            <BOMCostingSensitivityTab data={reportData} />
+                        )}
                     </motion.div>
                 ) : (
                     <motion.div
@@ -270,7 +331,7 @@ export default function BOMCostingReportModule() {
                         <div className="space-y-1">
                             <div className="text-sm font-semibold text-foreground">No Costing Report Generated Yet</div>
                             <p className="text-xs text-muted-foreground max-w-md">
-                                Select a target product above, adjust the simulated batch size if desired, and click <strong>Generate Costing Report</strong>.
+                                Select a finished product assembly above, adjust the batch quantity if desired, and click <strong>Generate Costing Report</strong>.
                             </p>
                         </div>
                     </motion.div>

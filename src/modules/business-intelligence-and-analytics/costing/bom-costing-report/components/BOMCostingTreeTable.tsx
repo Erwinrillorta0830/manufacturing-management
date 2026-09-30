@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { motion } from "framer-motion";
 import {
     ChevronDown,
@@ -11,44 +11,92 @@ import {
     Boxes,
     Package,
     AlertCircle,
-    Info
+    Info,
+    Search,
+    Wrench,
+    Factory,
+    ListTree
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import {
     Tooltip,
     TooltipContent,
     TooltipProvider,
     TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { BOMCostNode, BOMCostingReportData, MaterialClassification } from "../types";
+import {
+    BOMCostNode,
+    BOMCostingReportData,
+    MaterialClassification,
+    HierarchyRollupMode,
+    ComponentCategoryFilter
+} from "../types";
 
 interface BOMCostingTreeTableProps {
     data: BOMCostingReportData;
 }
 
-const formatCurrency = (val: number) => {
+// 1. Strict 4-decimal currency formatting
+export const formatStandardCurrency = (val: number, decimals: number = 4): string => {
+    const num = Number(val) || 0;
     return new Intl.NumberFormat("en-PH", {
         style: "currency",
         currency: "PHP",
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 4
-    }).format(val || 0);
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals
+    }).format(num);
 };
 
-const formatNumber = (val: number) => {
+// 2. Discrete vs Continuous Unit Formatting
+export const isDiscreteUom = (uom: string): boolean => {
+    const norm = (uom || "").trim().toUpperCase();
+    return [
+        "PCS",
+        "PC",
+        "PIECE",
+        "PIECES",
+        "PACK",
+        "PACKS",
+        "BOX",
+        "BOXES",
+        "CAN",
+        "CANS",
+        "BOTTLE",
+        "BOTTLES",
+        "UNIT",
+        "UNITS",
+        "TUB",
+        "TUBS"
+    ].includes(norm);
+};
+
+export const formatUomQuantity = (val: number, uom?: string): string => {
+    const num = Number(val) || 0;
+    if (uom && isDiscreteUom(uom) && Number.isInteger(num)) {
+        return new Intl.NumberFormat("en-US", {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 4
+        }).format(num);
+    }
     return new Intl.NumberFormat("en-US", {
-        minimumFractionDigits: 2,
+        minimumFractionDigits: 4,
         maximumFractionDigits: 4
-    }).format(val || 0);
+    }).format(num);
 };
 
 export default function BOMCostingTreeTable({ data }: BOMCostingTreeTableProps) {
     const { tree, summary, targetProduct } = data;
+
+    // Filter and search state
+    const [searchQuery, setSearchQuery] = useState("");
+    const [selectedCategory, setSelectedCategory] = useState<ComponentCategoryFilter>("all");
+    const [rollupMode, setRollupMode] = useState<HierarchyRollupMode>("multi-level");
+
     // Map of expanded node IDs
     const [expandedIds, setExpandedIds] = useState<Set<string>>(() => {
         const initial = new Set<string>();
-        // Expand top level by default
         tree.forEach(node => {
             if (node.children && node.children.length > 0) {
                 initial.add(node.id);
@@ -87,7 +135,24 @@ export default function BOMCostingTreeTable({ data }: BOMCostingTreeTableProps) 
         setExpandedIds(new Set());
     };
 
+    // Filter classification badges
     const renderClassificationBadge = (type: MaterialClassification, isSub: boolean) => {
+        if (type === "labor") {
+            return (
+                <Badge variant="outline" className="text-[10px] font-medium bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-300">
+                    <Wrench className="mr-1 h-3 w-3" />
+                    Labor
+                </Badge>
+            );
+        }
+        if (type === "overhead") {
+            return (
+                <Badge variant="outline" className="text-[10px] font-medium bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border-indigo-300">
+                    <Factory className="mr-1 h-3 w-3" />
+                    Overhead
+                </Badge>
+            );
+        }
         if (isSub || type === "sub_assembly") {
             return (
                 <Badge variant="outline" className="text-[10px] font-medium bg-purple-500/10 text-purple-700 dark:text-purple-300 border-purple-300">
@@ -112,6 +177,7 @@ export default function BOMCostingTreeTable({ data }: BOMCostingTreeTableProps) 
         );
     };
 
+    // Inventory Dispatch Rule Badge
     const renderInventoryRuleBadge = (rule: string) => {
         if (rule === "FEFO") {
             return (
@@ -148,36 +214,103 @@ export default function BOMCostingTreeTable({ data }: BOMCostingTreeTableProps) 
         return <span className="text-xs text-muted-foreground">-</span>;
     };
 
-    // Recursive row renderer
+    // Filter tree recursively or return flat list based on rollupMode
+    const filteredNodes = useMemo(() => {
+        // Filter predicate for search and category
+        const matchesFilter = (node: BOMCostNode): boolean => {
+            if (selectedCategory !== "all") {
+                if (node.materialClassification !== selectedCategory) {
+                    return false;
+                }
+            }
+            if (searchQuery.trim()) {
+                const q = searchQuery.toLowerCase();
+                const nameMatch = node.productName.toLowerCase().includes(q);
+                const codeMatch = (node.productCode || "").toLowerCase().includes(q);
+                const opMatch = (node.operationName || "").toLowerCase().includes(q);
+                return nameMatch || codeMatch || opMatch;
+            }
+            return true;
+        };
+
+        if (rollupMode === "flattened") {
+            const flat: BOMCostNode[] = [];
+            const flatten = (nodes: BOMCostNode[]) => {
+                nodes.forEach(n => {
+                    if (matchesFilter(n)) {
+                        flat.push(n);
+                    }
+                    if (n.children && n.children.length > 0) {
+                        flatten(n.children);
+                    }
+                });
+            };
+            flatten(tree);
+            return flat;
+        }
+
+        // Multi-level tree mode
+        const filterTree = (nodes: BOMCostNode[]): BOMCostNode[] => {
+            const result: BOMCostNode[] = [];
+            nodes.forEach(n => {
+                const selfMatches = matchesFilter(n);
+                const filteredChildren = n.children ? filterTree(n.children) : [];
+                if (selfMatches || filteredChildren.length > 0) {
+                    result.push({
+                        ...n,
+                        children: filteredChildren
+                    });
+                }
+            });
+            return result;
+        };
+
+        return filterTree(tree);
+    }, [tree, selectedCategory, searchQuery, rollupMode]);
+
+    // Recursive row renderer for 12 columns
     const renderNodeRows = (node: BOMCostNode, depth: number = 0): React.ReactNode => {
-        const hasChildren = node.children && node.children.length > 0;
+        const hasChildren = rollupMode === "multi-level" && node.children && node.children.length > 0;
         const isExpanded = expandedIds.has(node.id);
-        const costShare = summary.totalMaterialCost > 0
-            ? ((node.totalLineCost / summary.totalMaterialCost) * 100).toFixed(1)
-            : "0.0";
+        const effectiveDepth = rollupMode === "multi-level" ? depth : 0;
+
+        const effectiveTotalCost = summary.totalBatchCost > 0 ? summary.totalBatchCost : summary.totalMaterialCost;
+        const costShare = effectiveTotalCost > 0
+            ? ((node.totalLineCost / effectiveTotalCost) * 100)
+            : 0;
+        const costShareStr = costShare.toFixed(4);
 
         return (
             <React.Fragment key={node.id}>
                 <motion.tr
-                    initial={{ opacity: 0, y: -6 }}
+                    initial={{ opacity: 0, y: -4 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.18 }}
+                    transition={{ duration: 0.15 }}
                     className={`border-b transition-colors hover:bg-muted/40 text-xs ${
                         node.isSubAssembly ? "bg-muted/20 font-medium" : ""
                     }`}
                 >
-                    {/* Level & Component Name */}
-                    <td className="py-2.5 px-3">
+                    {/* 1. LEVEL & ROUTE */}
+                    <td
+                        className="py-2.5 px-3 min-w-[220px] whitespace-nowrap"
+                        title={`Hierarchy Level L${node.level} • Operation: ${node.operationName || "Unknown"}`}
+                    >
                         <div
-                            className="flex items-center gap-1.5"
-                            style={{ paddingLeft: `${depth * 20}px` }}
+                            className="flex items-center gap-1.5 whitespace-nowrap"
+                            style={{ paddingLeft: `${effectiveDepth * 16}px` }}
                         >
+                            {effectiveDepth > 0 && (
+                                <span className="text-muted-foreground/60 font-mono text-xs select-none">
+                                    ↳
+                                </span>
+                            )}
+
                             {hasChildren ? (
                                 <button
                                     type="button"
                                     onClick={() => toggleExpand(node.id)}
-                                    className="p-1 -ml-1 rounded-sm hover:bg-muted text-muted-foreground hover:text-foreground shrink-0 transition-transform"
-                                    aria-label={isExpanded ? "Collapse node" : "Expand node"}
+                                    className="p-1 -ml-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground shrink-0 transition-colors"
+                                    aria-label={isExpanded ? "Collapse branch" : "Expand branch"}
                                 >
                                     {isExpanded ? (
                                         <ChevronDown className="h-3.5 w-3.5" />
@@ -186,88 +319,137 @@ export default function BOMCostingTreeTable({ data }: BOMCostingTreeTableProps) 
                                     )}
                                 </button>
                             ) : (
-                                <span className="w-4 shrink-0 text-center text-muted-foreground/40 font-mono text-[11px]">
+                                <span className="w-3.5 shrink-0 text-center text-muted-foreground/40 font-mono text-[11px] select-none">
                                     •
                                 </span>
                             )}
 
-                            <span className="font-mono text-[10px] px-1 py-0 rounded bg-muted text-muted-foreground font-semibold shrink-0">
+                            <span className="font-mono text-[10px] px-1 py-0.5 rounded bg-muted text-muted-foreground font-semibold shrink-0">
                                 L{node.level}
                             </span>
 
-                            <div className="truncate">
-                                <div className="font-semibold text-foreground truncate">
-                                    {node.productName}
-                                </div>
-                                {node.productCode && (
-                                    <div className="text-[10px] text-muted-foreground font-mono">
-                                        {node.productCode}
-                                    </div>
-                                )}
-                            </div>
+                            <span className="text-[11px] font-medium text-foreground whitespace-nowrap" title={node.operationName || "Unknown"}>
+                                • {node.operationName || (node.routeSequence ? `Step #${node.routeSequence}` : "Unknown")}
+                            </span>
                         </div>
                     </td>
 
-                    {/* Classification */}
-                    <td className="py-2.5 px-3">
+                    {/* 2. COMPONENT NAME */}
+                    <td
+                        className="py-2.5 px-3 min-w-[220px]"
+                        title={`${node.productName}${node.productCode ? ` • ${node.productCode}` : ""}${node.description ? ` (${node.description})` : ""}`}
+                    >
+                        <div>
+                            <div className="font-semibold text-foreground whitespace-nowrap" title={node.productName}>
+                                {node.productName}
+                            </div>
+                            {node.productCode && (
+                                <div className="text-[10px] text-muted-foreground font-mono whitespace-nowrap">
+                                    {node.productCode}
+                                </div>
+                            )}
+                        </div>
+                    </td>
+
+                    {/* 3. TYPE */}
+                    <td
+                        className="py-2.5 px-3 min-w-[100px] whitespace-nowrap"
+                        title={`Material Classification: ${node.materialClassification.replace('_', ' ').toUpperCase()}`}
+                    >
                         {renderClassificationBadge(node.materialClassification, node.isSubAssembly)}
                     </td>
 
-                    {/* Inventory Dispatch Rule (FEFO/FIFO) */}
-                    <td className="py-2.5 px-3 text-center">
+                    {/* 4. RULE */}
+                    <td
+                        className="py-2.5 px-3 min-w-[70px] text-center whitespace-nowrap"
+                        title={node.inventoryRule === "FEFO" ? "First Expired, First Out (Perishable Lot Strategy)" : node.inventoryRule === "FIFO" ? "First In, First Out (Inward Receipt Strategy)" : "No inventory dispatch rule applicable"}
+                    >
                         {renderInventoryRuleBadge(node.inventoryRule)}
                     </td>
 
-                    {/* Route Step / Operation */}
-                    <td className="py-2.5 px-3 text-muted-foreground">
-                        <span className="truncate max-w-[130px] inline-block font-normal">
-                            {node.operationName || `Step #${node.routeSequence || 1}`}
-                        </span>
+                    {/* 5. UOM */}
+                    <td
+                        className="py-2.5 px-3 min-w-[60px] text-center font-mono text-[11px] text-muted-foreground whitespace-nowrap"
+                        title={`Unit of Measurement: ${node.uomName}`}
+                    >
+                        {node.uomName}
                     </td>
 
-                    {/* Scaled Batch Qty */}
-                    <td className="py-2.5 px-3 text-right font-mono">
-                        {formatNumber(node.scaledRequiredQty)}{" "}
-                        <span className="text-[10px] text-muted-foreground">{node.uomName}</span>
+                    {/* 6. BASE QTY */}
+                    <td
+                        className="py-2.5 px-3 min-w-[90px] text-right font-mono whitespace-nowrap"
+                        title={`Base Recipe Quantity: ${formatUomQuantity(node.baseRequiredQty, node.uomName)} ${node.uomName}`}
+                    >
+                        {formatUomQuantity(node.baseRequiredQty, node.uomName)}
                     </td>
 
-                    {/* Wastage / Scrap % */}
-                    <td className="py-2.5 px-3 text-right">
+                    {/* 7. REQ. QTY */}
+                    <td
+                        className="py-2.5 px-3 min-w-[95px] text-right font-mono whitespace-nowrap"
+                        title={`Net Scaled Quantity: ${formatUomQuantity(node.scaledRequiredQty, node.uomName)} ${node.uomName}`}
+                    >
+                        {formatUomQuantity(node.scaledRequiredQty, node.uomName)}
+                    </td>
+
+                    {/* 8. SCRAP */}
+                    <td
+                        className="py-2.5 px-3 min-w-[125px] text-right whitespace-nowrap"
+                        title={node.wastagePercent > 0 ? `Scrap Allowance: +${node.wastagePercent.toFixed(4)}% (+${formatUomQuantity(node.wastageQty, node.uomName)} ${node.uomName})` : "Zero scrap allowance (0.0000%)"}
+                    >
                         {node.wastagePercent > 0 ? (
                             <span className="text-amber-600 dark:text-amber-400 font-mono text-[11px]">
-                                +{node.wastagePercent}%
+                                +{node.wastagePercent.toFixed(4)}%
                                 <span className="block text-[9px] text-muted-foreground">
-                                    (+{formatNumber(node.wastageQty)} {node.uomName})
+                                    (+{formatUomQuantity(node.wastageQty, node.uomName)} {node.uomName})
                                 </span>
                             </span>
                         ) : (
-                            <span className="text-muted-foreground text-[11px]">0.00%</span>
+                            <span className="text-muted-foreground text-[11px] font-mono">0.0000%</span>
                         )}
                     </td>
 
-                    {/* Effective Quantity */}
-                    <td className="py-2.5 px-3 text-right font-mono font-medium">
-                        {formatNumber(node.effectiveQty)}{" "}
-                        <span className="text-[10px] text-muted-foreground font-normal">{node.uomName}</span>
+                    {/* 9. UNIT COST (Strict 4 Decimals) */}
+                    <td
+                        className="py-2.5 px-3 min-w-[105px] text-right font-mono whitespace-nowrap"
+                        title={`Standard Unit Cost: ${formatStandardCurrency(node.unitCost, 4)} per ${node.uomName}`}
+                    >
+                        {formatStandardCurrency(node.unitCost, 4)}
                     </td>
 
-                    {/* Unit Material Cost */}
-                    <td className="py-2.5 px-3 text-right font-mono">
-                        {formatCurrency(node.unitCost)}
+                    {/* 10. GROSS (EFF.) QTY */}
+                    <td
+                        className="py-2.5 px-3 min-w-[105px] text-right font-mono font-medium whitespace-nowrap"
+                        title={`Gross Effective Quantity: ${formatUomQuantity(node.effectiveQty, node.uomName)} ${node.uomName}`}
+                    >
+                        {formatUomQuantity(node.effectiveQty, node.uomName)}
                     </td>
 
-                    {/* Line Total Cost */}
-                    <td className="py-2.5 px-3 text-right font-mono font-semibold text-foreground">
-                        {formatCurrency(node.totalLineCost)}
+                    {/* 11. EXT. TOTAL COST (Strict 4 Decimals) */}
+                    <td
+                        className="py-2.5 px-3 min-w-[120px] text-right font-mono font-semibold text-foreground whitespace-nowrap"
+                        title={`Extended Line Total Cost: ${formatStandardCurrency(node.totalLineCost, 4)} (Gross Qty × Unit Cost)`}
+                    >
+                        {formatStandardCurrency(node.totalLineCost, 4)}
                     </td>
 
-                    {/* Cost Contribution % */}
-                    <td className="py-2.5 px-3 text-right font-mono text-muted-foreground">
-                        {costShare}%
+                    {/* 12. SHARE % with mini progress indicator */}
+                    <td
+                        className="py-2.5 px-3 min-w-[90px] text-right font-mono text-muted-foreground whitespace-nowrap"
+                        title={`Cost Share: ${costShareStr}% of total batch standard cost`}
+                    >
+                        <div className="flex flex-col items-end gap-1">
+                            <span>{costShareStr}%</span>
+                            <div className="w-12 h-1 bg-muted rounded-full overflow-hidden">
+                                <div
+                                    className="h-full bg-primary rounded-full transition-all duration-300"
+                                    style={{ width: `${Math.min(costShare, 100)}%` }}
+                                />
+                            </div>
+                        </div>
                     </td>
                 </motion.tr>
 
-                {/* Render children if expanded */}
+                {/* Render nested children if in multi-level mode and expanded */}
                 {hasChildren && isExpanded && (
                     node.children.map(child => renderNodeRows(child, depth + 1))
                 )}
@@ -275,103 +457,177 @@ export default function BOMCostingTreeTable({ data }: BOMCostingTreeTableProps) 
         );
     };
 
-    const hasCollapsibleBranches = React.useMemo(() => {
-        return summary.maxDepth > 1 || tree.some(node => node.children && node.children.length > 0);
-    }, [summary.maxDepth, tree]);
+    const hasCollapsibleBranches = useMemo(() => {
+        return rollupMode === "multi-level" && tree.some(node => node.children && node.children.length > 0);
+    }, [rollupMode, tree]);
 
     return (
         <motion.div
-            initial={{ opacity: 0, y: -8 }}
+            initial={{ opacity: 0, y: -6 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.25 }}
             className="rounded-xl border bg-card shadow-xs overflow-hidden"
         >
-            {/* Header bar with controls */}
+            {/* Header controls & tabs strip */}
             <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-b bg-muted/20">
-                <div>
-                    <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                        <span>Multi-Level BOM Cost Tree</span>
+                <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
+                        <ListTree className="h-4 w-4 text-primary" />
+                        <h3 className="text-sm font-semibold text-foreground">Standard Cost Tree Table</h3>
                         <Badge variant="secondary" className="text-[10px] font-normal">
                             {targetProduct.product_name} • {targetProduct.version_name}
                         </Badge>
-                    </h3>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                        Batch Quantity: <strong className="text-foreground">{formatNumber(targetProduct.target_quantity)} {targetProduct.uom_name}</strong> (Base: {targetProduct.base_quantity} {targetProduct.uom_name})
-                    </p>
+                    </div>
                 </div>
 
-                {hasCollapsibleBranches && (
-                    <div className="flex items-center gap-2">
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={expandAll}
-                            className="h-7 text-xs px-2.5 font-normal"
+                <div className="flex items-center gap-2">
+                    {/* Hierarchy Rollup Switch */}
+                    <div className="inline-flex rounded-lg border bg-muted/40 p-0.5 text-xs">
+                        <button
+                            type="button"
+                            onClick={() => setRollupMode("multi-level")}
+                            className={`px-2.5 py-1 rounded-md font-medium transition-all ${
+                                rollupMode === "multi-level"
+                                    ? "bg-background text-foreground shadow-xs"
+                                    : "text-muted-foreground hover:text-foreground"
+                            }`}
                         >
-                            <ChevronsUpDown className="mr-1 h-3.5 w-3.5" />
-                            Expand All
-                        </Button>
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={collapseAll}
-                            className="h-7 text-xs px-2.5 font-normal"
+                            Multi-Level
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setRollupMode("flattened")}
+                            className={`px-2.5 py-1 rounded-md font-medium transition-all ${
+                                rollupMode === "flattened"
+                                    ? "bg-background text-foreground shadow-xs"
+                                    : "text-muted-foreground hover:text-foreground"
+                            }`}
                         >
-                            <ChevronsDownUp className="mr-1 h-3.5 w-3.5" />
-                            Collapse All
-                        </Button>
+                            Flattened
+                        </button>
                     </div>
-                )}
+
+                    {hasCollapsibleBranches && (
+                        <div className="flex items-center gap-1.5 ml-2 border-l pl-2">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={expandAll}
+                                className="h-7 text-xs px-2 font-normal"
+                            >
+                                <ChevronsUpDown className="mr-1 h-3 w-3" />
+                                Expand
+                            </Button>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={collapseAll}
+                                className="h-7 text-xs px-2 font-normal"
+                            >
+                                <ChevronsDownUp className="mr-1 h-3 w-3" />
+                                Collapse
+                            </Button>
+                        </div>
+                    )}
+                </div>
             </div>
 
-            {/* Tree Table */}
+            {/* Filter & Search Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b bg-background">
+                {/* Search input */}
+                <div className="relative w-full sm:w-72">
+                    <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+                    <Input
+                        type="text"
+                        placeholder="Search operation, ingredient, code..."
+                        value={searchQuery}
+                        onChange={e => setSearchQuery(e.target.value)}
+                        className="h-8 pl-8 text-xs bg-muted/20"
+                    />
+                </div>
+
+                {/* Filter Category Pills */}
+                <div className="flex items-center gap-1 text-xs">
+                    <span className="text-muted-foreground mr-1">Filter Category:</span>
+                    {(["all", "raw_material", "packaging", "labor", "overhead"] as ComponentCategoryFilter[]).map(cat => {
+                        const labels: Record<ComponentCategoryFilter, string> = {
+                            all: "All",
+                            raw_material: "Raw Material",
+                            packaging: "Packaging",
+                            labor: "Labor",
+                            overhead: "Overhead"
+                        };
+                        const isSelected = selectedCategory === cat;
+                        return (
+                            <button
+                                key={cat}
+                                type="button"
+                                onClick={() => setSelectedCategory(cat)}
+                                className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors ${
+                                    isSelected
+                                        ? "bg-primary text-primary-foreground shadow-xs"
+                                        : "bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                }`}
+                            >
+                                {labels[cat]}
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+
+            {/* 12-Column Tree Table */}
             <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-left">
                     <thead>
-                        <tr className="border-b bg-muted/40 text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
-                            <th className="py-2.5 px-3 min-w-[240px]">Component Name / Level</th>
-                            <th className="py-2.5 px-3 min-w-[110px]">Type</th>
-                            <th className="py-2.5 px-3 min-w-[80px] text-center">Rule</th>
-                            <th className="py-2.5 px-3 min-w-[130px]">Route Operation</th>
-                            <th className="py-2.5 px-3 min-w-[110px] text-right">Net Req. Qty</th>
-                            <th className="py-2.5 px-3 min-w-[90px] text-right">Scrap %</th>
-                            <th className="py-2.5 px-3 min-w-[120px] text-right">Gross (Eff.) Qty</th>
-                            <th className="py-2.5 px-3 min-w-[100px] text-right">Unit Cost</th>
-                            <th className="py-2.5 px-3 min-w-[110px] text-right">Ext. Total Cost</th>
-                            <th className="py-2.5 px-3 min-w-[70px] text-right">Share %</th>
+                        <tr className="border-b bg-muted/40 text-[11px] font-medium text-muted-foreground uppercase tracking-wider whitespace-nowrap">
+                            <th className="py-2.5 px-3 min-w-[220px]" title="BOM Hierarchy level (L1/L2) and manufacturing routing operation sequence">Level & Route</th>
+                            <th className="py-2.5 px-3 min-w-[220px]" title="Component item name, code/SKU, and specifications">Component Name</th>
+                            <th className="py-2.5 px-3 min-w-[100px]" title="Material classification: Raw Material, Packaging, Sub-Assembly, Labor, or Overhead">Type</th>
+                            <th className="py-2.5 px-3 min-w-[70px] text-center" title="Inventory consumption dispatch rule: FEFO for perishables, FIFO for packaging materials">Rule</th>
+                            <th className="py-2.5 px-3 min-w-[60px] text-center" title="Unit of Measurement (UOM)">UOM</th>
+                            <th className="py-2.5 px-3 min-w-[90px] text-right" title="Standard recipe quantity required per base production batch">Base Qty</th>
+                            <th className="py-2.5 px-3 min-w-[95px] text-right" title="Net required quantity scaled for target production batch">Req. Qty</th>
+                            <th className="py-2.5 px-3 min-w-[125px] text-right" title="Planned scrap and process wastage allowance percentage and quantity">Scrap</th>
+                            <th className="py-2.5 px-3 min-w-[105px] text-right" title="Standard unit cost / landed valuation rate per UOM (₱)">Unit Cost</th>
+                            <th className="py-2.5 px-3 min-w-[105px] text-right" title="Gross effective quantity required after scrap allowance adjustment">Gross (Eff.) Qty</th>
+                            <th className="py-2.5 px-3 min-w-[120px] text-right" title="Extended line total standard cost (Gross Effective Qty × Unit Cost)">Ext. Total Cost</th>
+                            <th className="py-2.5 px-3 min-w-[90px] text-right" title="Percentage contribution to total standard batch production cost">Share %</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {tree.length === 0 ? (
+                        {filteredNodes.length === 0 ? (
                             <tr>
-                                <td colSpan={10} className="py-12 text-center text-muted-foreground">
+                                <td colSpan={12} className="py-12 text-center text-muted-foreground">
                                     <div className="flex flex-col items-center justify-center gap-2">
                                         <AlertCircle className="h-8 w-8 text-muted-foreground/50" />
-                                        <div className="text-sm font-medium">No BOM line items defined</div>
+                                        <div className="text-sm font-medium">No matching BOM components found</div>
                                         <p className="text-xs max-w-sm text-muted-foreground">
-                                            This manufacturing version does not currently contain active components or routes in the database.
+                                            {searchQuery || selectedCategory !== "all"
+                                                ? "Try clearing your search query or switching the category filter."
+                                                : "This manufacturing version does not contain active components."}
                                         </p>
                                     </div>
                                 </td>
                             </tr>
                         ) : (
-                            tree.map(node => renderNodeRows(node, 0))
+                            filteredNodes.map(node => renderNodeRows(node, 0))
                         )}
                     </tbody>
-                    {tree.length > 0 && (
+                    {filteredNodes.length > 0 && (
                         <tfoot>
                             <tr className="border-t-2 bg-muted/30 font-semibold text-xs text-foreground">
-                                <td colSpan={4} className="py-3 px-3">
-                                    Total Product Material Cost Rollup ({targetProduct.product_name})
+                                <td colSpan={5} className="py-3 px-3" title={`Total Standard Batch Cost Rollup for ${targetProduct.product_name}`}>
+                                    Total Standard Batch Cost Rollup ({targetProduct.product_name})
                                 </td>
-                                <td colSpan={4} className="py-3 px-3 text-right font-normal text-muted-foreground">
-                                    Unit Material Cost: <strong className="text-foreground font-mono">{formatCurrency(summary.costPerUnit)}</strong> / {targetProduct.uom_name}
+                                <td colSpan={5} className="py-3 px-3 text-right font-normal text-muted-foreground" title={`Per Piece Unit Cost: ${formatStandardCurrency(summary.costPerUnit, 4)} per ${targetProduct.uom_name}`}>
+                                    Per Piece Unit Cost: <strong className="text-foreground font-mono">{formatStandardCurrency(summary.costPerUnit, 4)}</strong> / {targetProduct.uom_name}
                                 </td>
-                                <td className="py-3 px-3 text-right font-mono text-sm font-bold text-primary">
-                                    {formatCurrency(summary.totalMaterialCost)}
+                                <td className="py-3 px-3 text-right font-mono text-sm font-bold text-primary" title={`Total Batch Cost: ${formatStandardCurrency(summary.totalBatchCost || summary.totalMaterialCost, 4)}`}>
+                                    {formatStandardCurrency(summary.totalBatchCost || summary.totalMaterialCost, 4)}
                                 </td>
-                                <td className="py-3 px-3 text-right font-mono">
-                                    100%
+                                <td className="py-3 px-3 text-right font-mono" title="100.0000% total standard cost rollup">
+                                    100.0000%
                                 </td>
                             </tr>
                         </tfoot>
@@ -384,12 +640,12 @@ export default function BOMCostingTreeTable({ data }: BOMCostingTreeTableProps) 
                 <div className="flex items-start gap-2">
                     <Info className="h-3.5 w-3.5 shrink-0 text-primary mt-0.5" />
                     <div>
-                        <strong className="text-foreground">Valuation Policy:</strong> Gross quantities include applicable production scrap allowances. Material costs are calculated using the current standard/unit cost associated with each BOM component. Extended costs and category rollups reconcile exactly with the displayed rows.
+                        <strong className="text-foreground">Standard Costing Policy:</strong> Gross quantities include applicable route scrap allowances. Unit costs and extended total valuations are standardized to 4 decimal precision. Direct labor and overhead are aggregated in accordance with routing sequences and version standards.
                     </div>
                 </div>
                 <div className="flex items-start gap-2 pl-5">
                     <div>
-                        <strong className="text-foreground">Inventory Allocation Strategy:</strong> Raw materials and perishable ingredients follow <strong>FEFO</strong> (First Expired, First Out) batch consumption, while packaging materials adhere to inward <strong>FIFO</strong> (First In, First Out) warehouse rotation.
+                        <strong className="text-foreground">Warehouse Inventory Strategy:</strong> Raw materials and perishable ingredients follow <strong>FEFO</strong> (First Expired, First Out) batch consumption, while packaging materials adhere to inward <strong>FIFO</strong> (First In, First Out) rotation.
                     </div>
                 </div>
             </div>

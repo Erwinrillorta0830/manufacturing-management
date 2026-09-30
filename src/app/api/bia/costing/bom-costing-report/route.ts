@@ -464,7 +464,7 @@ export async function GET(req: NextRequest) {
                 routes.forEach(r => routeMap.set(Number(r.route_id), r));
 
                 const round4 = (n: number) => Math.round((n + Number.EPSILON) * 10000) / 10000;
-                const nodes: BOMCostNode[] = [];
+                const rawNodes: BOMCostNode[] = [];
 
                 for (let i = 0; i < bomItems.length; i++) {
                     const item = bomItems[i];
@@ -473,7 +473,7 @@ export async function GET(req: NextRequest) {
                     const route = routeMap.get(Number(item.route_id));
 
                     const opId = route ? Number(route.operation_id) : 0;
-                    const opName = opsMap.get(opId) || (route ? `Step #${route.sequence_order}` : "Standard Assembly");
+                    const opName = opsMap.get(opId) || (route ? `Step #${route.sequence_order}` : "Unknown");
                     const routeSeq = route ? Number(route.sequence_order) : i + 1;
 
                     // Check if component has its own version (is sub-assembly)
@@ -486,8 +486,9 @@ export async function GET(req: NextRequest) {
                     const baseReqQty = Number(item.quantity_required) || 0;
                     const scaledReqQty = round4(baseReqQty * currentScaling);
                     const wastagePercent = Number(item.wastage_factor_percentage) || 0;
-                    const wastageQty = round4(scaledReqQty * (wastagePercent / 100));
-                    const effectiveQty = round4(scaledReqQty + wastageQty);
+                    const usableFactor = 1 - (wastagePercent / 100);
+                    const effectiveQty = usableFactor > 0 ? round4(scaledReqQty / usableFactor) : scaledReqQty;
+                    const wastageQty = round4(effectiveQty - scaledReqQty);
 
                     const itemUomId = Number(item.unit_of_measurement || 0);
                     const itemUomName = unitsMap.get(itemUomId) || "pcs";
@@ -513,7 +514,7 @@ export async function GET(req: NextRequest) {
                         }
                     }
 
-                    nodes.push({
+                    rawNodes.push({
                         id: nodeId,
                         level,
                         parentId,
@@ -542,11 +543,330 @@ export async function GET(req: NextRequest) {
                     });
                 }
 
-                return nodes;
+                // If sub-assemblies already exist with children, keep them
+                const hasExistingSubAssemblies = rawNodes.some(n => n.children && n.children.length > 0);
+                if (hasExistingSubAssemblies || level > 1) {
+                    return rawNodes;
+                }
+
+                // If all items are currently flat L1, organize by manufacturing intermediate dough/mixing stages
+                // Items from preparatory operations (1st Mix, Blanching, Premixes) roll up under the primary base ingredient (2nd Mix / Wheat Flour)
+                const mixingNodes = rawNodes.filter(n => n.materialClassification === "raw_material");
+                const packagingNodes = rawNodes.filter(n => n.materialClassification === "packaging");
+                const otherNodes = rawNodes.filter(n => n.materialClassification !== "raw_material" && n.materialClassification !== "packaging");
+
+                if (mixingNodes.length > 1) {
+                    // Find the primary base raw material (largest total cost / scaled qty, or operation with 2nd Mix / Flour)
+                    let primaryIndex = mixingNodes.findIndex(n =>
+                        n.productName.toLowerCase().includes("flour") ||
+                        (n.operationName && n.operationName.toLowerCase().includes("2nd mix"))
+                    );
+                    if (primaryIndex === -1) {
+                        primaryIndex = mixingNodes.reduce((maxIdx, n, currIdx, arr) =>
+                            n.totalLineCost > arr[maxIdx].totalLineCost ? currIdx : maxIdx, 0
+                        );
+                    }
+
+                    const parentNode = { ...mixingNodes[primaryIndex] };
+                    const childNodes = mixingNodes.filter((_, idx) => idx !== primaryIndex).map(c => ({
+                        ...c,
+                        level: 2,
+                        parentId: parentNode.id
+                    }));
+
+                    parentNode.children = childNodes;
+
+                    return [parentNode, ...packagingNodes, ...otherNodes];
+                }
+
+                return rawNodes;
             }
 
-            // Explode from Level 1
+            // Explode materials from Level 1
             const tree = await explodeVersion(productId, versionId, batchScalingFactor, 1, null, new Set());
+
+            // Fetch routes, positions, overheads, and work centers for labor and overhead costing
+            const [targetRoutesRes, positionsRes, overheadsRes, overheadTypesRes, workCentersRes] = await Promise.all([
+                fetch(`${DIRECTUS_URL}/items/manufacturing_routes?filter[version_id][_eq]=${versionId}&sort=sequence_order&limit=-1`, { headers, cache: "no-store" }),
+                fetch(`${DIRECTUS_URL}/items/product_version_positions?filter[version_id][_eq]=${versionId}&limit=-1`, { headers, cache: "no-store" }).catch(() => null),
+                fetch(`${DIRECTUS_URL}/items/product_version_overheads?filter[version_id][_eq]=${versionId}&limit=-1`, { headers, cache: "no-store" }).catch(() => null),
+                fetch(`${DIRECTUS_URL}/items/overhead_types?limit=-1`, { headers, cache: "no-store" }).catch(() => null),
+                fetch(`${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1`, { headers, cache: "no-store" }).catch(() => null)
+            ]);
+
+            const targetRoutes: Record<string, unknown>[] = targetRoutesRes.ok ? (await targetRoutesRes.json()).data || [] : [];
+            const versionPositions: Record<string, unknown>[] = positionsRes && positionsRes.ok ? (await positionsRes.json()).data || [] : [];
+            const versionOverheads: Record<string, unknown>[] = overheadsRes && overheadsRes.ok ? (await overheadsRes.json()).data || [] : [];
+            const overheadTypesList: Record<string, unknown>[] = overheadTypesRes && overheadTypesRes.ok ? (await overheadTypesRes.json()).data || [] : [];
+            const workCentersList: Record<string, unknown>[] = workCentersRes && workCentersRes.ok ? (await workCentersRes.json()).data || [] : [];
+
+            const round4 = (n: number) => Math.round((n + Number.EPSILON) * 10000) / 10000;
+            const overheadTypesMap = new Map<number, string>();
+            overheadTypesList.forEach(t => overheadTypesMap.set(Number(t.id), String(t.overhead_name || "")));
+
+            const workCentersMap = new Map<number, Record<string, unknown>>();
+            workCentersList.forEach(w => workCentersMap.set(Number(w.work_center_id || w.id), w));
+
+            // 1. Process Direct Labor Calculation
+            const laborNodes: BOMCostNode[] = [];
+            let totalLaborCost = 0;
+
+            if (versionPositions.length > 0) {
+                // Calculate from explicit position records assigned to this version
+                versionPositions.forEach((pos, idx) => {
+                    const posName = String(pos.position_name || `Direct Operator #${idx + 1}`);
+                    const headcount = Math.max(0, Number(pos.manpower_count) || 1);
+                    const hourlyRate = Math.max(0, Number(pos.hourly_rate) || 0);
+                    const dailyRate = Math.max(0, Number(pos.daily_rate) || (hourlyRate * 8) || 0);
+                    const otHours = Math.max(0, Number(pos.ot_hours) || 0);
+                    const hoursRequired = Math.max(0, Number(pos.hours_required) || 8);
+                    const baseHours = hoursRequired > 0 ? hoursRequired : 8;
+                    const scaledHours = round4(baseHours * batchScalingFactor);
+
+                    const wageCost = dailyRate > 0
+                        ? dailyRate * (headcount + otHours)
+                        : (hourlyRate > 0 ? hourlyRate * (baseHours * headcount + otHours) : 520);
+
+                    let benefitsCost = 0;
+                    if (pos.include_mandates !== false) {
+                        const configuredSss = Number(pos.sss_amount);
+                        const configuredPhic = Number(pos.phic_amount);
+                        const configuredHdmf = Number(pos.hdmf_amount);
+                        const sss = Number.isFinite(configuredSss) && configuredSss > 0 ? configuredSss : (dailyRate * 0.0954);
+                        const phic = Number.isFinite(configuredPhic) && configuredPhic > 0 ? configuredPhic : (200 / 26);
+                        const hdmf = Number.isFinite(configuredHdmf) && configuredHdmf > 0 ? configuredHdmf : (100 / 26);
+                        benefitsCost = (sss + phic + hdmf) * headcount;
+                    }
+
+                    const batchPositionCost = round4(wageCost + benefitsCost);
+                    const lineCost = round4(batchPositionCost * batchScalingFactor);
+                    const effectiveHourlyRate = scaledHours > 0 ? round4(lineCost / scaledHours) : round4(batchPositionCost / baseHours);
+
+                    totalLaborCost = round4(totalLaborCost + lineCost);
+
+                    laborNodes.push({
+                        id: `labor-pos-${pos.id || idx}`,
+                        level: 1,
+                        parentId: null,
+                        productId: 0,
+                        productName: `Direct Labor - ${posName}`,
+                        description: `Headcount: ${headcount} • Wage: ₱${dailyRate.toFixed(2)} • Mandates: +₱${benefitsCost.toFixed(2)}`,
+                        productCode: `LABOR-POS-${pos.position_id || idx + 1}`,
+                        productType: null,
+                        materialClassification: "labor",
+                        inventoryRule: "-",
+                        routeSequence: idx + 1,
+                        operationName: "Unknown",
+                        baseRequiredQty: baseHours,
+                        scaledRequiredQty: scaledHours,
+                        wastagePercent: 0,
+                        effectiveQty: scaledHours,
+                        wastageQty: 0,
+                        uomName: "HRS",
+                        unitCost: effectiveHourlyRate,
+                        netLineCost: lineCost,
+                        totalLineCost: lineCost,
+                        wastageCost: 0,
+                        isSubAssembly: false,
+                        children: []
+                    });
+                });
+            } else if (targetRoutes.length > 0) {
+                // Calculate from version routing steps and process cycle times
+                targetRoutes.forEach((r, idx) => {
+                    const opId = Number(r.operation_id || 0);
+                    const opName = opsMap.get(opId) || `Step #${r.sequence_order || idx + 1}`;
+                    const setupHours = Number(r.setup_time_hours || 0);
+                    const runHours = Number(r.run_time_hours || 0);
+                    const manpower = Number(r.default_manpower || 1);
+                    const expectedLabor = Number(r.expected_labor_cost || 0);
+
+                    // Compute cycle hours per batch
+                    const baseHours = round4(setupHours + runHours) || 0.1;
+                    const scaledHours = round4(setupHours + (runHours * targetQuantity)) || round4(baseHours * batchScalingFactor);
+                    const stdHourlyRate = 65.0; // Standard manufacturing operator rate (₱520 daily / 8h)
+
+                    let lineCost = 0;
+                    let unitLaborRate = stdHourlyRate;
+
+                    if (expectedLabor > 0) {
+                        lineCost = round4(expectedLabor * batchScalingFactor);
+                        unitLaborRate = scaledHours > 0 ? round4(lineCost / scaledHours) : expectedLabor;
+                    } else {
+                        lineCost = round4(scaledHours * manpower * stdHourlyRate);
+                        unitLaborRate = stdHourlyRate;
+                    }
+
+                    totalLaborCost = round4(totalLaborCost + lineCost);
+
+                    laborNodes.push({
+                        id: `labor-route-${r.route_id || idx}`,
+                        level: 1,
+                        parentId: null,
+                        productId: 0,
+                        productName: `Process Direct Labor - ${opName}`,
+                        description: `Manpower: ${manpower} • Setup: ${setupHours}h • Run: ${runHours}h/unit`,
+                        productCode: `LABOR-STEP-${r.sequence_order || idx + 1}`,
+                        productType: null,
+                        materialClassification: "labor",
+                        inventoryRule: "-",
+                        routeSequence: Number(r.sequence_order || idx + 1),
+                        operationName: opName,
+                        baseRequiredQty: baseHours,
+                        scaledRequiredQty: scaledHours,
+                        wastagePercent: 0,
+                        effectiveQty: scaledHours,
+                        wastageQty: 0,
+                        uomName: "HRS",
+                        unitCost: unitLaborRate,
+                        netLineCost: lineCost,
+                        totalLineCost: lineCost,
+                        wastageCost: 0,
+                        isSubAssembly: false,
+                        children: []
+                    });
+                });
+            } else {
+                // Standard direct labor allowance if no routes or positions exist
+                const stdLaborRate = 65.0;
+                const stdHours = 1;
+                const lineCost = round4(stdLaborRate * stdHours * batchScalingFactor);
+                totalLaborCost = lineCost;
+
+                laborNodes.push({
+                    id: `labor-std-0`,
+                    level: 1,
+                    parentId: null,
+                    productId: 0,
+                    productName: "Process Direct Labor - Unknown",
+                    description: "Direct labor allocation",
+                    productCode: "LABOR-STD",
+                    productType: null,
+                    materialClassification: "labor",
+                    inventoryRule: "-",
+                    routeSequence: 1,
+                    operationName: "Unknown",
+                    baseRequiredQty: stdHours,
+                    scaledRequiredQty: stdHours * batchScalingFactor,
+                    wastagePercent: 0,
+                    effectiveQty: stdHours * batchScalingFactor,
+                    wastageQty: 0,
+                    uomName: "HRS",
+                    unitCost: stdLaborRate,
+                    netLineCost: lineCost,
+                    totalLineCost: lineCost,
+                    wastageCost: 0,
+                    isSubAssembly: false,
+                    children: []
+                });
+            }
+
+            // 2. Manufacturing Overhead Calculation
+            const overheadNodes: BOMCostNode[] = [];
+            let totalOverheadCost = 0;
+
+            if (versionOverheads.length > 0) {
+                versionOverheads.forEach((ov, idx) => {
+                    const ovTypeId = Number(ov.overhead_type_id || 0);
+                    const ovName = overheadTypesMap.get(ovTypeId) || String(ov.remarks || `Plant Overhead #${idx + 1}`);
+                    const unitOverheadCost = Number(ov.cost ?? ov.cost_per_unit ?? 0);
+                    const isBatch = ov.allocation_basis === "batch";
+                    const lineCost = isBatch ? round4(unitOverheadCost) : round4(unitOverheadCost * targetQuantity);
+
+                    totalOverheadCost = round4(totalOverheadCost + lineCost);
+
+                    overheadNodes.push({
+                        id: `overhead-item-${ov.id || idx}`,
+                        level: 1,
+                        parentId: null,
+                        productId: 0,
+                        productName: `Mfg Overhead - ${ovName}`,
+                        description: `Basis: ${isBatch ? "Per Batch" : "Per Unit"} • ${ov.remarks || "Fixed Indirect Expense"}`,
+                        productCode: `OVH-TYPE-${ovTypeId || idx + 1}`,
+                        productType: null,
+                        materialClassification: "overhead",
+                        inventoryRule: "-",
+                        routeSequence: 90 + idx,
+                        operationName: "Unknown",
+                        baseRequiredQty: isBatch ? 1 : baseQuantity,
+                        scaledRequiredQty: isBatch ? 1 : targetQuantity,
+                        wastagePercent: 0,
+                        effectiveQty: isBatch ? 1 : targetQuantity,
+                        wastageQty: 0,
+                        uomName: isBatch ? "LOT" : uomName,
+                        unitCost: unitOverheadCost,
+                        netLineCost: lineCost,
+                        totalLineCost: lineCost,
+                        wastageCost: 0,
+                        isSubAssembly: false,
+                        children: []
+                    });
+                });
+            } else if (Number(targetVersion.custom_overhead || 0) > 0) {
+                const unitOverhead = Number(targetVersion.custom_overhead);
+                const lineCost = round4(unitOverhead * batchScalingFactor);
+                totalOverheadCost = lineCost;
+
+                overheadNodes.push({
+                    id: "overhead-custom-0",
+                    level: 1,
+                    parentId: null,
+                    productId: 0,
+                    productName: "Manufacturing & Machine Overhead",
+                    description: "Allocated plant equipment and indirect operating expenses",
+                    productCode: "MFG-OVERHEAD",
+                    productType: null,
+                    materialClassification: "overhead",
+                    inventoryRule: "-",
+                    routeSequence: 99,
+                    operationName: "Unknown",
+                    baseRequiredQty: 1,
+                    scaledRequiredQty: batchScalingFactor,
+                    wastagePercent: 0,
+                    effectiveQty: batchScalingFactor,
+                    wastageQty: 0,
+                    uomName: "LOT",
+                    unitCost: unitOverhead,
+                    netLineCost: lineCost,
+                    totalLineCost: lineCost,
+                    wastageCost: 0,
+                    isSubAssembly: false,
+                    children: []
+                });
+            } else {
+                // If 0, still provide standard machine overhead node so Overhead category is visible
+                const defaultUnitCost = 0.0000;
+                overheadNodes.push({
+                    id: "overhead-default-0",
+                    level: 1,
+                    parentId: null,
+                    productId: 0,
+                    productName: "Manufacturing & Machine Overhead",
+                    description: "Indirect production plant & equipment allocation",
+                    productCode: "MFG-OVERHEAD",
+                    productType: null,
+                    materialClassification: "overhead",
+                    inventoryRule: "-",
+                    routeSequence: 99,
+                    operationName: "Unknown",
+                    baseRequiredQty: 1,
+                    scaledRequiredQty: batchScalingFactor,
+                    wastagePercent: 0,
+                    effectiveQty: batchScalingFactor,
+                    wastageQty: 0,
+                    uomName: "LOT",
+                    unitCost: defaultUnitCost,
+                    netLineCost: 0,
+                    totalLineCost: 0,
+                    wastageCost: 0,
+                    isSubAssembly: false,
+                    children: []
+                });
+            }
+
+            // Append labor and overhead nodes directly to tree
+            tree.push(...laborNodes);
+            tree.push(...overheadNodes);
 
             // Flatten tree to compute accurate summary metrics
             function flattenTree(nodeList: BOMCostNode[]): BOMCostNode[] {
@@ -561,7 +881,6 @@ export async function GET(req: NextRequest) {
             }
 
             const flatNodes = flattenTree(tree);
-            const round4 = (n: number) => Math.round((n + Number.EPSILON) * 10000) / 10000;
 
             // Compute leaf items vs sub-assemblies (reconciled exactly from displayed rows)
             const leafNodes = flatNodes.filter(n => !n.children || n.children.length === 0);
@@ -577,12 +896,34 @@ export async function GET(req: NextRequest) {
                     .reduce((sum, n) => sum + n.totalLineCost, 0)
             );
 
+            const directLaborCost = totalLaborCost;
+            const mfgOverheadCost = totalOverheadCost;
+
             const totalMaterialCost = round4(rawMaterialsCost + packagingCost);
-            const totalNetMaterialCost = round4(leafNodes.reduce((sum, n) => sum + n.netLineCost, 0));
+            const totalNetMaterialCost = round4(leafNodes.filter(n => n.materialClassification === "raw_material" || n.materialClassification === "packaging").reduce((sum, n) => sum + n.netLineCost, 0));
             const totalWastageCost = round4(leafNodes.reduce((sum, n) => sum + n.wastageCost, 0));
-            const costPerUnit = targetQuantity > 0 ? round4(totalMaterialCost / targetQuantity) : 0;
+
+            const totalBatchCost = round4(totalMaterialCost + directLaborCost + mfgOverheadCost);
+            const costPerUnit = targetQuantity > 0 ? round4(totalBatchCost / targetQuantity) : 0;
+
             const effectiveWastageIncreasePct = totalNetMaterialCost > 0
                 ? round4((totalWastageCost / totalNetMaterialCost) * 100)
+                : 0;
+
+            const scrapImpactPct = totalBatchCost > 0
+                ? round4((totalWastageCost / totalBatchCost) * 100)
+                : 0;
+
+            const materialsSharePct = totalBatchCost > 0
+                ? round4((totalMaterialCost / totalBatchCost) * 100)
+                : 0;
+
+            const laborSharePct = totalBatchCost > 0
+                ? round4((directLaborCost / totalBatchCost) * 100)
+                : 0;
+
+            const overheadSharePct = totalBatchCost > 0
+                ? round4((mfgOverheadCost / totalBatchCost) * 100)
                 : 0;
 
             const subAssembliesCost = round4(
@@ -591,11 +932,14 @@ export async function GET(req: NextRequest) {
                     .reduce((sum, n) => sum + n.totalLineCost, 0)
             );
 
-            const maxDepth = flatNodes.reduce((max, n) => Math.max(max, n.level), 0);
+            const maxDepth = flatNodes.reduce((max, n) => Math.max(max, n.level), 1);
 
             const summary: BOMCostingSummary = {
                 totalNetMaterialCost,
                 totalMaterialCost,
+                directLaborCost,
+                mfgOverheadCost,
+                totalBatchCost,
                 costPerUnit,
                 totalWastageCost,
                 effectiveWastageIncreasePct,
@@ -603,7 +947,11 @@ export async function GET(req: NextRequest) {
                 rawMaterialsCost,
                 packagingCost,
                 subAssembliesCost,
-                maxDepth
+                maxDepth,
+                materialsSharePct,
+                laborSharePct,
+                overheadSharePct,
+                scrapImpactPct
             };
 
             const targetProduct: TargetProductSummary = {

@@ -13,12 +13,12 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { WorkCenterQueueSummary, WipJobOrder } from "../types";
+import { WorkCenterQueueSummary, WipJobOrder, WipDetailTab } from "../types";
 
 interface WipWorkCenterBoardViewProps {
     queues: WorkCenterQueueSummary[];
     isLoading: boolean;
-    onOpenDetail: (job: WipJobOrder, tab?: "stages" | "materials") => void;
+    onOpenDetail: (job: WipJobOrder, tab?: WipDetailTab) => void;
 }
 
 export function WipWorkCenterBoardView({
@@ -207,7 +207,7 @@ export function WipWorkCenterBoardView({
                                                         size="sm"
                                                         onClick={(e) => {
                                                             e.stopPropagation();
-                                                            onOpenDetail(job, "stages");
+                                                            onOpenDetail(job, "overview");
                                                         }}
                                                         className="h-6 px-1.5 text-[10px] text-primary hover:bg-primary/10"
                                                     >

@@ -3,130 +3,171 @@
 import React from "react";
 import { motion } from "framer-motion";
 import {
-    CircleDollarSign,
-    Coins,
-    Percent,
-    Layers,
     Boxes,
-    Package
+    Users,
+    Factory,
+    TrendingUp
 } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { BOMCostingReportData } from "../types";
+import { formatStandardCurrency } from "./BOMCostingTreeTable";
 
 interface BOMCostingSummaryCardsProps {
     data: BOMCostingReportData;
 }
 
-const formatCurrency = (val: number) => {
-    return new Intl.NumberFormat("en-PH", {
-        style: "currency",
-        currency: "PHP",
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 4
-    }).format(val || 0);
-};
-
 export default function BOMCostingSummaryCards({ data }: BOMCostingSummaryCardsProps) {
-    const { summary, targetProduct } = data;
+    const { summary } = data;
 
-    const cards = [
-        {
-            title: "Total Material Cost",
-            value: formatCurrency(summary.totalMaterialCost),
-            subtext: `For batch of ${targetProduct.target_quantity.toLocaleString()} ${targetProduct.uom_name}`,
-            icon: CircleDollarSign,
-            color: "text-emerald-600 dark:text-emerald-400",
-            bg: "bg-emerald-500/10",
-            border: "border-emerald-500/20"
-        },
-        {
-            title: "Unit Material Cost",
-            value: formatCurrency(summary.costPerUnit),
-            subtext: `Per 1.00 ${targetProduct.uom_name} produced`,
-            icon: Coins,
-            color: "text-blue-600 dark:text-blue-400",
-            bg: "bg-blue-500/10",
-            border: "border-blue-500/20"
-        },
-        {
-            title: "Scrap / Wastage Cost",
-            value: formatCurrency(summary.totalWastageCost),
-            subtext: `Effective increase: ${summary.effectiveWastageIncreasePct.toFixed(2)}% over net material cost`,
-            icon: Percent,
-            color: "text-amber-600 dark:text-amber-400",
-            bg: "bg-amber-500/10",
-            border: "border-amber-500/20"
-        },
-        {
-            title: "Structure & Components",
-            value: `${summary.totalComponentsCount} Items`,
-            subtext: `Max Depth: Level ${summary.maxDepth} • ${summary.subAssembliesCost > 0 ? "Multi-level" : "Single-level"}`,
-            icon: Layers,
-            color: "text-purple-600 dark:text-purple-400",
-            bg: "bg-purple-500/10",
-            border: "border-purple-500/20"
-        }
-    ];
+    const totalBatchCost = summary.totalBatchCost > 0 ? summary.totalBatchCost : summary.totalMaterialCost;
+    const directMaterials = summary.totalMaterialCost;
+    const directLabor = summary.directLaborCost;
+    const mfgOverhead = summary.mfgOverheadCost;
+    const scrapAllowance = summary.totalWastageCost;
+
+    const materialsShare = totalBatchCost > 0 ? (directMaterials / totalBatchCost) * 100 : 0;
+    const laborShare = totalBatchCost > 0 ? (directLabor / totalBatchCost) * 100 : 0;
+    const overheadShare = totalBatchCost > 0 ? (mfgOverhead / totalBatchCost) * 100 : 0;
+    const scrapImpact = totalBatchCost > 0 ? (scrapAllowance / totalBatchCost) * 100 : 0;
 
     return (
-        <div className="space-y-3">
-            <motion.div
-                initial={{ opacity: 0, y: -8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3 }}
-                className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5"
-            >
-                {cards.map((card, idx) => {
-                    const Icon = card.icon;
-                    return (
-                        <Card key={idx} className={`shadow-xs border ${card.border} bg-card overflow-hidden`}>
-                            <CardContent className="p-4">
-                                <div className="flex items-center justify-between gap-2">
-                                    <span className="text-xs font-medium text-muted-foreground truncate">{card.title}</span>
-                                    <div className={`p-1.5 rounded-md ${card.bg} ${card.color} shrink-0`}>
-                                        <Icon className="h-4 w-4" />
-                                    </div>
-                                </div>
-                                <div className="mt-2.5">
-                                    <div className="text-lg font-bold tracking-tight text-foreground truncate">{card.value}</div>
-                                    <div className="text-[11px] text-muted-foreground mt-0.5 truncate">{card.subtext}</div>
-                                </div>
-                            </CardContent>
-                        </Card>
-                    );
-                })}
-            </motion.div>
+        <motion.div
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.25 }}
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3"
+        >
+            {/* 1. TOTAL BATCH COST */}
+            <div className="rounded-xl border bg-card p-4 shadow-xs flex flex-col justify-between">
+                <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold tracking-wider uppercase text-muted-foreground">
+                        Total Batch Cost
+                    </span>
+                    <Badge variant="secondary" className="text-[10px] h-5 font-medium">
+                        Ext. Total
+                    </Badge>
+                </div>
+                <div className="mt-3">
+                    <div className="text-xl font-bold tracking-tight font-mono text-foreground">
+                        {formatStandardCurrency(totalBatchCost, 4)}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground mt-1 font-mono">
+                        Per Piece Unit Cost: <span className="font-semibold text-foreground">{formatStandardCurrency(summary.costPerUnit, 4)}</span>
+                    </div>
+                </div>
+            </div>
 
-            {/* Classification breakdown strip */}
-            <motion.div
-                initial={{ opacity: 0, y: -4 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3, delay: 0.1 }}
-                className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 rounded-lg border bg-muted/30 text-xs"
-            >
-                <div className="flex items-center gap-2">
-                    <span className="font-semibold text-foreground">Material Category Split:</span>
+            {/* 2. DIRECT MATERIALS */}
+            <div className="rounded-xl border bg-card p-4 shadow-xs flex flex-col justify-between">
+                <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold tracking-wider uppercase text-muted-foreground">
+                        Direct Materials
+                    </span>
+                    <div className="p-1.5 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                        <Boxes className="h-4 w-4" />
+                    </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-4 text-muted-foreground">
-                    <div className="flex items-center gap-1.5">
-                        <Boxes className="h-3.5 w-3.5 text-emerald-600" />
-                        <span>Raw Materials & Ingredients:</span>
-                        <strong className="text-foreground">{formatCurrency(summary.rawMaterialsCost)}</strong>
+                <div className="mt-3 space-y-2">
+                    <div className="text-xl font-bold tracking-tight font-mono text-foreground">
+                        {formatStandardCurrency(directMaterials, 4)}
                     </div>
-                    <div className="flex items-center gap-1.5">
-                        <Package className="h-3.5 w-3.5 text-blue-600" />
-                        <span>Packaging Materials:</span>
-                        <strong className="text-foreground">{formatCurrency(summary.packagingCost)}</strong>
-                    </div>
-                    {summary.subAssembliesCost > 0 && (
-                        <div className="flex items-center gap-1.5">
-                            <Layers className="h-3.5 w-3.5 text-purple-600" />
-                            <span>Sub-Assemblies:</span>
-                            <strong className="text-foreground">{formatCurrency(summary.subAssembliesCost)}</strong>
+                    <div className="space-y-1">
+                        <div className="text-[11px] text-muted-foreground">
+                            {materialsShare.toFixed(4)}% share
                         </div>
-                    )}
+                        <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+                            <div
+                                className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                                style={{ width: `${Math.min(materialsShare, 100)}%` }}
+                            />
+                        </div>
+                    </div>
                 </div>
-            </motion.div>
-        </div>
+            </div>
+
+            {/* 3. PROCESS DIRECT LABOR */}
+            <div className="rounded-xl border bg-card p-4 shadow-xs flex flex-col justify-between">
+                <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold tracking-wider uppercase text-muted-foreground">
+                        Process Direct Labor
+                    </span>
+                    <div className="p-1.5 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                        <Users className="h-4 w-4" />
+                    </div>
+                </div>
+                <div className="mt-3 space-y-2">
+                    <div className="text-xl font-bold tracking-tight font-mono text-foreground">
+                        {formatStandardCurrency(directLabor, 4)}
+                    </div>
+                    <div className="space-y-1">
+                        <div className="text-[11px] text-muted-foreground">
+                            {laborShare.toFixed(4)}% share
+                        </div>
+                        <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+                            <div
+                                className="h-full bg-amber-500 rounded-full transition-all duration-300"
+                                style={{ width: `${Math.min(laborShare, 100)}%` }}
+                            />
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* 4. MFG OVERHEAD */}
+            <div className="rounded-xl border bg-card p-4 shadow-xs flex flex-col justify-between">
+                <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold tracking-wider uppercase text-muted-foreground">
+                        Mfg Overhead
+                    </span>
+                    <div className="p-1.5 rounded-md bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                        <Factory className="h-4 w-4" />
+                    </div>
+                </div>
+                <div className="mt-3 space-y-2">
+                    <div className="text-xl font-bold tracking-tight font-mono text-foreground">
+                        {formatStandardCurrency(mfgOverhead, 4)}
+                    </div>
+                    <div className="space-y-1">
+                        <div className="text-[11px] text-muted-foreground">
+                            {overheadShare.toFixed(4)}% share
+                        </div>
+                        <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+                            <div
+                                className="h-full bg-purple-500 rounded-full transition-all duration-300"
+                                style={{ width: `${Math.min(overheadShare, 100)}%` }}
+                            />
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* 5. SCRAP ALLOWANCE */}
+            <div className="rounded-xl border bg-card p-4 shadow-xs flex flex-col justify-between">
+                <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold tracking-wider uppercase text-muted-foreground">
+                        Scrap Allowance
+                    </span>
+                    <div className="p-1.5 rounded-md bg-rose-500/10 text-rose-600 dark:text-rose-400">
+                        <TrendingUp className="h-4 w-4" />
+                    </div>
+                </div>
+                <div className="mt-3 space-y-2">
+                    <div className="text-xl font-bold tracking-tight font-mono text-foreground">
+                        {formatStandardCurrency(scrapAllowance, 4)}
+                    </div>
+                    <div className="space-y-1">
+                        <div className="text-[11px] text-muted-foreground">
+                            {scrapImpact.toFixed(4)}% scrap impact
+                        </div>
+                        <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+                            <div
+                                className="h-full bg-rose-500 rounded-full transition-all duration-300"
+                                style={{ width: `${Math.min(scrapImpact, 100)}%` }}
+                            />
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </motion.div>
     );
 }
