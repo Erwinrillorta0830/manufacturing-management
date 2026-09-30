@@ -370,8 +370,8 @@ export function generateAssetAmortizationSchedule(
     const cutoffYear = cutoffDate.getUTCFullYear();
 
     const startYear = startDate.getUTCFullYear();
-    const lifeYears = Math.max(1, Math.ceil(asset.life_span_years || 5));
-    const maxYear = Math.max(cutoffYear + 2, startYear + lifeYears + 1);
+ 
+   
 
     const schedule: AmortizationScheduleRow[] = [];
     const notes: string[] = [];
