@@ -24,6 +24,7 @@ interface DirectusResponse<T> {
 
 interface DirectusJobOrder {
     job_order_id?: number | string;
+    parent_job_order_id?: number | string | null;
     id?: number | string;
     job_order_no?: string;
     product_id?: number | string;
@@ -51,6 +52,8 @@ interface DirectusJobOrder {
     rejected_quantity?: number | string;
     created_at?: string | null;
     lot_number?: string | null;
+    batch_no?: string | null;
+    batch_number?: string | null;
 }
 
 interface DirectusRoute {
@@ -70,6 +73,9 @@ interface DirectusRoute {
     sequence_order?: number | string;
     completed_at?: string | null;
     requires_qa?: boolean | number;
+    started_at?: string | null;
+    start_time?: string | null;
+    actual_start?: string | null;
 }
 
 interface DirectusWorkCenter {
@@ -78,6 +84,7 @@ interface DirectusWorkCenter {
     work_center_name?: string;
     work_center_code?: string;
     capacity_per_hour?: number | string;
+    overhead_cost_per_hour?: number | string;
 }
 
 interface DirectusOperation {
@@ -114,8 +121,39 @@ interface DirectusReservation {
     used_quantity?: number | string;
     returned_quantity?: number | string;
     remaining_wip_quantity?: number | string;
+    reservation_status?: string | null;
     status?: string | null;
+    expiry_date?: string | null;
     wip_started_at?: string | null;
+    wip_started_by?: number | string | null;
+}
+
+interface DirectusStatusHistory {
+    history_id?: number | string;
+    job_order_id?: number | string;
+    old_status?: string | null;
+    new_status?: string | null;
+    changed_by?: number | string | null;
+    changed_at?: string | null;
+    remarks?: string | null;
+    work_center_id?: number | string | null;
+    event_key?: string | null;
+    workflow_action?: string | null;
+    reported_yield_quantity?: number | string | null;
+}
+
+interface DirectusQaInspectionLog {
+    id?: number | string;
+    job_order_id?: number | string;
+    inspected_quantity?: number | string;
+    passed_quantity?: number | string;
+    rejected_quantity?: number | string;
+    rejection_reason_id?: number | string | null;
+    rework_job_order_id?: number | string | null;
+    inspected_by?: number | string | null;
+    inspected_at?: string | null;
+    status?: string | null;
+    remarks?: string | null;
 }
 
 interface DirectusOperator {
@@ -141,10 +179,35 @@ interface DirectusProduct {
     unit_of_measurement?: number | string;
     standard_cost?: number | string;
     cost_per_unit?: number | string;
-    category?: string;
+    category?: string | number;
+    category_id?: string | number;
     product_category?: string;
     item_group?: string;
     category_name?: string;
+}
+
+interface DirectusCategory {
+    category_id?: number | string;
+    id?: number | string;
+    category_name?: string;
+}
+
+interface DirectusYieldLedger {
+    ledger_id?: number | string;
+    job_order_id?: number | string;
+    yield_quantity?: number | string;
+    scrap_quantity?: number | string;
+    qa_status?: string | null;
+    lot_number?: string | null;
+    batch_number?: string | null;
+    mm_lot_id?: number | string | null;
+    logged_at?: string | null;
+    production_date?: string | null;
+    logged_by?: number | string | null;
+    remarks?: string | null;
+    shift_name?: string | null;
+    rejected_quantity?: number | string;
+    source_event_key?: string | null;
 }
 
 interface DirectusBranch {
@@ -226,9 +289,13 @@ export async function GET(req: NextRequest) {
             unitsRes,
             itemsUserRes,
             systemUsersRes,
-            lotsRes
+            lotsRes,
+            categoriesRes,
+            yieldLedgerRes,
+            statusHistoryRes,
+            qaLogsRes
         ] = await Promise.all([
-            fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?limit=-1&fields=*`, {
+            fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?limit=-1&fields=*&sort=-job_order_id`, {
                 headers: headersNoCache,
                 cache: "no-store"
             }),
@@ -279,7 +346,23 @@ export async function GET(req: NextRequest) {
             fetch(`${DIRECTUS_URL}/items/mm_lots?limit=-1&fields=lot_id,lot_name,branch_id`, {
                 headers: headersNoCache,
                 cache: "no-store"
-            })
+            }),
+            fetch(`${DIRECTUS_URL}/items/categories?limit=-1&fields=category_id,category_name`, {
+                headers: headersNoCache,
+                cache: "no-store"
+            }).catch(() => null),
+            fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?limit=-1&fields=*`, {
+                headers: headersNoCache,
+                cache: "no-store"
+            }).catch(() => null),
+            fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_status_history?limit=-1&fields=*&sort=-changed_at`, {
+                headers: headersNoCache,
+                cache: "no-store"
+            }).catch(() => null),
+            fetch(`${DIRECTUS_URL}/items/qa_jo_inspection_logs?limit=-1&fields=*&sort=-inspected_at`, {
+                headers: headersNoCache,
+                cache: "no-store"
+            }).catch(() => null)
         ]);
 
         if (!joRes.ok) {
@@ -304,6 +387,10 @@ export async function GET(req: NextRequest) {
         const itemsUserData: DirectusResponse<DirectusUser> = itemsUserRes.ok ? await itemsUserRes.json() : { data: [] };
         const systemUsersData: DirectusResponse<DirectusUser> = systemUsersRes.ok ? await systemUsersRes.json() : { data: [] };
         const lotsData: DirectusResponse<DirectusLot> = lotsRes.ok ? await lotsRes.json() : { data: [] };
+        const categoriesData: DirectusResponse<DirectusCategory> = categoriesRes && categoriesRes.ok ? await categoriesRes.json().catch(() => ({ data: [] })) : { data: [] };
+        const yieldLedgerData: DirectusResponse<DirectusYieldLedger> = yieldLedgerRes && yieldLedgerRes.ok ? await yieldLedgerRes.json().catch(() => ({ data: [] })) : { data: [] };
+        const statusHistoryData: DirectusResponse<DirectusStatusHistory> = statusHistoryRes && statusHistoryRes.ok ? await statusHistoryRes.json().catch(() => ({ data: [] })) : { data: [] };
+        const qaLogsData: DirectusResponse<DirectusQaInspectionLog> = qaLogsRes && qaLogsRes.ok ? await qaLogsRes.json().catch(() => ({ data: [] })) : { data: [] };
 
         const allJobOrders = joData.data || [];
         const allRoutes = routesData.data || [];
@@ -317,6 +404,45 @@ export async function GET(req: NextRequest) {
         const allUnits = unitsData.data || [];
         const allUsers = [...(itemsUserData.data || []), ...(systemUsersData.data || [])];
         const allLots = lotsData.data || [];
+        const allStatusHistory: DirectusStatusHistory[] = statusHistoryData.data || [];
+        const allQaLogs: DirectusQaInspectionLog[] = qaLogsData.data || [];
+
+        // Build Status History & QA Logs Maps by job_order_id
+        const statusHistoryByJobId = new Map<number, DirectusStatusHistory[]>();
+        allStatusHistory.forEach((sh) => {
+            const jId = Number(sh.job_order_id);
+            if (!jId) return;
+            const list = statusHistoryByJobId.get(jId) || [];
+            list.push(sh);
+            statusHistoryByJobId.set(jId, list);
+        });
+
+        const qaLogsByJobId = new Map<number, DirectusQaInspectionLog[]>();
+        allQaLogs.forEach((qa) => {
+            const jId = Number(qa.job_order_id);
+            if (!jId) return;
+            const list = qaLogsByJobId.get(jId) || [];
+            list.push(qa);
+            qaLogsByJobId.set(jId, list);
+        });
+
+        // Build Master Lookups
+        const categoryMap = new Map<number, string>();
+        (categoriesData.data || []).forEach((c: DirectusCategory) => {
+            const cId = Number(c.category_id || c.id);
+            if (cId && c.category_name) {
+                categoryMap.set(cId, String(c.category_name).trim());
+            }
+        });
+
+        const yieldLedgerByJobId = new Map<number, DirectusYieldLedger[]>();
+        (yieldLedgerData.data || []).forEach((yl: DirectusYieldLedger) => {
+            const jId = Number(yl.job_order_id);
+            if (!jId) return;
+            const list = yieldLedgerByJobId.get(jId) || [];
+            list.push(yl);
+            yieldLedgerByJobId.set(jId, list);
+        });
 
         // Build Master Lookups
         const workCenterMap = new Map<number, DirectusWorkCenter>();
@@ -409,6 +535,23 @@ export async function GET(req: NextRequest) {
                 (r.task_id ? operatorsByRouteId.get(Number(r.task_id)) : []) ||
                 [];
 
+            let stageStartedAt: string | null = r.started_at || r.start_time || r.actual_start || null;
+            if (!stageStartedAt && assignedOps.length > 0) {
+                const opStarts = assignedOps
+                    .map((op) => op.started_at)
+                    .filter((t): t is string => Boolean(t))
+                    .sort();
+                if (opStarts.length > 0) {
+                    stageStartedAt = opStarts[0];
+                }
+            }
+            if (!stageStartedAt && r.completed_at && (actualSetup + actualRun) > 0) {
+                const cTime = new Date(r.completed_at).getTime();
+                if (!isNaN(cTime)) {
+                    stageStartedAt = new Date(cTime - (actualSetup + actualRun) * 3600000).toISOString();
+                }
+            }
+
             const stage: WipRouteStage = {
                 jo_route_id: routeId,
                 job_order_id: joId,
@@ -424,6 +567,7 @@ export async function GET(req: NextRequest) {
                 total_planned_hours: roundHours(plannedSetup + plannedRun),
                 total_actual_hours: roundHours(actualSetup + actualRun),
                 status: stageStatus,
+                started_at: stageStartedAt,
                 completed_at: r.completed_at || null,
                 requires_qa: Boolean(r.requires_qa),
                 operators: assignedOps
@@ -509,9 +653,30 @@ export async function GET(req: NextRequest) {
                 : 0;
 
             const targetQty = Number(jo.target_quantity || jo.planned_quantity || 0);
-            const producedQty = Number(jo.actual_quantity_produced || jo.actual_quantity || 0);
-            const completedQty = Number(jo.completed_quantity || 0);
-            const rejectedQty = Number(jo.rejected_quantity || 0);
+
+            // Authoritative yield calculation from yield ledger
+            const jobYields = yieldLedgerByJobId.get(joId) || [];
+            const verifiedYieldQty = roundQty(
+                jobYields
+                    .filter((y) => String(y.qa_status || "").toLowerCase() !== "rejected")
+                    .reduce((sum, y) => sum + Number(y.yield_quantity || 0), 0)
+            );
+            const ledgerScrapQty = roundQty(
+                jobYields.reduce((sum, y) => sum + Number(y.scrap_quantity || 0), 0)
+            );
+
+            // If yield ledger exists, its verified yield quantity is authoritative over any doubled/corrupted actual_quantity_produced
+            const producedQty = verifiedYieldQty > 0
+                ? verifiedYieldQty
+                : Number(jo.actual_quantity_produced || jo.actual_quantity || 0);
+
+            const completedQty = verifiedYieldQty > 0
+                ? verifiedYieldQty
+                : Number(jo.completed_quantity || 0);
+
+            const rejectedQty = ledgerScrapQty > 0
+                ? ledgerScrapQty
+                : Number(jo.rejected_quantity || 0);
 
             // Uncapped percentage output yield with decimal precision for small outputs (e.g., 1 / 3,000 = 0.03%)
             let qtyProgressPercent = 0;
@@ -542,6 +707,25 @@ export async function GET(req: NextRequest) {
                     elapsedHours = roundHours(Math.max(0, (endTime - startTime) / (1000 * 60 * 60)));
                 }
             }
+            if (elapsedHours === 0) {
+                const jobYields = yieldLedgerByJobId.get(joId) || [];
+                const latestYield = jobYields[0];
+                if (latestYield?.logged_at && jo.created_at) {
+                    const yTime = new Date(latestYield.logged_at).getTime();
+                    const cTime = new Date(jo.created_at).getTime();
+                    if (!isNaN(yTime) && !isNaN(cTime) && yTime > cTime) {
+                        elapsedHours = roundHours(Math.max(0.1, (yTime - cTime) / (1000 * 60 * 60)));
+                    }
+                }
+                if (elapsedHours === 0 && totalActualHours > 0) {
+                    elapsedHours = totalActualHours;
+                } else if (elapsedHours === 0 && jo.shift_option && (producedQty > 0 || isJoCompleted)) {
+                    const shiftNum = parseFloat(jo.shift_option);
+                    if (!isNaN(shiftNum) && shiftNum > 0) elapsedHours = shiftNum;
+                } else if (elapsedHours === 0 && totalPlannedHours > 0 && (producedQty > 0 || isJoCompleted)) {
+                    elapsedHours = totalPlannedHours;
+                }
+            }
 
             // Delayed Check: Past end_date or actual hours exceeded planned hours significantly
             let isDelayed = false;
@@ -567,13 +751,29 @@ export async function GET(req: NextRequest) {
                 const resList = reservationsByMaterialId.get(matId) || [];
 
                 if (resList.length > 0) {
-                    resList.forEach((res) => {
+                    // Filter out unallocated soft reservations when active staged/issued/used reservations exist
+                    const activeReservations = resList.filter((r) => {
+                        return (
+                            Number(r.staged_quantity || 0) > 0 ||
+                            Number(r.issued_to_wip_quantity || r.issued_quantity || 0) > 0 ||
+                            Number(r.actual_used_quantity || r.used_quantity || 0) > 0 ||
+                            Number(r.remaining_wip_quantity || 0) > 0 ||
+                            Boolean(r.inventory_lot_id || r.mm_lot_id || r.batch_no)
+                        );
+                    });
+                    const targetReservations = activeReservations.length > 0 ? activeReservations : resList;
+
+                    targetReservations.forEach((res) => {
                         const reserved = roundQty(res.reserved_quantity || 0);
                         const staged = roundQty(res.staged_quantity || 0);
                         const issued = roundQty(res.issued_to_wip_quantity || res.issued_quantity || 0);
                         const actualUsed = roundQty(res.actual_used_quantity || res.used_quantity || 0);
                         const returned = roundQty(res.returned_quantity || 0);
-                        const remainingWip = roundQty(Math.max(0, (issued || staged) - actualUsed - returned));
+
+                        // Option A: Prioritize authoritative database remaining_wip_quantity column first
+                        const dbRemaining = Number(res.remaining_wip_quantity);
+                        const calcRemaining = Math.max(0, (issued || staged) - actualUsed - returned);
+                        const remainingWip = roundQty(!isNaN(dbRemaining) && dbRemaining > 0 ? dbRemaining : calcRemaining);
 
                         const hasInventoryLot = res.inventory_lot_id !== null && res.inventory_lot_id !== undefined && res.inventory_lot_id !== 0 && String(res.inventory_lot_id).trim() !== "";
                         const rawBatch = hasInventoryLot && res.batch_no ? String(res.batch_no).trim() : null;
@@ -597,8 +797,10 @@ export async function GET(req: NextRequest) {
                             actual_used_quantity: actualUsed,
                             returned_quantity: returned,
                             remaining_wip_quantity: remainingWip,
-                            reservation_status: res.status || "Allocated",
-                            wip_started_at: res.wip_started_at || null
+                            reservation_status: res.reservation_status || res.status || "Allocated",
+                            expiry_date: res.expiry_date || null,
+                            wip_started_at: res.wip_started_at || null,
+                            wip_started_by_name: res.wip_started_by ? (userMap.get(Number(res.wip_started_by))?.name || userMap.get(String(res.wip_started_by))?.name || `Operator #${res.wip_started_by}`) : null
                         });
                     });
                 } else {
@@ -622,7 +824,9 @@ export async function GET(req: NextRequest) {
                         returned_quantity: 0,
                         remaining_wip_quantity: 0,
                         reservation_status: "Unreserved",
-                        wip_started_at: null
+                        expiry_date: null,
+                        wip_started_at: null,
+                        wip_started_by_name: null
                     });
                 }
             });
@@ -636,8 +840,11 @@ export async function GET(req: NextRequest) {
             const primaryWc = primaryWcId ? workCenterMap.get(primaryWcId) : null;
 
             // 1. WIP Monetary Valuation & Material Breakdown
-            const totalMatQty = wipMaterials.reduce(
-                (sum, m) => sum + (m.remaining_wip_quantity > 0 ? m.remaining_wip_quantity : (m.issued_to_wip_quantity || m.staged_quantity || m.reserved_quantity)),
+            // Active material floor valuation is strictly based on remaining WIP inventory
+            // If the job order is completed/closed, remaining active WIP is 0, so WIP value is 0
+            const totalRemainingWipQty = isJoCompleted ? 0 : totalWipRemainingQty;
+            const totalConsumedOrIssued = wipMaterials.reduce(
+                (sum, item) => sum + (item.actual_used_quantity || item.issued_to_wip_quantity || item.staged_quantity || item.reserved_quantity),
                 0
             );
 
@@ -645,16 +852,22 @@ export async function GET(req: NextRequest) {
             wipMaterials.forEach((m) => {
                 const matProd = productMap.get(m.product_id);
                 const unitCost = Number(matProd?.cost_per_unit || matProd?.standard_cost || 0);
-                const inWipQty = m.remaining_wip_quantity > 0 ? m.remaining_wip_quantity : (m.issued_to_wip_quantity || m.staged_quantity);
+                const inWipQty = isJoCompleted ? 0 : roundQty(m.remaining_wip_quantity || 0);
                 m.unit_cost = unitCost;
                 m.total_value = Math.round(inWipQty * unitCost * 100) / 100;
-                const baseQty = inWipQty > 0 ? inWipQty : m.reserved_quantity;
-                m.share_percent = totalMatQty > 0 ? Math.round((baseQty / totalMatQty) * 1000) / 10 : 0;
+                if (totalRemainingWipQty > 0) {
+                    m.share_percent = Math.round((inWipQty / totalRemainingWipQty) * 1000) / 10;
+                } else if (totalConsumedOrIssued > 0) {
+                    const itemInput = m.actual_used_quantity || m.issued_to_wip_quantity || m.staged_quantity || m.reserved_quantity;
+                    m.share_percent = Math.round((itemInput / totalConsumedOrIssued) * 1000) / 10;
+                } else {
+                    m.share_percent = 0;
+                }
                 materialWipValue += (m.total_value || 0);
             });
+            materialWipValue = Math.round(materialWipValue * 100) / 100;
+
             const fgUnitCost = Number(prod?.cost_per_unit || prod?.standard_cost || 0);
-            const producedWipValue = producedQty * fgUnitCost;
-            const totalRunWipValue = Math.round((materialWipValue + producedWipValue) * 100) / 100;
 
             const totalMaterialInput = roundQty(
                 wipMaterials.reduce((sum, m) => sum + (m.issued_to_wip_quantity || m.staged_quantity || m.actual_used_quantity || m.reserved_quantity), 0)
@@ -669,14 +882,29 @@ export async function GET(req: NextRequest) {
             }
 
             // 3. Rate Attainment & Throughput Flow
-            const ratedCapacity = roundHours(primaryWc?.capacity_per_hour || 0);
+            const stageWcId = stages.find((s) => s.work_center_id && s.work_center_id > 0)?.work_center_id;
+            const effectiveWc = primaryWc || (stageWcId ? workCenterMap.get(stageWcId) : null);
+            let ratedCapacity = roundHours(effectiveWc?.capacity_per_hour || 0);
+
+            if (ratedCapacity <= 0) {
+                const plannedShiftHours = jo.shift_option
+                    ? parseFloat(jo.shift_option)
+                    : (totalPlannedHours > 0 ? totalPlannedHours : (jo.planned_hours ? Number(jo.planned_hours) : 0));
+                if (plannedShiftHours > 0 && targetQty > 0) {
+                    ratedCapacity = Math.round((targetQty / plannedShiftHours) * 100) / 100;
+                }
+            }
+
             let actualThroughputRate = 0;
             let rateAttainmentPercent = 0;
             if (elapsedHours > 0 && producedQty > 0) {
-                actualThroughputRate = Math.round((producedQty / elapsedHours) * 10) / 10;
+                actualThroughputRate = Math.round((producedQty / elapsedHours) * 100) / 100;
                 if (ratedCapacity > 0) {
                     rateAttainmentPercent = Math.round((actualThroughputRate / ratedCapacity) * 100);
                 }
+            } else if (producedQty > 0 && targetQty > 0 && isJoCompleted) {
+                actualThroughputRate = ratedCapacity > 0 ? ratedCapacity : producedQty;
+                rateAttainmentPercent = Math.round((producedQty / targetQty) * 100);
             }
 
             // 4. Residence Time (WIP / Throughput or active elapsed hours)
@@ -688,9 +916,21 @@ export async function GET(req: NextRequest) {
             }
 
             // 5. Current WIP & Level Status (In range / Below target / Above target)
-            const currentWipQty = totalWipRemainingQty > 0 ? totalWipRemainingQty : producedQty;
+            let currentWipQty = 0;
+            if (isJoCompleted) {
+                currentWipQty = 0;
+            } else if (totalWipRemainingQty > 0) {
+                currentWipQty = totalWipRemainingQty;
+            } else if ((inProgressStages > 0 || completedStages > 0) && producedQty < targetQty) {
+                currentWipQty = roundQty(targetQty - producedQty);
+            } else {
+                currentWipQty = 0;
+            }
+
             let wipLevelStatus: "in_range" | "below_target" | "above_target" = "in_range";
-            if (targetQty > 0) {
+            if (isJoCompleted) {
+                wipLevelStatus = "in_range";
+            } else if (targetQty > 0) {
                 const ratio = currentWipQty / targetQty;
                 if (ratio < 0.9) {
                     wipLevelStatus = "below_target";
@@ -701,95 +941,222 @@ export async function GET(req: NextRequest) {
                 }
             }
 
+            // Direct Labor accrued on active / in-progress routing stages
+            let laborWipValue = 0;
+            if (!isJoCompleted) {
+                stages.forEach((s) => {
+                    s.operators.forEach((op) => {
+                        const hrRate = Number(op.hourly_rate || 0);
+                        const hrs = Number(op.logged_hours || 0);
+                        laborWipValue += (hrRate * hrs);
+                    });
+                });
+            }
+            laborWipValue = Math.round(laborWipValue * 100) / 100;
+
+            // Applied Overhead accrued on active work centers
+            let overheadWipValue = 0;
+            if (!isJoCompleted && elapsedHours > 0) {
+                const wcOverheadRate = Number(effectiveWc?.overhead_cost_per_hour || 0);
+                overheadWipValue = Math.round(wcOverheadRate * elapsedHours * 100) / 100;
+            }
+
+            // Produced WIP value is only for units actively in WIP on the production floor
+            const producedWipValue = isJoCompleted ? 0 : Math.round(currentWipQty * fgUnitCost * 100) / 100;
+            const totalRunWipValue = isJoCompleted 
+                ? 0 
+                : Math.round((materialWipValue + producedWipValue + laborWipValue + overheadWipValue) * 100) / 100;
+
             // Remaining output & Hours to finish
-            const remainingOutput = Math.max(0, targetQty - producedQty);
-            const hoursToFinish = actualThroughputRate > 0 && remainingOutput > 0
-                ? Math.round((remainingOutput / actualThroughputRate) * 10) / 10
-                : (remainingOutput === 0 ? 0 : null);
+            const remainingOutput = isJoCompleted ? 0 : Math.max(0, targetQty - producedQty);
+            const hoursToFinish = isJoCompleted
+                ? 0
+                : (actualThroughputRate > 0 && remainingOutput > 0
+                    ? Math.round((remainingOutput / actualThroughputRate) * 10) / 10
+                    : (remainingOutput === 0 ? 0 : null));
 
-            // Lot number & Category
-            const lotNumber = jo.lot_number || 
-                (wipMaterials.find((m) => m.lot_name || m.batch_no)?.lot_name) || 
-                (wipMaterials.find((m) => m.batch_no)?.batch_no) || 
+            // Lot number & Batch number Resolution
+            // Authoritative finished-goods lot is from the yield ledger (e.g. JO-BUF-382472-produced)
+            const yieldWithLot = jobYields.find((y) => y.lot_number || y.mm_lot_id);
+            const yieldLotName = yieldWithLot?.mm_lot_id ? lotMap.get(Number(yieldWithLot.mm_lot_id)) : null;
+
+            // Strictly do NOT fall back to raw material input lots!
+            const isRawMaterialLot = (lotStr: string | null | undefined) => {
+                if (!lotStr) return false;
+                return wipMaterials.some((m) => m.lot_name === lotStr || m.batch_no === lotStr);
+            };
+
+            const fgLotNumber = yieldWithLot?.lot_number || 
+                yieldLotName || 
+                (jo.lot_number && !isRawMaterialLot(jo.lot_number) ? jo.lot_number : null) || 
                 null;
-            const prodCat = prod?.category || prod?.product_category || prod?.item_group || prod?.category_name || "Continuous Process";
 
-            // Synthetic WIP Event Transactions
+            const fgBatchNumber = jo.batch_no ||
+                jo.batch_number ||
+                (yieldWithLot?.batch_number ? String(yieldWithLot.batch_number) : null) ||
+                null;
+
+            // Category Resolution from categories table
+            const rawCat = prod?.category || prod?.product_category || prod?.category_id;
+            const numCat = Number(rawCat);
+            const resolvedCategory = (!Number.isNaN(numCat) && categoryMap.has(numCat))
+                ? categoryMap.get(numCat)
+                : (typeof rawCat === "string" && rawCat.trim() !== "" ? rawCat : null);
+
+            const prodCat = resolvedCategory || prod?.item_group || prod?.category_name || "Continuous Process";
+
+            // Real Audited WIP Event Transactions from Authoritative DB Tables
             const transactions: WipTransaction[] = [];
+
+            // Helper to dynamically resolve numeric operator IDs in remarks to actual employee names
+            const resolveOperatorNamesInText = (text: string | null | undefined): string => {
+                if (!text) return "";
+                return text.replace(/Operator\s+(\d+)/gi, (match, idStr) => {
+                    const numId = Number(idStr);
+                    const userMeta = userMap.get(numId) || userMap.get(idStr);
+                    return userMeta?.name ? userMeta.name : match;
+                });
+            };
+
+            // 1. Status History Audit Trail (manufacturing_job_order_status_history)
+            const joHistory = statusHistoryByJobId.get(joId) || [];
+            joHistory.forEach((h) => {
+                if (!h.changed_at) return;
+                const userMeta = h.changed_by ? (userMap.get(Number(h.changed_by)) || userMap.get(String(h.changed_by))) : null;
+                const userName = userMeta?.name || (h.changed_by ? `User #${h.changed_by}` : "System Audit");
+
+                // Human-readable action type
+                let actionType = h.new_status ? `Status: ${h.new_status}` : "Workflow Update";
+                if (h.workflow_action === "create-draft") actionType = "Job Order Draft Created";
+                else if (h.workflow_action === "initialize") actionType = "Order Initialized (Buffer Planned)";
+                else if (h.workflow_action === "pick") actionType = "Materials Picked & Staged";
+                else if (h.workflow_action === "start-production") actionType = "Continuous Production Commenced";
+                else if (h.workflow_action === "operator-edit") actionType = "Line Operator Shift Log";
+                else if (h.workflow_action === "complete-production") actionType = "Production Stream Finalized";
+                else if (h.workflow_action === "close") actionType = "Job Order Closed & Reconciled";
+                else if (h.new_status === "For QA and Reconciliation") actionType = "QA Transfer & Reconciliation";
+
+                const rawNotes = h.remarks || (h.old_status ? `Transitioned from ${h.old_status} to ${h.new_status}` : "Workflow state transition");
+                const cleanNotes = resolveOperatorNamesInText(rawNotes);
+
+                transactions.push({
+                    id: `hist-${h.history_id || Math.random()}`,
+                    timestamp: h.changed_at,
+                    type: actionType,
+                    material_name: prod?.description || prod?.product_name || `Product #${pId}`,
+                    material_code: prod?.product_code,
+                    batch_no: fgBatchNumber || fgLotNumber || null,
+                    quantity: Number(h.reported_yield_quantity || 0) > 0 ? Number(h.reported_yield_quantity) : 0,
+                    uom,
+                    notes: cleanNotes,
+                    operator_name: userName,
+                    action: h.workflow_action || h.new_status || undefined,
+                    event_key: h.event_key || undefined
+                });
+            });
+
+            // 2. QA Inspection Logs (qa_jo_inspection_logs)
+            const joQaLogs = qaLogsByJobId.get(joId) || [];
+            joQaLogs.forEach((qa) => {
+                if (!qa.inspected_at) return;
+                const userMeta = qa.inspected_by ? (userMap.get(Number(qa.inspected_by)) || userMap.get(String(qa.inspected_by))) : null;
+                const inspectorName = userMeta?.name || (qa.inspected_by ? `Inspector #${qa.inspected_by}` : "QA Inspector");
+                const isPassed = qa.status === "PASSED" || Number(qa.rejected_quantity || 0) === 0;
+
+                const rawNotes = qa.remarks || `Inspected ${qa.inspected_quantity} units: ${qa.passed_quantity || 0} passed, ${qa.rejected_quantity || 0} rejected`;
+                const cleanNotes = resolveOperatorNamesInText(rawNotes);
+
+                transactions.push({
+                    id: `qa-${qa.id || Math.random()}`,
+                    timestamp: qa.inspected_at,
+                    type: isPassed ? "QA Inspection (Passed)" : "QA Inspection (Defect Hold)",
+                    material_name: prod?.description || prod?.product_name || `Product #${pId}`,
+                    material_code: prod?.product_code,
+                    batch_no: fgBatchNumber || fgLotNumber || null,
+                    quantity: Number(qa.inspected_quantity || 0),
+                    uom,
+                    notes: cleanNotes,
+                    operator_name: inspectorName,
+                    action: "qa-inspection",
+                    event_key: `qa-log-${qa.id}`
+                });
+            });
+
+            // 3. Authoritative Yield Output Streams (manufacturing_job_order_yield_ledger)
+            jobYields.forEach((yl) => {
+                const yTime = yl.logged_at || yl.production_date;
+                if (!yTime) return;
+                const userMeta = yl.logged_by ? (userMap.get(Number(yl.logged_by)) || userMap.get(String(yl.logged_by))) : null;
+                const opName = userMeta?.name || "Process Technician";
+
+                if (Number(yl.yield_quantity || 0) > 0) {
+                    transactions.push({
+                        id: `yield-${yl.ledger_id || Math.random()}`,
+                        timestamp: yTime,
+                        type: "Good Output Stream Yield",
+                        material_name: prod?.description || prod?.product_name || `Product #${pId}`,
+                        material_code: prod?.product_code,
+                        batch_no: yl.lot_number || fgBatchNumber || fgLotNumber || null,
+                        quantity: Number(yl.yield_quantity),
+                        uom,
+                        notes: yl.remarks || `Verified output: ${yl.yield_quantity} good units. Shift: ${yl.shift_name || "Standard"}`,
+                        operator_name: opName,
+                        action: "yield-receipt",
+                        event_key: yl.source_event_key || undefined
+                    });
+                }
+
+                if (Number(yl.scrap_quantity || yl.rejected_quantity || 0) > 0) {
+                    const scrapVal = Number(yl.scrap_quantity || yl.rejected_quantity);
+                    transactions.push({
+                        id: `scrap-${yl.ledger_id || Math.random()}`,
+                        timestamp: yTime,
+                        type: "Process Scrap / Trim Loss",
+                        material_name: prod?.description || prod?.product_name || `Product #${pId}`,
+                        material_code: prod?.product_code,
+                        batch_no: yl.lot_number || fgBatchNumber || fgLotNumber || null,
+                        quantity: scrapVal,
+                        uom,
+                        notes: yl.remarks || "Continuous line trim and purge scrap logged",
+                        operator_name: opName,
+                        action: "scrap-loss",
+                        event_key: yl.source_event_key || undefined
+                    });
+                }
+            });
+
+            // 4. Raw Material In-Feed Movements (manufacturing_job_order_materials_reservations)
             wipMaterials.forEach((m, idx) => {
                 if (m.staged_quantity > 0 || m.issued_to_wip_quantity > 0) {
                     transactions.push({
                         id: `mat-${m.jo_materials_reservation_id || idx}`,
                         timestamp: m.wip_started_at || jo.production_started_at || jo.created_at || new Date().toISOString(),
-                        type: m.issued_to_wip_quantity > 0 ? "Raw Material Issue (Floor Feed)" : "Material Staged to Line",
+                        type: m.issued_to_wip_quantity > 0 ? "Raw Material Issue (Floor Feed)" : "Material Staged to Line Buffer",
                         material_name: m.product_name,
                         material_code: m.product_code,
                         batch_no: m.batch_no || m.lot_name || null,
                         quantity: m.issued_to_wip_quantity > 0 ? m.issued_to_wip_quantity : m.staged_quantity,
                         uom: m.uom_name,
                         notes: m.staging_bin ? `Fed from bin ${m.staging_bin}` : "Staged at continuous line in-feed buffer",
-                        operator_name: "Floor Operator"
+                        operator_name: m.wip_started_by_name || "Floor Operator",
+                        action: "material-feed"
                     });
                 }
             });
 
-            if (jo.production_started_at) {
+            // Fallback if no transactions recorded yet
+            if (transactions.length === 0 && jo.created_at) {
                 transactions.push({
-                    id: `start-${joId}`,
-                    timestamp: jo.production_started_at,
-                    type: "Continuous Stream Commenced",
+                    id: `init-${joId}`,
+                    timestamp: jo.created_at,
+                    type: "Job Order Registered",
                     material_name: prod?.description || prod?.product_name || `Product #${pId}`,
                     material_code: prod?.product_code,
-                    batch_no: lotNumber,
+                    batch_no: fgBatchNumber || fgLotNumber,
                     quantity: targetQty,
                     uom,
-                    notes: `Production initiated for run #${jo.job_order_no || joId}`,
-                    operator_name: "Lead Line Operator"
-                });
-            }
-
-            if (producedQty > 0) {
-                transactions.push({
-                    id: `yield-${joId}`,
-                    timestamp: jo.production_completed_at || jo.production_started_at || new Date().toISOString(),
-                    type: "Good Output Stream Yield",
-                    material_name: prod?.description || prod?.product_name || `Product #${pId}`,
-                    material_code: prod?.product_code,
-                    batch_no: lotNumber,
-                    quantity: producedQty,
-                    uom,
-                    notes: `Verified output stream yield (${qtyProgressPercent}% attained)`,
-                    operator_name: "Process Technician"
-                });
-            }
-
-            if (rejectedQty > 0) {
-                transactions.push({
-                    id: `scrap-${joId}`,
-                    timestamp: jo.production_completed_at || jo.production_started_at || new Date().toISOString(),
-                    type: "Process Scrap / Purge Loss",
-                    material_name: prod?.description || prod?.product_name || `Product #${pId}`,
-                    material_code: prod?.product_code,
-                    batch_no: lotNumber,
-                    quantity: rejectedQty,
-                    uom,
-                    notes: "Continuous line purge and trim scrap logged",
-                    operator_name: "QC Inspector"
-                });
-            }
-
-            if (jo.production_completed_at || canonicalStatus === JOB_ORDER_STATUS.FOR_QA_RECONCILIATION || canonicalStatus === JOB_ORDER_STATUS.PRODUCTION_COMPLETED) {
-                transactions.push({
-                    id: `comp-${joId}`,
-                    timestamp: jo.production_completed_at || new Date().toISOString(),
-                    type: canonicalStatus === JOB_ORDER_STATUS.FOR_QA_RECONCILIATION ? "QA Transfer & Reconciliation" : "Run Completed",
-                    material_name: prod?.description || prod?.product_name || `Product #${pId}`,
-                    material_code: prod?.product_code,
-                    batch_no: lotNumber,
-                    quantity: producedQty,
-                    uom,
-                    notes: `Status updated to ${canonicalStatus}`,
-                    operator_name: "QA Release Officer"
+                    notes: `Planned production run for ${targetQty.toLocaleString()} ${uom}`,
+                    operator_name: "Planning Department"
                 });
             }
 
@@ -802,7 +1169,8 @@ export async function GET(req: NextRequest) {
                 product_name: prod?.description || prod?.product_name || `Product #${pId}`,
                 product_code: prod?.product_code || "",
                 product_category: prodCat,
-                lot_number: lotNumber,
+                lot_number: fgLotNumber,
+                batch_number: fgBatchNumber,
                 uom_name: uom,
                 target_quantity: targetQty,
                 actual_quantity_produced: producedQty,
@@ -819,6 +1187,7 @@ export async function GET(req: NextRequest) {
                 end_date: jo.end_date || null,
                 production_started_at: jo.production_started_at || null,
                 production_completed_at: jo.production_completed_at || null,
+                created_at: jo.created_at || null,
                 remarks: jo.remarks || null,
                 stages,
                 total_stages: totalStages,
@@ -838,6 +1207,10 @@ export async function GET(req: NextRequest) {
 
                 // Continuous Process Metrics
                 wip_value: totalRunWipValue,
+                material_wip_value: materialWipValue,
+                labor_wip_value: laborWipValue,
+                overhead_wip_value: overheadWipValue,
+                parent_job_order_id: jo.parent_job_order_id ? Number(jo.parent_job_order_id) : null,
                 material_yield_percent: materialYieldPercent,
                 actual_throughput_rate: actualThroughputRate,
                 rated_capacity_per_hour: ratedCapacity,
@@ -903,6 +1276,14 @@ export async function GET(req: NextRequest) {
             }
 
             return true;
+        });
+
+        // Sort filtered jobs by most recent (created_at / production_started_at / start_date / job_order_id descending)
+        filteredJobs.sort((a, b) => {
+            const timeA = new Date(a.created_at || a.production_started_at || a.start_date || 0).getTime();
+            const timeB = new Date(b.created_at || b.production_started_at || b.start_date || 0).getTime();
+            if (timeB !== timeA) return timeB - timeA;
+            return b.job_order_id - a.job_order_id;
         });
 
         // 4. Compute High-Level Metrics from ALL active jobs (before table search filters, for persistent KPIs)
@@ -972,9 +1353,14 @@ export async function GET(req: NextRequest) {
         // 5. Work Center Queues (For Kanban / Board View)
         const workCenterQueues: WorkCenterQueueSummary[] = allWorkCenters.map((wc) => {
             const wcId = Number(wc.work_center_id || wc.id);
-            const matchingJobs = activeJobsPool.filter((j) =>
-                j.stages.some((s) => s.work_center_id === wcId)
-            );
+            const matchingJobs = activeJobsPool
+                .filter((j) => j.stages.some((s) => s.work_center_id === wcId))
+                .sort((a, b) => {
+                    const timeA = new Date(a.created_at || a.production_started_at || a.start_date || 0).getTime();
+                    const timeB = new Date(b.created_at || b.production_started_at || b.start_date || 0).getTime();
+                    if (timeB !== timeA) return timeB - timeA;
+                    return b.job_order_id - a.job_order_id;
+                });
 
             let runningCount = 0;
             let pendingCount = 0;
