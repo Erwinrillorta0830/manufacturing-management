@@ -91,6 +91,7 @@ export function ProfitabilityTableView({
                                 </button>
                             </th>
                             <th className="py-3 px-3.5">Finished Good / Product</th>
+                            <th className="py-3 px-3.5 text-center">UOM</th>
                             <th className="py-3 px-3.5 text-right">Target Qty</th>
                             <th className="py-3 px-3.5 text-right">Produced Qty</th>
                             <th className="py-3 px-3.5 text-right">Selling Price</th>
@@ -130,7 +131,7 @@ export function ProfitabilityTableView({
                     <tbody className="divide-y divide-border">
                         {isLoading ? (
                             <tr>
-                                <td colSpan={9} className="py-12 text-center text-muted-foreground">
+                                <td colSpan={10} className="py-12 text-center text-muted-foreground">
                                     <div className="flex flex-col items-center justify-center gap-2">
                                         <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
                                         <span className="text-xs">Calculating manufacturing margins &amp; job order costs...</span>
@@ -139,7 +140,7 @@ export function ProfitabilityTableView({
                             </tr>
                         ) : rows.length === 0 ? (
                             <tr>
-                                <td colSpan={9} className="py-12 text-center text-muted-foreground">
+                                <td colSpan={10} className="py-12 text-center text-muted-foreground">
                                     <div className="flex flex-col items-center justify-center gap-1.5">
                                         <Layers className="h-8 w-8 text-muted-foreground/40" />
                                         <span className="text-sm font-semibold text-foreground">No Closed Job Orders Found</span>
@@ -150,6 +151,14 @@ export function ProfitabilityTableView({
                         ) : (
                             rows.map((row) => {
                                 const isNegative = row.gross_profit < 0;
+                                const dmCost = row.direct_materials_cost || 0;
+                                const dlCost = row.direct_labor_cost || 0;
+                                const ohCost = row.overhead_cost || 0;
+                                const totalCost = row.total_cogs > 0 ? row.total_cogs : (dmCost + dlCost + ohCost);
+                                const dmPct = totalCost > 0 ? (dmCost / totalCost) * 100 : 0;
+                                const dlPct = totalCost > 0 ? (dlCost / totalCost) * 100 : 0;
+                                const ohPct = totalCost > 0 ? (ohCost / totalCost) * 100 : 0;
+
                                 return (
                                     <tr
                                         key={row.job_order_id}
@@ -174,6 +183,13 @@ export function ProfitabilityTableView({
                                             </div>
                                         </td>
 
+                                        {/* UOM */}
+                                        <td className="py-3 px-3.5 text-center">
+                                            <span className="inline-block px-1.5 py-0.5 rounded text-[11px] font-mono text-muted-foreground">
+                                                {row.uom || "pcs"}
+                                            </span>
+                                        </td>
+
                                         {/* Target Qty */}
                                         <td className="py-3 px-3.5 text-right font-mono font-medium text-foreground">
                                             {row.target_quantity.toLocaleString()}
@@ -194,7 +210,7 @@ export function ProfitabilityTableView({
                                             {fmt(row.sales_unit_price)}
                                         </td>
 
-                                        {/* Total Manufacturing Cost (TMC / COGS) with DM / DL / OH Breakdown */}
+                                        {/* Total Manufacturing Cost (TMC / COGS) with dynamic breakdown bar */}
                                         <td className="py-3 px-3.5 text-right font-mono">
                                             <div className="flex items-center justify-end gap-1.5 font-bold text-foreground">
                                                 <span>{fmt(row.total_cogs)}</span>
@@ -202,19 +218,34 @@ export function ProfitabilityTableView({
                                                     ({fmt(row.unit_cogs)}/u)
                                                 </span>
                                             </div>
-                                            <div className="flex items-center justify-end gap-2 text-[10px] text-muted-foreground mt-0.5">
-                                                <span title="Direct Materials" className="text-indigo-600 dark:text-indigo-400 font-medium">
-                                                    DM: {fmt(row.direct_materials_cost)}
-                                                </span>
-                                                <span>•</span>
-                                                <span title="Direct Labor" className="text-amber-600 dark:text-amber-400 font-medium">
-                                                    DL: {fmt(row.direct_labor_cost)}
-                                                </span>
-                                                <span>•</span>
-                                                <span title="Workstation Overhead" className="text-teal-600 dark:text-teal-400 font-medium">
-                                                    OH: {fmt(row.overhead_cost)}
-                                                </span>
-                                            </div>
+                                            {/* Dynamic Cost Proportion Bar (DM / DL / OH) */}
+                                            {totalCost > 0 ? (
+                                                <div
+                                                    className="flex h-1.5 w-24 max-w-full ml-auto overflow-hidden rounded-full bg-muted/60 mt-1.5 gap-[1px]"
+                                                    title={`Cost Breakdown: Materials: ${fmt(dmCost)} (${dmPct.toFixed(1)}%), Labor: ${fmt(dlCost)} (${dlPct.toFixed(1)}%), Overhead: ${fmt(ohCost)} (${ohPct.toFixed(1)}%)`}
+                                                >
+                                                    {dmPct > 0 && (
+                                                        <div
+                                                            className="h-full bg-indigo-500 transition-all"
+                                                            style={{ width: `${dmPct}%` }}
+                                                        />
+                                                    )}
+                                                    {dlPct > 0 && (
+                                                        <div
+                                                            className="h-full bg-amber-500 transition-all"
+                                                            style={{ width: `${dlPct}%` }}
+                                                        />
+                                                    )}
+                                                    {ohPct > 0 && (
+                                                        <div
+                                                            className="h-full bg-teal-500 transition-all"
+                                                            style={{ width: `${ohPct}%` }}
+                                                        />
+                                                    )}
+                                                </div>
+                                            ) : (
+                                                <div className="h-1.5 w-24 ml-auto rounded-full bg-muted/40 mt-1.5" />
+                                            )}
                                         </td>
 
                                         {/* Gross Profit */}

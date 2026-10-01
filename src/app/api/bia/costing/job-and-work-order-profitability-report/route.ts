@@ -259,7 +259,7 @@ export async function GET(request: NextRequest) {
             workCentersRes,
             usersRes
         ] = await Promise.all([
-            fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,product_code,price_per_unit,priceA,priceB,cost_per_unit,estimated_unit_cost`, { headers, cache: "no-store" }).catch(() => null),
+            fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,product_code,price_per_unit,priceA,priceB,cost_per_unit,estimated_unit_cost,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations?limit=-1&fields=id,sales_order_detail_id,job_order_id,allocated_quantity`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/sales_order_details?limit=-1&fields=detail_id,product_id,order_id,unit_price,allocated_quantity`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/sales_order?limit=-1&fields=order_id,order_no,customer_code`, { headers, cache: "no-store" }).catch(() => null),
@@ -282,7 +282,7 @@ export async function GET(request: NextRequest) {
             });
         }
 
-        const productsMap = new Map<number, { name: string; code: string; price: number; cost: number }>();
+        const productsMap = new Map<number, { name: string; code: string; price: number; cost: number; uom: string }>();
         if (productsRes && productsRes.ok) {
             const pJson = await productsRes.json();
             (pJson.data || []).forEach((p: Record<string, unknown>) => {
@@ -292,11 +292,20 @@ export async function GET(request: NextRequest) {
                 const resolvedPrice = pricePerUnit > 0 ? pricePerUnit : priceA > 0 ? priceA : priceB;
                 const resolvedCost = Number(p.cost_per_unit || p.estimated_unit_cost || 0);
 
+                const uomObj = p.unit_of_measurement as { unit_shortcut?: string; unit_name?: string } | string | null | undefined;
+                let resolvedUom = "pcs";
+                if (typeof uomObj === "object" && uomObj !== null) {
+                    resolvedUom = uomObj.unit_shortcut || uomObj.unit_name || "pcs";
+                } else if (typeof uomObj === "string" && uomObj.trim()) {
+                    resolvedUom = uomObj.trim();
+                }
+
                 productsMap.set(Number(p.product_id), {
                     name: String(p.product_name || `Product #${p.product_id}`),
                     code: String(p.product_code || `PRD-${p.product_id}`),
                     price: resolvedPrice,
-                    cost: resolvedCost
+                    cost: resolvedCost,
+                    uom: resolvedUom
                 });
             });
         }
@@ -551,6 +560,7 @@ export async function GET(request: NextRequest) {
                 product_id: prodId,
                 product_name: product?.name || `Finished Good #${prodId}`,
                 product_code: product?.code || `FG-${prodId}`,
+                uom: product?.uom || "pcs",
                 version_id: Number(jo.version_id || 1),
                 branch_id: Number(jo.branch_id || 1),
                 status: String(jo.status || "Closed"),

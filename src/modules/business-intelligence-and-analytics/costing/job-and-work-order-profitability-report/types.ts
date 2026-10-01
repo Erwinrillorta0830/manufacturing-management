@@ -6,6 +6,7 @@ export interface JobOrderProfitabilityRow {
     product_id: number;
     product_name: string;
     product_code: string;
+    uom: string;
     version_id: number;
     branch_id: number;
     status: string;
