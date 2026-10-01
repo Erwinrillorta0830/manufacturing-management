@@ -500,9 +500,12 @@ export function ApprovalModal({
                                             </div>
 
                                             {(() => {
+                                                const isBatchOrProdPicked = activeBatch?.status === "Picked" || prodItem.totalPicked > 0;
                                                 const pickedAllocs = prodAllocs.filter((alloc) => {
                                                     const cap = Number(alloc.quantity || 0);
-                                                    const p = alloc.pickedQuantity !== undefined ? Number(alloc.pickedQuantity) : (alloc.status === "Picked" ? cap : 0);
+                                                    const p = (alloc.pickedQuantity !== undefined && alloc.pickedQuantity > 0)
+                                                        ? Number(alloc.pickedQuantity)
+                                                        : (alloc.status === "Picked" || isBatchOrProdPicked ? cap : 0);
                                                     return p > 0;
                                                 });
 
@@ -530,9 +533,9 @@ export function ApprovalModal({
                                                         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                                                             {pickedAllocs.map((alloc, idx) => {
                                                                 const lotPlanned = Number(alloc.quantity || 0);
-                                                                const lotPicked = alloc.pickedQuantity !== undefined
+                                                                const lotPicked = (alloc.pickedQuantity !== undefined && alloc.pickedQuantity > 0)
                                                                     ? Number(alloc.pickedQuantity)
-                                                                    : (alloc.status === "Picked" ? lotPlanned : 0);
+                                                                    : (alloc.status === "Picked" || isBatchOrProdPicked ? lotPlanned : 0);
                                                                 const isFloorLot = !alloc.reservationIds || alloc.reservationIds.length === 0 || lotPlanned === 0;
 
                                                                 return (

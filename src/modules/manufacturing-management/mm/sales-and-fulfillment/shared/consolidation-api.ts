@@ -207,7 +207,12 @@ export interface LotAllocation {
 }
 
 export async function fetchAllocations(batchId: number): Promise<LotAllocation[]> {
-    const res = await fetchWithSessionRetry(`${LEGACY}/allocations?batchId=${batchId}`);
+    const primaryUrl = `${BASE}/consolidation-picking/allocations?batchId=${batchId}`;
+    const legacyUrl = `${LEGACY}/allocations?batchId=${batchId}`;
+    let res = await fetchWithSessionRetry(primaryUrl);
+    if (!res.ok && res.status === 404) {
+        res = await fetchWithSessionRetry(legacyUrl);
+    }
     const data = await handleResponse(res, "Failed to load allocations");
     return data.allocations ?? [];
 }

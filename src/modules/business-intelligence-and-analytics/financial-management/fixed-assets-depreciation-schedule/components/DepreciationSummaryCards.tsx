@@ -62,7 +62,7 @@ export default function DepreciationSummaryCards({
         {
             title: "Accumulated Depreciation",
             value: formatCurrency(accumDepr),
-            subtext: cost > 0 ? `${((accumDepr / Math.max(1, cost - salvage)) * 100).toFixed(1)}% of depreciable base` : "0%",
+            subtext: (cost - salvage) > 0 ? `${((accumDepr / Math.max(1, cost - salvage)) * 100).toFixed(2)}% of depreciable base` : "0.00%",
             icon: Layers,
             accentBg: "from-rose-500/10 via-rose-500/5 to-transparent",
             borderColor: "border-rose-500/20",

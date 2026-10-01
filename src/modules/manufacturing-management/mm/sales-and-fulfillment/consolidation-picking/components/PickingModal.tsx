@@ -288,9 +288,13 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
     const normalizeUom = (uom?: string | null) => (uom || "").trim().toLowerCase();
 
     // Check validation error for an individual lot allocation
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const getLotValidationError = (productId: number, alloc: LotAllocation, allocIdx: number): string | null => {
-        // Individual lot capacity is no longer restricted; user can pick to a lot/batch even if available is less
+        const key = getLotKey(productId, alloc, allocIdx);
+        const picked = Number(lotPickedQtys[key] !== undefined ? lotPickedQtys[key] : (alloc.pickedQuantity || 0));
+        const available = alloc.availableQuantity !== undefined ? Number(alloc.availableQuantity) : Number(alloc.quantity || 0);
+
+        if (picked < 0) return "Picked quantity cannot be negative";
+        if (available > 0 && picked > available) return `Exceeds available stock (${available})`;
         return null;
     };
 
@@ -948,14 +952,7 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                                                     <span className={hasNoAllocation ? "font-semibold text-amber-700 dark:text-amber-400" : isItemDone ? "font-bold text-emerald-600" : "font-medium text-muted-foreground"}>
                                                         Picked: {currentPicked} / {maxQty}
                                                     </span>
-                                                    {!hasNoAllocation && totalAllocated < maxQty && (
-                                                        <>
-                                                            <span>•</span>
-                                                            <span className="font-semibold text-amber-600 dark:text-amber-400">
-                                                                Max Available: {totalAllocated} {prodItem.unit}
-                                                            </span>
-                                                        </>
-                                                    )}
+ 
                                                 </div>
                                             </div>
                                         </div>

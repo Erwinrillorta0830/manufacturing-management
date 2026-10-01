@@ -50,6 +50,9 @@ export interface WipMaterialReservation {
     remaining_wip_quantity: number;
     reservation_status: string;
     wip_started_at?: string | null;
+    share_percent?: number;
+    unit_cost?: number;
+    total_value?: number;
 }
 
 export interface WipJobOrder {
@@ -58,6 +61,8 @@ export interface WipJobOrder {
     product_id: number;
     product_name: string;
     product_code?: string;
+    product_category?: string | null;
+    lot_number?: string | null;
     uom_name: string;
     target_quantity: number;
     actual_quantity_produced: number;
@@ -95,6 +100,35 @@ export interface WipJobOrder {
     materials: WipMaterialReservation[];
     total_wip_materials_count: number;
     total_wip_remaining_quantity: number;
+    total_material_input: number;
+
+    // Continuous Process Metrics (Image 1 Alignment)
+    wip_value: number;
+    material_yield_percent: number;
+    actual_throughput_rate: number;
+    rated_capacity_per_hour: number;
+    rate_attainment_percent: number;
+    residence_hours: number | null;
+    wip_level_status: "in_range" | "below_target" | "above_target";
+    current_wip_quantity: number;
+    remaining_output: number;
+    hours_to_finish: number | null;
+    transactions?: WipTransaction[];
+}
+
+export type WipDetailTab = "overview" | "stages" | "materials" | "transactions";
+
+export interface WipTransaction {
+    id: string | number;
+    timestamp: string;
+    type: string;
+    material_name?: string;
+    material_code?: string;
+    batch_no?: string | null;
+    quantity: number;
+    uom: string;
+    notes?: string;
+    operator_name?: string;
 }
 
 export interface WipSummaryMetrics {
@@ -104,8 +138,14 @@ export interface WipSummaryMetrics {
     jobs_picked_ready: number;
     jobs_in_qa: number;
     average_stage_progress_percent: number;
+    average_quantity_progress_percent?: number;
     total_wip_materials_volume: number;
     delayed_jobs_count: number;
+
+    // Continuous Process Summary
+    total_floor_wip_value: number;
+    average_rate_attainment_percent: number;
+    average_material_yield_percent: number;
 }
 
 export interface WorkCenterQueueSummary {

@@ -9,7 +9,8 @@ import {
     WipSummaryMetrics, 
     WorkCenterQueueSummary, 
     WipMasterData, 
-    WipFilterState 
+    WipFilterState,
+    WipDetailTab 
 } from "../types";
 import { fetchWipTrackingData } from "../services/wip-tracking-api";
 
@@ -42,9 +43,9 @@ export function useWipTracking() {
 
     // Unified Modal State
     const [selectedJobForDetail, setSelectedJobForDetail] = useState<WipJobOrder | null>(null);
-    const [activeDetailTab, setActiveDetailTab] = useState<"stages" | "materials">("stages");
+    const [activeDetailTab, setActiveDetailTab] = useState<WipDetailTab>("overview");
 
-    const openDetailModal = useCallback((job: WipJobOrder, tab: "stages" | "materials" = "stages") => {
+    const openDetailModal = useCallback((job: WipJobOrder, tab: WipDetailTab = "overview") => {
         setSelectedJobForDetail(job);
         setActiveDetailTab(tab);
     }, []);

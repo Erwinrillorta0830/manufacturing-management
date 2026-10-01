@@ -115,7 +115,8 @@ export function evaluateAssetStatus(
     if (condNorm.includes("bad")) {
         return "Bad";
     }
-    if (nbv <= salvageValue + 0.01 && acquisitionCost > 0) {
+    const depreciableBase = Math.max(0, acquisitionCost - salvageValue);
+    if (depreciableBase > 0 && nbv <= salvageValue + 0.01 && acquisitionCost > 0) {
         return "Fully Depreciated";
     }
     if (condNorm === "good") {
@@ -130,7 +131,7 @@ export interface CalculatedDepreciationMetrics {
     currentPeriodDepreciation: number;
     endingAccumulatedDepreciation: number;
     netBookValue: number;
-    depreciatedPercent: number;
+    depreciatedPercent: number | null;
     status: AssetReportingStatus;
     isFullyDepreciated: boolean;
     monthsInService: number;
@@ -239,10 +240,11 @@ export function computeStraightLineMetrics(params: {
     const currentPeriodDepreciation = Math.max(0, endingAccum - beginningAccum);
     const netBookValue = Math.max(residualValue, acquisitionCost - endingAccum);
     const depreciatedPercent =
-        depreciableBase > 0 ? Math.min(100, (endingAccum / depreciableBase) * 100) : 100;
+        depreciableBase > 0 ? Math.min(100, (endingAccum / depreciableBase) * 100) : null;
 
     const status = evaluateAssetStatus(condition, netBookValue, residualValue, acquisitionCost);
-    const isFullyDepreciated = status === "Fully Depreciated" || endingAccum >= depreciableBase - 0.01;
+    const isFullyDepreciated =
+        depreciableBase > 0 && (status === "Fully Depreciated" || endingAccum >= depreciableBase - 0.01);
 
     const totalElapsedMonths = getElapsedMonths(startDate, cutoffDate);
     const remainingMonths = Math.max(0, totalLifeMonths - totalElapsedMonths);
@@ -253,7 +255,7 @@ export function computeStraightLineMetrics(params: {
         currentPeriodDepreciation: round2(currentPeriodDepreciation),
         endingAccumulatedDepreciation: round2(endingAccum),
         netBookValue: round2(netBookValue),
-        depreciatedPercent: round2(depreciatedPercent),
+        depreciatedPercent: depreciatedPercent !== null ? round2(depreciatedPercent) : null,
         status,
         isFullyDepreciated,
         monthsInService: Math.floor(totalElapsedMonths),
@@ -331,11 +333,12 @@ export function computeUOPMetrics(params: {
     const currentPeriodDepreciation = Math.max(0, endingAccum - beginningAccum);
     const netBookValue = Math.max(residualValue, acquisitionCost - endingAccum);
     const depreciatedPercent =
-        depreciableBase > 0 ? Math.min(100, (endingAccum / depreciableBase) * 100) : 100;
+        depreciableBase > 0 ? Math.min(100, (endingAccum / depreciableBase) * 100) : null;
     const remainingCapacity = Math.max(0, maxUnits - actualUnitsProduced);
 
     const status = evaluateAssetStatus(condition, netBookValue, residualValue, acquisitionCost);
-    const isFullyDepreciated = status === "Fully Depreciated" || endingAccum >= depreciableBase - 0.01;
+    const isFullyDepreciated =
+        depreciableBase > 0 && (status === "Fully Depreciated" || endingAccum >= depreciableBase - 0.01);
 
     return {
         depreciableBase,
@@ -345,7 +348,7 @@ export function computeUOPMetrics(params: {
         currentPeriodDepreciation: round2(currentPeriodDepreciation),
         endingAccumulatedDepreciation: round2(endingAccum),
         netBookValue: round2(netBookValue),
-        depreciatedPercent: round2(depreciatedPercent),
+        depreciatedPercent: depreciatedPercent !== null ? round2(depreciatedPercent) : null,
         status,
         isFullyDepreciated,
         monthsInService: 0,
@@ -367,8 +370,8 @@ export function generateAssetAmortizationSchedule(
     const cutoffYear = cutoffDate.getUTCFullYear();
 
     const startYear = startDate.getUTCFullYear();
-    const lifeYears = Math.max(1, Math.ceil(asset.life_span_years || 5));
-    const maxYear = Math.max(cutoffYear + 2, startYear + lifeYears + 1);
+ 
+   
 
     const schedule: AmortizationScheduleRow[] = [];
     const notes: string[] = [];
@@ -396,83 +399,126 @@ export function generateAssetAmortizationSchedule(
         );
 
         let periodIdx = 1;
-        for (let y = startYear; y <= maxYear; y++) {
-            if (runningAccum >= depreciableBase - 0.01 && currentNbv <= residualValue + 0.01) {
-                // If already fully depreciated in previous years and beyond cutoff, stop
-                if (y > cutoffYear + 1) break;
-            }
-
+        const endReportYear = Math.max(startYear, cutoffYear);
+        for (let y = startYear; y <= endReportYear; y++) {
             const openingNbv = currentNbv;
             let expense = 0;
 
-            if (y === startYear) {
-                // In-service year proration: months remaining in year
-                const startMonth = startDate.getUTCMonth();
-                const inServiceMonths = 12 - startMonth;
-                const prorated = (annualDepr / 12) * inServiceMonths;
-                expense = Math.min(Math.max(0, currentNbv - residualValue), prorated);
-            } else {
-                expense = Math.min(Math.max(0, currentNbv - residualValue), annualDepr);
+            if (runningAccum < depreciableBase - 0.001 && currentNbv > residualValue + 0.001) {
+                if (y === startYear) {
+                    // In-service year proration: months remaining in year
+                    const startMonth = startDate.getUTCMonth();
+                    const inServiceMonths = 12 - startMonth;
+                    const prorated = (annualDepr / 12) * inServiceMonths;
+                    expense = Math.min(Math.max(0, currentNbv - residualValue), prorated);
+                } else {
+                    expense = Math.min(Math.max(0, currentNbv - residualValue), annualDepr);
+                }
             }
 
+            // Invariants: Accumulated Depreciation <= Depreciable Base, Ending NBV >= Salvage Value
             runningAccum = Math.min(depreciableBase, runningAccum + expense);
             currentNbv = Math.max(residualValue, acquisitionCost - runningAccum);
 
             const isCutoffPeriod = y === cutoffYear;
-            const percentDepreciated = depreciableBase > 0 ? (runningAccum / depreciableBase) * 100 : 100;
+            const percentDepreciated = depreciableBase > 0 ? (runningAccum / depreciableBase) * 100 : null;
 
             schedule.push({
                 period_index: periodIdx++,
                 period_label: `FY ${y}`,
                 period_start_date: `${y}-01-01`,
-                period_end_date: `${y}-12-31`,
+                period_end_date: isCutoffPeriod ? asOfDateStr : `${y}-12-31`,
                 opening_nbv: round2(openingNbv),
                 depreciation_expense: round2(expense),
                 ending_accumulated_depreciation: round2(runningAccum),
                 ending_nbv: round2(currentNbv),
                 is_cutoff_period: isCutoffPeriod,
-                percent_depreciated: round2(percentDepreciated)
+                percent_depreciated: percentDepreciated !== null ? round2(percentDepreciated) : null
             });
         }
     } else {
-        // Units of Production schedule
+        // Units of Production schedule (Actual reporting, strictly no future forecasting)
         const maxCapacity = asset.maximum_unit_produced_capacity || 100000;
-        const ratePerUnit = asset.depreciation_per_unit || depreciableBase / maxCapacity;
+        const ratePerUnit = asset.depreciation_per_unit || (depreciableBase / maxCapacity);
+        const unitName = asset.production_unit_name || asset.production_unit_shortcut || "units";
         notes.push(
-            `Units of Production: Depreciable base ₱${round2(depreciableBase).toLocaleString()} over ${maxCapacity.toLocaleString()} ${asset.production_unit_name || "units"} (₱${ratePerUnit.toFixed(4)}/unit).`
+            `Units of Production: Depreciable base ₱${round2(depreciableBase).toLocaleString()} over ${maxCapacity.toLocaleString()} lifetime ${unitName} (Rate: ₱${ratePerUnit.toFixed(4)}/${unitName}).`
+        );
+        notes.push(
+            `Actual production quantity recorded: ${(asset.actual_units_produced || 0).toLocaleString()} ${unitName}.`
         );
 
-        const currentYield = asset.actual_units_produced || 0;
-        const totalPeriods = 5;
-        const nominalUnitsPerPeriod = maxCapacity / totalPeriods;
-
         let periodIdx = 1;
-        for (let i = 0; i < totalPeriods; i++) {
-            const y = startYear + i;
-            const openingNbv = currentNbv;
-            const unitsInPeriod = i === 0 ? Math.max(currentYield, nominalUnitsPerPeriod) : nominalUnitsPerPeriod;
-            const expense = Math.min(
+
+        if (asset.asset_origin === "Existing" && asset.opening_production_units > 0) {
+            const openingProdUnits = asset.opening_production_units;
+            const openingExp = Math.min(depreciableBase, asset.opening_accumulated_depreciation || (openingProdUnits * ratePerUnit));
+            const openingPeriodNbv = Math.max(residualValue, acquisitionCost - openingExp);
+
+            schedule.push({
+                period_index: periodIdx++,
+                period_label: `Pre-Cutover History`,
+                period_start_date: startDate.toISOString().split("T")[0],
+                period_end_date: asset.opening_production_date || `${cutoffYear - 1}-12-31`,
+                opening_nbv: round2(acquisitionCost),
+                production_units_period: openingProdUnits,
+                depreciation_expense: round2(openingExp),
+                ending_accumulated_depreciation: round2(openingExp),
+                ending_nbv: round2(openingPeriodNbv),
+                is_cutoff_period: false,
+                percent_depreciated: depreciableBase > 0 ? round2((openingExp / depreciableBase) * 100) : null
+            });
+
+            runningAccum = openingExp;
+            currentNbv = openingPeriodNbv;
+
+            // Current reporting period
+            const postCutoverUnits = Math.max(0, (asset.actual_units_produced || 0) - openingProdUnits);
+            const currentExpense = Math.min(
                 Math.max(0, currentNbv - residualValue),
-                unitsInPeriod * ratePerUnit
+                postCutoverUnits * ratePerUnit
             );
 
-            runningAccum = Math.min(depreciableBase, runningAccum + expense);
+            runningAccum = Math.min(depreciableBase, runningAccum + currentExpense);
             currentNbv = Math.max(residualValue, acquisitionCost - runningAccum);
 
             schedule.push({
                 period_index: periodIdx++,
-                period_label: `FY ${y} (Est. ${Math.round(unitsInPeriod).toLocaleString()} units)`,
-                period_start_date: `${y}-01-01`,
-                period_end_date: `${y}-12-31`,
+                period_label: `FY ${cutoffYear}`,
+                period_start_date: `${cutoffYear}-01-01`,
+                period_end_date: asOfDateStr,
+                opening_nbv: round2(openingPeriodNbv),
+                production_units_period: postCutoverUnits,
+                depreciation_expense: round2(currentExpense),
+                ending_accumulated_depreciation: round2(runningAccum),
+                ending_nbv: round2(currentNbv),
+                is_cutoff_period: true,
+                percent_depreciated: depreciableBase > 0 ? round2((runningAccum / depreciableBase) * 100) : null
+            });
+        } else {
+            // Standard / New asset: strictly actual recorded units up to cutoff
+            const actualUnits = asset.actual_units_produced || 0;
+            const openingNbv = acquisitionCost;
+            const expense = Math.min(
+                Math.max(0, openingNbv - residualValue),
+                actualUnits * ratePerUnit
+            );
+
+            runningAccum = Math.min(depreciableBase, expense);
+            currentNbv = Math.max(residualValue, acquisitionCost - runningAccum);
+
+            schedule.push({
+                period_index: periodIdx++,
+                period_label: `FY ${cutoffYear}`,
+                period_start_date: `${cutoffYear}-01-01`,
+                period_end_date: asOfDateStr,
                 opening_nbv: round2(openingNbv),
+                production_units_period: actualUnits,
                 depreciation_expense: round2(expense),
                 ending_accumulated_depreciation: round2(runningAccum),
                 ending_nbv: round2(currentNbv),
-                production_units_period: Math.round(unitsInPeriod),
-                is_cutoff_period: y === cutoffYear,
-                percent_depreciated: round2(
-                    depreciableBase > 0 ? (runningAccum / depreciableBase) * 100 : 100
-                )
+                is_cutoff_period: true,
+                percent_depreciated: depreciableBase > 0 ? round2((runningAccum / depreciableBase) * 100) : null
             });
         }
     }
@@ -515,8 +561,8 @@ export function formatCurrency(amount: number | null | undefined): string {
 }
 
 export function formatPercent(val: number | null | undefined): string {
-    if (val === null || val === undefined || isNaN(val)) return "0.0%";
-    return `${val.toFixed(1)}%`;
+    if (val === null || val === undefined || isNaN(val)) return "N/A";
+    return `${val.toFixed(2)}%`;
 }
 
 export function formatDateString(dateVal: string | null | undefined): string {

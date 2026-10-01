@@ -182,6 +182,7 @@ export async function GET(req: NextRequest) {
         }> = [];
 
         const isActiveBatch = ["Pending", "For Picking", "Picking", "Picked"].includes(batchStatus);
+        const isBatchPicked = ["Picked", "Approved", "Dispatched", "Delivered"].includes(batchStatus);
         const allowedStatuses = isActiveBatch ? ["Reserved", "Picked"] : ["Consumed", "Picked", "Reserved"];
 
         try {
@@ -213,15 +214,21 @@ export async function GET(req: NextRequest) {
                                 if (rowCreatedTime > batchUpdatedTime + 60000) continue;
                             }
                         }
+                        const rowQty = Number(row.reserved_quantity ?? row.quantity ?? 0);
+                        const rawPickedQty = Number(row.picked_quantity || 0);
+                        const isPicked = row.status === "Picked" || (isBatchPicked && rowQty > 0);
+                        const rowPickedQty = isPicked ? (rawPickedQty > 0 ? rawPickedQty : rowQty) : rawPickedQty;
+                        const rowStatus = isPicked ? "Picked" : row.status;
+
                         reservations.push({
                             id: Number(row.reservation_id || row.id),
                             sales_order_detail_id: row.sales_order_detail_id,
                             sales_invoice_detail_id: null,
                             product_id: Number(row.product_id || productByDetail.get(Number(row.sales_order_detail_id)) || 0),
                             inventory_lot_id: row.inventory_lot_id,
-                            quantity: Number(row.reserved_quantity ?? row.quantity ?? 0),
-                            picked_quantity: Number(row.picked_quantity ?? (row.status === "Picked" ? (row.reserved_quantity ?? row.quantity ?? 0) : 0)),
-                            status: row.status,
+                            quantity: rowQty,
+                            picked_quantity: rowPickedQty,
+                            status: rowStatus,
                         });
                     }
                 }
@@ -525,8 +532,10 @@ export async function GET(req: NextRequest) {
             const key = `${productId}:${lotId}:${batchNo}:${expiryDate || ""}`;
             const existing = allocationMap.get(key);
             const qty = Number(reservation.quantity || 0);
-            const isResPicked = reservation.status === "Picked";
-            const resPickedQty = isResPicked ? qty : Number(reservation.picked_quantity || 0);
+            const isResPicked = reservation.status === "Picked" || isBatchPicked;
+            const resPickedQty = isResPicked
+                ? (Number(reservation.picked_quantity) > 0 ? Number(reservation.picked_quantity) : qty)
+                : Number(reservation.picked_quantity || 0);
             const resId = Number(reservation.id || 0);
 
             if (existing) {

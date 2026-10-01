@@ -6,7 +6,9 @@ import {
     Layers,
     Package,
     RotateCcw,
-    Scale
+    GitBranch,
+    Coins,
+    Calculator
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,9 +26,17 @@ import {
     CommandItem,
     CommandList,
 } from "@/components/ui/command";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { ProductOption, VersionOption } from "../types";
+import { isDiscreteUom } from "./BOMCostingTreeTable";
 
 interface BOMCostingFiltersProps {
     products: ProductOption[];
@@ -48,7 +58,9 @@ export default function BOMCostingFilters({
     products,
     selectedProduct,
     onSelectProduct,
+    versions = [],
     selectedVersion,
+    onSelectVersion,
     targetQuantity,
     onChangeTargetQuantity,
     onGenerate,
@@ -58,12 +70,28 @@ export default function BOMCostingFilters({
     isGenerating
 }: BOMCostingFiltersProps) {
     const [isProductOpen, setIsProductOpen] = useState(false);
-    const [rawQtyInput, setRawQtyInput] = useState<string>(String(targetQuantity || 1));
 
-    // Synchronize local input string when external targetQuantity changes
-    React.useEffect(() => {
-        setRawQtyInput(String(targetQuantity));
-    }, [targetQuantity]);
+    // Format raw input string based on whether UOM is discrete (e.g. PCS) or continuous
+    const formatInitialQty = (qty: number, uom?: string): string => {
+        if (!qty || qty <= 0) return "1.0000";
+        if (uom && isDiscreteUom(uom) && Number.isInteger(qty)) {
+            return String(qty);
+        }
+        return Number(qty).toFixed(4);
+    };
+
+    const [prevTargetQuantity, setPrevTargetQuantity] = useState(targetQuantity);
+    const [prevUomName, setPrevUomName] = useState(selectedVersion?.uom_name);
+    const [rawQtyInput, setRawQtyInput] = useState<string>(
+        formatInitialQty(targetQuantity, selectedVersion?.uom_name)
+    );
+
+    // Synchronize local input string when external targetQuantity or version changes
+    if (targetQuantity !== prevTargetQuantity || selectedVersion?.uom_name !== prevUomName) {
+        setPrevTargetQuantity(targetQuantity);
+        setPrevUomName(selectedVersion?.uom_name);
+        setRawQtyInput(formatInitialQty(targetQuantity, selectedVersion?.uom_name));
+    }
 
     // Handle quantity typing with auto-selection & blur fallback
     const handleQtyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -87,11 +115,13 @@ export default function BOMCostingFilters({
         const num = parseFloat(rawQtyInput);
         if (isNaN(num) || num <= 0) {
             const fallback = selectedVersion?.base_quantity || 1;
-            setRawQtyInput(String(fallback));
-            onChangeTargetQuantity(fallback);
+            const formattedFallback = Number(fallback).toFixed(4);
+            setRawQtyInput(formattedFallback);
+            onChangeTargetQuantity(Number(formattedFallback));
         } else {
-            setRawQtyInput(String(num));
-            onChangeTargetQuantity(num);
+            const formatted = num.toFixed(4);
+            setRawQtyInput(formatted);
+            onChangeTargetQuantity(Number(formatted));
         }
     };
 
@@ -124,14 +154,15 @@ export default function BOMCostingFilters({
 
     return (
         <div className="rounded-xl border bg-card p-4 sm:p-5 shadow-xs transition-all space-y-4">
+            {/* Top action header */}
             <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
                 <div className="flex items-center gap-2">
                     <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
                         <Layers className="h-4 w-4" />
                     </div>
                     <div>
-                        <h3 className="text-sm font-semibold text-foreground">Report Parameters & Simulation</h3>
-                        <p className="text-xs text-muted-foreground">Select a finished good or sub-assembly to explode its multi-level material cost breakdown.</p>
+                        <h3 className="text-sm font-semibold text-foreground">Standard Costing Parameters</h3>
+                        <p className="text-xs text-muted-foreground">Select a finished product assembly to explode its multi-level BOM standard cost breakdown.</p>
                     </div>
                 </div>
 
@@ -152,18 +183,18 @@ export default function BOMCostingFilters({
                         disabled={!selectedProduct || !selectedVersion || isGenerating}
                         className="h-8 text-xs font-medium shadow-xs"
                     >
-                      
-                        {isGenerating ? "Exploding BOM..." : "Generate Costing Report"}
+                        {isGenerating ? "Calculating Standard Cost..." : "Generate Costing Report"}
                     </Button>
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* 1. PRODUCT SELECTOR (COMBOBOX) */}
-                <div className="space-y-1.5">
-                    <Label className="text-xs font-medium text-foreground flex items-center gap-1.5">
+            {/* Filter grid row */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* 1. FINISHED PRODUCT ASSEMBLY (COMBOBOX) */}
+                <div className="space-y-1.5 sm:col-span-2 lg:col-span-1">
+                    <Label className="text-[11px] font-semibold text-foreground tracking-wider uppercase flex items-center gap-1.5">
                         <Package className="h-3.5 w-3.5 text-primary" />
-                        Target Finished Good
+                        Finished Product Assembly
                     </Label>
                     <Popover open={isProductOpen} onOpenChange={setIsProductOpen}>
                         <PopoverTrigger asChild>
@@ -189,21 +220,21 @@ export default function BOMCostingFilters({
                                         title={selectedProduct ? (selectedProduct.description || selectedProduct.product_name) : ""}
                                     >
                                         {selectedProduct
-                                            ? (selectedProduct.description || selectedProduct.product_name)
+                                            ? `${selectedProduct.product_code ? `${selectedProduct.product_code} • ` : ""}${selectedProduct.description || selectedProduct.product_name}`
                                             : isLoadingProducts
-                                            ? "Loading finished goods..."
-                                            : "Select finished good..."}
+                                            ? "Loading finished products..."
+                                            : "Select finished product assembly..."}
                                     </span>
                                 </div>
                                 <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
                             </Button>
                         </PopoverTrigger>
-                        <PopoverContent className="w-[540px] sm:w-[650px] md:w-[720px] max-w-[95vw] p-0" align="start">
+                        <PopoverContent className="w-[500px] sm:w-[600px] max-w-[95vw] p-0" align="start">
                             <Command>
-                                <CommandInput placeholder="Search products by name or SKU..." className="h-9 text-xs" />
-                                <CommandList className="max-h-84">
-                                    <CommandEmpty>No matching finished goods found.</CommandEmpty>
-                                    <CommandGroup heading="Finished Goods & Variants">
+                                <CommandInput placeholder="Search assembly by name, code or SKU..." className="h-9 text-xs" />
+                                <CommandList className="max-h-80">
+                                    <CommandEmpty>No matching finished products found.</CommandEmpty>
+                                    <CommandGroup heading="Finished Assemblies & Variants">
                                         {roots.map(root => {
                                             const rootDisplayName = root.description || root.product_name;
                                             const rootChildren = childrenMap.get(root.product_id) || [];
@@ -211,15 +242,14 @@ export default function BOMCostingFilters({
 
                                             return (
                                                 <React.Fragment key={`root-group-${root.product_id}`}>
-                                                    {/* Parent Product Row */}
                                                     <CommandItem
-                                                        value={`${rootDisplayName} ${root.product_name} ${root.product_code || ""} ${root.uom_name || ""} ${root.product_id} Parent`}
+                                                        value={`${rootDisplayName} ${root.product_name} ${root.product_code || ""} ${root.product_id} Parent`}
                                                         onSelect={() => {
                                                             onSelectProduct(root);
                                                             setIsProductOpen(false);
                                                         }}
                                                         className={cn(
-                                                            "text-xs flex items-center justify-between cursor-pointer py-2 px-3 border-b border-border/40 hover:bg-muted/50 transition-colors",
+                                                            "text-xs flex items-center justify-between cursor-pointer py-2 px-3 border-b border-border/30 hover:bg-muted/50 transition-colors",
                                                             isRootSelected && "bg-primary/5 font-semibold"
                                                         )}
                                                     >
@@ -229,11 +259,11 @@ export default function BOMCostingFilters({
                                                             </div>
                                                             <div className="flex flex-col min-w-0 flex-1">
                                                                 <div className="flex items-center gap-1.5 min-w-0">
-                                                                    <span className="font-bold text-foreground truncate text-xs">
+                                                                    <span className="font-semibold text-foreground truncate text-xs">
                                                                         {rootDisplayName}
                                                                     </span>
-                                                                    <span className="bg-blue-500/10 text-blue-600 dark:text-blue-400 text-[8px] font-bold px-1.5 py-0.2 rounded border border-blue-500/20 shrink-0">
-                                                                        Parent
+                                                                    <span className="bg-primary/10 text-primary text-[8px] font-medium px-1.5 py-0.2 rounded border border-primary/20 shrink-0">
+                                                                        Master
                                                                     </span>
                                                                 </div>
                                                                 <span className="text-[10px] text-muted-foreground font-mono truncate">
@@ -247,7 +277,7 @@ export default function BOMCostingFilters({
                                                                 className={cn(
                                                                     "text-[10px] font-medium px-2 py-0.5 rounded-full",
                                                                     root.has_versions
-                                                                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/15"
+                                                                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
                                                                         : "bg-muted text-muted-foreground"
                                                                 )}
                                                             >
@@ -256,7 +286,6 @@ export default function BOMCostingFilters({
                                                         </div>
                                                     </CommandItem>
 
-                                                    {/* Child Variants */}
                                                     {rootChildren.map(child => {
                                                         const childDisplayName = child.description || child.product_name;
                                                         const isChildSelected = selectedProduct?.product_id === child.product_id;
@@ -264,27 +293,27 @@ export default function BOMCostingFilters({
                                                         return (
                                                             <CommandItem
                                                                 key={`child-${child.product_id}`}
-                                                                value={`${childDisplayName} ${child.product_name} ${child.product_code || ""} ${child.uom_name || ""} ${child.product_id} Child ${rootDisplayName}`}
+                                                                value={`${childDisplayName} ${child.product_name} ${child.product_code || ""} ${child.product_id} Child`}
                                                                 onSelect={() => {
                                                                     onSelectProduct(child);
                                                                     setIsProductOpen(false);
                                                                 }}
                                                                 className={cn(
-                                                                    "text-xs flex items-center justify-between cursor-pointer py-2 px-3 pl-7 border-b border-border/30 hover:bg-muted/50 transition-colors",
+                                                                    "text-xs flex items-center justify-between cursor-pointer py-2 px-3 pl-8 border-b border-border/30 hover:bg-muted/50 transition-colors",
                                                                     isChildSelected && "bg-primary/5 font-semibold"
                                                                 )}
                                                             >
                                                                 <div className="flex items-center gap-2.5 min-w-0 flex-1 mr-3">
-                                                                    <div className="p-1.5 rounded-full bg-muted text-muted-foreground shrink-0">
+                                                                    <div className="p-1 rounded-full bg-muted text-muted-foreground shrink-0">
                                                                         <Layers className="h-3 w-3" />
                                                                     </div>
                                                                     <div className="flex flex-col min-w-0 flex-1">
                                                                         <div className="flex items-center gap-1.5 min-w-0">
-                                                                            <span className="font-semibold text-foreground truncate text-xs">
+                                                                            <span className="font-medium text-foreground truncate text-xs">
                                                                                 {childDisplayName}
                                                                             </span>
                                                                             <span className="bg-muted text-muted-foreground text-[8px] font-medium px-1.5 py-0.2 rounded border shrink-0">
-                                                                                Child
+                                                                                Variant
                                                                             </span>
                                                                         </div>
                                                                         <span className="text-[10px] text-muted-foreground font-mono truncate">
@@ -298,7 +327,7 @@ export default function BOMCostingFilters({
                                                                         className={cn(
                                                                             "text-[10px] font-medium px-2 py-0.5 rounded-full",
                                                                             child.has_versions
-                                                                                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/15"
+                                                                                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
                                                                                 : "bg-muted text-muted-foreground"
                                                                         )}
                                                                     >
@@ -312,7 +341,6 @@ export default function BOMCostingFilters({
                                             );
                                         })}
 
-                                        {/* Orphan Variants (if parent not in roots) */}
                                         {orphans.map(orphan => {
                                             const orphanDisplayName = orphan.description || orphan.product_name;
                                             const isOrphanSelected = selectedProduct?.product_id === orphan.product_id;
@@ -320,47 +348,40 @@ export default function BOMCostingFilters({
                                             return (
                                                 <CommandItem
                                                     key={`orphan-${orphan.product_id}`}
-                                                    value={`${orphanDisplayName} ${orphan.product_name} ${orphan.product_code || ""} ${orphan.uom_name || ""} ${orphan.product_id} Child`}
+                                                    value={`${orphanDisplayName} ${orphan.product_name} ${orphan.product_code || ""} ${orphan.product_id} Child`}
                                                     onSelect={() => {
                                                         onSelectProduct(orphan);
                                                         setIsProductOpen(false);
                                                     }}
                                                     className={cn(
-                                                        "text-xs flex items-center justify-between cursor-pointer py-2 px-3 pl-7 border-b border-border/30 hover:bg-muted/50 transition-colors",
+                                                        "text-xs flex items-center justify-between cursor-pointer py-2 px-3 pl-8 border-b border-border/30 hover:bg-muted/50 transition-colors",
                                                         isOrphanSelected && "bg-primary/5 font-semibold"
                                                     )}
                                                 >
                                                     <div className="flex items-center gap-2.5 min-w-0 flex-1 mr-3">
-                                                        <div className="p-1.5 rounded-full bg-muted text-muted-foreground shrink-0">
+                                                        <div className="p-1 rounded-full bg-muted text-muted-foreground shrink-0">
                                                             <Layers className="h-3 w-3" />
                                                         </div>
                                                         <div className="flex flex-col min-w-0 flex-1">
-                                                            <div className="flex items-center gap-1.5 min-w-0">
-                                                                <span className="font-semibold text-foreground truncate text-xs">
-                                                                    {orphanDisplayName}
-                                                                </span>
-                                                                <span className="bg-muted text-muted-foreground text-[8px] font-medium px-1.5 py-0.2 rounded border shrink-0">
-                                                                    Child
-                                                                </span>
-                                                            </div>
+                                                            <span className="font-semibold text-foreground truncate text-xs">
+                                                                {orphanDisplayName}
+                                                            </span>
                                                             <span className="text-[10px] text-muted-foreground font-mono truncate">
-                                                                SKU: {orphan.product_code || "N/A"} • Base: {orphan.uom_name || "PCS"}
+                                                                SKU: {orphan.product_code || "N/A"}
                                                             </span>
                                                         </div>
                                                     </div>
-                                                    <div className="shrink-0">
-                                                        <Badge
-                                                            variant={orphan.has_versions ? "default" : "secondary"}
-                                                            className={cn(
-                                                                "text-[10px] font-medium px-2 py-0.5 rounded-full",
-                                                                orphan.has_versions
-                                                                    ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/15"
-                                                                    : "bg-muted text-muted-foreground"
-                                                            )}
-                                                        >
-                                                            {orphan.has_versions ? "Recipe Ready" : "No Recipe"}
-                                                        </Badge>
-                                                    </div>
+                                                    <Badge
+                                                        variant={orphan.has_versions ? "default" : "secondary"}
+                                                        className={cn(
+                                                            "text-[10px] font-medium px-2 py-0.5 rounded-full",
+                                                            orphan.has_versions
+                                                                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                                                                : "bg-muted text-muted-foreground"
+                                                        )}
+                                                    >
+                                                        {orphan.has_versions ? "Recipe Ready" : "No Recipe"}
+                                                    </Badge>
                                                 </CommandItem>
                                             );
                                         })}
@@ -371,39 +392,87 @@ export default function BOMCostingFilters({
                     </Popover>
                 </div>
 
-                {/* 2. SIMULATED BATCH QUANTITY */}
+                {/* 2. ROUTING & BOM REV */}
+                <div className="space-y-1.5">
+                    <Label className="text-[11px] font-semibold text-foreground tracking-wider uppercase flex items-center gap-1.5">
+                        <GitBranch className="h-3.5 w-3.5 text-primary" />
+                        Routing & BOM Rev
+                    </Label>
+                    {versions.length > 0 && onSelectVersion ? (
+                        <Select
+                            value={selectedVersion ? String(selectedVersion.version_id) : ""}
+                            onValueChange={val => {
+                                const found = versions.find(v => String(v.version_id) === val);
+                                if (found) onSelectVersion(found);
+                            }}
+                            disabled={isLoadingVersions || isGenerating}
+                        >
+                            <SelectTrigger className="h-9 text-xs bg-background">
+                                <SelectValue placeholder="Select routing revision..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {versions.map(v => (
+                                    <SelectItem key={v.version_id} value={String(v.version_id)} className="text-xs">
+                                        {v.version_name} {v.is_primary ? "(Active Standard)" : `(${v.status})`}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    ) : (
+                        <Input
+                            disabled
+                            value={isLoadingVersions ? "Loading revisions..." : selectedVersion ? `${selectedVersion.version_name} (${selectedVersion.status})` : "No revision available"}
+                            className="h-9 text-xs bg-muted/30"
+                        />
+                    )}
+                </div>
+
+                {/* 3. CURRENCY BASE */}
+                <div className="space-y-1.5">
+                    <Label className="text-[11px] font-semibold text-foreground tracking-wider uppercase flex items-center gap-1.5">
+                        <Coins className="h-3.5 w-3.5 text-primary" />
+                        Currency Base
+                    </Label>
+                    <Select defaultValue="PHP">
+                        <SelectTrigger className="h-9 text-xs bg-background">
+                            <SelectValue placeholder="Currency" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="PHP" className="text-xs">
+                                PHP (₱) - Philippine Peso
+                            </SelectItem>
+                        </SelectContent>
+                    </Select>
+                </div>
+
+                {/* 4. BATCH PRODUCTION QTY */}
                 <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
-                        <Label className="text-xs font-medium text-foreground flex items-center gap-1.5">
-                            <Scale className="h-3.5 w-3.5 text-primary" />
-                            Target Batch Size ({selectedVersion?.uom_name || "Units"})
+                        <Label className="text-[11px] font-semibold text-foreground tracking-wider uppercase flex items-center gap-1.5">
+                            <Calculator className="h-3.5 w-3.5 text-primary" />
+                            Batch Production Qty
                         </Label>
-                        {isLoadingVersions ? (
-                            <span className="text-[10px] text-muted-foreground animate-pulse">
-                                Loading primary recipe...
+                        {selectedVersion && (
+                            <span className="text-[10px] text-muted-foreground font-mono">
+                                Base: {formatInitialQty(selectedVersion.base_quantity, selectedVersion.uom_name)} {selectedVersion.uom_name}
                             </span>
-                        ) : selectedVersion ? (
-                            <span className="text-[10px] text-muted-foreground">
-                                Recipe: <strong className="text-foreground font-medium">{selectedVersion.version_name}</strong> (Base: {selectedVersion.base_quantity} {selectedVersion.uom_name})
-                            </span>
-                        ) : null}
+                        )}
                     </div>
                     <div className="relative">
                         <Input
-                            type="number"
-                            min="0.0001"
-                            step="any"
+                            type="text"
+                            inputMode="decimal"
                             value={rawQtyInput}
                             onChange={handleQtyChange}
                             onFocus={handleQtyFocus}
                             onClick={handleQtyClick}
                             onBlur={handleQtyBlur}
                             disabled={!selectedVersion || isGenerating}
-                            placeholder="Enter batch size..."
-                            className="h-9 text-xs font-semibold bg-background pr-12"
+                            placeholder="Enter batch quantity..."
+                            className="h-9 text-xs font-semibold bg-background pr-14"
                         />
-                        <div className="absolute right-3 top-2.5 text-[11px] font-medium text-muted-foreground pointer-events-none">
-                            {selectedVersion?.uom_name || "pcs"}
+                        <div className="absolute right-3 top-2 text-[11px] font-mono text-muted-foreground pointer-events-none">
+                            {selectedVersion?.uom_name || "PCS"}
                         </div>
                     </div>
                 </div>
