@@ -156,15 +156,17 @@ interface LotBatchSelectionModalProps {
   onConfirm: (result: LotBatchSelectionResult) => void;
 }
 
-// â”€â”€ Ultra-responsive, 60fps Quantity Input Component â”€â”€
+// ── Ultra-responsive, 60fps Quantity Input Component ──
 function BatchQuantityInput({
   value,
   onChange,
   hasError,
+  disabled = false,
 }: {
   value: number | undefined | null;
   onChange: (val: number) => void;
   hasError?: boolean;
+  disabled?: boolean;
 }) {
   const [prevValue, setPrevValue] = useState(value);
   const [localValue, setLocalValue] = useState<string>(() =>
@@ -183,6 +185,7 @@ function BatchQuantityInput({
   }
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (disabled) return;
     const raw = e.target.value;
     setLocalValue(raw);
 
@@ -198,6 +201,7 @@ function BatchQuantityInput({
   };
 
   const handleBlur = () => {
+    if (disabled) return;
     if (timerRef.current) clearTimeout(timerRef.current);
     if (localValue === '') {
       setLocalValue('');
@@ -216,15 +220,16 @@ function BatchQuantityInput({
       min={0}
       value={localValue}
       placeholder="0"
-      onFocus={(e) => e.target.select()}
-      onClick={(e) => (e.target as HTMLInputElement).select()}
+      disabled={disabled}
+      onFocus={(e) => !disabled && e.target.select()}
+      onClick={(e) => !disabled && (e.target as HTMLInputElement).select()}
       onChange={handleChange}
       onBlur={handleBlur}
       className={`h-9 text-xs font-mono font-bold text-center transition-colors ${
         hasError
           ? 'border-destructive ring-1 ring-destructive/40 bg-destructive/5 text-destructive focus-visible:ring-destructive'
           : ''
-      }`}
+      } ${disabled ? 'bg-muted/40 cursor-not-allowed opacity-100 font-semibold' : ''}`}
     />
   );
 }
@@ -1934,46 +1939,48 @@ export function QAMultiLotBatchAllocationModal({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 flex-wrap">
-                  {!isTargetQuantityMatched && requestedQuantity && requestedQuantity > 0 && (
+                {!readOnly && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {!isTargetQuantityMatched && requestedQuantity && requestedQuantity > 0 && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={handleReallocateLots}
+                        className="h-8 text-xs font-bold gap-1.5 shrink-0 bg-amber-500/20 hover:bg-amber-500/30 border-amber-500/40 text-amber-900 dark:text-amber-200 cursor-pointer"
+                        title="Auto-balance batches to match requested target quantity"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5 text-amber-700 dark:text-amber-300" />
+                        Auto-Balance Batches
+                      </Button>
+                    )}
+
+                    {lotGroups.length > 0 && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={handleReallocateLots}
+                        className="h-8 text-xs font-bold gap-1.5 shrink-0 bg-background border-border shadow-xs hover:bg-muted cursor-pointer text-foreground"
+                        title={lotGroups.length > 1 ? "Reallocate target quantity across lots according to each lot's capacity" : "Reallocate target quantity to balance batches"}
+                      >
+                        <RotateCcw className="w-3.5 h-3.5 text-primary" />
+                        {lotGroups.length > 1 ? "Reallocate across Lots" : "Reallocate Target Batches"}
+                      </Button>
+                    )}
+
                     <Button
                       type="button"
                       size="sm"
                       variant="outline"
-                      onClick={handleReallocateLots}
-                      className="h-8 text-xs font-bold gap-1.5 shrink-0 bg-amber-500/20 hover:bg-amber-500/30 border-amber-500/40 text-amber-900 dark:text-amber-200 cursor-pointer"
-                      title="Auto-balance batches to match requested target quantity"
+                      onClick={handleAddLotGroup}
+                      className="h-8 text-xs font-bold gap-1.5 shrink-0 bg-background border-border shadow-xs hover:bg-muted cursor-pointer"
                     >
-                      <RotateCcw className="w-3.5 h-3.5 text-amber-700 dark:text-amber-300" />
-                      Auto-Balance Batches
+                      <Plus className="w-3.5 h-3.5" />
+                      Assign Another Lot
                     </Button>
-                  )}
-
-                  {lotGroups.length > 0 && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={handleReallocateLots}
-                      className="h-8 text-xs font-bold gap-1.5 shrink-0 bg-background border-border shadow-xs hover:bg-muted cursor-pointer text-foreground"
-                      title={lotGroups.length > 1 ? "Reallocate target quantity across lots according to each lot's capacity" : "Reallocate target quantity to balance batches"}
-                    >
-                      <RotateCcw className="w-3.5 h-3.5 text-primary" />
-                      {lotGroups.length > 1 ? "Reallocate across Lots" : "Reallocate Target Batches"}
-                    </Button>
-                  )}
-
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={handleAddLotGroup}
-                    className="h-8 text-xs font-bold gap-1.5 shrink-0 bg-background border-border shadow-xs hover:bg-muted cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    Assign Another Lot
-                  </Button>
-                </div>
+                  </div>
+                )}
               </div>
 
               {/* NO QUALIFIED STORAGE LOTS / EMPTY STATE GUIDANCE BANNER */}
@@ -2194,6 +2201,7 @@ export function QAMultiLotBatchAllocationModal({
                                     onValueChange={(val) => handleChangeLot(gIdx, val)}
                                     placeholder="Select Storage Lot / Bay..."
                                     searchPlaceholder="Search lot name..."
+                                    disabled={readOnly}
                                     triggerTitle={groupLot ? `${groupLot.lot_name}${groupLot.max_batch_capacity ? ` (Cap: ${groupLot.max_batch_capacity.toLocaleString()} ${groupLot.unit_name || productUomName})` : ''}` : undefined}
                                     popoverClassName="w-[540px] max-w-[90vw]"
                                     emptyMessage={
@@ -2269,7 +2277,7 @@ export function QAMultiLotBatchAllocationModal({
                               }`}
                           >
                             <Gauge className="w-3 h-3" />
-                            {projectedTotalStock.toLocaleString()} / {maxCap > 0 ? `${maxCap.toLocaleString()} ${productUomName}` : 'âˆž'} ({projectedUtilizationPct}%)
+                            {projectedTotalStock.toLocaleString()} / {maxCap > 0 ? `${maxCap.toLocaleString()} ${productUomName}` : '∞'} ({projectedUtilizationPct}%)
                           </Badge>
                         </div>
                       </div>
@@ -2283,7 +2291,7 @@ export function QAMultiLotBatchAllocationModal({
                           <span className="text-sm font-mono font-black text-foreground">{groupQtyTotal.toLocaleString()} {productUomName}</span>
                         </div>
 
-                        {lotGroups.length > 1 && (
+                        {!readOnly && lotGroups.length > 1 && (
                           <Button
                             type="button"
                             variant="ghost"
@@ -2600,90 +2608,92 @@ export function QAMultiLotBatchAllocationModal({
                         </span>
 
                         {/* Bulk Auto-fill Toolbar Outside the Input Cards */}
-                        <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto justify-between lg:justify-end">
-                          <div className="flex flex-wrap items-center gap-2 bg-muted/40 px-3 py-1.5 rounded-lg border border-border/70">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-[10px] font-bold text-muted-foreground uppercase">Mfg:</span>
-                              <Input
-                                type="date"
-                                value={
-                                  toolbarDates[gIdx]?.mfg ??
-                                  (group.batches[0]?.manufacturing_date ? String(group.batches[0].manufacturing_date).substring(0, 10) : '')
-                                }
-                                onChange={(e) => {
-                                  const current = toolbarDates[gIdx] || {
-                                    mfg: group.batches[0]?.manufacturing_date ? String(group.batches[0].manufacturing_date).substring(0, 10) : '',
-                                    exp: group.batches[0]?.expiry_date ? String(group.batches[0].expiry_date).substring(0, 10) : '',
-                                  };
-                                  setToolbarDates({ ...toolbarDates, [gIdx]: { ...current, mfg: e.target.value } });
+                        {!readOnly && (
+                          <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto justify-between lg:justify-end">
+                            <div className="flex flex-wrap items-center gap-2 bg-muted/40 px-3 py-1.5 rounded-lg border border-border/70">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] font-bold text-muted-foreground uppercase">Mfg:</span>
+                                <Input
+                                  type="date"
+                                  value={
+                                    toolbarDates[gIdx]?.mfg ??
+                                    (group.batches[0]?.manufacturing_date ? String(group.batches[0].manufacturing_date).substring(0, 10) : '')
+                                  }
+                                  onChange={(e) => {
+                                    const current = toolbarDates[gIdx] || {
+                                      mfg: group.batches[0]?.manufacturing_date ? String(group.batches[0].manufacturing_date).substring(0, 10) : '',
+                                      exp: group.batches[0]?.expiry_date ? String(group.batches[0].expiry_date).substring(0, 10) : '',
+                                    };
+                                    setToolbarDates({ ...toolbarDates, [gIdx]: { ...current, mfg: e.target.value } });
+                                  }}
+                                  className="h-7 text-xs w-36 bg-background px-2 py-0"
+                                  title="Select manufacturing date to apply"
+                                />
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] font-bold text-muted-foreground uppercase">Exp:</span>
+                                <Input
+                                  type="date"
+                                  value={
+                                    toolbarDates[gIdx]?.exp ??
+                                    (group.batches[0]?.expiry_date ? String(group.batches[0].expiry_date).substring(0, 10) : '')
+                                  }
+                                  onChange={(e) => {
+                                    const current = toolbarDates[gIdx] || {
+                                      mfg: group.batches[0]?.manufacturing_date ? String(group.batches[0].manufacturing_date).substring(0, 10) : '',
+                                      exp: group.batches[0]?.expiry_date ? String(group.batches[0].expiry_date).substring(0, 10) : '',
+                                    };
+                                    setToolbarDates({ ...toolbarDates, [gIdx]: { ...current, exp: e.target.value } });
+                                  }}
+                                  className="h-7 text-xs w-36 bg-background px-2 py-0"
+                                  title="Select expiration date to apply"
+                                />
+                              </div>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => {
+                                  const currentMfg =
+                                    toolbarDates[gIdx]?.mfg ??
+                                    (group.batches[0]?.manufacturing_date ? String(group.batches[0].manufacturing_date).substring(0, 10) : '');
+                                  const currentExp =
+                                    toolbarDates[gIdx]?.exp ??
+                                    (group.batches[0]?.expiry_date ? String(group.batches[0].expiry_date).substring(0, 10) : '');
+
+                                  handleApplyDatesToAll(gIdx, currentMfg, currentExp);
                                 }}
-                                className="h-7 text-xs w-36 bg-background px-2 py-0"
-                                title="Select manufacturing date to apply"
-                              />
+                                className="h-7 text-xs font-bold px-3 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 cursor-pointer"
+                                title="Apply selected dates to all batches in this lot"
+                              >
+                                Apply to all
+                              </Button>
                             </div>
+
                             <div className="flex items-center gap-1.5">
-                              <span className="text-[10px] font-bold text-muted-foreground uppercase">Exp:</span>
-                              <Input
-                                type="date"
-                                value={
-                                  toolbarDates[gIdx]?.exp ??
-                                  (group.batches[0]?.expiry_date ? String(group.batches[0].expiry_date).substring(0, 10) : '')
-                                }
-                                onChange={(e) => {
-                                  const current = toolbarDates[gIdx] || {
-                                    mfg: group.batches[0]?.manufacturing_date ? String(group.batches[0].manufacturing_date).substring(0, 10) : '',
-                                    exp: group.batches[0]?.expiry_date ? String(group.batches[0].expiry_date).substring(0, 10) : '',
-                                  };
-                                  setToolbarDates({ ...toolbarDates, [gIdx]: { ...current, exp: e.target.value } });
-                                }}
-                                className="h-7 text-xs w-36 bg-background px-2 py-0"
-                                title="Select expiration date to apply"
-                              />
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleReallocateLotBatches(gIdx)}
+                                className="h-8 text-xs font-bold text-muted-foreground hover:text-foreground hover:bg-muted/50 gap-1 px-2.5 shrink-0 border border-border cursor-pointer"
+                                title="Rebalance batch quantities for this lot"
+                              >
+                                <RotateCcw className="w-3.5 h-3.5 text-primary" /> Auto-Balance
+                              </Button>
+
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => handleAddBatch(gIdx)}
+                                className="h-8 text-xs font-bold text-primary hover:bg-primary/10 gap-1 px-3 shrink-0 border border-primary/20 cursor-pointer"
+                              >
+                                <Plus className="w-3.5 h-3.5" /> Add Batch Split
+                              </Button>
                             </div>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="secondary"
-                              onClick={() => {
-                                const currentMfg =
-                                  toolbarDates[gIdx]?.mfg ??
-                                  (group.batches[0]?.manufacturing_date ? String(group.batches[0].manufacturing_date).substring(0, 10) : '');
-                                const currentExp =
-                                  toolbarDates[gIdx]?.exp ??
-                                  (group.batches[0]?.expiry_date ? String(group.batches[0].expiry_date).substring(0, 10) : '');
-
-                                handleApplyDatesToAll(gIdx, currentMfg, currentExp);
-                              }}
-                              className="h-7 text-xs font-bold px-3 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 cursor-pointer"
-                              title="Apply selected dates to all batches in this lot"
-                            >
-                              Apply to all
-                            </Button>
                           </div>
-
-                          <div className="flex items-center gap-1.5">
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleReallocateLotBatches(gIdx)}
-                              className="h-8 text-xs font-bold text-muted-foreground hover:text-foreground hover:bg-muted/50 gap-1 px-2.5 shrink-0 border border-border cursor-pointer"
-                              title="Rebalance batch quantities for this lot"
-                            >
-                              <RotateCcw className="w-3.5 h-3.5 text-primary" /> Auto-Balance
-                            </Button>
-
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => handleAddBatch(gIdx)}
-                              className="h-8 text-xs font-bold text-primary hover:bg-primary/10 gap-1 px-3 shrink-0 border border-primary/20 cursor-pointer"
-                            >
-                              <Plus className="w-3.5 h-3.5" /> Add Batch Split
-                            </Button>
-                          </div>
-                        </div>
+                        )}
                       </div>
 
                       <div className="space-y-2.5">
@@ -2707,6 +2717,7 @@ export function QAMultiLotBatchAllocationModal({
                                   Batch Number *
                                 </Label>
                                 <BatchCombobox
+                                  disabled={readOnly}
                                   value={batch.batch_no}
                                   existingBatches={(() => {
                                     // 1. Batches with on-hand balances in this lot
@@ -2790,6 +2801,7 @@ export function QAMultiLotBatchAllocationModal({
                                 </Label>
                                 <BatchQuantityInput
                                   value={batch.quantity}
+                                  disabled={readOnly}
                                   onChange={(newQty) => handleUpdateBatchField(gIdx, bIdx, 'quantity', newQty)}
                                   hasError={!batch.quantity || Number(batch.quantity) <= 0}
                                 />
@@ -2802,6 +2814,7 @@ export function QAMultiLotBatchAllocationModal({
                                 </Label>
                                 <Input
                                   type="date"
+                                  disabled={readOnly}
                                   value={batch.manufacturing_date ? batch.manufacturing_date.substring(0, 10) : ''}
                                   onChange={(e) => handleUpdateBatchField(gIdx, bIdx, 'manufacturing_date', e.target.value)}
                                   className={`h-9 text-xs transition-colors ${!batch.manufacturing_date ? 'border-destructive ring-1 ring-destructive/40 bg-destructive/5' : ''}`}
@@ -2815,6 +2828,7 @@ export function QAMultiLotBatchAllocationModal({
                                 </Label>
                                 <Input
                                   type="date"
+                                  disabled={readOnly}
                                   value={batch.expiry_date ? batch.expiry_date.substring(0, 10) : ''}
                                   onChange={(e) => handleUpdateBatchField(gIdx, bIdx, 'expiry_date', e.target.value)}
                                   className={`h-9 text-xs transition-colors ${
@@ -2882,19 +2896,21 @@ export function QAMultiLotBatchAllocationModal({
                               </div>
 
                               {/* Remove Batch Split */}
-                              <div className="shrink-0 flex items-end pt-5 md:pt-0">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  disabled={group.batches.length <= 1}
-                                  onClick={() => handleRemoveBatch(gIdx, bIdx)}
-                                  className="h-9 w-9 text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg disabled:opacity-30"
-                                  title="Remove Batch"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </Button>
-                              </div>
+                              {!readOnly && (
+                                <div className="shrink-0 flex items-end pt-5 md:pt-0">
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    disabled={group.batches.length <= 1}
+                                    onClick={() => handleRemoveBatch(gIdx, bIdx)}
+                                    className="h-9 w-9 text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg disabled:opacity-30"
+                                    title="Remove Batch"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                </div>
+                              )}
                             </div>
                           );
                         })}
@@ -2910,7 +2926,12 @@ export function QAMultiLotBatchAllocationModal({
         {/* FOOTER & ACTIONS */}
         <DialogFooter className="p-4 border-t border-border bg-card shrink-0 flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="text-xs text-muted-foreground text-left flex-1">
-            {combinedValidationErrors.length > 0 ? (
+            {readOnly ? (
+              <span className="text-muted-foreground font-medium flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-muted-foreground shrink-0" />
+                View-Only: Allocations for this completed receipt cannot be modified.
+              </span>
+            ) : combinedValidationErrors.length > 0 ? (
               <span className="text-red-500 font-semibold flex items-center gap-1.5">
                 <AlertTriangle className="w-4 h-4 shrink-0" />
                 Please resolve the highlighted lot issues above.
@@ -2926,23 +2947,25 @@ export function QAMultiLotBatchAllocationModal({
           <div className="flex items-center gap-2">
             <Button
               type="button"
-              variant="outline"
+              variant={readOnly ? "default" : "outline"}
               size="sm"
               onClick={() => onOpenChange(false)}
               className="text-xs h-9"
             >
-              Cancel
+              {readOnly ? "Close" : "Cancel"}
             </Button>
-            <Button
-              type="button"
-              size="sm"
-              onClick={handleConfirm}
-              disabled={!isValid || loading || readOnly}
-              className="text-xs font-bold h-9 bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm gap-1.5"
-            >
-              <CheckCircle2 className="w-4 h-4" />
-              Apply Lot & Batch Allocations
-            </Button>
+            {!readOnly && (
+              <Button
+                type="button"
+                size="sm"
+                onClick={handleConfirm}
+                disabled={!isValid || loading}
+                className="text-xs font-bold h-9 bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm gap-1.5"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                Apply Lot & Batch Allocations
+              </Button>
+            )}
           </div>
         </DialogFooter>
       </DialogContent>

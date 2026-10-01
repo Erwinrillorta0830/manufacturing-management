@@ -1193,10 +1193,6 @@ export function useQAReceiving({
             const rejected = Number.isFinite(received) && Number.isFinite(accepted)
                 ? Math.max(0, deriveRejectedQuantity(received, accepted))
                 : 0;
-            const ordered = Number(line.quantity_ordered || 0);
-            const remaining = replacementDisposition?.purchaseOrderLineId === line.line_id
-                ? replacementDisposition.remainingQuantity
-                : Math.max(0, Number(line.remaining_quantity ?? (ordered - Number(line.quantity_received || 0))));
 
             if (received <= 0) continue;
 

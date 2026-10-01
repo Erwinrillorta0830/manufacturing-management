@@ -101,6 +101,7 @@ interface DirectusReceiving {
     receipt_date?: unknown;
     received_date?: unknown;
     received_quantity?: unknown;
+    quantity_allocated?: unknown;
     quantity_rejected?: unknown;
     isPosted?: unknown;
     is_reverted?: unknown;
@@ -135,6 +136,13 @@ class WarehouseReceivingError extends Error {
     constructor(message: string, readonly statusCode = 500) {
         super(message);
     }
+}
+
+function effectiveReceivedQuantity(row: DirectusReceiving): number {
+    if (row.quantity_allocated !== null && row.quantity_allocated !== undefined) {
+        return Math.max(0, numberValue(row.quantity_allocated));
+    }
+    return Math.max(0, numberValue(row.received_quantity));
 }
 
 function bodyRows(body: unknown): Record<string, unknown>[] {
@@ -483,7 +491,7 @@ function buildReceiptHistory(
         };
 
         entry.isCurrent = entry.isCurrent || isCurrent;
-        entry.totalReceivedQuantity += Math.max(0, numberValue(row.received_quantity));
+        entry.totalReceivedQuantity += effectiveReceivedQuantity(row);
         const receivingLineId = lineId(row);
         if (receivingLineId) {
             const line = linesById.get(receivingLineId);
@@ -495,7 +503,7 @@ function buildReceiptHistory(
                 productCode: line?.productCode || "",
                 receivedQuantity: 0
             };
-            lineEntry.receivedQuantity += Math.max(0, numberValue(row.received_quantity));
+            lineEntry.receivedQuantity += effectiveReceivedQuantity(row);
             entry.lines.set(receivingLineId, lineEntry);
         }
         grouped.set(key, entry);
@@ -538,7 +546,7 @@ async function buildOrderView(order: DirectusOrder) {
     for (const row of postedRows) {
         const id = lineId(row);
         if (!id) continue;
-        previousByLine.set(id, (previousByLine.get(id) || 0) + Math.max(0, numberValue(row.received_quantity)));
+        previousByLine.set(id, (previousByLine.get(id) || 0) + effectiveReceivedQuantity(row));
     }
     const draftByLine = new Map<number, number>();
     for (const row of warehouseRows) {
@@ -646,7 +654,7 @@ async function validateWarehouseLines(order: DirectusOrder, command: WarehouseRe
     for (const row of receivingRows) {
         if (isWarehouse(row) && isUnposted(row)) continue;
         const id = lineId(row);
-        if (id) postedByLine.set(id, (postedByLine.get(id) || 0) + Math.max(0, numberValue(row.received_quantity)));
+        if (id) postedByLine.set(id, (postedByLine.get(id) || 0) + effectiveReceivedQuantity(row));
     }
     const validated = lines.map(line => {
         const submitted = submittedById.get(line.lineId);
