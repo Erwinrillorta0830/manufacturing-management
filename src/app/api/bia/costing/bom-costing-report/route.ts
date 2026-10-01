@@ -503,9 +503,9 @@ export async function GET(req: NextRequest) {
                     let children: BOMCostNode[] = [];
                     if (isSubAssembly && subAssemblyVersion && level < 5) {
                         const subVerId = Number(subAssemblyVersion.version_id);
-                        const subBaseQty = Number(subAssemblyVersion.base_quantity) || 1;
-                        const subScalingFactor = effectiveQty / subBaseQty;
-                        children = await explodeVersion(compId, subVerId, subScalingFactor, level + 1, nodeId, localVisited);
+                        // Sub-assembly production quantity needed to fulfill effectiveQty
+                        const subProductionQty = effectiveQty;
+                        children = await explodeVersion(compId, subVerId, subProductionQty, level + 1, nodeId, localVisited);
 
                         // If children have cost, roll up total child cost to sub-assembly if direct lineCost was 0
                         const childrenCostSum = round4(children.reduce((acc, c) => acc + c.totalLineCost, 0));
@@ -582,8 +582,8 @@ export async function GET(req: NextRequest) {
                 return rawNodes;
             }
 
-            // Explode materials from Level 1
-            const tree = await explodeVersion(productId, versionId, batchScalingFactor, 1, null, new Set());
+            // Explode materials from Level 1 scaled to target batch quantity
+            const tree = await explodeVersion(productId, versionId, targetQuantity, 1, null, new Set());
 
             // Fetch routes, positions, overheads, and work centers for labor and overhead costing
             const [targetRoutesRes, positionsRes, overheadsRes, overheadTypesRes, workCentersRes] = await Promise.all([
@@ -620,15 +620,21 @@ export async function GET(req: NextRequest) {
                     const dailyRate = Math.max(0, Number(pos.daily_rate) || (hourlyRate * 8) || 0);
                     const otHours = Math.max(0, Number(pos.ot_hours) || 0);
                     const hoursRequired = Math.max(0, Number(pos.hours_required) || 8);
-                    const baseHours = hoursRequired > 0 ? hoursRequired : 8;
+
+                    // Dynamic label: 'Maintenance' or 'Direct Line'
+                    const isMaintenance = String(pos.category || "").toLowerCase() === "maintenance";
+                    const dynamicLabel = isMaintenance ? "Maintenance" : "Direct Line";
+
+                    // Total allocated man-hours: Headcount × Shift Hours per worker
+                    const baseHours = round4(headcount * (hoursRequired > 0 ? hoursRequired : 8));
                     const scaledHours = round4(baseHours * batchScalingFactor);
 
                     const wageCost = dailyRate > 0
                         ? dailyRate * (headcount + otHours)
-                        : (hourlyRate > 0 ? hourlyRate * (baseHours * headcount + otHours) : 520);
+                        : (hourlyRate > 0 ? hourlyRate * (baseHours + otHours) : 520);
 
                     let benefitsCost = 0;
-                    if (pos.include_mandates !== false) {
+                    if (pos.include_mandates !== false && !isMaintenance) {
                         const configuredSss = Number(pos.sss_amount);
                         const configuredPhic = Number(pos.phic_amount);
                         const configuredHdmf = Number(pos.hdmf_amount);
@@ -640,7 +646,7 @@ export async function GET(req: NextRequest) {
 
                     const batchPositionCost = round4(wageCost + benefitsCost);
                     const lineCost = round4(batchPositionCost * batchScalingFactor);
-                    const effectiveHourlyRate = scaledHours > 0 ? round4(lineCost / scaledHours) : round4(batchPositionCost / baseHours);
+                    const effectiveHourlyRate = baseHours > 0 ? round4(batchPositionCost / baseHours) : (scaledHours > 0 ? round4(lineCost / scaledHours) : 0);
 
                     totalLaborCost = round4(totalLaborCost + lineCost);
 
@@ -649,14 +655,14 @@ export async function GET(req: NextRequest) {
                         level: 1,
                         parentId: null,
                         productId: 0,
-                        productName: `Direct Labor - ${posName}`,
-                        description: `Headcount: ${headcount} • Wage: ₱${dailyRate.toFixed(2)} • Mandates: +₱${benefitsCost.toFixed(2)}`,
-                        productCode: `LABOR-POS-${pos.position_id || idx + 1}`,
+                        productName: `${isMaintenance ? "Maintenance" : "Direct Line"} Labor - ${posName}`,
+                        description: `Category: ${dynamicLabel} • Headcount: ${headcount} • Daily Rate: ₱${dailyRate.toFixed(2)} • Mandates: +₱${benefitsCost.toFixed(2)}`,
+                        productCode: `Headcount: ${Number.isInteger(headcount) ? headcount : headcount.toFixed(2)}`,
                         productType: null,
                         materialClassification: "labor",
                         inventoryRule: "-",
                         routeSequence: idx + 1,
-                        operationName: "Unknown",
+                        operationName: dynamicLabel,
                         baseRequiredQty: baseHours,
                         scaledRequiredQty: scaledHours,
                         wastagePercent: 0,
@@ -682,8 +688,8 @@ export async function GET(req: NextRequest) {
                     const expectedLabor = Number(r.expected_labor_cost || 0);
 
                     // Compute cycle hours per batch
-                    const baseHours = round4(setupHours + runHours) || 0.1;
-                    const scaledHours = round4(setupHours + (runHours * targetQuantity)) || round4(baseHours * batchScalingFactor);
+                    const baseHours = round4((setupHours + runHours) * manpower) || 0.1;
+                    const scaledHours = round4((setupHours + (runHours * targetQuantity)) * manpower) || round4(baseHours * batchScalingFactor);
                     const stdHourlyRate = 65.0; // Standard manufacturing operator rate (₱520 daily / 8h)
 
                     let lineCost = 0;
@@ -693,7 +699,7 @@ export async function GET(req: NextRequest) {
                         lineCost = round4(expectedLabor * batchScalingFactor);
                         unitLaborRate = scaledHours > 0 ? round4(lineCost / scaledHours) : expectedLabor;
                     } else {
-                        lineCost = round4(scaledHours * manpower * stdHourlyRate);
+                        lineCost = round4(scaledHours * stdHourlyRate);
                         unitLaborRate = stdHourlyRate;
                     }
 
@@ -706,7 +712,7 @@ export async function GET(req: NextRequest) {
                         productId: 0,
                         productName: `Process Direct Labor - ${opName}`,
                         description: `Manpower: ${manpower} • Setup: ${setupHours}h • Run: ${runHours}h/unit`,
-                        productCode: `LABOR-STEP-${r.sequence_order || idx + 1}`,
+                        productCode: `Headcount: ${manpower}`,
                         productType: null,
                         materialClassification: "labor",
                         inventoryRule: "-",
@@ -729,7 +735,7 @@ export async function GET(req: NextRequest) {
             } else {
                 // Standard direct labor allowance if no routes or positions exist
                 const stdLaborRate = 65.0;
-                const stdHours = 1;
+                const stdHours = 8;
                 const lineCost = round4(stdLaborRate * stdHours * batchScalingFactor);
                 totalLaborCost = lineCost;
 
@@ -738,14 +744,14 @@ export async function GET(req: NextRequest) {
                     level: 1,
                     parentId: null,
                     productId: 0,
-                    productName: "Process Direct Labor - Unknown",
-                    description: "Direct labor allocation",
-                    productCode: "LABOR-STD",
+                    productName: "Process Direct Labor - Line Operations",
+                    description: "Direct line labor standard allowance",
+                    productCode: "Headcount: 1",
                     productType: null,
                     materialClassification: "labor",
                     inventoryRule: "-",
                     routeSequence: 1,
-                    operationName: "Unknown",
+                    operationName: "Direct Line",
                     baseRequiredQty: stdHours,
                     scaledRequiredQty: stdHours * batchScalingFactor,
                     wastagePercent: 0,
@@ -765,12 +771,74 @@ export async function GET(req: NextRequest) {
             const overheadNodes: BOMCostNode[] = [];
             let totalOverheadCost = 0;
 
+            // A. Routing Work Center Machine Runtime Overhead (from manufacturing_routes & manufacturing_work_centers)
+            if (targetRoutes.length > 0) {
+                targetRoutes.forEach((route, idx) => {
+                    const wcId = Number(route.work_center_id || 0);
+                    const wc = workCentersMap.get(wcId);
+                    const wcName = wc ? String(wc.work_center_name || `Work Center #${wcId}`) : `Work Center #${wcId}`;
+                    const wcRate = wc ? Number(wc.overhead_cost_per_hour || 0) : 0;
+                    const opId = Number(route.operation_id || 0);
+                    const opName = opsMap.get(opId) || `Step #${route.sequence_order || idx + 1}`;
+
+                    const setupHours = Number(route.setup_time_hours || 0);
+                    const runHours = Number(route.run_time_hours || 0);
+                    const totalHours = round4(setupHours + runHours);
+                    const stepCost = round4(totalHours * wcRate * batchScalingFactor);
+
+                    if (wcRate > 0 || totalHours > 0) {
+                        totalOverheadCost = round4(totalOverheadCost + stepCost);
+
+                        overheadNodes.push({
+                            id: `overhead-wc-step-${route.route_id || idx}`,
+                            level: 1,
+                            parentId: null,
+                            productId: 0,
+                            productName: `Mfg Machine Overhead - ${wcName}`,
+                            description: `Step #${route.sequence_order || idx + 1}: ${opName} • Setup: ${setupHours.toFixed(2)}h, Run: ${runHours.toFixed(2)}h • Rate: ₱${wcRate.toFixed(2)}/hr`,
+                            productCode: "Basis: Machine Runtime",
+                            productType: null,
+                            materialClassification: "overhead",
+                            inventoryRule: "-",
+                            routeSequence: Number(route.sequence_order || idx + 1),
+                            operationName: opName,
+                            baseRequiredQty: totalHours,
+                            scaledRequiredQty: round4(totalHours * batchScalingFactor),
+                            wastagePercent: 0,
+                            effectiveQty: round4(totalHours * batchScalingFactor),
+                            wastageQty: 0,
+                            uomName: "HRS",
+                            unitCost: wcRate,
+                            netLineCost: stepCost,
+                            totalLineCost: stepCost,
+                            wastageCost: 0,
+                            isSubAssembly: false,
+                            children: []
+                        });
+                    }
+                });
+            }
+
+            // B. Version Fixed & Allocation Overheads (from product_version_overheads)
             if (versionOverheads.length > 0) {
                 versionOverheads.forEach((ov, idx) => {
                     const ovTypeId = Number(ov.overhead_type_id || 0);
                     const ovName = overheadTypesMap.get(ovTypeId) || String(ov.remarks || `Plant Overhead #${idx + 1}`);
                     const unitOverheadCost = Number(ov.cost ?? ov.cost_per_unit ?? 0);
-                    const isBatch = ov.allocation_basis === "batch";
+                    const rawBasis = String(ov.allocation_basis || "").toLowerCase();
+                    const isBatch = rawBasis === "per_batch" || rawBasis === "batch" || rawBasis.includes("batch");
+                    const isMachineHour = rawBasis.includes("machine");
+                    const isLaborPct = rawBasis.includes("labor");
+
+                    let basisCode = "Basis: Per Unit";
+                    if (isBatch) {
+                        basisCode = "Basis: Per Batch";
+                    } else if (isMachineHour) {
+                        basisCode = "Basis: Per Machine Hour";
+                    } else if (isLaborPct) {
+                        basisCode = "Basis: % of Labor";
+                    }
+
                     const lineCost = isBatch ? round4(unitOverheadCost) : round4(unitOverheadCost * targetQuantity);
 
                     totalOverheadCost = round4(totalOverheadCost + lineCost);
@@ -781,13 +849,13 @@ export async function GET(req: NextRequest) {
                         parentId: null,
                         productId: 0,
                         productName: `Mfg Overhead - ${ovName}`,
-                        description: `Basis: ${isBatch ? "Per Batch" : "Per Unit"} • ${ov.remarks || "Fixed Indirect Expense"}`,
-                        productCode: `OVH-TYPE-${ovTypeId || idx + 1}`,
+                        description: `${basisCode} • ${ov.remarks || "Fixed Indirect Expense"}`,
+                        productCode: basisCode,
                         productType: null,
                         materialClassification: "overhead",
                         inventoryRule: "-",
                         routeSequence: 90 + idx,
-                        operationName: "Unknown",
+                        operationName: ovName || "Plant Overhead",
                         baseRequiredQty: isBatch ? 1 : baseQuantity,
                         scaledRequiredQty: isBatch ? 1 : targetQuantity,
                         wastagePercent: 0,
@@ -802,7 +870,7 @@ export async function GET(req: NextRequest) {
                         children: []
                     });
                 });
-            } else if (Number(targetVersion.custom_overhead || 0) > 0) {
+            } else if (overheadNodes.length === 0 && Number(targetVersion.custom_overhead || 0) > 0) {
                 const unitOverhead = Number(targetVersion.custom_overhead);
                 const lineCost = round4(unitOverhead * batchScalingFactor);
                 totalOverheadCost = lineCost;
@@ -814,12 +882,12 @@ export async function GET(req: NextRequest) {
                     productId: 0,
                     productName: "Manufacturing & Machine Overhead",
                     description: "Allocated plant equipment and indirect operating expenses",
-                    productCode: "MFG-OVERHEAD",
+                    productCode: "Basis: Per Unit",
                     productType: null,
                     materialClassification: "overhead",
                     inventoryRule: "-",
                     routeSequence: 99,
-                    operationName: "Unknown",
+                    operationName: "Plant Overhead",
                     baseRequiredQty: 1,
                     scaledRequiredQty: batchScalingFactor,
                     wastagePercent: 0,
@@ -833,7 +901,7 @@ export async function GET(req: NextRequest) {
                     isSubAssembly: false,
                     children: []
                 });
-            } else {
+            } else if (overheadNodes.length === 0) {
                 // If 0, still provide standard machine overhead node so Overhead category is visible
                 const defaultUnitCost = 0.0000;
                 overheadNodes.push({
@@ -843,12 +911,12 @@ export async function GET(req: NextRequest) {
                     productId: 0,
                     productName: "Manufacturing & Machine Overhead",
                     description: "Indirect production plant & equipment allocation",
-                    productCode: "MFG-OVERHEAD",
+                    productCode: "Basis: Per Unit",
                     productType: null,
                     materialClassification: "overhead",
                     inventoryRule: "-",
                     routeSequence: 99,
-                    operationName: "Unknown",
+                    operationName: "Plant Overhead",
                     baseRequiredQty: 1,
                     scaledRequiredQty: batchScalingFactor,
                     wastagePercent: 0,
@@ -882,16 +950,20 @@ export async function GET(req: NextRequest) {
 
             const flatNodes = flattenTree(tree);
 
-            // Compute leaf items vs sub-assemblies (reconciled exactly from displayed rows)
-            const leafNodes = flatNodes.filter(n => !n.children || n.children.length === 0);
+            // Direct materials are non-sub-assembly raw materials and packaging (including parent nodes with synthetic grouping)
+            const materialNodes = flatNodes.filter(n =>
+                (n.materialClassification === "raw_material" || n.materialClassification === "packaging") &&
+                !n.isSubAssembly
+            );
+
             const rawMaterialsCost = round4(
-                leafNodes
+                materialNodes
                     .filter(n => n.materialClassification === "raw_material")
                     .reduce((sum, n) => sum + n.totalLineCost, 0)
             );
 
             const packagingCost = round4(
-                leafNodes
+                materialNodes
                     .filter(n => n.materialClassification === "packaging")
                     .reduce((sum, n) => sum + n.totalLineCost, 0)
             );
@@ -900,8 +972,8 @@ export async function GET(req: NextRequest) {
             const mfgOverheadCost = totalOverheadCost;
 
             const totalMaterialCost = round4(rawMaterialsCost + packagingCost);
-            const totalNetMaterialCost = round4(leafNodes.filter(n => n.materialClassification === "raw_material" || n.materialClassification === "packaging").reduce((sum, n) => sum + n.netLineCost, 0));
-            const totalWastageCost = round4(leafNodes.reduce((sum, n) => sum + n.wastageCost, 0));
+            const totalNetMaterialCost = round4(materialNodes.reduce((sum, n) => sum + n.netLineCost, 0));
+            const totalWastageCost = round4(materialNodes.reduce((sum, n) => sum + n.wastageCost, 0));
 
             const totalBatchCost = round4(totalMaterialCost + directLaborCost + mfgOverheadCost);
             const costPerUnit = targetQuantity > 0 ? round4(totalBatchCost / targetQuantity) : 0;

@@ -73,9 +73,10 @@ export default function BOMCostingFilters({
 
     // Format raw input string based on whether UOM is discrete (e.g. PCS) or continuous
     const formatInitialQty = (qty: number, uom?: string): string => {
-        if (!qty || qty <= 0) return "1.0000";
-        if (uom && isDiscreteUom(uom) && Number.isInteger(qty)) {
-            return String(qty);
+        if (!qty || qty <= 0) return "1";
+        if (uom && isDiscreteUom(uom)) {
+            const rounded = Math.round((qty + Number.EPSILON) * 100) / 100;
+            return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
         }
         return Number(qty).toFixed(4);
     };
@@ -113,15 +114,16 @@ export default function BOMCostingFilters({
 
     const handleQtyBlur = () => {
         const num = parseFloat(rawQtyInput);
+        const uom = selectedVersion?.uom_name;
         if (isNaN(num) || num <= 0) {
             const fallback = selectedVersion?.base_quantity || 1;
-            const formattedFallback = Number(fallback).toFixed(4);
+            const formattedFallback = formatInitialQty(fallback, uom);
             setRawQtyInput(formattedFallback);
-            onChangeTargetQuantity(Number(formattedFallback));
+            onChangeTargetQuantity(parseFloat(formattedFallback));
         } else {
-            const formatted = num.toFixed(4);
+            const formatted = formatInitialQty(num, uom);
             setRawQtyInput(formatted);
-            onChangeTargetQuantity(Number(formatted));
+            onChangeTargetQuantity(parseFloat(formatted));
         }
     };
 
