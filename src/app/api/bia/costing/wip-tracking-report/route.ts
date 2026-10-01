@@ -206,6 +206,8 @@ interface DirectusYieldLedger {
     logged_by?: number | string | null;
     remarks?: string | null;
     shift_name?: string | null;
+    rejected_quantity?: number | string;
+    source_event_key?: string | null;
 }
 
 interface DirectusBranch {
