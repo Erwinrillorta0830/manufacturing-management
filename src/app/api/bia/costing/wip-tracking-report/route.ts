@@ -52,6 +52,8 @@ interface DirectusJobOrder {
     rejected_quantity?: number | string;
     created_at?: string | null;
     lot_number?: string | null;
+    batch_no?: string | null;
+    batch_number?: string | null;
 }
 
 interface DirectusRoute {
@@ -71,6 +73,9 @@ interface DirectusRoute {
     sequence_order?: number | string;
     completed_at?: string | null;
     requires_qa?: boolean | number;
+    started_at?: string | null;
+    start_time?: string | null;
+    actual_start?: string | null;
 }
 
 interface DirectusWorkCenter {
@@ -174,10 +179,33 @@ interface DirectusProduct {
     unit_of_measurement?: number | string;
     standard_cost?: number | string;
     cost_per_unit?: number | string;
-    category?: string;
+    category?: string | number;
+    category_id?: string | number;
     product_category?: string;
     item_group?: string;
     category_name?: string;
+}
+
+interface DirectusCategory {
+    category_id?: number | string;
+    id?: number | string;
+    category_name?: string;
+}
+
+interface DirectusYieldLedger {
+    ledger_id?: number | string;
+    job_order_id?: number | string;
+    yield_quantity?: number | string;
+    scrap_quantity?: number | string;
+    qa_status?: string | null;
+    lot_number?: string | null;
+    batch_number?: string | null;
+    mm_lot_id?: number | string | null;
+    logged_at?: string | null;
+    production_date?: string | null;
+    logged_by?: number | string | null;
+    remarks?: string | null;
+    shift_name?: string | null;
 }
 
 interface DirectusBranch {
@@ -357,10 +385,10 @@ export async function GET(req: NextRequest) {
         const itemsUserData: DirectusResponse<DirectusUser> = itemsUserRes.ok ? await itemsUserRes.json() : { data: [] };
         const systemUsersData: DirectusResponse<DirectusUser> = systemUsersRes.ok ? await systemUsersRes.json() : { data: [] };
         const lotsData: DirectusResponse<DirectusLot> = lotsRes.ok ? await lotsRes.json() : { data: [] };
-        const categoriesData = categoriesRes && (categoriesRes as any).ok ? await (categoriesRes as any).json().catch(() => ({ data: [] })) : { data: [] };
-        const yieldLedgerData = yieldLedgerRes && (yieldLedgerRes as any).ok ? await (yieldLedgerRes as any).json().catch(() => ({ data: [] })) : { data: [] };
-        const statusHistoryData = statusHistoryRes && (statusHistoryRes as any).ok ? await (statusHistoryRes as any).json().catch(() => ({ data: [] })) : { data: [] };
-        const qaLogsData = qaLogsRes && (qaLogsRes as any).ok ? await (qaLogsRes as any).json().catch(() => ({ data: [] })) : { data: [] };
+        const categoriesData: DirectusResponse<DirectusCategory> = categoriesRes && categoriesRes.ok ? await categoriesRes.json().catch(() => ({ data: [] })) : { data: [] };
+        const yieldLedgerData: DirectusResponse<DirectusYieldLedger> = yieldLedgerRes && yieldLedgerRes.ok ? await yieldLedgerRes.json().catch(() => ({ data: [] })) : { data: [] };
+        const statusHistoryData: DirectusResponse<DirectusStatusHistory> = statusHistoryRes && statusHistoryRes.ok ? await statusHistoryRes.json().catch(() => ({ data: [] })) : { data: [] };
+        const qaLogsData: DirectusResponse<DirectusQaInspectionLog> = qaLogsRes && qaLogsRes.ok ? await qaLogsRes.json().catch(() => ({ data: [] })) : { data: [] };
 
         const allJobOrders = joData.data || [];
         const allRoutes = routesData.data || [];
@@ -398,15 +426,15 @@ export async function GET(req: NextRequest) {
 
         // Build Master Lookups
         const categoryMap = new Map<number, string>();
-        (categoriesData.data || []).forEach((c: any) => {
+        (categoriesData.data || []).forEach((c: DirectusCategory) => {
             const cId = Number(c.category_id || c.id);
             if (cId && c.category_name) {
                 categoryMap.set(cId, String(c.category_name).trim());
             }
         });
 
-        const yieldLedgerByJobId = new Map<number, any[]>();
-        (yieldLedgerData.data || []).forEach((yl: any) => {
+        const yieldLedgerByJobId = new Map<number, DirectusYieldLedger[]>();
+        (yieldLedgerData.data || []).forEach((yl: DirectusYieldLedger) => {
             const jId = Number(yl.job_order_id);
             if (!jId) return;
             const list = yieldLedgerByJobId.get(jId) || [];
@@ -505,7 +533,7 @@ export async function GET(req: NextRequest) {
                 (r.task_id ? operatorsByRouteId.get(Number(r.task_id)) : []) ||
                 [];
 
-            let stageStartedAt: string | null = (r as any).started_at || (r as any).start_time || (r as any).actual_start || null;
+            let stageStartedAt: string | null = r.started_at || r.start_time || r.actual_start || null;
             if (!stageStartedAt && assignedOps.length > 0) {
                 const opStarts = assignedOps
                     .map((op) => op.started_at)
@@ -628,11 +656,11 @@ export async function GET(req: NextRequest) {
             const jobYields = yieldLedgerByJobId.get(joId) || [];
             const verifiedYieldQty = roundQty(
                 jobYields
-                    .filter((y: any) => String(y.qa_status || "").toLowerCase() !== "rejected")
-                    .reduce((sum: number, y: any) => sum + Number(y.yield_quantity || 0), 0)
+                    .filter((y) => String(y.qa_status || "").toLowerCase() !== "rejected")
+                    .reduce((sum, y) => sum + Number(y.yield_quantity || 0), 0)
             );
             const ledgerScrapQty = roundQty(
-                jobYields.reduce((sum: number, y: any) => sum + Number(y.scrap_quantity || 0), 0)
+                jobYields.reduce((sum, y) => sum + Number(y.scrap_quantity || 0), 0)
             );
 
             // If yield ledger exists, its verified yield quantity is authoritative over any doubled/corrupted actual_quantity_produced
@@ -947,7 +975,7 @@ export async function GET(req: NextRequest) {
 
             // Lot number & Batch number Resolution
             // Authoritative finished-goods lot is from the yield ledger (e.g. JO-BUF-382472-produced)
-            const yieldWithLot = jobYields.find((y: any) => y.lot_number || y.mm_lot_id);
+            const yieldWithLot = jobYields.find((y) => y.lot_number || y.mm_lot_id);
             const yieldLotName = yieldWithLot?.mm_lot_id ? lotMap.get(Number(yieldWithLot.mm_lot_id)) : null;
 
             // Strictly do NOT fall back to raw material input lots!
@@ -961,19 +989,19 @@ export async function GET(req: NextRequest) {
                 (jo.lot_number && !isRawMaterialLot(jo.lot_number) ? jo.lot_number : null) || 
                 null;
 
-            const fgBatchNumber = (jo as any).batch_no ||
-                (jo as any).batch_number ||
+            const fgBatchNumber = jo.batch_no ||
+                jo.batch_number ||
                 (yieldWithLot?.batch_number ? String(yieldWithLot.batch_number) : null) ||
                 null;
 
             // Category Resolution from categories table
-            const rawCat = (prod as any)?.category || (prod as any)?.product_category || (prod as any)?.category_id;
+            const rawCat = prod?.category || prod?.product_category || prod?.category_id;
             const numCat = Number(rawCat);
             const resolvedCategory = (!Number.isNaN(numCat) && categoryMap.has(numCat))
                 ? categoryMap.get(numCat)
                 : (typeof rawCat === "string" && rawCat.trim() !== "" ? rawCat : null);
 
-            const prodCat = resolvedCategory || (prod as any)?.item_group || (prod as any)?.category_name || "Continuous Process";
+            const prodCat = resolvedCategory || prod?.item_group || prod?.category_name || "Continuous Process";
 
             // Real Audited WIP Event Transactions from Authoritative DB Tables
             const transactions: WipTransaction[] = [];
@@ -1053,7 +1081,7 @@ export async function GET(req: NextRequest) {
             });
 
             // 3. Authoritative Yield Output Streams (manufacturing_job_order_yield_ledger)
-            jobYields.forEach((yl: any) => {
+            jobYields.forEach((yl) => {
                 const yTime = yl.logged_at || yl.production_date;
                 if (!yTime) return;
                 const userMeta = yl.logged_by ? (userMap.get(Number(yl.logged_by)) || userMap.get(String(yl.logged_by))) : null;
