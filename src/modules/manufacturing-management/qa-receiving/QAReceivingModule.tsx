@@ -81,7 +81,6 @@ export default function QAReceivingModule({
         supplierDocumentTypeError,
         supplierDocumentTypeId,
         handleSupplierDocumentTypeChange,
-        quantityStatus,
         processOverDelivery,
         setProcessOverDelivery,
         overDeliveryLines,
@@ -208,7 +207,6 @@ export default function QAReceivingModule({
                 supplierDocumentTypeError={supplierDocumentTypeError}
                 supplierDocumentTypeId={supplierDocumentTypeId}
                 onSupplierDocumentTypeChange={handleSupplierDocumentTypeChange}
-                quantityStatus={quantityStatus}
                 processOverDelivery={processOverDelivery}
                 setProcessOverDelivery={setProcessOverDelivery}
                 overDeliveryLines={overDeliveryLines}
@@ -425,7 +423,6 @@ export default function QAReceivingModule({
                     supplierDocumentTypeError={supplierDocumentTypeError}
                     supplierDocumentTypeId={supplierDocumentTypeId}
                     onSupplierDocumentTypeChange={handleSupplierDocumentTypeChange}
-                    quantityStatus={quantityStatus}
                     processOverDelivery={processOverDelivery}
                     setProcessOverDelivery={setProcessOverDelivery}
                     overDeliveryLines={overDeliveryLines}

@@ -80,7 +80,6 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
         quantities,
         receiptNumber,
         receiptDate,
-        receiptType,
         search,
         supplierId,
         dateFrom,
@@ -105,7 +104,6 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
         updateQuantity,
         setReceiptNumber,
         setReceiptDate,
-        setReceiptType,
         start,
         saveDraft,
         submitToQa,
@@ -136,7 +134,6 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
     const totalEntered = selectedLines.reduce((sum, line) => sum + Math.max(0, Number(quantities[line.lineId] || 0)), 0);
     const overReceivingLines = selectedLines.filter(line => isReceiptQuantityOverRemaining(Math.max(0, Number(quantities[line.lineId] || 0)), line.allowableQuantity));
     const overReceivingQuantity = overReceivingLines.reduce((sum, line) => sum + Math.max(0, Number(quantities[line.lineId] || 0) - line.allowableQuantity), 0);
-    const hasPartialReceiptValidationErrors = isStarted && receiptType === "partial" && overReceivingLines.length > 0;
     const totalOrdered = selectedLines.reduce((sum, line) => sum + Math.max(0, line.orderedQuantity), 0);
     const totalReceivedToDate = selectedLines.reduce((sum, line) => sum + Math.max(0, line.previouslyReceivedQuantity), 0);
     const totalRemaining = selectedLines.reduce((sum, line) => sum + Math.max(0, line.remainingQuantity), 0);
@@ -263,30 +260,6 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
                                     </tbody>
                                 </table>
                             </div>
-                            <div className="hidden">
-                                {orders.map(order => (
-                                    <button
-                                        key={order.id}
-                                        type="button"
-                                        onClick={() => void handleOpenOrder(order)}
-                                        className="flex w-full flex-col gap-3 p-5 text-left transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none sm:flex-row sm:items-center sm:justify-between"
-                                    >
-                                        <div className="min-w-0">
-                                            <div className="flex flex-wrap items-center gap-2">
-                                                <span className="font-semibold">{order.poNumber}</span>
-                                                <Badge variant="outline" className={statusClass(order.status)}>{statusLabel(order.status)}</Badge>
-                                            </div>
-                                            {order.referenceNumber && <p className="mt-0.5 text-xs text-muted-foreground">Ref: {order.referenceNumber}</p>}
-                                            <p className="mt-1 truncate text-sm text-muted-foreground">{order.supplierName} · {order.branch.name} {order.branch.code ? `(${order.branch.code})` : ""}</p>
-                                        </div>
-                                        <div className="flex shrink-0 items-center gap-6 text-sm">
-                                            <div><p className="text-xs text-muted-foreground">Lines</p><p className="font-medium">{order.lines.length}</p></div>
-                                            <div className="text-right"><p className="text-xs text-muted-foreground">PHP total</p><p className="font-medium">{formatAmount(order.totalPhpAmount, "PHP")}</p>{foreignTotal(order) && <p className="text-xs text-muted-foreground">{order.currencyCode} {foreignTotal(order)}</p>}</div>
-                                            <span className="text-sm font-semibold text-primary">Open <span aria-hidden="true">→</span></span>
-                                        </div>
-                                    </button>
-                                ))}
-                            </div>
                             </div>
                         )}
                         <div className="flex flex-col gap-3 border-t p-4 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
@@ -306,143 +279,226 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
             ) : !selectedOrder ? (
                 <Card><CardContent className="flex min-h-72 items-center justify-center text-sm text-muted-foreground">Purchase order not found.</CardContent></Card>
             ) : (
-                <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-                    <Card className="min-w-0">
-                        <CardHeader className="border-b">
-                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                <div>
-                                    <div className="flex flex-wrap items-center gap-2"><CardTitle>{selectedOrder.poNumber}</CardTitle><Badge variant="outline" className={statusClass(selectedOrder.status)}>{statusLabel(selectedOrder.status)}</Badge></div>
-                                    {selectedOrder.referenceNumber && <p className="mt-1 text-xs text-muted-foreground">Ref: {selectedOrder.referenceNumber}</p>}
-                                    <p className="mt-1 text-sm text-muted-foreground">{selectedOrder.supplierName} · Receiving branch: {selectedOrder.branch.name} {selectedOrder.branch.code ? `(${selectedOrder.branch.code})` : ""}</p>
+                <Card className="min-w-0">
+                    <CardHeader className="border-b">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="space-y-1.5">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <CardTitle>{selectedOrder.poNumber}</CardTitle>
+                                    <Badge variant="outline" className={statusClass(selectedOrder.status)}>{statusLabel(selectedOrder.status)}</Badge>
                                 </div>
-                                <div className="text-left sm:text-right"><p className="text-xs text-muted-foreground">PHP total</p><p className="font-semibold">{formatAmount(selectedOrder.totalPhpAmount, "PHP")}</p>{foreignTotal(selectedOrder) && <p className="text-xs text-muted-foreground">{selectedOrder.currencyCode} {foreignTotal(selectedOrder)}</p>}</div>
+                                {selectedOrder.referenceNumber && <p className="text-xs text-muted-foreground">Ref: {selectedOrder.referenceNumber}</p>}
+                                <p className="text-sm text-muted-foreground">{selectedOrder.supplierName} · Receiving branch: {selectedOrder.branch.name} {selectedOrder.branch.code ? `(${selectedOrder.branch.code})` : ""}</p>
+                                <div className="pt-2 flex flex-wrap items-center gap-2 text-xs">
+                                    <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50/80 px-2.5 py-1 text-emerald-800 font-medium">
+                                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> 1. Approved
+                                    </span>
+                                    <span className="text-muted-foreground">→</span>
+                                    <span className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 font-medium ${isStarted ? "border border-primary/30 bg-primary/10 text-primary font-semibold" : "border bg-muted/40 text-muted-foreground"}`}>
+                                        2. Warehouse Receiving
+                                    </span>
+                                    <span className="text-muted-foreground">→</span>
+                                    <span className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 font-medium ${isPendingQa ? "border border-amber-300 bg-amber-50 text-amber-800 font-semibold" : "border bg-muted/40 text-muted-foreground"}`}>
+                                        3. QA Receiving
+                                    </span>
+                                </div>
                             </div>
-                        </CardHeader>
-                        <CardContent className="space-y-6 p-5">
-                            {isReceived ? (
-                                <Alert className="border-emerald-300 bg-emerald-50 text-emerald-950">
-                                    <CheckCircle2 className="h-4 w-4 text-emerald-700" />
-                                    <AlertTitle>Purchase order fully received</AlertTitle>
-                                    <AlertDescription>
-                                        This purchase order is complete and is shown for receipt history and reference. No additional warehouse receipt can be started.
-                                    </AlertDescription>
-                                </Alert>
-                            ) : isPendingQa ? (
-                                <Alert className="border-amber-300 bg-amber-50 text-amber-950">
-                                    <ClipboardCheck className="h-4 w-4 text-amber-700" />
-                                    <AlertTitle>Partial receipt is awaiting QA</AlertTitle>
-                                    <AlertDescription>
-                                        This warehouse receipt has been submitted to QA Receiving. It is visible here for tracking but cannot be edited or followed by another warehouse receipt until QA posts it.
-                                    </AlertDescription>
-                                </Alert>
-                            ) : (
-                                <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-4 text-sm text-blue-900">
-                                    <div className="flex items-start gap-3"><ClipboardCheck className="mt-0.5 h-5 w-5 shrink-0" /><div><p className="font-semibold">Warehouse quantity confirmation</p><p className="mt-1">Enter the physical quantities received. Lot, batch, expiration, and QA disposition are completed in the next QA Receiving step.</p></div></div>
-                                </div>
-                            )}
+                            <div className="text-left sm:text-right"><p className="text-xs text-muted-foreground">PHP total</p><p className="text-lg font-bold">{formatAmount(selectedOrder.totalPhpAmount, "PHP")}</p>{foreignTotal(selectedOrder) && <p className="text-xs text-muted-foreground">{selectedOrder.currencyCode} {foreignTotal(selectedOrder)}</p>}</div>
+                        </div>
+                    </CardHeader>
+                    <CardContent className="space-y-6 p-6">
+                        {isReceived ? (
+                            <Alert className="border-emerald-300 bg-emerald-50 text-emerald-950">
+                                <CheckCircle2 className="h-4 w-4 text-emerald-700" />
+                                <AlertTitle>Purchase order fully received</AlertTitle>
+                                <AlertDescription>
+                                    This purchase order is complete and is shown for receipt history and reference. No additional warehouse receipt can be started.
+                                </AlertDescription>
+                            </Alert>
+                        ) : isPendingQa ? (
+                            <Alert className="border-amber-300 bg-amber-50 text-amber-950">
+                                <ClipboardCheck className="h-4 w-4 text-amber-700" />
+                                <AlertTitle>Partial receipt is awaiting QA</AlertTitle>
+                                <AlertDescription>
+                                    This warehouse receipt has been submitted to QA Receiving. It is visible here for tracking but cannot be edited or followed by another warehouse receipt until QA posts it.
+                                </AlertDescription>
+                            </Alert>
+                        ) : (
+                            <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-4 text-sm text-blue-900">
+                                <div className="flex items-start gap-3"><ClipboardCheck className="mt-0.5 h-5 w-5 shrink-0 text-blue-700" /><div><p className="font-semibold text-blue-950">Physical quantity confirmation</p><p className="mt-0.5 text-xs text-blue-800">Enter the physical quantities received at the warehouse. Lot allocation, expiration dates, and QA disposition are completed in QA Receiving.</p></div></div>
+                            </div>
+                        )}
 
-                            <div data-testid="warehouse-receiving-progress" className="rounded-lg border border-primary/20 bg-primary/5 p-4">
-                                <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-                                    <div>
-                                        <h2 className="font-semibold text-primary">PO receiving progress</h2>
-                                        <p className="text-sm text-muted-foreground">Posted receipts are included in Received to date. The active receipt is shown separately until QA posts it.</p>
-                                    </div>
-                                    {selectedOrder.receiptHistory.length > 0 && (
-                                        <span className="text-xs font-semibold text-muted-foreground">
-                                            {selectedOrder.receiptHistory.length} receipt{selectedOrder.receiptHistory.length === 1 ? "" : "s"} recorded
-                                        </span>
-                                    )}
+                        <div data-testid="warehouse-receiving-progress" className="rounded-lg border border-primary/20 bg-primary/5 p-4">
+                            <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                                <div>
+                                    <h2 className="font-semibold text-primary">PO receiving progress</h2>
+                                    <p className="text-xs text-muted-foreground">Posted receipts are included in Received to date. Active receipts are shown separately until QA posts them.</p>
                                 </div>
-                                <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-                                    <div className="rounded-md border bg-background/80 px-3 py-2"><p className="text-xs text-muted-foreground">Ordered</p><p className="text-lg font-semibold">{formatQuantity(totalOrdered)}</p></div>
-                                    <div className="rounded-md border bg-background/80 px-3 py-2"><p className="text-xs text-muted-foreground">Received to date</p><p className="text-lg font-semibold text-emerald-700">{formatQuantity(totalReceivedToDate)}</p></div>
-                                    <div className="rounded-md border bg-background/80 px-3 py-2"><p className="text-xs text-muted-foreground">Remaining</p><p className="text-lg font-semibold text-amber-700">{formatQuantity(totalRemaining)}</p></div>
-                                </div>
-                                {(isStarted || isPendingQa) && (
-                                    <p className="mt-3 text-sm font-semibold text-primary">Current receipt quantity: {formatQuantity(totalEntered)}{isPendingQa ? " · Awaiting QA" : " · Draft"}</p>
+                                {selectedOrder.receiptHistory.length > 0 && (
+                                    <span className="text-xs font-semibold text-muted-foreground">
+                                        {selectedOrder.receiptHistory.length} receipt{selectedOrder.receiptHistory.length === 1 ? "" : "s"} recorded
+                                    </span>
                                 )}
                             </div>
-
-                            <div className="grid gap-4 md:grid-cols-3">
-                                <div className="space-y-2"><Label htmlFor="receipt-number">Receipt Number</Label><Input id="receipt-number" value={receiptNumber} onChange={event => setReceiptNumber(event.target.value)} disabled={!isStarted || actionBusy} placeholder="Enter receipt number" /></div>
-                                <div className="space-y-2"><Label htmlFor="receipt-date">Date of Receipt</Label><Input id="receipt-date" type="date" value={receiptDate} onChange={event => setReceiptDate(event.target.value)} disabled={!isStarted || actionBusy} /></div>
-                                <div className="space-y-2"><Label htmlFor="receipt-type">Quantity Status</Label><select id="receipt-type" value={receiptType} onChange={event => setReceiptType(event.target.value as "full" | "partial")} disabled={!isStarted || actionBusy} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"><option value="full">Full receipt</option><option value="partial">Partial receipt</option></select></div>
+                            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                                <div className="rounded-md border bg-background/90 px-3 py-2"><p className="text-xs text-muted-foreground">Ordered</p><p className="text-base font-semibold">{formatQuantity(totalOrdered)}</p></div>
+                                <div className="rounded-md border bg-background/90 px-3 py-2"><p className="text-xs text-muted-foreground">Received to date</p><p className="text-base font-semibold text-emerald-700">{formatQuantity(totalReceivedToDate)}</p></div>
+                                <div className="rounded-md border bg-background/90 px-3 py-2"><p className="text-xs text-muted-foreground">Remaining</p><p className="text-base font-semibold text-amber-700">{formatQuantity(totalRemaining)}</p></div>
                             </div>
+                            {(isStarted || isPendingQa) && (
+                                <p className="mt-3 text-xs font-semibold text-primary">Current receipt quantity: {formatQuantity(totalEntered)}{isPendingQa ? " · Awaiting QA" : " · Draft"}</p>
+                            )}
+                        </div>
 
-                            <Separator />
-                            <div className="flex items-end justify-between gap-3"><div><h2 className="font-semibold">Purchase-order lines</h2><p className="text-sm text-muted-foreground">{receiptType === "partial" ? "Partial receipt quantities cannot exceed each line’s remaining balance." : "Quantities are compared with the unreceived balance. Full-receipt overages are allowed and flagged for review."}</p></div><div className="text-right text-sm"><p className="text-muted-foreground">Entered quantity</p><p className="font-semibold">{totalEntered.toLocaleString()} units</p></div></div>
+                        <div className="grid gap-4 sm:grid-cols-2">
+                            <div className="space-y-1.5"><Label htmlFor="receipt-number" className="text-xs font-medium">Receipt Number</Label><Input id="receipt-number" value={receiptNumber} onChange={event => setReceiptNumber(event.target.value)} disabled={!isStarted || actionBusy} placeholder="Enter receipt number" /></div>
+                            <div className="space-y-1.5"><Label htmlFor="receipt-date" className="text-xs font-medium">Date of Receipt</Label><Input id="receipt-date" type="date" value={receiptDate} onChange={event => setReceiptDate(event.target.value)} disabled={!isStarted || actionBusy} /></div>
+                        </div>
+
+                        <Separator />
+                        <div className="space-y-3">
+                            <div className="flex items-end justify-between gap-3">
+                                <div>
+                                    <h2 className="font-semibold text-sm">Purchase-order lines</h2>
+                                    <p className="text-xs text-muted-foreground">Confirm received quantities per item. Overages are flagged for review.</p>
+                                </div>
+                                <div className="text-right text-xs"><p className="text-muted-foreground">Entered quantity</p><p className="font-semibold">{totalEntered.toLocaleString()} units</p></div>
+                            </div>
                             {overReceivingLines.length > 0 && (
-                                <Alert className={hasPartialReceiptValidationErrors ? "border-destructive/40 bg-destructive/5 text-destructive" : "border-amber-300 bg-amber-50 text-amber-950"}>
-                                    <AlertTriangle className={`h-4 w-4 ${hasPartialReceiptValidationErrors ? "text-destructive" : "text-amber-600"}`} />
-                                    <AlertTitle>{hasPartialReceiptValidationErrors ? "Partial receipt quantity exceeds remaining" : "Over-receiving notice"}</AlertTitle>
-                                    <AlertDescription>{hasPartialReceiptValidationErrors ? `Reduce quantities by ${formatQuantity(overReceivingQuantity)} units before sending this receipt to QA. You can still save the draft.` : `${formatQuantity(overReceivingQuantity)} units above the unreceived balance will be recorded and flagged for review. You can still submit this receipt.`}</AlertDescription>
+                                <Alert className="border-amber-300 bg-amber-50 text-amber-950">
+                                    <AlertTriangle className="h-4 w-4 text-amber-600" />
+                                    <AlertTitle>Over-receiving notice</AlertTitle>
+                                    <AlertDescription>{formatQuantity(overReceivingQuantity)} units above the unreceived balance will be recorded and flagged for QA review.</AlertDescription>
                                 </Alert>
                             )}
-                            <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[760px] text-sm"><thead className="bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-4 py-3">Product</th><th className="px-4 py-3 text-right">Ordered</th><th className="px-4 py-3 text-right">Previously received</th><th className="px-4 py-3 text-right">Remaining</th><th className="w-44 px-4 py-3">Receiving quantity</th></tr></thead><tbody className="divide-y">{selectedLines.map(line => { const entered = Math.max(0, Number(quantities[line.lineId] || 0)); const overage = Math.max(0, entered - line.allowableQuantity); const partialOverage = isStarted && receiptType === "partial" && isReceiptQuantityOverRemaining(entered, line.allowableQuantity); return <tr key={line.lineId}><td className="px-4 py-3"><p className="font-medium">{line.productName}</p><p className="text-xs text-muted-foreground">{line.productCode || `Line ${line.lineId}`}</p></td><td className="px-4 py-3 text-right">{line.orderedQuantity.toLocaleString()}</td><td className="px-4 py-3 text-right">{line.previouslyReceivedQuantity.toLocaleString()}</td><td className="px-4 py-3 text-right font-medium">{line.allowableQuantity.toLocaleString()}</td><td className="px-4 py-3"><div className="space-y-2"><Input type="number" min="0" step="any" value={quantities[line.lineId] ?? ""} onChange={event => updateQuantity(line.lineId, event.target.value)} disabled={!isStarted || actionBusy} aria-label={`Receiving quantity for ${line.productName}`} aria-invalid={partialOverage} className={partialOverage ? "border-destructive focus-visible:ring-destructive" : overage > 1e-9 ? "border-amber-400 focus-visible:ring-amber-400" : undefined} />{partialOverage ? <p role="alert" className="flex items-start gap-1 text-xs font-medium leading-4 text-destructive"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />Cannot exceed the remaining quantity of {formatQuantity(line.allowableQuantity)} units.</p> : overage > 1e-9 && <p role="status" className="flex items-start gap-1 text-xs font-medium leading-4 text-amber-700"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />Exceeds ordered quantity by +{formatQuantity(overage)} units</p>}</div></td></tr>; })}</tbody></table></div>
+                            <div className="overflow-x-auto rounded-lg border">
+                                <table className="w-full min-w-[720px] text-sm">
+                                    <thead className="bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                                        <tr>
+                                            <th className="px-4 py-3">Product</th>
+                                            <th className="px-4 py-3 text-right">Ordered</th>
+                                            <th className="px-4 py-3 text-right">Previously received</th>
+                                            <th className="px-4 py-3 text-right">Remaining</th>
+                                            <th className="w-48 px-4 py-3">Receiving quantity</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y">
+                                        {selectedLines.map(line => {
+                                            const entered = Math.max(0, Number(quantities[line.lineId] || 0));
+                                            const overage = Math.max(0, entered - line.allowableQuantity);
+                                            return (
+                                                <tr key={line.lineId}>
+                                                    <td className="px-4 py-3">
+                                                        <p className="font-medium">{line.productName}</p>
+                                                        <p className="text-xs text-muted-foreground">{line.productCode || `Line ${line.lineId}`}</p>
+                                                    </td>
+                                                    <td className="px-4 py-3 text-right text-muted-foreground">{line.orderedQuantity.toLocaleString()}</td>
+                                                    <td className="px-4 py-3 text-right text-muted-foreground">{line.previouslyReceivedQuantity.toLocaleString()}</td>
+                                                    <td className="px-4 py-3 text-right font-medium">{line.allowableQuantity.toLocaleString()}</td>
+                                                    <td className="px-4 py-3">
+                                                        <div className="space-y-1.5">
+                                                            <Input
+                                                                type="number"
+                                                                min="0"
+                                                                step="any"
+                                                                value={quantities[line.lineId] ?? ""}
+                                                                onChange={event => updateQuantity(line.lineId, event.target.value)}
+                                                                disabled={!isStarted || actionBusy}
+                                                                aria-label={`Receiving quantity for ${line.productName}`}
+                                                                className={overage > 1e-9 ? "border-amber-400 focus-visible:ring-amber-400" : undefined}
+                                                            />
+                                                            {overage > 1e-9 && (
+                                                                <p role="status" className="flex items-start gap-1 text-[11px] font-medium leading-4 text-amber-700">
+                                                                    <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                                                                    +{formatQuantity(overage)} units over remaining
+                                                                </p>
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
 
-                            {selectedOrder.receiptHistory.length > 0 && (
-                                <div data-testid="warehouse-receipt-history" className="rounded-lg border bg-background">
-                                    <div className="flex flex-col gap-1 border-b bg-muted/20 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                                        <div>
-                                            <h2 className="font-semibold">Receipt history</h2>
-                                            <p className="text-sm text-muted-foreground">Each receipt shows the quantity received for this purchase order and its product lines.</p>
-                                        </div>
-                                        <span className="text-xs font-semibold text-muted-foreground">Read-only history</span>
+                        {selectedOrder.receiptHistory.length > 0 && (
+                            <div data-testid="warehouse-receipt-history" className="rounded-lg border bg-background">
+                                <div className="flex flex-col gap-1 border-b bg-muted/20 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                                    <div>
+                                        <h2 className="font-semibold text-sm">Receipt history</h2>
+                                        <p className="text-xs text-muted-foreground">Historical records of previously posted warehouse receipts for this purchase order.</p>
                                     </div>
-                                    <div className="space-y-3 p-4">
-                                        {selectedOrder.receiptHistory.map(receipt => (
-                                            <div key={`${receipt.id ?? receipt.receiptNumber}-${receipt.receiptDate ?? "undated"}`} className="rounded-md border bg-muted/10 p-3">
-                                                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                                                    <div>
-                                                        <p className="font-semibold">Receipt {receipt.receiptNumber}</p>
-                                                        <p className="text-xs text-muted-foreground">{formatDate(receipt.receiptDate)}{receipt.receiptType ? ` · ${receipt.receiptType}` : ""}</p>
-                                                    </div>
-                                                    <div className="flex items-center gap-3 sm:text-right">
-                                                        <Badge variant="outline" className={receiptHistoryStatusClass(receipt.status)}>{receipt.status}</Badge>
-                                                        <div><p className="text-xs text-muted-foreground">Amount received</p><p className="font-semibold">{formatQuantity(receipt.totalReceivedQuantity)} units</p></div>
-                                                    </div>
+                                    <span className="text-xs font-semibold text-muted-foreground">Read-only history</span>
+                                </div>
+                                <div className="space-y-3 p-4">
+                                    {selectedOrder.receiptHistory.map(receipt => (
+                                        <div key={`${receipt.id ?? receipt.receiptNumber}-${receipt.receiptDate ?? "undated"}`} className="rounded-md border bg-muted/10 p-3">
+                                            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                                <div>
+                                                    <p className="font-semibold text-sm">Receipt {receipt.receiptNumber}</p>
+                                                    <p className="text-xs text-muted-foreground">{formatDate(receipt.receiptDate)}</p>
                                                 </div>
-                                                {receipt.lines.length > 0 && (
-                                                    <div className="mt-3 overflow-x-auto rounded-md border bg-background">
-                                                        <table className="w-full min-w-[560px] text-sm">
-                                                            <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
-                                                                <tr><th className="px-3 py-2">Product</th><th className="px-3 py-2">Code</th><th className="px-3 py-2 text-right">Received</th></tr>
-                                                            </thead>
-                                                            <tbody className="divide-y">
-                                                                {receipt.lines.map(line => (
-                                                                    <tr key={`${receipt.id ?? receipt.receiptNumber}-${line.lineId}`}>
-                                                                        <td className="px-3 py-2 font-medium">{line.productName}</td>
-                                                                        <td className="px-3 py-2 text-muted-foreground">{line.productCode || `Line ${line.lineId}`}</td>
-                                                                        <td className="px-3 py-2 text-right font-semibold">{formatQuantity(line.receivedQuantity)}</td>
-                                                                    </tr>
-                                                                ))}
-                                                            </tbody>
-                                                        </table>
-                                                    </div>
-                                                )}
+                                                <div className="flex items-center gap-3 sm:text-right">
+                                                    <Badge variant="outline" className={receiptHistoryStatusClass(receipt.status)}>{receipt.status}</Badge>
+                                                    <div><p className="text-xs text-muted-foreground">Amount received</p><p className="font-semibold text-sm">{formatQuantity(receipt.totalReceivedQuantity)} units</p></div>
+                                                </div>
                                             </div>
-                                        ))}
-                                    </div>
+                                            {receipt.lines.length > 0 && (
+                                                <div className="mt-3 overflow-x-auto rounded-md border bg-background">
+                                                    <table className="w-full min-w-[500px] text-xs">
+                                                        <thead className="bg-muted/40 text-left uppercase tracking-wide text-muted-foreground">
+                                                            <tr><th className="px-3 py-2">Product</th><th className="px-3 py-2">Code</th><th className="px-3 py-2 text-right">Received</th></tr>
+                                                        </thead>
+                                                        <tbody className="divide-y">
+                                                            {receipt.lines.map(line => (
+                                                                <tr key={`${receipt.id ?? receipt.receiptNumber}-${line.lineId}`}>
+                                                                    <td className="px-3 py-2 font-medium">{line.productName}</td>
+                                                                    <td className="px-3 py-2 text-muted-foreground">{line.productCode || `Line ${line.lineId}`}</td>
+                                                                    <td className="px-3 py-2 text-right font-semibold">{formatQuantity(line.receivedQuantity)}</td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="border-t pt-4 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
+                            {isReceived ? (
+                                <span className="text-xs font-medium text-emerald-700">Warehouse receiving is complete for this PO.</span>
+                            ) : isPendingQa ? (
+                                <span className="text-xs font-medium text-amber-700">Receipt is locked while QA completes inspection.</span>
+                            ) : !isStarted ? (
+                                <Button onClick={() => void start()} disabled={actionBusy || (isContinuation && !hasRemainingQuantity)} title={isContinuation && !hasRemainingQuantity ? "No remaining quantity is available for another warehouse receipt." : undefined}>
+                                    {submitting === "start" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                    <PackageCheck className="mr-2 h-4 w-4" /> {isContinuation ? "Start Next Warehouse Receipt" : "Start Warehouse Receiving"}
+                                </Button>
+                            ) : (
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <Button variant="outline" onClick={() => void saveDraft()} disabled={actionBusy}>
+                                        {submitting === "save_draft" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Save Draft
+                                    </Button>
+                                    {selectedOrder.draft && (
+                                        <Button variant="outline" onClick={() => void printSummary()} disabled={actionBusy}>
+                                            {printing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />} Print Summary
+                                        </Button>
+                                    )}
+                                    <Button onClick={() => void submitToQa()} disabled={actionBusy}>
+                                        {submitting === "submit_to_qa" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                        <ClipboardCheck className="mr-2 h-4 w-4" /> Complete &amp; Send to QA
+                                    </Button>
                                 </div>
                             )}
-                        </CardContent>
-                    </Card>
-                    <Card className="h-fit xl:sticky xl:top-4">
-                        <CardHeader><CardTitle>Workflow action</CardTitle></CardHeader>
-                        <CardContent className="space-y-4">
-                            <div className="space-y-3 text-sm"><div className="flex items-center gap-3"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"><CheckCircle2 className="h-4 w-4" /></span><div><p className="font-medium">Approved</p><p className="text-xs text-muted-foreground">Finance approval complete</p></div></div><div className={`flex items-center gap-3 ${isStarted || isPendingQa ? "text-foreground" : "text-muted-foreground"}`}><span className={`flex h-7 w-7 items-center justify-center rounded-full ${isStarted || isPendingQa ? "bg-primary text-primary-foreground" : "bg-muted"}`}>2</span><div><p className="font-medium">Warehouse Receiving</p><p className="text-xs text-muted-foreground">Confirm physical quantities</p></div></div><div className={`flex items-center gap-3 ${isPendingQa ? "text-foreground" : "text-muted-foreground"}`}><span className={`flex h-7 w-7 items-center justify-center rounded-full ${isPendingQa ? "bg-amber-500 text-white" : "bg-muted"}`}>3</span><div><p className="font-medium">Receiving QA</p><p className="text-xs">Lot and quality inspection</p></div></div></div>
-                            <Separator />
-                            {overReceivingLines.length > 0 && (hasPartialReceiptValidationErrors ? <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs leading-5 text-destructive">Correct the partial quantities above the remaining balance before sending to QA. Draft saving remains available.</p> : <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">This full receipt contains an over-receipt. Submission is allowed, and the excess will be visible for review.</p>)}
-                            {isContinuation && !hasRemainingQuantity && <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">This purchase order has no remaining quantity available for another warehouse receipt.</p>}
-                            {isReceived ? (
-                                <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-center text-xs leading-5 text-emerald-800">Warehouse receiving is complete for this purchase order.</p>
-                            ) : isPendingQa ? (
-                                <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-center text-xs leading-5 text-amber-800">QA must post this receipt before the next warehouse receipt can be started.</p>
-                            ) : !isStarted ? <Button className="w-full" onClick={() => void start()} disabled={actionBusy || (isContinuation && !hasRemainingQuantity)} title={isContinuation && !hasRemainingQuantity ? "No remaining quantity is available for another warehouse receipt." : undefined}>{submitting === "start" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}<PackageCheck className="mr-2 h-4 w-4" /> {isContinuation ? "Start Next Warehouse Receipt" : "Start Warehouse Receiving"}</Button> : <><Button variant="outline" className="w-full" onClick={() => void saveDraft()} disabled={actionBusy}>{submitting === "save_draft" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Save Draft</Button>{selectedOrder.draft && <Button variant="outline" className="w-full" onClick={() => void printSummary()} disabled={actionBusy}>{printing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />} Print Receiving Summary</Button>}<Button className="w-full" onClick={() => void submitToQa()} disabled={actionBusy || hasPartialReceiptValidationErrors} title={hasPartialReceiptValidationErrors ? "Correct partial receipt quantities above the remaining balance before submitting." : undefined}>{submitting === "submit_to_qa" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}<ClipboardCheck className="mr-2 h-4 w-4" /> Complete &amp; Send to QA</Button></>}
-                            <p className="text-center text-xs leading-5 text-muted-foreground">{isPendingQa ? "The receipt is locked while QA completes inspection." : "Sending to QA locks this warehouse receipt and makes it available in QA Receiving."}</p>
-                        </CardContent>
-                    </Card>
-                </div>
+                        </div>
+                    </CardContent>
+                </Card>
             )}
 
             {!isDetailMode && (
@@ -454,7 +510,6 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
                     quantities={quantities}
                     receiptNumber={receiptNumber}
                     receiptDate={receiptDate}
-                    receiptType={receiptType}
                     loading={detailLoading}
                     error={detailError}
                     submitting={submitting}
@@ -462,7 +517,6 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
                     updateQuantity={updateQuantity}
                     setReceiptNumber={setReceiptNumber}
                     setReceiptDate={setReceiptDate}
-                    setReceiptType={setReceiptType}
                     start={start}
                     saveDraft={saveDraft}
                     submitToQa={submitToQa}

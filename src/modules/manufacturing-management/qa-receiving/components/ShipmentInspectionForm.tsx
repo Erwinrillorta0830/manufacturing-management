@@ -1,7 +1,7 @@
 import React from "react";
 import Image from "next/image";
 import { ArrowLeft, MapPin, AlertTriangle, CheckCircle2, Search, ChevronDown, Plus, Minus, Loader2, ReceiptText, CalendarDays, Radio, RefreshCw } from "lucide-react";
-import { Shipment, ShipmentLineItem, Branch, InspectionRow, StorageLot, StorageLotBatch, StorageLotLookupState, QaSpecificationLoadState, QaSpecificationReadings, ReceivingQaEvaluation, ReceivingLotAllocationInput, OverDeliveryLine, SupplierDocumentType, ReceivingQuantityStatus, QaReceiptOption } from "../types";
+import { Shipment, ShipmentLineItem, Branch, InspectionRow, StorageLot, StorageLotBatch, StorageLotLookupState, QaSpecificationLoadState, QaSpecificationReadings, ReceivingQaEvaluation, ReceivingLotAllocationInput, OverDeliveryLine, SupplierDocumentType, QaReceiptOption } from "../types";
 import { deriveRejectedQuantity } from "@/app/api/manufacturing/qa/_receiving-evaluation";
 import { canForceReceivePurchaseOrder, isForceReceived } from "@/app/api/manufacturing/qa-receiving/_force-received";
 import { INVENTORY_STATUS } from "@/app/api/manufacturing/procurement/_domain";
@@ -94,7 +94,6 @@ interface ShipmentInspectionFormProps {
     supplierDocumentTypeError: string | null;
     supplierDocumentTypeId: number | null;
     onSupplierDocumentTypeChange: (value: string) => void;
-    quantityStatus: ReceivingQuantityStatus;
     processOverDelivery: boolean;
     setProcessOverDelivery: (value: boolean) => void;
     overDeliveryLines: OverDeliveryLine[];
@@ -146,7 +145,6 @@ export default function ShipmentInspectionForm({
     supplierDocumentTypeError,
     supplierDocumentTypeId,
     onSupplierDocumentTypeChange,
-    quantityStatus,
     selectedBranchId,
     processOverDelivery,
     setProcessOverDelivery,
@@ -243,49 +241,57 @@ export default function ShipmentInspectionForm({
     }, [lineItems]);
 
     const receiptProgress = React.useMemo(() => {
-        const postedReceived = lineItems.reduce((sum, line) => sum + Math.max(0, Number(line.previously_received_quantity || 0)), 0);
         const postedAccepted = lineItems.reduce((sum, line) => sum + Math.max(0, Number(line.previously_accepted_quantity || 0)), 0);
-        const remainingPhysical = lineItems.reduce((sum, line) => sum + Math.max(0, Number(line.remaining_quantity || 0)), 0);
         const remainingAccepted = lineItems.reduce((sum, line) => sum + Math.max(0, Number(line.remaining_accepted_quantity || 0)), 0);
         const selectedReceived = selectedReceipt ? Math.max(0, Number(selectedReceipt.receivedQuantity || 0)) : null;
         const selectedAccepted = selectedReceipt ? Math.max(0, Number(selectedReceipt.acceptedQuantity || 0)) : null;
         const selectedRejected = selectedReceipt ? Math.max(0, Number(selectedReceipt.rejectedQuantity || 0)) : null;
 
+        // When viewing a historical (posted) receipt, postedAccepted already contains all posted receipts.
+        // When inspecting a new/pending receipt (selectedReceipt?.isCurrent), we add the pending accepted quantity.
+        const totalProgressAccepted = selectedReceipt?.isCurrent
+            ? postedAccepted + (selectedAccepted ?? 0)
+            : postedAccepted;
+
+        const progressPercent = totalOrderedQty > 0
+            ? Math.min(100, Math.max(0, Math.round((totalProgressAccepted / totalOrderedQty) * 100)))
+            : 0;
+
         return {
-            postedReceived,
             postedAccepted,
-            remainingPhysical,
             remainingAccepted,
             selectedReceived,
             selectedAccepted,
             selectedRejected,
+            progressPercent,
         };
-    }, [lineItems, selectedReceipt]);
+    }, [lineItems, selectedReceipt, totalOrderedQty]);
 
     const receiptProgressMetrics = [
-        { label: "PO ordered", value: formatQuantity(totalOrderedQty), className: "text-foreground" },
-        {
-            label: selectedReceipt?.isCurrent ? "Posted before this receipt" : "Posted received",
-            value: formatQuantity(receiptProgress.postedReceived),
-            className: "text-foreground"
+        { 
+            label: "PO Ordered", 
+            value: formatQuantity(totalOrderedQty), 
+            subtext: "Total ordered on PO",
+            className: "text-foreground" 
         },
         {
-            label: selectedReceipt?.isCurrent ? "Current receipt (pending QA)" : "Selected receipt",
-            value: selectedReceipt ? formatQuantity(receiptProgress.selectedReceived) : "—",
+            label: selectedReceipt?.isCurrent ? "Posted Before This" : "Posted & Stored",
+            value: formatQuantity(receiptProgress.postedAccepted),
+            subtext: "Accepted into inventory",
+            className: "text-emerald-700"
+        },
+        {
+            label: selectedReceipt?.isCurrent ? "Current Receipt (QA)" : "Inspected Receipt",
+            value: selectedReceipt ? formatQuantity(receiptProgress.selectedAccepted ?? receiptProgress.selectedReceived) : "—",
+            subtext: selectedReceipt ? `${formatQuantity(receiptProgress.selectedReceived)} received` : "No receipt selected",
             className: "text-primary"
         },
-        { label: "Remaining physical", value: formatQuantity(receiptProgress.remainingPhysical), className: "text-amber-700" },
-        {
-            label: selectedReceipt?.isCurrent ? "Posted accepted before this receipt" : "Posted accepted",
-            value: formatQuantity(receiptProgress.postedAccepted),
-            className: "text-emerald-700"
+        { 
+            label: "Remaining to Receive", 
+            value: formatQuantity(receiptProgress.remainingAccepted), 
+            subtext: "Balance remaining",
+            className: "text-amber-700" 
         },
-        {
-            label: selectedReceipt?.isCurrent ? "Current accepted (pending QA)" : "Selected accepted",
-            value: selectedReceipt ? formatQuantity(receiptProgress.selectedAccepted) : "—",
-            className: "text-emerald-700"
-        },
-        { label: "Remaining accepted", value: formatQuantity(receiptProgress.remainingAccepted), className: "text-amber-700" },
     ];
 
     const receiptSelectOptions = React.useMemo(() => receiptOptions.map(option => ({
@@ -519,7 +525,7 @@ export default function ShipmentInspectionForm({
 
             <div
                 data-testid="receiving-metadata-grid"
-                className="grid grid-cols-1 gap-3 border-b bg-background p-4 sm:grid-cols-2 2xl:grid-cols-5"
+                className="grid grid-cols-1 gap-3 border-b bg-background p-4 sm:grid-cols-2 2xl:grid-cols-4"
             >
                 <div className="min-w-0 space-y-1">
                     <label htmlFor="receiving-receipt-number" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
@@ -644,46 +650,43 @@ export default function ShipmentInspectionForm({
                     {!issueFor(undefined, "supplierDocumentTypeId") && supplierDocumentTypeError && !readOnly && <p className="text-[9px] font-semibold text-red-600" role="alert">{supplierDocumentTypeError}</p>}
                     {!issueFor(undefined, "supplierDocumentTypeId") && !supplierDocumentTypeError && <p className="text-[9px] text-muted-foreground">Classifies the supplier document provided with this delivery.</p>}
                 </div>
-
-                <div className="min-w-0 space-y-1">
-                    <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">Quantity Status</span>
-                    <div
-                        data-testid="receiving-quantity-status"
-                        role="status"
-                        className="w-full h-10 rounded-xl border bg-muted/40 text-foreground text-xs font-semibold px-3 py-2 flex items-center"
-                    >
-                        {quantityStatus === "FULL" ? "Full" : quantityStatus === "REJECTED" ? "Rejected" : "Partial"}
-                    </div>
-                    <p className="text-[9px] text-muted-foreground">
-                        {isReplacement ? "Replacement receipts use the linked quarantine disposition." : "Calculated from cumulative accepted quantity versus the PO."}
-                    </p>
-                </div>
             </div>
 
             {!isReplacement && (
-                <div data-testid="qa-receiving-progress" className="mx-4 mt-4 rounded-xl border border-primary/20 bg-primary/5 p-3">
-                    <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-                        <div>
-                            <p className="text-[10px] font-extrabold uppercase tracking-wider text-primary">PO receiving progress</p>
-                            <p className="text-[10px] text-muted-foreground">
-                                Posted quantities are cumulative. The current receipt remains separate until QA posts it.
-                            </p>
+                <div data-testid="qa-receiving-progress" className="mx-4 mt-4 rounded-xl border border-primary/20 bg-primary/5 p-3.5 space-y-3">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex items-center gap-2">
+                            <p className="text-[10px] font-extrabold uppercase tracking-wider text-primary">PO Receiving Progress</p>
+                            <span className="text-[9px] font-bold bg-primary/10 text-primary px-2 py-0.5 rounded-full">
+                                {receiptProgress.progressPercent}% Processed
+                            </span>
                         </div>
                         <span className="text-[9px] font-bold text-muted-foreground">
                             {receiptOptions.length} receipt{receiptOptions.length === 1 ? "" : "s"} on this PO
                         </span>
                     </div>
-                    <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
+
+                    {/* Progress Bar */}
+                    <div className="w-full bg-muted/60 h-2 rounded-full overflow-hidden">
+                        <div 
+                            className="bg-primary h-full transition-all duration-300 rounded-full" 
+                            style={{ width: `${receiptProgress.progressPercent}%` }}
+                        />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
                         {receiptProgressMetrics.map(metric => (
-                            <div key={metric.label} className="rounded-lg border border-border/70 bg-background/80 px-2.5 py-2">
+                            <div key={metric.label} className="rounded-lg border border-border/70 bg-background/90 px-3 py-2">
                                 <p className="text-[8px] font-bold uppercase tracking-wide text-muted-foreground">{metric.label}</p>
-                                <p className={`mt-1 text-sm font-extrabold ${metric.className}`}>{metric.value}</p>
+                                <p className={`mt-0.5 text-sm font-extrabold ${metric.className}`}>{metric.value}</p>
+                                <p className="text-[8px] text-muted-foreground/80 truncate mt-0.5">{metric.subtext}</p>
                             </div>
                         ))}
                     </div>
+
                     {selectedReceipt && receiptProgress.selectedRejected !== null && receiptProgress.selectedRejected > 0 && (
-                        <p className="mt-2 text-[9px] font-semibold text-amber-700">
-                            Selected receipt rejected: {formatQuantity(receiptProgress.selectedRejected)}
+                        <p className="text-[9px] font-semibold text-amber-700 bg-amber-500/10 rounded-md px-2.5 py-1">
+                            Selected receipt rejected: {formatQuantity(receiptProgress.selectedRejected)} units
                         </p>
                     )}
                 </div>
@@ -831,7 +834,7 @@ export default function ShipmentInspectionForm({
                         const quantitiesReconcile = [receivedVal, acceptedVal].every(Number.isFinite)
                             && acceptedVal >= 0
                             && acceptedVal <= receivedVal;
-                        const isRemarksMandatory = rejectedVal > 0 || (receivedVal > 0 && receivedVal !== remainingVal);
+                        const isRemarksMandatory = rejectedVal > 0;
                         const evaluation = qaEvaluationResults[line.line_id];
                         const lineIssue = (field: string) => issueFor(line.line_id, field);
                         const quantityIssue = lineIssue("quantity") || lineIssue("receivedQuantity");
@@ -921,30 +924,22 @@ export default function ShipmentInspectionForm({
                                     </div>
                                 )}
 
-                                <div className="grid grid-cols-2 gap-2 border-y py-3 text-[10px] font-semibold text-muted-foreground sm:grid-cols-3 xl:grid-cols-6">
+                                <div className="grid grid-cols-2 gap-2 border-y py-3 text-[10px] font-semibold text-muted-foreground sm:grid-cols-4">
                                     <div>
-                                        <span className="block text-[8px] font-bold uppercase tracking-wide">{selectedReceipt?.isCurrent ? "Posted before this receipt" : "Posted to date"}</span>
-                                        <strong className="mt-0.5 block text-foreground">{formatQuantity(previouslyReceivedVal)}</strong>
+                                        <span className="block text-[8px] font-bold uppercase tracking-wide">PO Ordered</span>
+                                        <strong className="mt-0.5 block text-foreground">{formatQuantity(line.quantity_ordered)}</strong>
                                     </div>
                                     <div>
-                                        <span className="block text-[8px] font-bold uppercase tracking-wide">Posted accepted</span>
+                                        <span className="block text-[8px] font-bold uppercase tracking-wide">Previously Stored</span>
                                         <strong className="mt-0.5 block text-emerald-700">{formatQuantity(previouslyAcceptedVal)}</strong>
                                     </div>
                                     <div>
-                                        <span className="block text-[8px] font-bold uppercase tracking-wide">{selectedReceipt?.readOnly ? "Selected receipt accepted" : "Current receipt accepted"}</span>
-                                        <strong className="mt-0.5 block text-primary">{currentReceiptAcceptedVal === null ? "—" : formatQuantity(currentReceiptAcceptedVal)}</strong>
+                                        <span className="block text-[8px] font-bold uppercase tracking-wide">{selectedReceipt?.readOnly ? "Inspected Receipt" : "Current Receipt (QA)"}</span>
+                                        <strong className="mt-0.5 block text-primary">{currentReceiptAcceptedVal === null ? (currentReceiptPhysicalVal !== null ? formatQuantity(currentReceiptPhysicalVal) : "—") : formatQuantity(currentReceiptAcceptedVal)}</strong>
                                     </div>
                                     <div>
-                                        <span className="block text-[8px] font-bold uppercase tracking-wide">{selectedReceipt?.readOnly ? "Selected receipt physical" : "Current receipt physical"}</span>
-                                        <strong className="mt-0.5 block text-foreground">{currentReceiptPhysicalVal === null ? "—" : formatQuantity(currentReceiptPhysicalVal)}</strong>
-                                    </div>
-                                    <div>
-                                        <span className="block text-[8px] font-bold uppercase tracking-wide">Remaining accepted</span>
-                                        <strong className="mt-0.5 block text-primary">{formatQuantity(remainingAcceptedVal)}</strong>
-                                    </div>
-                                    <div>
-                                        <span className="block text-[8px] font-bold uppercase tracking-wide">Remaining physical</span>
-                                        <strong className="mt-0.5 block text-foreground">{formatQuantity(remainingVal)}</strong>
+                                        <span className="block text-[8px] font-bold uppercase tracking-wide">Remaining to Receive</span>
+                                        <strong className="mt-0.5 block text-amber-700">{formatQuantity(remainingAcceptedVal)}</strong>
                                     </div>
                                 </div>
 
@@ -1258,7 +1253,7 @@ export default function ShipmentInspectionForm({
                                     <input
                                         type="text"
                                         required={!readOnly && isRemarksMandatory}
-                                        placeholder={isRemarksMandatory ? "Logistics discrepancy or bad order explanation is mandatory" : "Reason for discrepancy or failure"}
+                                        placeholder={isRemarksMandatory ? "Reason for rejected quantity is mandatory" : "Remarks / notes (optional)"}
                                         value={row.rejectionReason}
                                         onChange={e => handleUpdateRow(line.line_id, "rejectionReason", e.target.value)}
                                         disabled={lineInputDisabled}
@@ -1269,13 +1264,11 @@ export default function ShipmentInspectionForm({
                                     {lineIssue("remarks") && <p id={`remarks-error-${line.line_id}`} className="text-[9px] font-semibold text-red-600" role="alert">{lineIssue("remarks")?.message}</p>}
                                 </div>
 
-                                {/* Discrepancy warnings */}
-                                {!readOnly && receivedVal > 0 && receivedVal !== remainingVal && (
+                                {/* Over-delivery & reconciliation warnings */}
+                                {!readOnly && overDeliveryQuantity > 1e-9 && (
                                     <div className="bg-amber-500/5 border border-amber-500/10 rounded-lg p-2.5 flex items-center gap-2 text-[10px] text-amber-600 animate-in fade-in duration-200">
                                         <AlertTriangle className="h-4 w-4 shrink-0" />
-                                        <span>{overDeliveryQuantity > 1e-9
-                                            ? `Over-delivery warning: received ${receivedVal.toLocaleString()} vs expected ${remainingVal.toLocaleString()} (excess ${overDeliveryQuantity.toLocaleString()}).`
-                                            : `Logistics discrepancy detected: received ${receivedVal.toLocaleString()} vs expected ${remainingVal.toLocaleString()}.`}</span>
+                                        <span>Over-delivery warning: received {receivedVal.toLocaleString()} vs expected {remainingVal.toLocaleString()} (excess {overDeliveryQuantity.toLocaleString()}).</span>
                                     </div>
                                 )}
                                 {!readOnly && !quantitiesReconcile && (receivedVal > 0 || acceptedVal > 0 || rejectedVal > 0) && (
@@ -1289,7 +1282,7 @@ export default function ShipmentInspectionForm({
                                 {!readOnly && rejectedVal > 0 && (
                                     <div className="bg-red-500/5 border border-red-500/10 rounded-lg p-2.5 flex items-center gap-2 text-[10px] text-red-500 animate-in fade-in duration-200">
                                         <AlertTriangle className="h-4 w-4 shrink-0" />
-                                        <span>Warning: {rejectedVal} units are marked rejected. Remarks are mandatory.</span>
+                                        <span>Warning: {rejectedVal} unit(s) are marked rejected. Rejection reason is mandatory.</span>
                                     </div>
                                 )}
                                 {evaluation?.forceRejected && (

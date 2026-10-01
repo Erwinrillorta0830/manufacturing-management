@@ -1206,8 +1206,8 @@ export function useQAReceiving({
                 addIssue({ lineId: line.line_id, productName, field: "quantity", message: `${productName}: Accepted Quantity cannot exceed Received Quantity.` });
             }
 
-            if ((rejected > 0 || Math.abs(received - remaining) > 1e-9) && !row?.rejectionReason?.trim()) {
-                addIssue({ lineId: line.line_id, productName, field: "remarks", message: `${productName}: Remarks are required for rejected or discrepancy quantities.` });
+            if (rejected > 0 && !row?.rejectionReason?.trim()) {
+                addIssue({ lineId: line.line_id, productName, field: "remarks", message: `${productName}: Remarks / rejection notes are required for rejected quantities (${rejected} rejected).` });
             }
 
             const qaState = qaSpecificationStates[Number(line.product_id?.product_id)];
