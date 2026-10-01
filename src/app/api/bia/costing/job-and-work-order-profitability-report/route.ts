@@ -63,16 +63,14 @@ export async function GET(request: NextRequest) {
                 routesRes,
                 productsRes,
                 allocationsRes,
-                salesOrderDetailsRes,
-                salesOrdersRes
+                salesOrderDetailsRes
             ] = await Promise.all([
                 fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joId}?fields=job_order_id,job_order_no,product_id,actual_quantity_produced,target_quantity,completed_quantity`, { headers, cache: "no-store" }),
                 fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${joId}&fields=ledger_id`, { headers, cache: "no-store" }),
                 fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${joId}&fields=jo_route_id,work_center_id,planned_run_hours,actual_run_hours,status`, { headers, cache: "no-store" }),
                 fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,product_code,price_per_unit,priceA,priceB,cost_per_unit,estimated_unit_cost,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name`, { headers, cache: "no-store" }),
                 fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations?filter[job_order_id][_eq]=${joId}&fields=id,sales_order_detail_id,job_order_id,allocated_quantity`, { headers, cache: "no-store" }).catch(() => null),
-                fetch(`${DIRECTUS_URL}/items/sales_order_details?limit=-1&fields=detail_id,product_id,order_id,unit_price,allocated_quantity`, { headers, cache: "no-store" }).catch(() => null),
-                fetch(`${DIRECTUS_URL}/items/sales_order?limit=-1&fields=order_id,order_no,customer_code`, { headers, cache: "no-store" }).catch(() => null)
+                fetch(`${DIRECTUS_URL}/items/sales_order_details?limit=-1&fields=detail_id,product_id,order_id,unit_price,allocated_quantity`, { headers, cache: "no-store" }).catch(() => null)
             ]);
 
             if (!joRes.ok) {
@@ -506,6 +504,7 @@ export async function GET(request: NextRequest) {
                     product_id: prodId,
                     product_name: prod?.name || `Material #${prodId}`,
                     product_code: prod?.code || `MAT-${prodId}`,
+                    uom: prod?.uom || "pcs",
                     quantity_consumed: qty,
                     unit_cost: unitCost,
                     total_cost: totalCost,
