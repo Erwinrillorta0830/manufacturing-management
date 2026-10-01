@@ -32,6 +32,23 @@ interface WipDetailModalProps {
     onTabChange: (tab: WipDetailTab) => void;
 }
 
+function formatTimestamp(ts?: string | null): string {
+    if (!ts) return "—";
+    try {
+        const d = new Date(ts);
+        if (!isNaN(d.getTime())) {
+            const pad = (n: number) => String(n).padStart(2, "0");
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        }
+    } catch {
+        // ignore
+    }
+    if (ts.includes("T")) {
+        return ts.replace("T", " ").substring(0, 19);
+    }
+    return ts;
+}
+
 export function WipDetailModal({
     job,
     open,
@@ -48,6 +65,10 @@ export function WipDetailModal({
     const progressPercent = totalStages > 0 ? Math.round((completedStages / totalStages) * 100) : 0;
     const totalMaterials = job.materials.length;
     const totalTransactions = job.transactions?.length || 0;
+    const isCompleted = 
+        job.status === "Closed" || 
+        job.status === "Production Completed" || 
+        job.status === "For QA & Reconciliation";
 
     // Target range calculation (0.9x to 1.1x)
     const minTarget = Math.round(job.target_quantity * 0.9);
@@ -83,6 +104,14 @@ export function WipDetailModal({
                                         <span>Delayed / Behind</span>
                                     </Badge>
                                 )}
+                                {job.parent_job_order_id && (
+                                    <Badge
+                                        variant="outline"
+                                        className="text-xs px-2.5 py-0.5 gap-1 font-semibold bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/30"
+                                    >
+                                        Sub-Assembly (Parent: #{job.parent_job_order_id})
+                                    </Badge>
+                                )}
                             </div>
                             <DialogTitle className="text-xl font-bold text-foreground">
                                 {job.product_name}
@@ -104,6 +133,14 @@ export function WipDetailModal({
                                         <span>•</span>
                                         <span className="font-mono">
                                             Lot: <strong className="text-foreground">{job.lot_number}</strong>
+                                        </span>
+                                    </>
+                                )}
+                                {job.batch_number && (
+                                    <>
+                                        <span>•</span>
+                                        <span className="font-mono">
+                                            Batch: <strong className="text-foreground">{job.batch_number}</strong>
                                         </span>
                                     </>
                                 )}
@@ -144,7 +181,7 @@ export function WipDetailModal({
                             <div className="border-l border-border/70 pl-3">
                                 <span className="text-muted-foreground block text-[10px] uppercase font-sans font-semibold">Attainment</span>
                                 <span className="font-bold text-blue-600 dark:text-blue-400 text-sm">
-                                    {job.rate_attainment_percent > 0 ? `${job.rate_attainment_percent}%` : "—"}
+                                    {job.quantity_progress_percent}%
                                 </span>
                             </div>
                             <div className="border-l border-border/70 pl-3">
@@ -190,9 +227,9 @@ export function WipDetailModal({
                                 className="h-8 gap-2 px-4 text-xs font-semibold whitespace-nowrap data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-xs"
                             >
                                 <PackageSearch className="h-4 w-4 text-cyan-600 dark:text-cyan-400 shrink-0" />
-                                <span className="whitespace-nowrap">WIP Raw Materials</span>
+                                <span className="whitespace-nowrap">Material Allocations</span>
                                 <Badge variant="secondary" className="ml-1 text-[10px] px-1.5 py-0 font-mono shrink-0">
-                                    {totalMaterials} items
+                                    {totalMaterials}
                                 </Badge>
                             </TabsTrigger>
 
@@ -254,13 +291,20 @@ export function WipDetailModal({
                                 </div>
                             </div>
 
-                            {/* Card 3: Lot Number */}
+                            {/* Card 3: Lot & Batch Number */}
                             <div className="rounded-xl border border-border/70 bg-card p-3.5 shadow-xs">
                                 <span className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider block">
-                                    Lot Number
+                                    Lot & Batch Number
                                 </span>
-                                <div className="mt-1 font-mono font-bold text-sm text-foreground">
-                                    {job.lot_number || "—"}
+                                <div className="mt-1 flex flex-col gap-0.5 font-mono">
+                                    <div className="flex items-center gap-1.5 text-xs font-bold text-foreground truncate" title={job.lot_number || undefined}>
+                                        <span className="text-[9px] font-sans font-medium text-muted-foreground uppercase shrink-0">Lot:</span>
+                                        <span className="truncate">{job.lot_number || "—"}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground truncate" title={job.batch_number || undefined}>
+                                        <span className="text-[9px] font-sans font-medium text-muted-foreground uppercase shrink-0">Batch:</span>
+                                        <span className="font-semibold text-foreground/90 truncate">{job.batch_number || "—"}</span>
+                                    </div>
                                 </div>
                             </div>
 
@@ -330,6 +374,15 @@ export function WipDetailModal({
                                 <div className="mt-1 font-mono font-bold text-lg text-emerald-600 dark:text-emerald-400">
                                     ₱{job.wip_value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                 </div>
+                                {(job.material_wip_value !== undefined && (job.labor_wip_value || 0) + (job.overhead_wip_value || 0) > 0) ? (
+                                    <span className="text-[10px] text-muted-foreground block mt-0.5 truncate" title={`Mat: ₱${(job.material_wip_value || 0).toLocaleString()} • Lab: ₱${(job.labor_wip_value || 0).toLocaleString()} • Ovh: ₱${(job.overhead_wip_value || 0).toLocaleString()}`}>
+                                        Mat: ₱{(job.material_wip_value || 0).toLocaleString()} • Lab: ₱{(job.labor_wip_value || 0).toLocaleString()}
+                                    </span>
+                                ) : (
+                                    <span className="text-[10px] text-muted-foreground block mt-0.5">
+                                        Materials & applied line cost
+                                    </span>
+                                )}
                             </div>
 
                             {/* Card 8: Residence Time */}
@@ -347,9 +400,16 @@ export function WipDetailModal({
 
                             {/* Card 9: Actual Throughput */}
                             <div className="rounded-xl border border-border/70 bg-card p-3.5 shadow-xs">
-                                <span className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider block">
-                                    Throughput
-                                </span>
+                                <div className="flex items-center justify-between">
+                                    <span className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider block">
+                                        Throughput
+                                    </span>
+                                    {isCompleted && (
+                                        <Badge variant="outline" className="text-[9px] px-1.5 py-0 font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
+                                            Final Run Rate
+                                        </Badge>
+                                    )}
+                                </div>
                                 <div className="mt-1 font-mono font-bold text-base text-foreground">
                                     {job.actual_throughput_rate > 0 ? `${job.actual_throughput_rate} ${job.uom_name}/h` : "—"}
                                 </div>
@@ -368,15 +428,27 @@ export function WipDetailModal({
                                 </div>
                             </div>
 
-                            {/* Card 11: Rate Attainment */}
+                            {/* Card 11: Line Speed Attainment */}
                             <div className="rounded-xl border border-border/70 bg-card p-3.5 shadow-xs">
-                                <span className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider block">
-                                    Rate Attainment
-                                </span>
+                                <div className="flex items-center justify-between">
+                                    <span className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider block">
+                                        Line Speed Attainment
+                                    </span>
+                                    {isCompleted && (
+                                        <Badge variant="outline" className="text-[9px] px-1.5 py-0 font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20">
+                                            Run Achieved
+                                        </Badge>
+                                    )}
+                                </div>
                                 <div className="mt-1 flex items-baseline gap-2">
                                     <span className="font-mono font-bold text-lg text-blue-600 dark:text-blue-400">
                                         {job.rate_attainment_percent > 0 ? `${job.rate_attainment_percent}%` : "—"}
                                     </span>
+                                    {job.rated_capacity_per_hour > 0 && (
+                                        <span className="text-[10px] text-muted-foreground font-mono">
+                                            vs {job.rated_capacity_per_hour.toLocaleString()} {job.uom_name}/h rated
+                                        </span>
+                                    )}
                                 </div>
                                 <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-muted/80">
                                     <div
@@ -428,7 +500,9 @@ export function WipDetailModal({
                                     Scrap / Trim Loss
                                 </span>
                                 <div className="mt-1 font-mono font-bold text-base text-foreground">
-                                    {job.rejected_quantity > 0 ? `${job.rejected_quantity.toLocaleString()} ${job.uom_name}` : "—"}
+                                    {job.rejected_quantity !== undefined && job.rejected_quantity !== null
+                                        ? `${job.rejected_quantity.toLocaleString()} ${job.uom_name}`
+                                        : "—"}
                                 </div>
                             </div>
 
@@ -458,7 +532,11 @@ export function WipDetailModal({
                                     Hours to Finish
                                 </span>
                                 <div className="mt-1 font-mono font-bold text-base text-foreground">
-                                    {job.hours_to_finish !== null ? `${job.hours_to_finish} h` : (job.remaining_output === 0 ? "Completed" : "—")}
+                                    {isCompleted || job.remaining_output === 0
+                                        ? "0 h (Run Finalized)"
+                                        : (job.hours_to_finish !== null && job.hours_to_finish > 0
+                                            ? `${job.hours_to_finish} h`
+                                            : "—")}
                                 </div>
                             </div>
                         </div>
@@ -546,15 +624,11 @@ export function WipDetailModal({
                                                     <td className="py-3 px-3 text-right">
                                                         {stage.total_planned_hours > 0 ? `${stage.total_planned_hours} h` : "—"}
                                                     </td>
-                                                    <td className="py-3 px-3 text-muted-foreground">
-                                                        {stage.total_actual_hours > 0 && job.production_started_at
-                                                            ? job.production_started_at
-                                                            : (isInProgress || isCompleted ? (job.production_started_at || "In progress") : "—")}
+                                                    <td className="py-3 px-3 text-muted-foreground font-mono">
+                                                        {formatTimestamp(stage.started_at)}
                                                     </td>
-                                                    <td className="py-3 px-3 text-muted-foreground">
-                                                        {isCompleted
-                                                            ? (stage.completed_at || job.production_completed_at || "Completed")
-                                                            : "—"}
+                                                    <td className="py-3 px-3 text-muted-foreground font-mono">
+                                                        {formatTimestamp(stage.completed_at)}
                                                     </td>
                                                     <td className={`py-3 px-3 text-right font-bold ${
                                                         hasOverrun ? "text-rose-600 dark:text-rose-400" : "text-foreground"
@@ -595,7 +669,7 @@ export function WipDetailModal({
                             <div className="space-y-0.5">
                                 <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                                     <PackageSearch className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
-                                    Active Raw Materials in WIP Buffer
+                                    Material Allocations & Floor Feeds
                                 </h4>
                                 <p className="text-[11px] text-muted-foreground">
                                     Share of recipe, current quantity held on shop floor, unit cost, and valuation.
@@ -608,21 +682,23 @@ export function WipDetailModal({
 
                         {job.materials.length === 0 ? (
                             <div className="rounded-xl border border-dashed border-border/80 p-12 text-center text-sm text-muted-foreground">
-                                No materials reserved or issued to WIP for this job order.
+                                No material allocations or floor feeds for this job order.
                             </div>
                         ) : (
                             <div className="overflow-x-auto rounded-xl border border-border/70 bg-card shadow-xs">
-                                <table className="w-full text-left text-xs border-collapse min-w-[950px]">
+                                <table className="w-full text-left text-xs border-collapse min-w-[1050px]">
                                     <thead>
                                         <tr className="border-b border-border/70 bg-muted/60 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                                            <th className="py-3 px-3.5 min-w-[220px]">Material</th>
-                                            <th className="py-3 px-3 min-w-[110px]">Code</th>
-                                            <th className="py-3 px-3 min-w-[110px] text-right">Share %</th>
-                                            <th className="py-3 px-3 min-w-[140px] text-right">Quantity in WIP</th>
-                                            <th className="py-3 px-3 min-w-[120px] text-right">Unit Cost (₱)</th>
-                                            <th className="py-3 px-3 min-w-[130px] text-right">Value (₱)</th>
+                                            <th className="py-3 px-3.5 min-w-[200px]">Material</th>
+                                            <th className="py-3 px-3 min-w-[100px]">Code</th>
+                                            <th className="py-3 px-3 min-w-[90px] text-right">Share %</th>
+                                            <th className="py-3 px-3 min-w-[130px] text-right">Quantity in WIP</th>
+                                            <th className="py-3 px-3 min-w-[110px] text-right">Unit Cost (₱)</th>
+                                            <th className="py-3 px-3 min-w-[120px] text-right">Value (₱)</th>
                                             <th className="py-3 px-3 min-w-[140px]">Batch / Lot #</th>
-                                            <th className="py-3 px-3 min-w-[100px] text-center">Status</th>
+                                            <th className="py-3 px-3 min-w-[120px]">Staging Bin</th>
+                                            <th className="py-3 px-3 min-w-[110px]">Expiry (FEFO)</th>
+                                            <th className="py-3 px-3 min-w-[90px] text-center">Status</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-border/50 font-mono text-[11px]">
@@ -679,6 +755,16 @@ export function WipDetailModal({
                                                                     </span>
                                                                 )}
                                                             </div>
+                                                        )}
+                                                    </td>
+                                                    <td className="py-2.5 px-3 text-muted-foreground font-mono">
+                                                        {mat.staging_bin || "—"}
+                                                    </td>
+                                                    <td className="py-2.5 px-3 font-mono">
+                                                        {mat.expiry_date ? (
+                                                            <span className="text-foreground font-semibold">{mat.expiry_date}</span>
+                                                        ) : (
+                                                            <span className="text-muted-foreground italic">—</span>
                                                         )}
                                                     </td>
                                                     <td className="py-2.5 px-3 text-center">
@@ -759,10 +845,8 @@ export function WipDetailModal({
                                                     key={tx.id || idx}
                                                     className="hover:bg-muted/30 transition-colors"
                                                 >
-                                                    <td className="py-2.5 px-3.5 text-muted-foreground">
-                                                        {tx.timestamp ? (
-                                                            tx.timestamp.includes("T") ? tx.timestamp.replace("T", " ").substring(0, 19) : tx.timestamp
-                                                        ) : "—"}
+                                                    <td className="py-2.5 px-3.5 text-muted-foreground font-mono">
+                                                        {formatTimestamp(tx.timestamp)}
                                                     </td>
                                                     <td className="py-2.5 px-3 font-sans">
                                                         <Badge
@@ -803,7 +887,18 @@ export function WipDetailModal({
                                                         {isYield ? "+" : isScrap ? "-" : ""}{tx.quantity.toLocaleString()} {tx.uom}
                                                     </td>
                                                     <td className="py-2.5 px-3 font-sans text-muted-foreground text-[11px]">
-                                                        {tx.notes || tx.operator_name || "—"}
+                                                        {tx.operator_name && (
+                                                            <div className="font-semibold text-foreground flex items-center gap-1">
+                                                                <User className="h-3 w-3 text-muted-foreground" />
+                                                                <span>{tx.operator_name}</span>
+                                                            </div>
+                                                        )}
+                                                        {tx.notes && (
+                                                            <div className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2" title={tx.notes}>
+                                                                {tx.notes}
+                                                            </div>
+                                                        )}
+                                                        {!tx.operator_name && !tx.notes && "—"}
                                                     </td>
                                                 </tr>
                                             );

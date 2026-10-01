@@ -147,6 +147,10 @@ export function WipTableView({
                             ) : (
                                 paginatedJobs.map((job, idx) => {
                                     const qtyProgress = job.quantity_progress_percent;
+                                    const isCompleted = 
+                                        job.status === "Closed" || 
+                                        job.status === "Production Completed" || 
+                                        job.status === "For QA & Reconciliation";
 
                                     return (
                                         <motion.tr
@@ -258,8 +262,16 @@ export function WipTableView({
                                             <td className="py-3 px-3 align-top">
                                                 {job.rated_capacity_per_hour > 0 && job.actual_throughput_rate > 0 ? (
                                                     <div className="space-y-1">
-                                                        <div className="font-mono text-xs font-semibold text-foreground">
-                                                            {job.actual_throughput_rate.toLocaleString()} / {job.rated_capacity_per_hour.toLocaleString()} <span className="text-[10px] text-muted-foreground font-normal">{job.uom_name}/h</span>
+                                                        <div className="font-mono text-xs font-semibold text-foreground flex items-center justify-between">
+                                                            <span>
+                                                                {job.actual_throughput_rate.toLocaleString()} / {job.rated_capacity_per_hour.toLocaleString()}{" "}
+                                                                <span className="text-[10px] text-muted-foreground font-normal">{job.uom_name}/h</span>
+                                                            </span>
+                                                            {isCompleted && (
+                                                                <span className="text-[9px] px-1.5 py-0 rounded font-sans font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                                                                    Final
+                                                                </span>
+                                                            )}
                                                         </div>
                                                         <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted/80">
                                                             <div
