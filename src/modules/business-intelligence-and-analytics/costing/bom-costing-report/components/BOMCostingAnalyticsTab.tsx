@@ -31,22 +31,34 @@ const CATEGORY_COLORS = {
     overhead: "#8b5cf6"      // Purple
 };
 
+const CATEGORY_LABELS: Record<ComponentCategoryFilter, string> = {
+    all: "All",
+    raw_material: "Raw Material",
+    packaging: "Packaging",
+    labor: "Labor",
+    overhead: "Overhead"
+};
+
 export default function BOMCostingAnalyticsTab({ data }: BOMCostingAnalyticsTabProps) {
     const { summary, tree } = data;
 
     // 1. Flatten all leaf components to calculate exact category and driver splits
+    // Captures all direct materials including parent raw materials that have children
     const leafNodes = useMemo(() => {
         const leaves: BOMCostNode[] = [];
-        const extractLeaves = (nodes: BOMCostNode[]) => {
+        const extractNodes = (nodes: BOMCostNode[]) => {
             nodes.forEach(node => {
-                if (node.children && node.children.length > 0) {
-                    extractLeaves(node.children);
-                } else {
-                    leaves.push(node);
+                if (node.isSubAssembly && node.children && node.children.length > 0) {
+                    extractNodes(node.children);
+                    return;
+                }
+                leaves.push(node);
+                if (!node.isSubAssembly && node.children && node.children.length > 0) {
+                    extractNodes(node.children);
                 }
             });
         };
-        extractLeaves(tree);
+        extractNodes(tree);
         return leaves;
     }, [tree]);
 
@@ -63,7 +75,6 @@ export default function BOMCostingAnalyticsTab({ data }: BOMCostingAnalyticsTabP
             } else if (node.materialClassification === "raw_material") {
                 rawMaterialsCost += node.totalLineCost;
             } else if (node.materialClassification === "labor") {
-                // Already tracked in summary.directLaborCost if not in tree
                 if (laborCost === 0) laborCost += node.totalLineCost;
             } else if (node.materialClassification === "overhead") {
                 if (overheadCost === 0) overheadCost += node.totalLineCost;
@@ -121,8 +132,13 @@ export default function BOMCostingAnalyticsTab({ data }: BOMCostingAnalyticsTabP
 
     // 3. Compute Top 5 Component Cost Share Drivers for the Bar Chart
     const topCostDrivers = useMemo(() => {
-        const totalCost = summary.totalBatchCost > 0 ? summary.totalBatchCost : summary.totalMaterialCost;
-        if (totalCost <= 0) return [];
+        const totalBatchCost = summary.totalBatchCost > 0 ? summary.totalBatchCost : summary.totalMaterialCost;
+        if (totalBatchCost <= 0) return [];
+
+        // Total cost of the filtered category
+        const categoryCost = selectedDriverCategory === "all"
+            ? totalBatchCost
+            : filteredLeafNodes.reduce((sum, n) => sum + n.totalLineCost, 0);
 
         // Aggregate by unique component name or leaf
         const driverMap = new Map<string, { fullName: string; shortName: string; cost: number }>();
@@ -131,7 +147,7 @@ export default function BOMCostingAnalyticsTab({ data }: BOMCostingAnalyticsTabP
             const fullName = node.productName.trim();
             // Clean short name: strip common prefixes and truncate nicely to avoid generic 'MFG' or 'DIRECT'
             let cleaned = fullName
-                .replace(/^(Mfg Overhead\s*-\s*|Process Direct Labor\s*-\s*|Direct Labor\s*-\s*)/i, "")
+                .replace(/^(Mfg Overhead\s*-\s*|Process Direct Labor\s*-\s*|Direct Line Labor\s*-\s*|Maintenance Labor\s*-\s*|Direct Labor\s*-\s*)/i, "")
                 .trim();
             if (cleaned.length > 12) {
                 cleaned = cleaned.substring(0, 11) + "…";
@@ -147,6 +163,12 @@ export default function BOMCostingAnalyticsTab({ data }: BOMCostingAnalyticsTabP
             driverMap.set(fullName, existing);
         });
 
+        // When filtered by a specific category, show the share relative to that category so the relative
+        // cost drivers within that category are clearly visible and meaningful.
+        const activeDenominator = (selectedDriverCategory !== "all" && categoryCost > 0)
+            ? categoryCost
+            : totalBatchCost;
+
         // Sort descending by cost
         const sorted = Array.from(driverMap.values())
             .sort((a, b) => b.cost - a.cost)
@@ -155,11 +177,12 @@ export default function BOMCostingAnalyticsTab({ data }: BOMCostingAnalyticsTabP
                 name: item.shortName,
                 fullName: item.fullName,
                 cost: item.cost,
-                sharePct: Number(((item.cost / totalCost) * 100).toFixed(4))
+                sharePct: Number(((item.cost / activeDenominator) * 100).toFixed(4)),
+                batchSharePct: Number(((item.cost / totalBatchCost) * 100).toFixed(4))
             }));
 
         return sorted;
-    }, [filteredLeafNodes, summary]);
+    }, [filteredLeafNodes, selectedDriverCategory, summary]);
 
     // Dynamic bar color based on selected driver category
     const barColor = useMemo(() => {
@@ -169,6 +192,21 @@ export default function BOMCostingAnalyticsTab({ data }: BOMCostingAnalyticsTabP
         if (selectedDriverCategory === "overhead") return CATEGORY_COLORS.overhead;
         return "#0284c7"; // Sky blue default for All
     }, [selectedDriverCategory]);
+
+    // Adaptive Y-axis domain to prevent small shares from flattening or disappearing
+    const yDomain = useMemo((): [number, number] => {
+        const maxVal = Math.max(...topCostDrivers.map(d => d.sharePct), 0);
+        if (maxVal <= 0) return [0, 10];
+        if (maxVal <= 0.01) return [0, Number((maxVal * 1.3).toFixed(4))];
+        if (maxVal <= 0.1) return [0, Number((maxVal * 1.3).toFixed(3))];
+        if (maxVal <= 1) return [0, Number((maxVal * 1.25).toFixed(2))];
+        if (maxVal <= 10) return [0, Math.ceil(maxVal * 1.2)];
+        if (maxVal <= 50) return [0, Math.ceil(maxVal / 10) * 10];
+        if (selectedDriverCategory !== "all") {
+            return [0, Math.min(100, Math.ceil(maxVal * 1.15))];
+        }
+        return [0, Math.max(70, Math.ceil(maxVal / 10) * 10)];
+    }, [topCostDrivers, selectedDriverCategory]);
 
     return (
         <motion.div
@@ -265,13 +303,6 @@ export default function BOMCostingAnalyticsTab({ data }: BOMCostingAnalyticsTabP
                         {/* Category filter pills */}
                         <div className="flex items-center gap-1 text-[10px]">
                             {(["all", "raw_material", "packaging", "labor", "overhead"] as ComponentCategoryFilter[]).map(cat => {
-                                const labels: Record<ComponentCategoryFilter, string> = {
-                                    all: "All",
-                                    raw_material: "Raw Mat",
-                                    packaging: "Packaging",
-                                    labor: "Labor",
-                                    overhead: "Overhead"
-                                };
                                 const isSelected = selectedDriverCategory === cat;
                                 return (
                                     <button
@@ -284,7 +315,7 @@ export default function BOMCostingAnalyticsTab({ data }: BOMCostingAnalyticsTabP
                                                 : "bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground"
                                         }`}
                                     >
-                                        {labels[cat]}
+                                        {CATEGORY_LABELS[cat]}
                                     </button>
                                 );
                             })}
@@ -296,7 +327,7 @@ export default function BOMCostingAnalyticsTab({ data }: BOMCostingAnalyticsTabP
                             <ResponsiveContainer width="100%" height="100%">
                                 <BarChart
                                     data={topCostDrivers}
-                                    margin={{ top: 10, right: 10, left: -20, bottom: 20 }}
+                                    margin={{ top: 10, right: 10, left: 0, bottom: 20 }}
                                 >
                                     <CartesianGrid
                                         strokeDasharray="3 3"
@@ -315,18 +346,37 @@ export default function BOMCostingAnalyticsTab({ data }: BOMCostingAnalyticsTabP
                                         axisLine={false}
                                         tickLine={false}
                                         tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
-                                        domain={[0, (dataMax: number) => Math.max(70, Math.ceil(dataMax / 10) * 10)]}
-                                        tickFormatter={(val: number) => `${val}`}
+                                        domain={yDomain}
+                                        tickFormatter={(val: number) => {
+                                            if (val === 0) return "0%";
+                                            if (val < 0.01) return `${val.toFixed(4)}%`;
+                                            if (val < 0.1) return `${val.toFixed(2)}%`;
+                                            if (val < 1) return `${val.toFixed(1)}%`;
+                                            return `${Math.round(val)}%`;
+                                        }}
                                     />
                                     <RechartsTooltip
                                         formatter={(
                                             val: TooltipValue,
                                             _name: number | string,
-                                            item: { payload?: { cost?: number; fullName?: string } }
-                                        ) => [
-                                            `${(Number(val) || 0).toFixed(4)}% (${formatStandardCurrency(item?.payload?.cost || 0, 4)})`,
-                                            String(item?.payload?.fullName || "Share")
-                                        ]}
+                                            item: { payload?: { cost?: number; fullName?: string; batchSharePct?: number } }
+                                        ) => {
+                                            const payload = item?.payload;
+                                            const shareVal = Number(val) || 0;
+                                            const costStr = formatStandardCurrency(payload?.cost || 0, 4);
+
+                                            if (selectedDriverCategory !== "all" && payload?.batchSharePct !== undefined) {
+                                                return [
+                                                    `${shareVal.toFixed(4)}% of ${CATEGORY_LABELS[selectedDriverCategory]} (${payload.batchSharePct.toFixed(4)}% of Batch • ${costStr})`,
+                                                    String(payload?.fullName || "Share")
+                                                ];
+                                            }
+
+                                            return [
+                                                `${shareVal.toFixed(4)}% (${costStr})`,
+                                                String(payload?.fullName || "Share")
+                                            ];
+                                        }}
                                         contentStyle={{
                                             backgroundColor: "hsl(var(--popover))",
                                             borderColor: "hsl(var(--border))",
@@ -340,6 +390,7 @@ export default function BOMCostingAnalyticsTab({ data }: BOMCostingAnalyticsTabP
                                         fill={barColor}
                                         radius={[4, 4, 0, 0]}
                                         maxBarSize={55}
+                                        minPointSize={8}
                                         animationDuration={600}
                                     />
                                 </BarChart>
@@ -353,7 +404,9 @@ export default function BOMCostingAnalyticsTab({ data }: BOMCostingAnalyticsTabP
                 </div>
 
                 <div className="pt-4 border-t text-[11px] text-muted-foreground flex justify-between items-center">
-                    <span>Ranked by percentage contribution to total batch cost</span>
+                    <span>
+                        Ranked by percentage contribution to {selectedDriverCategory === "all" ? "total batch" : CATEGORY_LABELS[selectedDriverCategory]} cost
+                    </span>
                     <span className="font-mono">Top {topCostDrivers.length} Items</span>
                 </div>
             </div>
