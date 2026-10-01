@@ -85,6 +85,7 @@ export function exportProfitabilityPDF(
     const tableRows = rows.map(r => [
         r.job_order_no,
         r.product_name,
+        r.uom || "pcs",
         r.target_quantity.toLocaleString(),
         r.actual_quantity_produced.toLocaleString(),
         r.total_quantity_consumed > 0 ? r.total_quantity_consumed.toLocaleString() : "—",
@@ -100,7 +101,7 @@ export function exportProfitabilityPDF(
 
     autoTable(doc, {
         startY: currentY,
-        head: [["JO #", "Product", "Target Qty", "Produced Qty", "Consumed Qty", "Unit Price", "Revenue", "Materials", "Labor", "Overhead", "Total COGS", "Gross Profit", "Margin %"]],
+        head: [["JO #", "Product", "UOM", "Target Qty", "Produced Qty", "Consumed Qty", "Unit Price", "Revenue", "Materials", "Labor", "Overhead", "Total COGS", "Gross Profit", "Margin %"]],
         body: tableRows,
         theme: "striped",
         headStyles: {
@@ -117,21 +118,22 @@ export function exportProfitabilityPDF(
         columnStyles: {
             0: { halign: "left", fontStyle: "bold" },
             1: { halign: "left" },
-            2: { halign: "right" },
-            3: { halign: "right", fontStyle: "bold" },
-            4: { halign: "right" },
+            2: { halign: "center" },
+            3: { halign: "right" },
+            4: { halign: "right", fontStyle: "bold" },
             5: { halign: "right" },
-            6: { halign: "right", fontStyle: "bold" },
-            7: { halign: "right" },
+            6: { halign: "right" },
+            7: { halign: "right", fontStyle: "bold" },
             8: { halign: "right" },
             9: { halign: "right" },
-            10: { halign: "right", fontStyle: "bold" },
+            10: { halign: "right" },
             11: { halign: "right", fontStyle: "bold" },
-            12: { halign: "center", fontStyle: "bold" }
+            12: { halign: "right", fontStyle: "bold" },
+            13: { halign: "center", fontStyle: "bold" }
         },
         margin: { left: margin, right: margin },
         didParseCell: (data) => {
-            if (data.section === "body" && (data.column.index === 11 || data.column.index === 12)) {
+            if (data.section === "body" && (data.column.index === 12 || data.column.index === 13)) {
                 const rowObj = rows[data.row.index];
                 if (rowObj && rowObj.gross_profit < 0) {
                     data.cell.styles.textColor = [220, 38, 38]; // Red for negative margin

@@ -6,6 +6,7 @@ export interface JobOrderProfitabilityRow {
     product_id: number;
     product_name: string;
     product_code: string;
+    uom: string;
     version_id: number;
     branch_id: number;
     status: string;
@@ -38,10 +39,12 @@ export interface MaterialCostItem {
     product_id: number;
     product_name: string;
     product_code: string;
+    uom: string;
     quantity_consumed: number;
     unit_cost: number;
     total_cost: number;
     batch_no?: string | null;
+    batch_percentage?: number;
 }
 
 export interface LaborCostItem {
@@ -71,6 +74,12 @@ export interface JobOrderCostBreakdown {
     job_order_id: number;
     job_order_no: string;
     product_name: string;
+    product_code?: string;
+    uom?: string;
+    targetQuantity?: number;
+    actualQuantity: number;
+    yieldEfficiencyPercent?: number;
+    marginStatus?: MarginStatus;
     materials: MaterialCostItem[];
     labor: LaborCostItem[];
     overheads: OverheadCostItem[];
@@ -78,11 +87,15 @@ export interface JobOrderCostBreakdown {
     totalLaborCost: number;
     totalOverheadCost: number;
     totalCogs: number;
-    actualQuantity: number;
     unitCogs: number;
     sellingPrice: number;
     grossProfit: number;
     grossMarginPercent: number;
+    breakEvenPrice?: number;
+    targetMarginPercent?: number;
+    targetMarginLabel?: string;
+    targetMarginPrice?: number;
+    materialsBatchPercentage?: number;
 }
 
 export interface ProfitabilitySummaryKPIs {

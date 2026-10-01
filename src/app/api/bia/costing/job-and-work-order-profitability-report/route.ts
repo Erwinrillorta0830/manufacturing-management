@@ -57,11 +57,20 @@ export async function GET(request: NextRequest) {
         // If drilldown detail is requested for a specific Job Order
         if (drilldownJoId) {
             const joId = Number(drilldownJoId);
-            const [joRes, yieldLedgersRes, routesRes, productsRes] = await Promise.all([
+            const [
+                joRes,
+                yieldLedgersRes,
+                routesRes,
+                productsRes,
+                allocationsRes,
+                salesOrderDetailsRes
+            ] = await Promise.all([
                 fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joId}?fields=job_order_id,job_order_no,product_id,actual_quantity_produced,target_quantity,completed_quantity`, { headers, cache: "no-store" }),
                 fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${joId}&fields=ledger_id`, { headers, cache: "no-store" }),
                 fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${joId}&fields=jo_route_id,work_center_id,planned_run_hours,actual_run_hours,status`, { headers, cache: "no-store" }),
-                fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,product_code,cost_per_unit,price_per_unit`, { headers, cache: "no-store" })
+                fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,product_code,price_per_unit,priceA,priceB,cost_per_unit,estimated_unit_cost,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name`, { headers, cache: "no-store" }),
+                fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations?filter[job_order_id][_eq]=${joId}&fields=id,sales_order_detail_id,job_order_id,allocated_quantity`, { headers, cache: "no-store" }).catch(() => null),
+                fetch(`${DIRECTUS_URL}/items/sales_order_details?limit=-1&fields=detail_id,product_id,order_id,unit_price,allocated_quantity`, { headers, cache: "no-store" }).catch(() => null)
             ]);
 
             if (!joRes.ok) {
@@ -69,15 +78,30 @@ export async function GET(request: NextRequest) {
             }
 
             const jo = (await joRes.json()).data;
-            const productsMap = new Map<number, { name: string; code: string; cost: number; price: number }>();
+            const productsMap = new Map<number, { name: string; code: string; cost: number; price: number; uom: string }>();
             if (productsRes.ok) {
                 const pJson = await productsRes.json();
                 (pJson.data || []).forEach((p: Record<string, unknown>) => {
+                    const pricePerUnit = Number(p.price_per_unit || 0);
+                    const priceA = Number(p.priceA || 0);
+                    const priceB = Number(p.priceB || 0);
+                    const resolvedPrice = pricePerUnit > 0 ? pricePerUnit : priceA > 0 ? priceA : priceB;
+                    const resolvedCost = Number(p.cost_per_unit || p.estimated_unit_cost || 0);
+
+                    const uomObj = p.unit_of_measurement as { unit_shortcut?: string; unit_name?: string } | string | null | undefined;
+                    let resolvedUom = "pcs";
+                    if (typeof uomObj === "object" && uomObj !== null) {
+                        resolvedUom = uomObj.unit_shortcut || uomObj.unit_name || "pcs";
+                    } else if (typeof uomObj === "string" && uomObj.trim()) {
+                        resolvedUom = uomObj.trim();
+                    }
+
                     productsMap.set(Number(p.product_id), {
                         name: String(p.product_name || ""),
                         code: String(p.product_code || ""),
-                        cost: Number(p.cost_per_unit || 0),
-                        price: Number(p.price_per_unit || 0)
+                        cost: resolvedCost,
+                        price: resolvedPrice,
+                        uom: resolvedUom
                     });
                 });
             }
@@ -89,7 +113,18 @@ export async function GET(request: NextRequest) {
                 (yJson.data || []).forEach((y: Record<string, unknown>) => ledgerIds.push(Number(y.ledger_id)));
             }
 
-            const materials: MaterialCostItem[] = [];
+            const rawMaterials: Array<{
+                consumage_id: number;
+                product_id: number;
+                product_name: string;
+                product_code: string;
+                uom: string;
+                quantity_consumed: number;
+                unit_cost: number;
+                total_cost: number;
+                batch_no: string | null;
+            }> = [];
+
             if (ledgerIds.length > 0) {
                 const consumageRes = await fetch(
                     `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger_bom_consumage?filter[ledger_id][_in]=${ledgerIds.join(",")}&fields=consumage_id,product_id,quantity_consumed,batch_no`,
@@ -102,11 +137,12 @@ export async function GET(request: NextRequest) {
                         const prod = productsMap.get(pid);
                         const qty = Number(c.quantity_consumed || 0);
                         const uCost = prod?.cost || 0;
-                        materials.push({
+                        rawMaterials.push({
                             consumage_id: Number(c.consumage_id),
                             product_id: pid,
                             product_name: prod?.name || `Material #${pid}`,
                             product_code: prod?.code || `MAT-${pid}`,
+                            uom: prod?.uom || "pcs",
                             quantity_consumed: qty,
                             unit_cost: uCost,
                             total_cost: Math.round(qty * uCost * 100) / 100,
@@ -199,22 +235,110 @@ export async function GET(request: NextRequest) {
                 }
             }
 
-            const totalMaterialsCost = Math.round(materials.reduce((s, m) => s + m.total_cost, 0) * 100) / 100;
-            const totalLaborCost = Math.round(labor.reduce((s, l) => s + l.labor_cost, 0) * 100) / 100;
-            const totalOverheadCost = Math.round(overheads.reduce((s, o) => s + o.total_overhead_cost, 0) * 100) / 100;
-            const totalCogs = Math.round((totalMaterialsCost + totalLaborCost + totalOverheadCost) * 100) / 100;
-            const actualQty = Number(jo.actual_quantity_produced || jo.completed_quantity || jo.target_quantity || 1);
-            const unitCogs = actualQty > 0 ? Math.round((totalCogs / actualQty) * 100) / 100 : 0;
+            const targetQty = Number(jo.target_quantity || 0);
+            const actualProduced = Math.max(
+                Number(jo.actual_quantity_produced || 0),
+                Number(jo.completed_quantity || 0)
+            );
+            const effectiveQty = actualProduced > 0 ? actualProduced : targetQty;
+
+            // Direct Materials with Fallback
+            let totalMaterialsCost = Math.round(rawMaterials.reduce((s, m) => s + m.total_cost, 0) * 100) / 100;
             const fgProd = productsMap.get(Number(jo.product_id));
-            const sellingPrice = fgProd?.price || 0;
-            const totalRev = Math.round(actualQty * sellingPrice * 100) / 100;
+            if (totalMaterialsCost === 0 && fgProd?.cost && effectiveQty > 0) {
+                totalMaterialsCost = Math.round(effectiveQty * fgProd.cost * 0.75 * 100) / 100;
+            }
+
+            // Direct Labor with Fallback
+            let totalLaborCost = Math.round(labor.reduce((s, l) => s + l.labor_cost, 0) * 100) / 100;
+            if (totalLaborCost === 0 && fgProd?.cost && effectiveQty > 0) {
+                totalLaborCost = Math.round(effectiveQty * fgProd.cost * 0.15 * 100) / 100;
+            }
+
+            // Overhead with Fallback
+            let totalOverheadCost = Math.round(overheads.reduce((s, o) => s + o.total_overhead_cost, 0) * 100) / 100;
+            if (totalOverheadCost === 0 && fgProd?.cost && effectiveQty > 0) {
+                totalOverheadCost = Math.round(effectiveQty * fgProd.cost * 0.10 * 100) / 100;
+            }
+
+            const totalCogs = Math.round((totalMaterialsCost + totalLaborCost + totalOverheadCost) * 100) / 100;
+            const unitCogs = effectiveQty > 0 ? Math.round((totalCogs / effectiveQty) * 100) / 100 : 0;
+
+            // Resolve Sales Order Price with Allocations Fallback
+            let sellingPrice = 0;
+            if (allocationsRes && allocationsRes.ok && salesOrderDetailsRes && salesOrderDetailsRes.ok) {
+                const aJson = await allocationsRes.json();
+                const sodJson = await salesOrderDetailsRes.json();
+                const allocationsList = aJson.data || [];
+                if (allocationsList.length > 0) {
+                    const primaryAlloc = allocationsList[0];
+                    const matchedSod = (sodJson.data || []).find((s: Record<string, unknown>) => Number(s.detail_id) === Number(primaryAlloc.sales_order_detail_id));
+                    if (matchedSod && Number(matchedSod.unit_price) > 0) {
+                        sellingPrice = Number(matchedSod.unit_price);
+                    }
+                }
+            }
+
+            if (sellingPrice === 0 && fgProd?.price) {
+                sellingPrice = fgProd.price;
+            }
+
+            const totalRev = Math.round(effectiveQty * sellingPrice * 100) / 100;
             const grossProfit = Math.round((totalRev - totalCogs) * 100) / 100;
             const grossMarginPercent = totalRev > 0 ? Math.round((grossProfit / totalRev) * 1000) / 10 : 0;
+            const yieldEfficiencyPercent = targetQty > 0 ? Math.round((effectiveQty / targetQty) * 1000) / 10 : 100;
+
+            const marginStatus = resolveMarginStatus(grossMarginPercent);
+
+            // Determine dynamic target margin benchmark based on margin health
+            let targetMarginPercent = 30;
+            let targetMarginLabel = "Price for 30% margin";
+
+            if (marginStatus === "high") {
+                targetMarginPercent = 45;
+                targetMarginLabel = "Price for 45% margin";
+            } else if (marginStatus === "healthy") {
+                targetMarginPercent = 30;
+                targetMarginLabel = "Price for 30% margin";
+            } else if (marginStatus === "moderate") {
+                targetMarginPercent = 20;
+                targetMarginLabel = "Price for 20% margin";
+            } else if (marginStatus === "low") {
+                targetMarginPercent = 10;
+                targetMarginLabel = "Price for 10% margin";
+            } else if (marginStatus === "negative") {
+                targetMarginPercent = 25;
+                targetMarginLabel = "Price for 25% target margin";
+            }
+
+            const targetMarginPrice = unitCogs > 0 && targetMarginPercent < 100
+                ? Math.round((unitCogs / (1 - (targetMarginPercent / 100))) * 100) / 100
+                : unitCogs;
+
+            const breakEvenPrice = unitCogs;
+            const materialsBatchPercentage = totalCogs > 0
+                ? Math.round((totalMaterialsCost / totalCogs) * 1000) / 10
+                : 0;
+
+            // Calculate % of batch per individual material item
+            const materials: MaterialCostItem[] = rawMaterials.map(m => {
+                const batchPct = totalCogs > 0 ? Math.round((m.total_cost / totalCogs) * 1000) / 10 : 0;
+                return {
+                    ...m,
+                    batch_percentage: batchPct
+                };
+            });
 
             const breakdown: JobOrderCostBreakdown = {
                 job_order_id: joId,
                 job_order_no: String(jo.job_order_no || `JO-${joId}`),
                 product_name: fgProd?.name || `Product #${jo.product_id}`,
+                product_code: fgProd?.code || `FG-${jo.product_id}`,
+                uom: fgProd?.uom || "pcs",
+                targetQuantity: targetQty,
+                actualQuantity: effectiveQty,
+                yieldEfficiencyPercent,
+                marginStatus,
                 materials,
                 labor,
                 overheads,
@@ -222,11 +346,15 @@ export async function GET(request: NextRequest) {
                 totalLaborCost,
                 totalOverheadCost,
                 totalCogs,
-                actualQuantity: actualQty,
                 unitCogs,
                 sellingPrice,
                 grossProfit,
-                grossMarginPercent
+                grossMarginPercent,
+                breakEvenPrice,
+                targetMarginPercent,
+                targetMarginLabel,
+                targetMarginPrice,
+                materialsBatchPercentage
             };
 
             return NextResponse.json({ data: breakdown });
@@ -259,7 +387,7 @@ export async function GET(request: NextRequest) {
             workCentersRes,
             usersRes
         ] = await Promise.all([
-            fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,product_code,price_per_unit,priceA,priceB,cost_per_unit,estimated_unit_cost`, { headers, cache: "no-store" }).catch(() => null),
+            fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,product_code,price_per_unit,priceA,priceB,cost_per_unit,estimated_unit_cost,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations?limit=-1&fields=id,sales_order_detail_id,job_order_id,allocated_quantity`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/sales_order_details?limit=-1&fields=detail_id,product_id,order_id,unit_price,allocated_quantity`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/sales_order?limit=-1&fields=order_id,order_no,customer_code`, { headers, cache: "no-store" }).catch(() => null),
@@ -282,7 +410,7 @@ export async function GET(request: NextRequest) {
             });
         }
 
-        const productsMap = new Map<number, { name: string; code: string; price: number; cost: number }>();
+        const productsMap = new Map<number, { name: string; code: string; price: number; cost: number; uom: string }>();
         if (productsRes && productsRes.ok) {
             const pJson = await productsRes.json();
             (pJson.data || []).forEach((p: Record<string, unknown>) => {
@@ -292,11 +420,20 @@ export async function GET(request: NextRequest) {
                 const resolvedPrice = pricePerUnit > 0 ? pricePerUnit : priceA > 0 ? priceA : priceB;
                 const resolvedCost = Number(p.cost_per_unit || p.estimated_unit_cost || 0);
 
+                const uomObj = p.unit_of_measurement as { unit_shortcut?: string; unit_name?: string } | string | null | undefined;
+                let resolvedUom = "pcs";
+                if (typeof uomObj === "object" && uomObj !== null) {
+                    resolvedUom = uomObj.unit_shortcut || uomObj.unit_name || "pcs";
+                } else if (typeof uomObj === "string" && uomObj.trim()) {
+                    resolvedUom = uomObj.trim();
+                }
+
                 productsMap.set(Number(p.product_id), {
                     name: String(p.product_name || `Product #${p.product_id}`),
                     code: String(p.product_code || `PRD-${p.product_id}`),
                     price: resolvedPrice,
-                    cost: resolvedCost
+                    cost: resolvedCost,
+                    uom: resolvedUom
                 });
             });
         }
@@ -367,6 +504,7 @@ export async function GET(request: NextRequest) {
                     product_id: prodId,
                     product_name: prod?.name || `Material #${prodId}`,
                     product_code: prod?.code || `MAT-${prodId}`,
+                    uom: prod?.uom || "pcs",
                     quantity_consumed: qty,
                     unit_cost: unitCost,
                     total_cost: totalCost,
@@ -551,6 +689,7 @@ export async function GET(request: NextRequest) {
                 product_id: prodId,
                 product_name: product?.name || `Finished Good #${prodId}`,
                 product_code: product?.code || `FG-${prodId}`,
+                uom: product?.uom || "pcs",
                 version_id: Number(jo.version_id || 1),
                 branch_id: Number(jo.branch_id || 1),
                 status: String(jo.status || "Closed"),
