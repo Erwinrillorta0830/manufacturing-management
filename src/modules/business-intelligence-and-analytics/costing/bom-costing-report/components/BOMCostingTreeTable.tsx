@@ -20,12 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import {
-    Tooltip,
-    TooltipContent,
-    TooltipProvider,
-    TooltipTrigger,
-} from "@/components/ui/tooltip";
+ 
 import {
     BOMCostNode,
     BOMCostingReportData,
@@ -68,18 +63,31 @@ export const isDiscreteUom = (uom: string): boolean => {
         "UNIT",
         "UNITS",
         "TUB",
-        "TUBS"
+        "TUBS",
+        "ROLL",
+        "ROLLS",
+        "CONTAINER",
+        "CONTAINERS",
+        "JAR",
+        "JARS",
+        "TIN",
+        "TINS",
+        "BUNDLE",
+        "BUNDLES"
     ].includes(norm);
 };
 
 export const formatUomQuantity = (val: number, uom?: string): string => {
     const num = Number(val) || 0;
-    if (uom && isDiscreteUom(uom) && Number.isInteger(num)) {
+    if (uom && isDiscreteUom(uom)) {
+        // Discrete units (PCS, BOX, etc.): round to whole integers or max 2 decimal places
+        const rounded = Math.round((num + Number.EPSILON) * 100) / 100;
         return new Intl.NumberFormat("en-US", {
             minimumFractionDigits: 0,
-            maximumFractionDigits: 4
-        }).format(num);
+            maximumFractionDigits: 2
+        }).format(rounded);
     }
+    // Bulk liquid/weight ingredients (KG, L, BAG, etc.): reserve strictly 4 decimal places
     return new Intl.NumberFormat("en-US", {
         minimumFractionDigits: 4,
         maximumFractionDigits: 4
@@ -175,43 +183,6 @@ export default function BOMCostingTreeTable({ data }: BOMCostingTreeTableProps) 
                 Raw Material
             </Badge>
         );
-    };
-
-    // Inventory Dispatch Rule Badge
-    const renderInventoryRuleBadge = (rule: string) => {
-        if (rule === "FEFO") {
-            return (
-                <TooltipProvider>
-                    <Tooltip>
-                        <TooltipTrigger asChild>
-                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-300/60 cursor-help">
-                                FEFO
-                            </span>
-                        </TooltipTrigger>
-                        <TooltipContent side="top" className="text-xs max-w-xs">
-                            First Expired, First Out: Components consume nearest-expiry lots first.
-                        </TooltipContent>
-                    </Tooltip>
-                </TooltipProvider>
-            );
-        }
-        if (rule === "FIFO") {
-            return (
-                <TooltipProvider>
-                    <Tooltip>
-                        <TooltipTrigger asChild>
-                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-cyan-500/10 text-cyan-700 dark:text-cyan-400 border border-cyan-300/60 cursor-help">
-                                FIFO
-                            </span>
-                        </TooltipTrigger>
-                        <TooltipContent side="top" className="text-xs max-w-xs">
-                            First In, First Out: Packaging materials consume earliest receipt/inward date first.
-                        </TooltipContent>
-                    </Tooltip>
-                </TooltipProvider>
-            );
-        }
-        return <span className="text-xs text-muted-foreground">-</span>;
     };
 
     // Filter tree recursively or return flat list based on rollupMode
@@ -359,15 +330,7 @@ export default function BOMCostingTreeTable({ data }: BOMCostingTreeTableProps) 
                         {renderClassificationBadge(node.materialClassification, node.isSubAssembly)}
                     </td>
 
-                    {/* 4. RULE */}
-                    <td
-                        className="py-2.5 px-3 min-w-[70px] text-center whitespace-nowrap"
-                        title={node.inventoryRule === "FEFO" ? "First Expired, First Out (Perishable Lot Strategy)" : node.inventoryRule === "FIFO" ? "First In, First Out (Inward Receipt Strategy)" : "No inventory dispatch rule applicable"}
-                    >
-                        {renderInventoryRuleBadge(node.inventoryRule)}
-                    </td>
-
-                    {/* 5. UOM */}
+                    {/* 4. UOM */}
                     <td
                         className="py-2.5 px-3 min-w-[60px] text-center font-mono text-[11px] text-muted-foreground whitespace-nowrap"
                         title={`Unit of Measurement: ${node.uomName}`}
@@ -584,7 +547,6 @@ export default function BOMCostingTreeTable({ data }: BOMCostingTreeTableProps) 
                             <th className="py-2.5 px-3 min-w-[220px]" title="BOM Hierarchy level (L1/L2) and manufacturing routing operation sequence">Level & Route</th>
                             <th className="py-2.5 px-3 min-w-[220px]" title="Component item name, code/SKU, and specifications">Component Name</th>
                             <th className="py-2.5 px-3 min-w-[100px]" title="Material classification: Raw Material, Packaging, Sub-Assembly, Labor, or Overhead">Type</th>
-                            <th className="py-2.5 px-3 min-w-[70px] text-center" title="Inventory consumption dispatch rule: FEFO for perishables, FIFO for packaging materials">Rule</th>
                             <th className="py-2.5 px-3 min-w-[60px] text-center" title="Unit of Measurement (UOM)">UOM</th>
                             <th className="py-2.5 px-3 min-w-[90px] text-right" title="Standard recipe quantity required per base production batch">Base Qty</th>
                             <th className="py-2.5 px-3 min-w-[95px] text-right" title="Net required quantity scaled for target production batch">Req. Qty</th>
@@ -598,7 +560,7 @@ export default function BOMCostingTreeTable({ data }: BOMCostingTreeTableProps) 
                     <tbody>
                         {filteredNodes.length === 0 ? (
                             <tr>
-                                <td colSpan={12} className="py-12 text-center text-muted-foreground">
+                                <td colSpan={11} className="py-12 text-center text-muted-foreground">
                                     <div className="flex flex-col items-center justify-center gap-2">
                                         <AlertCircle className="h-8 w-8 text-muted-foreground/50" />
                                         <div className="text-sm font-medium">No matching BOM components found</div>
@@ -620,7 +582,7 @@ export default function BOMCostingTreeTable({ data }: BOMCostingTreeTableProps) 
                                 <td colSpan={5} className="py-3 px-3" title={`Total Standard Batch Cost Rollup for ${targetProduct.product_name}`}>
                                     Total Standard Batch Cost Rollup ({targetProduct.product_name})
                                 </td>
-                                <td colSpan={5} className="py-3 px-3 text-right font-normal text-muted-foreground" title={`Per Piece Unit Cost: ${formatStandardCurrency(summary.costPerUnit, 4)} per ${targetProduct.uom_name}`}>
+                                <td colSpan={4} className="py-3 px-3 text-right font-normal text-muted-foreground" title={`Per Piece Unit Cost: ${formatStandardCurrency(summary.costPerUnit, 4)} per ${targetProduct.uom_name}`}>
                                     Per Piece Unit Cost: <strong className="text-foreground font-mono">{formatStandardCurrency(summary.costPerUnit, 4)}</strong> / {targetProduct.uom_name}
                                 </td>
                                 <td className="py-3 px-3 text-right font-mono text-sm font-bold text-primary" title={`Total Batch Cost: ${formatStandardCurrency(summary.totalBatchCost || summary.totalMaterialCost, 4)}`}>
@@ -641,11 +603,6 @@ export default function BOMCostingTreeTable({ data }: BOMCostingTreeTableProps) 
                     <Info className="h-3.5 w-3.5 shrink-0 text-primary mt-0.5" />
                     <div>
                         <strong className="text-foreground">Standard Costing Policy:</strong> Gross quantities include applicable route scrap allowances. Unit costs and extended total valuations are standardized to 4 decimal precision. Direct labor and overhead are aggregated in accordance with routing sequences and version standards.
-                    </div>
-                </div>
-                <div className="flex items-start gap-2 pl-5">
-                    <div>
-                        <strong className="text-foreground">Warehouse Inventory Strategy:</strong> Raw materials and perishable ingredients follow <strong>FEFO</strong> (First Expired, First Out) batch consumption, while packaging materials adhere to inward <strong>FIFO</strong> (First In, First Out) rotation.
                     </div>
                 </div>
             </div>

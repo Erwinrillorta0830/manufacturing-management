@@ -26,6 +26,7 @@ export interface WipRouteStage {
     total_planned_hours: number;
     total_actual_hours: number;
     status: "Pending" | "In Progress" | "Completed" | "QA Hold" | "Skipped" | string;
+    started_at?: string | null;
     completed_at: string | null;
     requires_qa: boolean;
     operators: WipOperatorAssignment[];
@@ -49,7 +50,9 @@ export interface WipMaterialReservation {
     returned_quantity: number;
     remaining_wip_quantity: number;
     reservation_status: string;
+    expiry_date?: string | null;
     wip_started_at?: string | null;
+    wip_started_by_name?: string | null;
     share_percent?: number;
     unit_cost?: number;
     total_value?: number;
@@ -63,6 +66,7 @@ export interface WipJobOrder {
     product_code?: string;
     product_category?: string | null;
     lot_number?: string | null;
+    batch_number?: string | null;
     uom_name: string;
     target_quantity: number;
     actual_quantity_produced: number;
@@ -79,6 +83,7 @@ export interface WipJobOrder {
     end_date: string | null;
     production_started_at: string | null;
     production_completed_at: string | null;
+    created_at?: string | null;
     remarks?: string | null;
     
     // Calculated Progress Metrics
@@ -104,6 +109,10 @@ export interface WipJobOrder {
 
     // Continuous Process Metrics (Image 1 Alignment)
     wip_value: number;
+    material_wip_value?: number;
+    labor_wip_value?: number;
+    overhead_wip_value?: number;
+    parent_job_order_id?: number | null;
     material_yield_percent: number;
     actual_throughput_rate: number;
     rated_capacity_per_hour: number;
@@ -129,6 +138,8 @@ export interface WipTransaction {
     uom: string;
     notes?: string;
     operator_name?: string;
+    action?: string;
+    event_key?: string | null;
 }
 
 export interface WipSummaryMetrics {
