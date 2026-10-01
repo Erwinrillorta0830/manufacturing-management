@@ -16,7 +16,6 @@ import type {
     ReceivingLotAllocationInput,
     ReceivingPreview,
     ReceivingQaEvaluation,
-    ReceivingQuantityStatus,
     Shipment,
     ShipmentLineItem,
     StorageLot,
@@ -52,7 +51,6 @@ export interface QaReceivingInspectionModalProps {
     supplierDocumentTypeError: string | null;
     supplierDocumentTypeId: number | null;
     onSupplierDocumentTypeChange: (value: string) => void;
-    quantityStatus: ReceivingQuantityStatus;
     processOverDelivery: boolean;
     setProcessOverDelivery: (value: boolean) => void;
     overDeliveryLines: OverDeliveryLine[];
@@ -111,7 +109,6 @@ export default function QaReceivingInspectionModal({
     supplierDocumentTypeError,
     supplierDocumentTypeId,
     onSupplierDocumentTypeChange,
-    quantityStatus,
     processOverDelivery,
     setProcessOverDelivery,
     overDeliveryLines,
@@ -205,7 +202,6 @@ export default function QaReceivingInspectionModal({
                         supplierDocumentTypeError={supplierDocumentTypeError}
                         supplierDocumentTypeId={supplierDocumentTypeId}
                         onSupplierDocumentTypeChange={onSupplierDocumentTypeChange}
-                        quantityStatus={quantityStatus}
                         processOverDelivery={processOverDelivery}
                         setProcessOverDelivery={setProcessOverDelivery}
                         overDeliveryLines={overDeliveryLines}

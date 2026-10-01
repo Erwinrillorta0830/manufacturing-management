@@ -37,7 +37,6 @@ export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWa
     const [quantities, setQuantities] = useState<Record<number, string>>({});
     const [receiptNumber, setReceiptNumber] = useState("");
     const [receiptDate, setReceiptDate] = useState(today);
-    const [receiptType, setReceiptType] = useState<WarehouseReceiptType>("full");
     const [search, setSearch] = useState("");
     const [supplierId, setSupplierId] = useState("");
     const [dateFrom, setDateFrom] = useState("");
@@ -104,7 +103,6 @@ export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWa
             const receipt = detail.draft || detail.pendingQaReceipt;
             setReceiptNumber(receipt?.receiptNumber || "");
             setReceiptDate(receipt?.receiptDate || today());
-            setReceiptType(receipt?.receiptType || "full");
             setQuantities(Object.fromEntries(detail.lines.map(line => [line.lineId, String(line.currentReceivedQuantity || "")])));
         } catch (caught) {
             if (controller.signal.aborted || (caught as Error).name === "AbortError") return;
@@ -134,6 +132,16 @@ export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWa
         receivedQuantity: Math.max(0, Number(quantities[line.lineId] || 0))
     })) || [], [quantities, selectedOrder]);
 
+    const isPartialReceipt = useMemo(() => {
+        if (!selectedOrder) return false;
+        return selectedOrder.lines.some(line => {
+            const entered = Math.max(0, Number(quantities[line.lineId] || 0));
+            return entered < line.allowableQuantity - 1e-9;
+        });
+    }, [quantities, selectedOrder]);
+
+    const receiptType: WarehouseReceiptType = isPartialReceipt ? "partial" : "full";
+
     const post = useCallback(async (
         action: WarehouseReceivingCommand["action"],
         options: { silent?: boolean } = {}
@@ -161,23 +169,18 @@ export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWa
             });
             if (action === "submit_to_qa") {
                 toast.success(`${result.poNumber} was sent to QA Receiving.`);
-                if (isDetailMode) {
-                    setSelectedOrder(result);
-                    setQuantities(Object.fromEntries(result.lines.map(line => [line.lineId, String(line.currentReceivedQuantity || "")])));
-                    setReceiptNumber(result.draft?.receiptNumber || result.pendingQaReceipt?.receiptNumber || receiptNumber);
-                    setReceiptDate(result.draft?.receiptDate || result.pendingQaReceipt?.receiptDate || receiptDate);
-                    setReceiptType(result.draft?.receiptType || result.pendingQaReceipt?.receiptType || receiptType);
-                } else {
-                    setSelectedOrder(null);
-                    setQuantities({});
-                    await loadQueue(1, filters);
+                setSelectedOrder(result);
+                setQuantities(Object.fromEntries(result.lines.map(line => [line.lineId, String(line.currentReceivedQuantity || "")])));
+                setReceiptNumber(result.draft?.receiptNumber || result.pendingQaReceipt?.receiptNumber || receiptNumber);
+                setReceiptDate(result.draft?.receiptDate || result.pendingQaReceipt?.receiptDate || receiptDate);
+                if (!isDetailMode) {
+                    await loadQueue(page, filters);
                 }
             } else {
                 setSelectedOrder(result);
                 setQuantities(Object.fromEntries(result.lines.map(line => [line.lineId, String(line.currentReceivedQuantity || "")])));
                 setReceiptNumber(result.draft?.receiptNumber || receiptNumber);
                 setReceiptDate(result.draft?.receiptDate || receiptDate);
-                setReceiptType(result.draft?.receiptType || receiptType);
                 if (!isDetailMode) {
                     await loadQueue(page, filters);
                 }
@@ -251,7 +254,6 @@ export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWa
         updateQuantity,
         setReceiptNumber,
         setReceiptDate,
-        setReceiptType,
         start: () => post("start"),
         saveDraft: () => post("save_draft"),
         submitToQa: () => post("submit_to_qa"),
