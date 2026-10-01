@@ -9,8 +9,7 @@ import {
     Package,
     Layers,
     Search,
-    TrendingUp,
-    TrendingDown,
+ 
     AlertCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -190,15 +189,15 @@ export default function BOMCostingSensitivityTab({ data }: BOMCostingSensitivity
         setShifts({});
     };
 
-    const handleApplyGlobalShift = (percentage: number) => {
-        setShifts(prev => {
-            const next = { ...prev };
-            visibleMaterials.forEach(item => {
-                next[item.id] = percentage;
-            });
-            return next;
-        });
-    };
+    // const handleApplyGlobalShift = (percentage: number) => {
+    //     setShifts(prev => {
+    //         const next = { ...prev };
+    //         visibleMaterials.forEach(item => {
+    //             next[item.id] = percentage;
+    //         });
+    //         return next;
+    //     });
+    // };
 
     const formatBadgeVal = (val: number): string => {
         if (val > 0) return `+${val.toFixed(1)}%`;
