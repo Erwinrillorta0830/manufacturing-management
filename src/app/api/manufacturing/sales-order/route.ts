@@ -980,10 +980,11 @@ export async function POST(request: Request) {
             }
             const orderNo = `SO-DIR-${String(allocationId).padStart(6, "0")}`;
 
-            // Calculate total amount
+            // Calculate total amount & discounts
             // disabled-lint-next-line @typescript-eslint/no-explicit-any
             const totalAmount = directItems.reduce((sum, item) => sum + item.unit_price * item.quantity, 0);
-            const totalDiscount = directItems.reduce((sum, item) => sum + (item.discount_amount || 0), 0);
+            const totalItemDiscount = directItems.reduce((sum, item) => sum + ((item.discount_amount || 0) * item.quantity), 0);
+            const totalDiscount = totalItemDiscount + Number(body.discountAmount || 0);
 
             // 3. Create the header and all details as one compensated business action.
             const salesOrderPayload = {
@@ -992,7 +993,7 @@ export async function POST(request: Request) {
                 customer_code: customerCode,
                 order_status: body.submitForApproval ? "For Approval" : "Draft",
                 total_amount: totalAmount,
-                discount_amount: 0,
+                discount_amount: totalDiscount,
                 net_amount: totalAmount - totalDiscount,
                 remarks: remarks,
                 created_date: localCreatedDate,
@@ -1012,6 +1013,7 @@ export async function POST(request: Request) {
                 const safeVerId = (requestedVerId && validVersionIds.has(requestedVerId))
                     ? requestedVerId
                     : (versionMap.get(item.product_id) || null);
+                const lineDiscount = (item.discount_amount || 0) * item.quantity;
                 return {
                     product_id: item.product_id,
                     bom_version_id: safeVerId,
@@ -1020,10 +1022,10 @@ export async function POST(request: Request) {
                     allocated_quantity: 0,
                     served_quantity: 0,
                     allocated_amount: 0,
-                    net_amount: (item.unit_price * item.quantity) - (item.discount_amount || 0),
+                    net_amount: (item.unit_price * item.quantity) - lineDiscount,
                     gross_amount: item.unit_price * item.quantity,
                     discount_type: item.discount_type || null,
-                    discount_amount: item.discount_amount || 0,
+                    discount_amount: lineDiscount,
                     created_date: localCreatedDate
                 };
             });
@@ -1046,7 +1048,7 @@ export async function POST(request: Request) {
         if (items && items.length > 0) {
             quoteItems = items;
             quoteTotal = quoteItems.reduce((sum, item) => sum + Number(item.unit_price) * Number(item.quantity), 0);
-            totalDiscount = quoteItems.reduce((sum, item) => sum + (Number(item.discount_amount) || 0), 0);
+            totalDiscount = quoteItems.reduce((sum, item) => sum + ((Number(item.discount_amount) || 0) * Number(item.quantity)), 0);
             quoteParentIds = quoteItems.map((item: any) => Number(item.parent_product_id || item.product_id));
         } else {
             // Fetch the quotation snapshots
@@ -1140,7 +1142,7 @@ export async function POST(request: Request) {
             customer_code: customerCode,
             order_status: body.submitForApproval ? "For Approval" : "Draft", // Start as Draft or Submit
             total_amount: quoteTotal,
-            discount_amount: items && items.length > 0 ? 0 : discountAmount,
+            discount_amount: effectiveDiscount,
             net_amount: quoteTotal - effectiveDiscount,
             remarks: remarks || `Converted 1:1 from Quote ${quote.quote_number}.`,
             created_date: localCreatedDate,
@@ -1160,7 +1162,8 @@ export async function POST(request: Request) {
             const quantity = Number(item.quantity);
             const productId = Number(item.product_id);
             const parentId = Number(item.parent_product_id || item.parent_id || item.product_id);
-            const itemDiscount = Number(item.discount_amount || 0);
+            const unitDiscount = Number(item.discount_amount || 0);
+            const lineDiscount = unitDiscount * quantity;
             const requestedVerId = item.bom_version_id ? Number(item.bom_version_id) : (quoteVersionMap.get(parentId) || null);
             const safeVerId = (requestedVerId && quoteValidVersionIds.has(requestedVerId)) ? requestedVerId : (quoteVersionMap.get(parentId) || null);
             return {
@@ -1171,10 +1174,10 @@ export async function POST(request: Request) {
                 allocated_quantity: 0,
                 served_quantity: 0,
                 allocated_amount: 0,
-                net_amount: (unitPrice * quantity) - itemDiscount,
+                net_amount: (unitPrice * quantity) - lineDiscount,
                 gross_amount: unitPrice * quantity,
                 discount_type: item.discount_type || null,
-                discount_amount: itemDiscount,
+                discount_amount: lineDiscount,
                 created_date: localCreatedDate
             };
         });
@@ -1280,7 +1283,7 @@ export async function PATCH(request: Request) {
 
             const detailParams = new URLSearchParams({
                 "filter[order_id][_eq]": String(orderId),
-                fields: "detail_id,order_id,unit_price,ordered_quantity,allocated_quantity,served_quantity,net_amount,gross_amount,product_id,created_date",
+                fields: "detail_id,order_id,unit_price,ordered_quantity,allocated_quantity,served_quantity,net_amount,gross_amount,product_id,discount_amount,discount_type,created_date",
                 limit: "-1"
             });
             const allDetailsRes = await fetch(`${DIRECTUS_URL}/items/sales_order_details?${detailParams.toString()}`, {
@@ -1296,22 +1299,6 @@ export async function PATCH(request: Request) {
                     throw new ApiError(409, `Sales order cannot be fully edited while it is ${currentStatus || "in an unknown status"}.`);
                 }
 
-                const headerPayload = {
-                    customer_code: body.customerId ? undefined : undefined,
-                    po_no: body.poNo,
-                    delivery_date: body.deliveryDate || null,
-                    due_date: body.dueDate || null,
-                    payment_terms: body.paymentTerms ? Number(body.paymentTerms) : null,
-                    salesman_id: body.salesmanId ? Number(body.salesmanId) : null,
-                    branch_id: body.branchId ? Number(body.branchId) : null,
-                    remarks: body.remarks || null,
-                    discount_amount: body.discountAmount || 0,
-                    modified_by: user.id,
-                    modified_date: localCreatedDate,
-                    order_status: body.submitForApproval ? "For Approval" : (mappedStatus === "For Revision" ? "For Revision" : "Draft"),
-                    for_approval_at: body.submitForApproval ? localCreatedDate : undefined
-                };
-
                 // Map old detail created_dates by product_id
                 const oldDetailsMap = new Map<number, string[]>();
                 for (const od of allDetails) {
@@ -1323,12 +1310,15 @@ export async function PATCH(request: Request) {
                 // Calculate new totals
                 const items = body.items || [];
                 let newTotal = 0;
+                let totalItemDiscount = 0;
                 const newDetails = items.map((item: any) => {
                     const qty = Number(item.quantity);
                     const price = Number(item.unit_price);
-                    const discount = Number(item.discount_amount || 0);
-                    const net = qty * price - discount;
+                    const unitDiscount = Number(item.discount_amount || 0);
+                    const lineDiscount = unitDiscount * qty;
+                    const net = qty * price - lineDiscount;
                     newTotal += (qty * price);
+                    totalItemDiscount += lineDiscount;
 
                     const pid = Number(item.product_id);
                     const mappedCreatedDate = (oldDetailsMap.has(pid) && oldDetailsMap.get(pid)!.length > 0)
@@ -1341,7 +1331,7 @@ export async function PATCH(request: Request) {
                         ordered_quantity: qty,
                         unit_price: price,
                         discount_type: item.discount_type || null,
-                        discount_amount: discount,
+                        discount_amount: lineDiscount,
                         net_amount: net,
                         gross_amount: qty * price,
                         allocated_quantity: 0,
@@ -1352,11 +1342,27 @@ export async function PATCH(request: Request) {
                         order_id: orderId
                     };
                 });
-                const headerDiscount = Number(body.discountAmount || 0);
-                if (headerDiscount > newTotal) {
+                const totalDiscount = totalItemDiscount + Number(body.discountAmount || 0);
+                if (totalDiscount > newTotal) {
                     throw new ApiError(400, "The sales-order discount cannot exceed the updated total.");
                 }
-                const newNet = newTotal - headerDiscount;
+                const newNet = newTotal - totalDiscount;
+
+                const headerPayload = {
+                    customer_code: body.customerId ? undefined : undefined,
+                    po_no: body.poNo,
+                    delivery_date: body.deliveryDate || null,
+                    due_date: body.dueDate || null,
+                    payment_terms: body.paymentTerms ? Number(body.paymentTerms) : null,
+                    salesman_id: body.salesmanId ? Number(body.salesmanId) : null,
+                    branch_id: body.branchId ? Number(body.branchId) : null,
+                    remarks: body.remarks || null,
+                    discount_amount: totalDiscount,
+                    modified_by: user.id,
+                    modified_date: localCreatedDate,
+                    order_status: body.submitForApproval ? "For Approval" : (mappedStatus === "For Revision" ? "For Revision" : "Draft"),
+                    for_approval_at: body.submitForApproval ? localCreatedDate : undefined
+                };
 
                 const fullHeaderPayload = {
                     ...headerPayload,
@@ -1559,16 +1565,20 @@ export async function PATCH(request: Request) {
                 throw new ApiError(404, `Sales-order detail IDs were not found on this order: ${foreignDetailIds.join(", ")}`);
             }
 
+            let calculatedDiscount = 0;
             const total = allDetails.reduce((sum: number, detail: any) => {
                 const detailId = Number(detail.detail_id);
                 const quantity = requestedDetails.get(detailId) ?? Number(detail.ordered_quantity);
                 const unitPrice = Number(detail.unit_price);
+                const originalQty = Number(detail.ordered_quantity || 1);
+                const unitDiscount = (Number(detail.discount_amount) || 0) / (originalQty || 1);
+                calculatedDiscount += (unitDiscount * quantity);
                 if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(unitPrice) || unitPrice < 0) {
                     throw new ApiError(409, "Sales-order details contain invalid quantities or prices.");
                 }
                 return sum + (quantity * unitPrice);
             }, 0);
-            if (discount > total) throw new ApiError(400, "The sales-order discount cannot exceed the updated total.");
+            if (calculatedDiscount > total) throw new ApiError(400, "The sales-order discount cannot exceed the updated total.");
 
             const nextStatus = "Draft";
             const detailsById = new Map<number, any>(allDetails.map((detail: any) => [Number(detail.detail_id), detail]));
@@ -1578,7 +1588,11 @@ export async function PATCH(request: Request) {
             try {
                 for (const [detailId, quantity] of requestedDetails) {
                     const detail = detailsById.get(detailId);
-                    const newNet = Number(detail.unit_price) * quantity;
+                    const originalQty = Number(detail.ordered_quantity || 1);
+                    const unitDiscount = (Number(detail.discount_amount) || 0) / (originalQty || 1);
+                    const lineDiscount = unitDiscount * quantity;
+                    const newGross = Number(detail.unit_price) * quantity;
+                    const newNet = newGross - lineDiscount;
                     const mutation: DetailQuantityMutation = {
                         detailId,
                         original: {
@@ -1589,7 +1603,7 @@ export async function PATCH(request: Request) {
                         applied: {
                             ordered_quantity: quantity,
                             net_amount: newNet,
-                            gross_amount: newNet
+                            gross_amount: newGross
                         }
                     };
                     attemptedMutations.push(mutation);
@@ -1597,7 +1611,10 @@ export async function PATCH(request: Request) {
                     const detailRes = await fetch(`${DIRECTUS_URL}/items/sales_order_details/${detailId}`, {
                         method: "PATCH",
                         headers,
-                        body: JSON.stringify(mutation.applied)
+                        body: JSON.stringify({
+                            ...mutation.applied,
+                            discount_amount: lineDiscount
+                        })
                     });
                     if (!detailRes.ok) throw new Error(`detail ${detailId} update returned ${detailRes.status}`);
                 }
@@ -1605,12 +1622,14 @@ export async function PATCH(request: Request) {
                 headerMutation = {
                     original: {
                         total_amount: order.total_amount,
+                        discount_amount: order.discount_amount,
                         net_amount: order.net_amount,
                         order_status: currentStatus
                     },
                     applied: {
                         total_amount: total,
-                        net_amount: total - discount,
+                        discount_amount: calculatedDiscount,
+                        net_amount: total - calculatedDiscount,
                         order_status: nextStatus
                     }
                 };
