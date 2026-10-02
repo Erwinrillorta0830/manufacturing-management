@@ -7,6 +7,7 @@ import ThemeSettingsProvider from "@/components/theme/ThemeSettingsProvider"
 import { ThemeTransitionProvider } from "@/components/theme/ThemeTransitionOverlay"
 import { Toaster } from "@/components/ui/sonner"
 import { IdleTimer } from "@/components/auth/IdleTimer"
+import { LowStockAlertModal } from "@/components/shared/LowStockAlertModal"
 
 const geistSans = Geist({
     variable: "--font-geist-sans",
@@ -40,6 +41,9 @@ export default function RootLayout({
 
                     {/* Global session monitor */}
                     <IdleTimer />
+
+                    {/* Global low-stock alert — once per login session, auth pages only */}
+                    <LowStockAlertModal />
 
                     {/* Global toast host (Sonner / shadcn) */}
                     <Toaster position="top-right" richColors />
