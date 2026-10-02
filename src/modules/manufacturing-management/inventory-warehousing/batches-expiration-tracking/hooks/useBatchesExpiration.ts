@@ -81,9 +81,11 @@ export function useBatchesExpiration() {
         }
     }, []);
 
+    const { branch_id, status, product_type, only_with_on_hand } = filters;
+
     useEffect(() => {
-        loadData(filters);
-    }, [loadData, filters.branch_id, filters.status, filters.product_type, filters.only_with_on_hand]);
+        loadData({ branch_id, status, product_type, only_with_on_hand, search: "" });
+    }, [loadData, branch_id, status, product_type, only_with_on_hand]);
 
     // Client-side text search filtering
     const filteredItems = useMemo(() => {
