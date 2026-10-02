@@ -60,6 +60,10 @@ interface SpringBatchOnhand {
     product_id?: number;
     batchNo?: string;
     batch_no?: string;
+    inventoryLotId?: number | string | null;
+    inventory_lot_id?: number | string | null;
+    mmLotId?: number | string | null;
+    mm_lot_id?: number | string | null;
     lotId?: number;
     lot_id?: number;
     lotName?: string;
