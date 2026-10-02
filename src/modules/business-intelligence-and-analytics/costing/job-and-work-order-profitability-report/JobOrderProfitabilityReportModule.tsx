@@ -4,6 +4,7 @@ import React from "react";
 import { useJobOrderProfitability } from "./hooks/useJobOrderProfitability";
 import { ProfitabilityHeader } from "./components/ProfitabilityHeader";
 import { ProfitabilitySummaryCards } from "./components/ProfitabilitySummaryCards";
+import { ProfitabilityAnalyticsSection } from "./components/ProfitabilityAnalyticsSection";
 import { ProfitabilityFilterToolbar } from "./components/ProfitabilityFilterToolbar";
 import { ProfitabilityTableView } from "./components/ProfitabilityTableView";
 import { ProfitabilityDetailModal } from "./components/ProfitabilityDetailModal";
@@ -76,6 +77,11 @@ export default function JobOrderProfitabilityReportModule() {
                 filters={filters}
                 onMarginFilterClick={(marginStatus) => setFilter("marginStatus", marginStatus)}
             />
+
+            {/* Collapsible Visual Analytics & Margin Trends Section */}
+            {!isLoading && filteredRows.length > 0 && (
+                <ProfitabilityAnalyticsSection rows={filteredRows} />
+            )}
 
             {/* Filter Toolbar */}
             <ProfitabilityFilterToolbar

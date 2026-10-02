@@ -136,28 +136,56 @@ export function ProfitabilityDetailModal({
                     </div>
                 ) : data ? (
                     <>
-                        {/* Financial Snapshot Bar */}
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-4 bg-muted/40 border-b text-xs shrink-0">
+                        {/* Financial Snapshot 6-Card Grid */}
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 p-4 bg-muted/40 border-b text-xs shrink-0">
+                            {/* Card 1: Produced */}
                             <div className="rounded-lg border bg-card p-2.5">
-                                <span className="text-[10px] text-muted-foreground uppercase font-semibold">Yield / Produced</span>
+                                <span className="text-[10px] text-muted-foreground uppercase font-semibold">Produced</span>
                                 <div className="text-sm font-bold text-foreground font-mono mt-0.5">
-                                    {data.actualQuantity.toLocaleString()} units
+                                    {data.actualQuantity.toLocaleString()} {data.uom || "pcs"}
+                                </div>
+                                <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold mt-0.5">
+                                    {(data.yieldEfficiencyPercent || 100).toFixed(1)}% yield
                                 </div>
                             </div>
+
+                            {/* Card 2: Price / unit */}
                             <div className="rounded-lg border bg-card p-2.5">
-                                <span className="text-[10px] text-muted-foreground uppercase font-semibold">Selling Unit Price</span>
+                                <span className="text-[10px] text-muted-foreground uppercase font-semibold">Price / unit</span>
                                 <div className="text-sm font-bold text-foreground font-mono mt-0.5">
                                     {fmt(data.sellingPrice)}
                                 </div>
                             </div>
+
+                            {/* Card 3: TMC / unit */}
                             <div className="rounded-lg border bg-card p-2.5">
-                                <span className="text-[10px] text-muted-foreground uppercase font-semibold">Unit COGS (Cost/u)</span>
+                                <span className="text-[10px] text-muted-foreground uppercase font-semibold">TMC / unit</span>
                                 <div className="text-sm font-bold text-foreground font-mono mt-0.5">
                                     {fmt(data.unitCogs)}
                                 </div>
                             </div>
+
+                            {/* Card 4: Break-even price */}
                             <div className="rounded-lg border bg-card p-2.5">
-                                <span className="text-[10px] text-muted-foreground uppercase font-semibold">Gross Profit (Batch)</span>
+                                <span className="text-[10px] text-muted-foreground uppercase font-semibold">Break-even price</span>
+                                <div className="text-sm font-bold text-foreground font-mono mt-0.5">
+                                    {fmt(data.breakEvenPrice ?? data.unitCogs)}
+                                </div>
+                            </div>
+
+                            {/* Card 5: Price for Margin Target (Dynamic based on JO margin health) */}
+                            <div className="rounded-lg border bg-card p-2.5">
+                                <span className="text-[10px] text-muted-foreground uppercase font-semibold truncate block" title={data.targetMarginLabel || "Target margin price"}>
+                                    {data.targetMarginLabel || "Target margin price"}
+                                </span>
+                                <div className="text-sm font-bold text-foreground font-mono mt-0.5">
+                                    {fmt(data.targetMarginPrice ?? data.unitCogs)}
+                                </div>
+                            </div>
+
+                            {/* Card 6: Gross profit */}
+                            <div className="rounded-lg border bg-card p-2.5">
+                                <span className="text-[10px] text-muted-foreground uppercase font-semibold">Gross profit</span>
                                 <div className={`text-sm font-bold font-mono mt-0.5 ${data.grossProfit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"}`}>
                                     {fmt(data.grossProfit)}
                                 </div>
@@ -244,12 +272,30 @@ export function ProfitabilityDetailModal({
                                                 <tr>
                                                     <th className="py-2 px-2.5">Material / SKU</th>
                                                     <th className="py-2 px-2.5">Batch / Lot</th>
-                                                    <th className="py-2 px-2.5 text-right">Quantity Consumed</th>
-                                                    <th className="py-2 px-2.5 text-right">Unit Cost</th>
-                                                    <th className="py-2 px-2.5 text-right">Total Cost</th>
+                                                    <th className="py-2 px-2.5 text-center">UOM</th>
+                                                    <th className="py-2 px-2.5 text-right">Unit cost</th>
+                                                    <th className="py-2 px-2.5 text-right">Qty consumed</th>
+                                                    <th className="py-2 px-2.5 text-right">Total</th>
+                                                    <th className="py-2 px-2.5 text-right">% of batch</th>
                                                 </tr>
                                             </thead>
                                             <tbody className="divide-y divide-border">
+                                                {/* All materials Summary Row */}
+                                                {!searchQuery && (
+                                                    <tr className="bg-muted/15 font-semibold text-foreground border-b border-border/80">
+                                                        <td className="py-2 px-2.5">All materials</td>
+                                                        <td className="py-2 px-2.5 font-mono text-[11px] text-muted-foreground">—</td>
+                                                        <td className="py-2 px-2.5 text-center text-muted-foreground">—</td>
+                                                        <td className="py-2 px-2.5 text-right text-muted-foreground">—</td>
+                                                        <td className="py-2 px-2.5 text-right text-muted-foreground">—</td>
+                                                        <td className="py-2 px-2.5 text-right font-mono font-bold">
+                                                            {fmt(data.totalMaterialsCost)}
+                                                        </td>
+                                                        <td className="py-2 px-2.5 text-right font-mono font-bold">
+                                                            {(data.materialsBatchPercentage ?? 0).toFixed(1)}%
+                                                        </td>
+                                                    </tr>
+                                                )}
                                                 {paginatedMaterials.map((m) => (
                                                     <tr key={m.consumage_id} className="hover:bg-muted/20">
                                                         <td className="py-2 px-2.5">
@@ -257,16 +303,22 @@ export function ProfitabilityDetailModal({
                                                             <div className="text-[10px] text-muted-foreground">{m.product_code}</div>
                                                         </td>
                                                         <td className="py-2 px-2.5 font-mono text-[11px] text-muted-foreground">
-                                                            {m.batch_no || "N/A"}
+                                                            {m.batch_no || "—"}
                                                         </td>
-                                                        <td className="py-2 px-2.5 text-right font-mono font-medium">
-                                                            {m.quantity_consumed.toLocaleString()}
+                                                        <td className="py-2 px-2.5 text-center font-mono text-[11px] text-muted-foreground">
+                                                            {m.uom || "pcs"}
                                                         </td>
                                                         <td className="py-2 px-2.5 text-right font-mono text-muted-foreground">
                                                             {fmt(m.unit_cost)}
                                                         </td>
+                                                        <td className="py-2 px-2.5 text-right font-mono font-medium">
+                                                            {m.quantity_consumed.toLocaleString()}
+                                                        </td>
                                                         <td className="py-2 px-2.5 text-right font-mono font-bold text-foreground">
                                                             {fmt(m.total_cost)}
+                                                        </td>
+                                                        <td className="py-2 px-2.5 text-right font-mono font-semibold text-foreground">
+                                                            {(m.batch_percentage || 0).toFixed(1)}%
                                                         </td>
                                                     </tr>
                                                 ))}
