@@ -1278,11 +1278,6 @@ export function useQAReceiving({
                 toast.error(`Remarks are mandatory for ${name} because there is a rejected quantity (${rejected} units).`);
                 return;
             }
-
-            if (received !== remaining && (!row.rejectionReason || !row.rejectionReason.trim())) {
-                toast.error(`Remarks are mandatory for ${name} due to logistics discrepancy (Received: ${received}, Remaining: ${remaining}).`);
-                return;
-            }
         }
 
         if (!lineItems.some(line => Number(inspectionRows[line.line_id]?.receivedQty || 0) > 0)) {
