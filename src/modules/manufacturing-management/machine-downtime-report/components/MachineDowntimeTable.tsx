@@ -1,9 +1,12 @@
 "use client";
 
-import { AlertTriangle, Clock3, History, Wrench } from "lucide-react";
+import { AlertTriangle, ChevronLeft, ChevronRight, Clock3, History, RotateCcw, Search, Wrench } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { phtTimestampToEpoch } from "@/modules/manufacturing-management/shared/pht-date";
 import type {
     AssetHaltedJobOrder,
     MachineAssetReport,
@@ -12,14 +15,29 @@ import type {
 
 interface MachineDowntimeTableProps {
     assets: MachineAssetReport[];
+    totalAssets: number;
+    totalAvailableAssets: number;
+    searchQuery: string;
+    conditionFilter: string;
+    eventFilter: string;
+    currentPage: number;
+    totalPages: number;
+    startIndex: number;
+    pageSize: number;
+    onSearchQueryChange: (value: string) => void;
+    onConditionFilterChange: (value: "All" | "Under Maintenance" | "Good") => void;
+    onEventFilterChange: (value: "All" | "Termination" | "Cancellation") => void;
+    onResetFilters: () => void;
+    onPageChange: (page: number) => void;
     onOpenHistory: (assetId: number) => void;
     onStartMaintenance: (assetId: number, jobOrder: AssetHaltedJobOrder, routeStep: RouteStepUsage) => void;
 }
 
 function dateLabel(value: string | null): string {
     if (!value) return "Date not recorded";
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return value;
+    const timestamp = phtTimestampToEpoch(value);
+    if (!timestamp) return value;
+    const date = new Date(timestamp);
     return new Intl.DateTimeFormat("en-PH", {
         timeZone: "Asia/Manila",
         year: "numeric",
@@ -90,11 +108,69 @@ function HaltedJobRows({
 
 export function MachineDowntimeTable({
     assets,
+    totalAssets,
+    totalAvailableAssets,
+    searchQuery,
+    conditionFilter,
+    eventFilter,
+    currentPage,
+    totalPages,
+    startIndex,
+    pageSize,
+    onSearchQueryChange,
+    onConditionFilterChange,
+    onEventFilterChange,
+    onResetFilters,
+    onPageChange,
     onOpenHistory,
     onStartMaintenance
 }: MachineDowntimeTableProps) {
+    const hasActiveFilters = searchQuery.trim() !== "" || conditionFilter !== "All" || eventFilter !== "All";
+
     return (
         <div className="space-y-4">
+            <div className="flex flex-col gap-3 rounded-lg border border-border/50 bg-muted/10 p-3 md:flex-row md:items-center">
+                <div className="relative w-full flex-1">
+                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                        type="search"
+                        aria-label="Search machine downtime report"
+                        placeholder="Search asset name/ID, JO number, reason, or work center..."
+                        value={searchQuery}
+                        onChange={(event) => onSearchQueryChange(event.target.value)}
+                        className="pl-9"
+                    />
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                    <Select value={conditionFilter} onValueChange={onConditionFilterChange}>
+                        <SelectTrigger aria-label="Filter by asset condition" className="w-[175px]">
+                            <SelectValue placeholder="All conditions" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="All">All conditions</SelectItem>
+                            <SelectItem value="Under Maintenance">Under Maintenance</SelectItem>
+                            <SelectItem value="Good">Good</SelectItem>
+                        </SelectContent>
+                    </Select>
+                    <Select value={eventFilter} onValueChange={onEventFilterChange}>
+                        <SelectTrigger aria-label="Filter by Job Order event" className="w-[165px]">
+                            <SelectValue placeholder="All JO events" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="All">All JO events</SelectItem>
+                            <SelectItem value="Termination">Termination</SelectItem>
+                            <SelectItem value="Cancellation">Cancellation</SelectItem>
+                        </SelectContent>
+                    </Select>
+                    {hasActiveFilters && (
+                        <Button type="button" variant="outline" size="sm" onClick={onResetFilters}>
+                            <RotateCcw className="mr-1.5 h-4 w-4" />
+                            Reset
+                        </Button>
+                    )}
+                </div>
+            </div>
+
             {assets.map((asset) => (
                 <Card key={asset.assetId} className="overflow-hidden">
                     <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 bg-muted/30 py-4">
@@ -147,9 +223,44 @@ export function MachineDowntimeTable({
                 </Card>
             ))}
 
-            {assets.length === 0 && (
+            {totalAssets === 0 && (
                 <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-                    No Production assets were found.
+                    {totalAvailableAssets === 0
+                        ? "No Production assets were found."
+                        : "No machines match the current search or filters."}
+                </div>
+            )}
+
+            {totalAssets > 0 && (
+                <div className="flex flex-col items-center justify-between gap-3 px-1 py-2 text-sm text-muted-foreground sm:flex-row">
+                    <span>
+                        Showing {startIndex + 1}-{Math.min(startIndex + pageSize, totalAssets)} of {totalAssets} machines
+                    </span>
+                    <div className="flex items-center gap-2">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => onPageChange(Math.max(currentPage - 1, 1))}
+                            disabled={currentPage <= 1}
+                        >
+                            <ChevronLeft className="mr-1 h-4 w-4" />
+                            Previous
+                        </Button>
+                        <span aria-live="polite" className="min-w-[90px] text-center text-xs">
+                            Page {currentPage} of {totalPages}
+                        </span>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => onPageChange(Math.min(currentPage + 1, totalPages))}
+                            disabled={currentPage >= totalPages}
+                        >
+                            Next
+                            <ChevronRight className="ml-1 h-4 w-4" />
+                        </Button>
+                    </div>
                 </div>
             )}
         </div>

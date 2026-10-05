@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { phtTimestampToEpoch } from "@/modules/manufacturing-management/shared/pht-date";
 import type { AssetHaltedJobOrder, MachineAssetReport, RouteStepUsage } from "../types";
 
 interface MaintenanceEpisodeDialogProps {
@@ -27,8 +28,9 @@ interface MaintenanceEpisodeDialogProps {
 
 function displayTimestamp(value: string | null): string {
     if (!value) return "Unknown start time";
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return value;
+    const timestamp = phtTimestampToEpoch(value);
+    if (!timestamp) return value;
+    const date = new Date(timestamp);
     return new Intl.DateTimeFormat("en-PH", {
         timeZone: "Asia/Manila",
         year: "numeric",
