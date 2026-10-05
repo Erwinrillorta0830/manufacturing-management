@@ -369,7 +369,7 @@ export function useIncomingShipmentsForm({
             payment_mode: null,
             payment_terms: null,
             delivery_terms: "",
-            price_type: "",
+            price_type: "Price List",
             currency_code: "PHP"
         });
         setLinesForm([]);

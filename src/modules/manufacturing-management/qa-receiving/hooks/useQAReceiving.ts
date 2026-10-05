@@ -1256,10 +1256,6 @@ export function useQAReceiving({
             const received = Number(row.receivedQty);
             const accepted = Number(row.acceptedQty);
             const rejected = Math.max(0, deriveRejectedQuantity(received, accepted));
-            const ordered = Number(line.quantity_ordered || 0);
-            const remaining = replacementDisposition?.purchaseOrderLineId === line.line_id
-                ? replacementDisposition.remainingQuantity
-                : Math.max(0, Number(line.remaining_quantity ?? (ordered - Number(line.quantity_received || 0))));
 
             try {
                 deriveReceivingDisposition({
@@ -1276,11 +1272,6 @@ export function useQAReceiving({
 
             if (rejected > 0 && (!row.rejectionReason || !row.rejectionReason.trim())) {
                 toast.error(`Remarks are mandatory for ${name} because there is a rejected quantity (${rejected} units).`);
-                return;
-            }
-
-            if (received !== remaining && (!row.rejectionReason || !row.rejectionReason.trim())) {
-                toast.error(`Remarks are mandatory for ${name} due to logistics discrepancy (Received: ${received}, Remaining: ${remaining}).`);
                 return;
             }
         }
