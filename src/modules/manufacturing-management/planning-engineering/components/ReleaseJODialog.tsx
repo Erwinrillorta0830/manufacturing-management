@@ -33,6 +33,7 @@ import {
 import { calculateProductionMetrics } from "../utils/production-metrics";
 import { calculateAggregateRunHours, calculateFullBatchTarget, calculatePerUnitMaterialRequirement, calculateReleaseMaterialRequirementPlan, calculateRequiredBatchCount, convergeToFullBatch, DEFAULT_PRODUCTION_SHIFT_HOURS, formatProductionValue, isPieceProductionUom, normalizeProductionOutputQuantity, readUomId, resolveProductionShiftHours, resolveRecipeBatchSizeDisplay, sanitizeQuantityDraft } from "../utils/production-timing";
 import { buildReleaseSummaryHtml, type ReleaseSummaryComponent, type ReleaseSummaryFinancials, type ReleaseSummaryRoutingStep } from "../utils/release-summary-print";
+import { formatPhtDate } from "../../shared/pht-date";
 
 interface ReleaseJODialogProps {
     isConfirmOpen: boolean;
@@ -708,7 +709,7 @@ export function ReleaseJODialog({
         const printWindow = window.open("", "_blank");
         if (!printWindow) return;
 
-        const dateStr = new Date().toLocaleDateString();
+        const dateStr = formatPhtDate(new Date());
         const branchName = selectedBranch?.branch_name || "Main Branch";
 
         let tableRowsHtml = "";

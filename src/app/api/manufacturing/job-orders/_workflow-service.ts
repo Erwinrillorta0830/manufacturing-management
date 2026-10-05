@@ -878,7 +878,9 @@ async function writeTransition(
 ): Promise<JobOrderWorkflowResult> {
     const jobOrderId = numberValue(jobOrder.job_order_id);
     const jobOrderNo = text(jobOrder.job_order_no) || `JO-${jobOrderId}`;
-    const now = formatPhtDateTime();
+    const nowInstant = new Date();
+    const now = formatPhtDateTime(nowInstant);
+    const changedAt = nowInstant.toISOString();
     const suppliedRemarks = command.remarks?.trim() || "";
     const transitionRemarks = command.action === "start-production" && suppliedRemarks
         ? suppliedRemarks
@@ -948,7 +950,7 @@ async function writeTransition(
                     workflow_action: command.action,
                     workflow_request_hash: workflowRequestHash(command),
                     changed_by: command.actorUserId,
-                    changed_at: now,
+                    changed_at: changedAt,
                     remarks: transitionRemarks || `Workflow action: ${command.action}`,
                     ...(command.action === "place-on-hold"
                         ? {
@@ -1180,7 +1182,7 @@ export async function executeJobOrderWorkflow(
                 mergeExistingWhenMissing: true
             }
         );
-        await markReservationsWip(jobOrderId, command.actorUserId, new Date().toISOString());
+        await markReservationsWip(jobOrderId, command.actorUserId, formatPhtDateTime());
     }
 
     const result = await writeTransition(jobOrder, command, previousStatus, actionTarget(command.action));

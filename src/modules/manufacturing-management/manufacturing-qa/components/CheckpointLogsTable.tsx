@@ -6,6 +6,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { QALog } from "../types";
+import { formatPhtTimestamp } from "../../shared/pht-date";
 
 interface CheckpointLogsTableProps {
     loadingLogs: boolean;
@@ -124,7 +125,7 @@ export function CheckpointLogsTable({
                                                 {log.comments || "No remarks logged."}
                                             </TableCell>
                                             <TableCell className="text-muted-foreground text-[11px] font-mono whitespace-nowrap">
-                                                {new Date(log.recorded_at).toLocaleString()}
+                                                {formatPhtTimestamp(log.recorded_at)}
                                             </TableCell>
                                         </TableRow>
                                     );

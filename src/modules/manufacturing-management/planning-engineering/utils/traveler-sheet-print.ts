@@ -7,6 +7,7 @@ import type {
     JobOrderOperation,
 } from "../types";
 import { displayJobOrderStatus } from "../../job-order-status";
+import { formatPhtTimestamp } from "../../shared/pht-date";
 import { resolveProductionShiftHours } from "./production-timing";
 
 export interface TravelerSheetPrintSheet {
@@ -309,13 +310,7 @@ async function sheetHtml(
  * app layout, dialog stacking, and print CSS cannot suppress it.
  */
 export async function buildTravelerSheetHtml(data: TravelerSheetPrintData): Promise<string> {
-    const issuedAt = data.issuedAt || new Date().toLocaleString("en-US", {
-        year: "numeric",
-        month: "short",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-    });
+    const issuedAt = data.issuedAt || formatPhtTimestamp(new Date());
     const resolved = data.sheets.map(resolveSheet);
     const titleJoNo = resolved[0]?.joNo || "JO";
     const sheetsHtml = (await Promise.all(

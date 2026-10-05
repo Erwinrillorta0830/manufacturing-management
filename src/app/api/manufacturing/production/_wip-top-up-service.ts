@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { DIRECTUS_URL, headers, getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
+import { DIRECTUS_URL, headers, formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 import {
     isCancelledJobOrderStatus,
     JOB_ORDER_STATUS,
@@ -469,7 +469,7 @@ export async function recordWipTopUp(request: Request): Promise<NextResponse> {
     const body = await request.json().catch(() => ({}));
     const input = normalizeInput(body);
     const actorId = await getActorId();
-    const now = await getISOStringInConfiguredTimezone();
+    const now = formatPhtDateTime();
     const baseEventKey = `wip-top-up:${input.jobOrderId}:${input.idempotencyKey}`;
     const sourceEventKeys = input.allocations.map((_, index) => input.allocations.length === 1
         ? baseEventKey

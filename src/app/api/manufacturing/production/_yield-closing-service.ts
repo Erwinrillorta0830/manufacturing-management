@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { formatPhtDateTime, getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
+import { getPhtDateInputValue } from "@/modules/manufacturing-management/shared/pht-date";
 import {
     calculateIncrementalMaterialConsumption,
     loadYieldMaterials,
@@ -1035,7 +1036,7 @@ function completionReceipt(
         manufacturing_date: manufacturingDate,
         expiration_date: expirationDate,
         unit_cost: finiteNumber(input.unitCost ?? 0, "Unit cost", { nonNegative: true }),
-        date_received: movement.created_at || movement.created_on || new Date().toISOString()
+        date_received: movement.created_at || movement.created_on || formatPhtDateTime()
     };
 }
 
@@ -1313,7 +1314,7 @@ async function completeYieldClosingInternal(
                 documentType: "Job Order Receipt",
                 documentNo: jobOrder.jobOrderNo,
                 documentDescription: `MFG Run: ${lotNumber}`,
-                documentDate: await getTodayDateString()
+                documentDate: getPhtDateInputValue()
             },
             "Create finished-goods product ledger"
         );
@@ -1405,13 +1406,16 @@ async function completeYieldClosingInternal(
                 `Job Order ${jobOrder.jobOrderNo} has an unknown status and cannot be completed.`
             );
         }
+        const completedAtInstant = new Date();
+        const completedAt = formatPhtDateTime(completedAtInstant);
+        const completedHistoryAt = completedAtInstant.toISOString();
         await journal.patch(
             "manufacturing_job_orders",
             jobOrder.jobOrderId,
             {
                 status: JOB_ORDER_STATUS.COMPLETED,
                 actual_quantity_produced: quantityProduced,
-                modified_at: new Date().toISOString()
+                modified_at: completedAt
             },
             `Complete Job Order ${jobOrder.jobOrderNo}`
         );
@@ -1424,7 +1428,7 @@ async function completeYieldClosingInternal(
                 old_status: oldStatus,
                 new_status: JOB_ORDER_STATUS.COMPLETED,
                 changed_by: input.actorUserId,
-                changed_at: new Date().toISOString(),
+                changed_at: completedHistoryAt,
                 remarks: `Yield Closing completed: ${quantityProduced} units.`
             },
             `Create Job Order completion history for ${jobOrder.jobOrderNo}`
@@ -1702,7 +1706,7 @@ export async function previewHaltFinalize(joId: string | number): Promise<HaltFi
         };
     });
 
-    const today = await getTodayDateString();
+    const today = getPhtDateInputValue();
     return {
         jobOrder: {
             jobOrderId: jobOrder.jobOrderId,
@@ -2048,7 +2052,7 @@ export async function finalizeHaltedJobOrder(input: FinalizeHaltedJobOrderInput)
                 documentType: "Job Order Receipt",
                 documentNo: jobOrder.jobOrderNo,
                 documentDescription: `Partial close: ${lotNumber}`,
-                documentDate: await getTodayDateString()
+                documentDate: getPhtDateInputValue()
             },
             "Create partial finished-goods product ledger"
         );
@@ -2098,6 +2102,9 @@ export async function finalizeHaltedJobOrder(input: FinalizeHaltedJobOrderInput)
         const returnedQuantity = roundTo4(Number(leftoverExecution.response.returnedQuantity || 0));
 
         const previousProduced = Number(jobOrder.actualQuantityProduced || 0);
+        const completedAtInstant = new Date();
+        const completedAt = formatPhtDateTime(completedAtInstant);
+        const completedHistoryAt = completedAtInstant.toISOString();
         await journal.patch(
             "manufacturing_job_orders",
             jobOrder.jobOrderId,
@@ -2105,7 +2112,7 @@ export async function finalizeHaltedJobOrder(input: FinalizeHaltedJobOrderInput)
                 status: JOB_ORDER_STATUS.COMPLETED,
                 actual_quantity_produced: roundTo4(previousProduced + quantityProduced),
                 completed_quantity: roundTo4(previousProduced + quantityProduced),
-                modified_at: new Date().toISOString()
+                modified_at: completedAt
             },
             `Complete halted Job Order ${jobOrder.jobOrderNo}`
         );
@@ -2119,7 +2126,7 @@ export async function finalizeHaltedJobOrder(input: FinalizeHaltedJobOrderInput)
                     old_status: jobOrder.status || JOB_ORDER_STATUS.ON_HOLD,
                     new_status: JOB_ORDER_STATUS.COMPLETED,
                     changed_by: actorUserId,
-                    changed_at: new Date().toISOString(),
+                    changed_at: completedHistoryAt,
                     remarks: `Halted run finalized: partial yield ${formatQuantity(quantityProduced)} unit(s); ${formatQuantity(returnedQuantity)} unit(s) returned to store.`
                 },
                 `Record finalization history for ${jobOrder.jobOrderNo}`

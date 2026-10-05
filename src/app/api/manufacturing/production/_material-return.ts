@@ -1,4 +1,4 @@
-import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import { DIRECTUS_URL, headers, formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 import {
     isCancellableJobOrderStatus,
     isCancelledJobOrderStatus,
@@ -1354,7 +1354,8 @@ async function executeCancellation(
                 cancellationReason: jobOrder.cancellationReason,
                 cancellationImageId: jobOrder.cancellationImageId
             };
-            const cancelledAt = new Date().toISOString();
+            const cancelledAt = formatPhtDateTime();
+            const cancellationHistoryAt = new Date().toISOString();
             await directusWrite(
                 `/items/manufacturing_job_orders/${jobOrder.jobOrderId}`,
                 "PATCH",
@@ -1377,7 +1378,7 @@ async function executeCancellation(
                     event_key: options.eventKey || null,
                     workflow_action: options.workflowAction || "cancel",
                     changed_by: options.actorUserId,
-                    changed_at: new Date().toISOString(),
+                    changed_at: cancellationHistoryAt,
                     remarks: `Job Order cancelled. Reason: ${options.reason} | Returned ${returnedQuantity} unit(s) to ${MAIN_STORE_BIN} across ${returnLines.length} lot/batch line(s); released ${computed.reservationReleaseTargets.length} reservation(s).`
                 },
                 "record the Job Order cancellation history"

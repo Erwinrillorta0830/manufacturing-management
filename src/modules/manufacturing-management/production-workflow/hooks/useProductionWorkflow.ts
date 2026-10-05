@@ -820,7 +820,6 @@ const selectedTask = useMemo(() => {
                 taskId,
                 taskPatch: {
                     status: "Completed",
-                    completed_at: new Date().toISOString(),
                     actual_run_hours: Math.round(totalHours * 100) / 100
                 }
             });

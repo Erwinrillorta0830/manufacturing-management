@@ -40,6 +40,7 @@ import {
 } from "../utils/material-consumption";
 import { getProductionCameraErrorMessage } from "../utils/production-camera";
 import { hasCompletedTimer } from "../operator-time";
+import { getPhtDateInputValue } from "../../shared/pht-date";
 import { hasReachedProductionTarget } from "../utils/production-output";
 
 interface JobOrderShiftLogModalProps {
@@ -410,7 +411,7 @@ export function JobOrderShiftLogModal({
             manuallyEditedMaterialKeysRef.current.clear();
             setMaterialsLoadError(null);
             setProductionDay("1");
-            const todayStr = new Date().toISOString().split("T")[0];
+            const todayStr = getPhtDateInputValue();
             setProductionDate(todayStr);
             setSessionKey(typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
                 ? crypto.randomUUID()
