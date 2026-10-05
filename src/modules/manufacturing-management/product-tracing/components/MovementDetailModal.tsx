@@ -26,8 +26,7 @@ import {
     Layers,
     Copy,
     Building,
-    Check,
-    Code
+    Check
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -55,7 +54,6 @@ export function MovementDetailModal({
     users = []
 }: Props) {
     const [copiedKey, setCopiedKey] = React.useState<string | null>(null);
-    const [showRawJson, setShowRawJson] = React.useState(false);
 
     // ── Resolved Names (ALL HOOKS CALLED UNCONDITIONALLY AT TOP) ─────
     const resolvedBranchName = React.useMemo(() => {
@@ -191,44 +189,13 @@ export function MovementDetailModal({
                             <Badge variant="secondary" className="font-mono text-xs font-black px-3.5 py-1.5 rounded-xl border bg-muted/60">
                                 {movement.movementKey}
                             </Badge>
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-8 rounded-xl px-2.5 text-xs font-bold gap-1 text-muted-foreground hover:text-foreground"
-                                onClick={() => setShowRawJson(!showRawJson)}
-                            >
-                                <Code className="h-3.5 w-3.5" />
-                                {showRawJson ? "Visual View" : "Raw JSON"}
-                            </Button>
                         </div>
                     </div>
                 </DialogHeader>
 
                 {/* Modal Body */}
                 <div className="p-6 sm:p-8 space-y-6 overflow-y-auto flex-1">
-                    {showRawJson ? (
-                        <div className="space-y-2 animate-in fade-in duration-200">
-                            <div className="flex items-center justify-between">
-                                <span className="text-xs font-black uppercase tracking-wider text-muted-foreground">
-                                    Raw Spring Boot Payload
-                                </span>
-                                <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-7 text-xs font-bold gap-1 text-primary"
-                                    onClick={() => copyToClipboard(JSON.stringify(movement, null, 2), "Raw JSON")}
-                                >
-                                    {copiedKey === "Raw JSON" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                                    Copy JSON
-                                </Button>
-                            </div>
-                            <pre className="p-4 rounded-2xl bg-muted/70 font-mono text-xs text-foreground overflow-x-auto border max-h-[50vh] leading-relaxed">
-                                {JSON.stringify(movement, null, 2)}
-                            </pre>
-                        </div>
-                    ) : (
-                        <>
-                            {/* Key Financial & Quantity Highlights */}
+                    {/* Key Financial & Quantity Highlights */}
                             <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 p-5 rounded-2xl bg-muted/30 border">
                                 <div className="space-y-1">
                                     <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground block">
@@ -423,8 +390,6 @@ export function MovementDetailModal({
                                     </p>
                                 </div>
                             </div>
-                        </>
-                    )}
                 </div>
 
                 {/* Modal Footer */}
