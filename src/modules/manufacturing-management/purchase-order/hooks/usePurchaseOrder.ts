@@ -40,7 +40,7 @@ const blankLine = (): ManifestLineFormItem => ({
 });
 const blankForm = (): ShipmentFormState => ({
     reference_number: "", remark: "", supplier_id: "", exchange_rate: "", total_foreign_currency: "0", total_php_value: "0",
-    status: "Ordered", date_received: new Date().toISOString().split("T")[0], branch_id: null, payment_type: null, payment_mode: null, payment_terms: null, delivery_terms: "", price_type: "", currency_code: "PHP"
+    status: "Ordered", date_received: new Date().toISOString().split("T")[0], branch_id: null, payment_type: null, payment_mode: null, payment_terms: null, delivery_terms: "", price_type: "Price List", currency_code: "PHP"
 });
 
 function calculateDraftTotals(lines: PurchaseOrderDraftPayload["lines"], exchangeRate: number) {

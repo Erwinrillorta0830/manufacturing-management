@@ -3,6 +3,7 @@ import { resolveParentSharedAttributes } from "@/modules/manufacturing-managemen
 
 export const RAW_MATERIAL_PRODUCT_TYPE = 389;
 export const PACKAGING_MATERIAL_PRODUCT_TYPE = 390;
+export const BOTTLE_PRODUCT_CATEGORY = 329;
 
 type ProductRecord = {
     product_id?: unknown;
