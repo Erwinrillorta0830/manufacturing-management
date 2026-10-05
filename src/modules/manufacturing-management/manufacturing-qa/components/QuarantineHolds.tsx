@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DispositionRecord } from "../types";
 import { ResponsiveDataView } from "./ResponsiveDataView";
+import { formatPhtTimestamp } from "../../shared/pht-date";
 
 interface QuarantineHoldsProps {
     loadingDispositions: boolean;
@@ -164,7 +165,7 @@ export function QuarantineHolds({
                                             </div>
                                         </TableCell>
                                         <TableCell className="text-muted-foreground text-xs font-mono">
-                                            {new Date(hold.recorded_at).toLocaleString()}
+                                            {formatPhtTimestamp(hold.recorded_at)}
                                         </TableCell>
                                         <TableCell className="text-right">
                                             <div className="flex flex-col items-end gap-2 sm:flex-row sm:justify-end">

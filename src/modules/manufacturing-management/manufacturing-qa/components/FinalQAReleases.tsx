@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import type { FinalQACoa } from "../services/qa-api";
 import { ResponsiveDataView } from "./ResponsiveDataView";
+import { formatPhtDate, formatPhtTimestamp } from "../../shared/pht-date";
 
 interface FinalQAReleasesProps {
     lots: any[];
@@ -141,9 +142,7 @@ export function FinalQAReleases({
     const dispositionStatus = (release: any) => String(release?.overall_disposition || "").trim().toLowerCase();
 
     const formatAuditDate = (value: string | null | undefined) => {
-        if (!value) return "—";
-        const parsed = new Date(value);
-        return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
+        return value ? formatPhtDate(value) : "—";
     };
 
     const renderLotCard = (lot: any, index: number) => {
@@ -493,7 +492,7 @@ export function FinalQAReleases({
                                     <div><div className="text-muted-foreground font-semibold">Packaging Seal Audit</div><div className="font-bold">{selectedFinalQAAudit.packaging_seal_passed ? "Passed" : "Failed"}</div></div>
                                     <div><div className="text-muted-foreground font-semibold">Label & Expiry Compliance</div><div className="font-bold">{selectedFinalQAAudit.label_compliance_passed ? "Passed" : "Failed"}</div></div>
                                     <div><div className="text-muted-foreground font-semibold">COA Reference</div><div className="font-mono font-bold">{selectedFinalQAAudit.coa_reference_no || "Not assigned"}</div></div>
-                                    <div><div className="text-muted-foreground font-semibold">Approved At</div><div className="font-bold">{formatAuditDate(selectedFinalQAAudit.approved_at)}</div></div>
+                                    <div><div className="text-muted-foreground font-semibold">Approved At</div><div className="font-bold">{formatPhtTimestamp(selectedFinalQAAudit.approved_at)}</div></div>
                                     <div><div className="text-muted-foreground font-semibold">Approved By</div><div className="font-mono font-bold">{selectedFinalQAAudit.approved_by ? `User #${selectedFinalQAAudit.approved_by}` : "—"}</div></div>
                                 </div>
                             </div>

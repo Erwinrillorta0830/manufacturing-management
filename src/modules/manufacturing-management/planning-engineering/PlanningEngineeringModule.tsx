@@ -30,6 +30,7 @@ import { JobOrderJourneyBar } from "../shared/components/JobOrderJourneyBar";
 import { JobOrderStatusBadge } from "../shared/components/JobOrderStatusBadge";
 import { NextStepCallout } from "../shared/components/NextStepCallout";
 import { StatusLegendPopover } from "../shared/components/StatusLegendPopover";
+import { formatPhtTimestamp } from "../shared/pht-date";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { isCancelledJobOrderStatus, isJobOrderStatus, isTerminatedJobOrder, JOB_ORDER_STATUS, normalizeJobOrderStatus, displayJobOrderStatus } from "../job-order-status";
@@ -101,7 +102,7 @@ function JobOrderStatusHistoryPanel({ history }: { history?: any[] }) {
                 {rows.slice(0, 8).map((entry, index) => {
                     const previous = entry.old_status || entry.previous_status || "Created";
                     const next = entry.new_status || "Unknown";
-                    const changedAt = entry.changed_at ? new Date(entry.changed_at).toLocaleString() : "Time not recorded";
+                    const changedAt = entry.changed_at ? formatPhtTimestamp(entry.changed_at) : "Time not recorded";
                     return (
                         <div key={entry.history_id || entry.id || `${next}-${changedAt}-${index}`} className="flex flex-col gap-1 rounded-lg border border-border/50 bg-muted/20 px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                             <div className="min-w-0">
@@ -736,7 +737,7 @@ export default function PlanningEngineeringModule() {
                         <div class="meta">Generated for Job Order: <strong>${activeFamilyJo.jo_id}</strong> ${isFamily ? `(Family Group)` : ''}</div>
                     </div>
                     <div style="text-align: right;" class="meta">
-                        <div>Date Printed: ${new Date().toLocaleString()}</div>
+                        <div>Date Printed: ${formatPhtTimestamp(new Date())}</div>
                         <div>Status: DRAFT ALLOCATION</div>
                     </div>
                 </div>
@@ -821,7 +822,7 @@ export default function PlanningEngineeringModule() {
         }
 
         const worksheetBranchName = branches.find((b: any) => Number(b.id) === Number(selectedBranchId))?.branch_name || "Manufacturing Facility";
-        const worksheetPrintedAt = new Date().toLocaleString();
+        const worksheetPrintedAt = formatPhtTimestamp(new Date());
 
         const renderJoPrintBlock = async (jo: any, mats: any[], title: string, color: string) => {
             const lineDuration = calculatePipelinedLineDurationHours(jo?.routing_tasks || []);
@@ -1601,7 +1602,7 @@ export default function PlanningEngineeringModule() {
                                     </div>
                                     {activeFamilyJo?.cancelled_at && (
                                         <time className="text-[10px] text-muted-foreground" dateTime={activeFamilyJo.cancelled_at}>
-                                            {new Date(activeFamilyJo.cancelled_at).toLocaleString()}
+                                            {formatPhtTimestamp(activeFamilyJo.cancelled_at)}
                                         </time>
                                     )}
                                 </div>

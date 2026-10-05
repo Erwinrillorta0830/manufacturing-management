@@ -1,6 +1,42 @@
 const PHT_TIME_ZONE = "Asia/Manila";
 const PHT_OFFSET_MS = 8 * 60 * 60 * 1000;
 
+export function getPhtDateInputValue(value: Date = new Date()): string {
+    const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: PHT_TIME_ZONE,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+    }).formatToParts(value);
+    const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day}`;
+}
+
+export function addCalendarDaysToDateInput(value: string, days: number): string {
+    const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match || !Number.isInteger(days)) return value;
+
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const sourceDate = new Date(Date.UTC(year, month - 1, day));
+    if (
+        sourceDate.getUTCFullYear() !== year
+        || sourceDate.getUTCMonth() !== month - 1
+        || sourceDate.getUTCDate() !== day
+    ) {
+        return value;
+    }
+
+    const result = new Date(Date.UTC(year, month - 1, day + days));
+    const resultParts = [
+        result.getUTCFullYear().toString().padStart(4, "0"),
+        (result.getUTCMonth() + 1).toString().padStart(2, "0"),
+        result.getUTCDate().toString().padStart(2, "0")
+    ];
+    return resultParts.join("-");
+}
+
 type WallClockParts = {
     year: number;
     month: number;

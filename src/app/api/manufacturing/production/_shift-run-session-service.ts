@@ -5,8 +5,7 @@ import { NextResponse } from "next/server";
 import {
     DIRECTUS_URL,
     headers,
-    formatPhtDateTime,
-    getISOStringInConfiguredTimezone
+    formatPhtDateTime
 } from "@/app/api/manufacturing/directus-api";
 import {
     isCancelledJobOrderStatus,
@@ -1052,7 +1051,7 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
         const input = normalizeSessionInput(body);
         const actor = await getSessionActor();
         const actorId = actor.actorId;
-        const now = await getISOStringInConfiguredTimezone();
+        const now = formatPhtDateTime();
         const createdAt = formatPhtDateTime();
         const sourceEventKey = sessionSourceKey(input);
         const hash = requestHash(input);

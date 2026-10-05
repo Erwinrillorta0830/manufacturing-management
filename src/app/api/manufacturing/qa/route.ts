@@ -1,7 +1,8 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
 import { AuthenticatedActorError, requireManufacturingActorId } from "@/app/api/manufacturing/production/_authenticated-actor";
-import { DIRECTUS_URL, headers, getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { DIRECTUS_URL, headers, formatPhtDateTime, getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { getPhtDateInputValue } from "@/modules/manufacturing-management/shared/pht-date";
 import { createJobOrder } from "@/app/api/manufacturing/planning-engineering/planning-helper";
 import { twoPointQAInspectionRequestSchema } from "./_two-point-contract";
 import {
@@ -464,7 +465,7 @@ export async function GET(request: Request) {
 // POST handler
 export async function POST(request: Request) {
     try {
-        const todayStr = await getTodayDateString();
+        const todayStr = getPhtDateInputValue();
         const rawBody: unknown = await request.json().catch(() => null);
         if (!rawBody || typeof rawBody !== "object" || Array.isArray(rawBody)) {
             return NextResponse.json({ error: "Request body must be a JSON object." }, { status: 400 });
@@ -681,7 +682,7 @@ export async function POST(request: Request) {
                                         status: JOB_ORDER_STATUS.RELEASED,
                                         branch_id: branchId,
                                         created_by: userId,
-                                        created_at: new Date().toISOString(),
+                                        created_at: formatPhtDateTime(),
                                         remarks: `Standalone Rework Job Order spawned from QA Inspection of ${parentJoNo}. Rejection: ${reasonName}`
                                     })
                                 },
@@ -716,6 +717,7 @@ export async function POST(request: Request) {
                 }
 
                 // 4. Insert Inspection Record into qa_jo_inspection_logs.
+                const inspectionTimestamp = new Date().toISOString();
                 const inspectionLogPayload = {
                     job_order_id: parentJoIdInt,
                     inspected_quantity: inspQty,
@@ -724,7 +726,7 @@ export async function POST(request: Request) {
                     rejection_reason_id: rejQty > 0 ? Number(rejection_reason_id) : null,
                     rework_job_order_id: reworkJoIdInt,
                     inspected_by: userId,
-                    inspected_at: new Date().toISOString(),
+                    inspected_at: inspectionTimestamp,
                     status: rejQty === 0 ? "PASSED" : "REWORK_TRIGGERED",
                     remarks: remarks || (rejQty === 0 ? "100% Passed QA Inspection" : `Rework required: ${rejQty} units due to ${reasonName}`)
                 };
@@ -803,6 +805,8 @@ export async function POST(request: Request) {
                 const newProducedQty = (Number(parentJO.actual_quantity_produced) || 0) + passQty;
                 const newRejectedQty = (Number(parentJO.rejected_quantity) || 0) + rejQty;
 
+                const qaCompletedAt = formatPhtDateTime();
+                const qaHistoryTimestamp = new Date().toISOString();
                 await directusMutation(
                     `/items/manufacturing_job_orders/${parentJoIdInt}`,
                     {
@@ -813,7 +817,7 @@ export async function POST(request: Request) {
                             completed_quantity: newCompletedQty,
                             actual_quantity_produced: newProducedQty,
                             rejected_quantity: newRejectedQty,
-                            modified_at: new Date().toISOString()
+                            modified_at: qaCompletedAt
                         })
                     },
                     "Update parent Job Order QA state"
@@ -826,7 +830,7 @@ export async function POST(request: Request) {
                     old_status: oldStatus,
                     new_status: newStatus,
                     changed_by: userId,
-                    changed_at: new Date().toISOString(),
+                    changed_at: qaHistoryTimestamp,
                     remarks: rejQty === 0
                         ? `QA Inspection Completed: 100% Passed (${passQty} units). Transitioned status to COMPLETED.`
                         : `QA Inspection Completed: ${passQty} Passed, ${rejQty} Rejected (${reasonName}). Spawned Rework Job Order ${spawnedReworkJo?.job_order_no || "JO-RWK"}.`
