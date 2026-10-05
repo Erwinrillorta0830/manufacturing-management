@@ -140,7 +140,7 @@ export async function POST(
             if (imageValue !== null && (typeof File === "undefined" || !(imageValue instanceof File))) {
                 return NextResponse.json({
                     success: false,
-                    error: "The termination evidence image is invalid.",
+                    error: "The termination evidence file is invalid.",
                     code: "TERMINATION_IMAGE_INVALID"
                 }, { status: 422 });
             }
@@ -208,15 +208,15 @@ export async function POST(
             if (!terminationImage) {
                 return NextResponse.json({
                     success: false,
-                    error: "A termination evidence image is required.",
+                    error: "A termination evidence image or video is required.",
                     code: "TERMINATION_IMAGE_REQUIRED"
                 }, { status: 422 });
             }
-            const imageError = validateJobOrderTerminationImage(terminationImage);
-            if (imageError) {
+            const evidenceError = validateJobOrderTerminationImage(terminationImage);
+            if (evidenceError) {
                 return NextResponse.json({
                     success: false,
-                    error: imageError,
+                    error: evidenceError,
                     code: "TERMINATION_IMAGE_INVALID"
                 }, { status: 422 });
             }
@@ -226,15 +226,15 @@ export async function POST(
             if (!workflowEvidenceImage) {
                 return NextResponse.json({
                     success: false,
-                    error: "A breakdown or hold evidence image is required.",
+                    error: "A breakdown or hold evidence image or video is required.",
                     code: "WORKFLOW_EVIDENCE_REQUIRED"
                 }, { status: 422 });
             }
-            const imageError = validateJobOrderWorkflowEvidence(workflowEvidenceImage);
-            if (imageError) {
+            const evidenceError = validateJobOrderWorkflowEvidence(workflowEvidenceImage);
+            if (evidenceError) {
                 return NextResponse.json({
                     success: false,
-                    error: imageError,
+                    error: evidenceError,
                     code: "WORKFLOW_EVIDENCE_INVALID"
                 }, { status: 422 });
             }

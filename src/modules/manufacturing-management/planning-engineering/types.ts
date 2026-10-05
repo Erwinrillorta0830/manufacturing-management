@@ -155,8 +155,14 @@ export interface JobOrder {
     cancellation_reason?: string | null;
     cancellation_image_id?: string | null;
     cancellation_image_url?: string | null;
+    cancellation_image_file_name?: string | null;
+    cancellation_image_mime_type?: string | null;
+    cancellation_image_file_size?: number | null;
     termination_image_id?: string | null;
     termination_image_url?: string | null;
+    termination_image_file_name?: string | null;
+    termination_image_mime_type?: string | null;
+    termination_image_file_size?: number | null;
     remarks?: string | null;
     actual_quantity_produced?: number;
     quantity?: number;

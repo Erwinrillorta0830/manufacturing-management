@@ -332,7 +332,7 @@ async function readShiftRunRequest(request: Request): Promise<ShiftRunRequestDat
 
         const imageValue = formData.get("image");
         if (imageValue !== null && !isFileValue(imageValue)) {
-            throw new ProductionSessionError(400, "SHIFT_RUN_IMAGE_INVALID", "The shift evidence image is invalid.");
+            throw new ProductionSessionError(400, "SHIFT_RUN_IMAGE_INVALID", "The shift evidence file is invalid.");
         }
 
         return { body: body as Record<string, unknown>, image: isFileValue(imageValue) ? imageValue : null };
@@ -508,7 +508,7 @@ async function uploadProductionYieldImage(file: File, joId: number, sessionKey: 
             cache: "no-store"
         });
     } catch (error) {
-        throw new DirectusSessionPersistenceError(`Shift evidence image upload could not reach Manufacturing Directus: ${(error as Error).message}`);
+        throw new DirectusSessionPersistenceError(`Shift evidence upload could not reach Manufacturing Directus: ${(error as Error).message}`);
     }
 
     const responseText = await response.text();
@@ -516,14 +516,14 @@ async function uploadProductionYieldImage(file: File, joId: number, sessionKey: 
     try { payload = responseText ? JSON.parse(responseText) : null; } catch { payload = null; }
     if (!response.ok) {
         throw new DirectusSessionPersistenceError(
-            `Shift evidence image upload failed with HTTP ${response.status}: ${responseText || "No response body"}`,
+            `Shift evidence upload failed with HTTP ${response.status}: ${responseText || "No response body"}`,
             response.status >= 400 && response.status < 500 ? response.status : 502
         );
     }
 
     const fileId = directusFileId(payload?.data);
     if (!fileId) {
-        throw new DirectusSessionPersistenceError("Shift evidence image upload returned no file identifier.");
+        throw new DirectusSessionPersistenceError("Shift evidence upload returned no file identifier.");
     }
     return fileId;
 }
@@ -536,7 +536,7 @@ async function deleteProductionYieldImage(fileId: string): Promise<void> {
             cache: "no-store"
         });
     } catch (error) {
-        console.error(`Unable to clean up unreferenced shift evidence image ${fileId}:`, error);
+        console.error(`Unable to clean up unreferenced shift evidence file ${fileId}:`, error);
     }
 }
 
@@ -1042,7 +1042,7 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
     try {
         const { body, image } = await readShiftRunRequest(request);
         if (!image) {
-            throw new ProductionSessionError(400, "SHIFT_RUN_IMAGE_REQUIRED", "A shift evidence image is required.");
+            throw new ProductionSessionError(400, "SHIFT_RUN_IMAGE_REQUIRED", "A shift evidence image or video is required.");
         }
         const imageError = validateProductionYieldImage(image);
         if (imageError) {

@@ -106,8 +106,14 @@ export interface JobOrder {
     remarks?: string | null;
     cancellation_image_id?: string | null;
     cancellation_image_url?: string | null;
+    cancellation_image_file_name?: string | null;
+    cancellation_image_mime_type?: string | null;
+    cancellation_image_file_size?: number | null;
     termination_image_id?: string | null;
     termination_image_url?: string | null;
+    termination_image_file_name?: string | null;
+    termination_image_mime_type?: string | null;
+    termination_image_file_size?: number | null;
     created_by?: number | null;
     created_at?: string | null;
     yield_logs?: any[];
@@ -265,6 +271,9 @@ export interface JobOrderStatusHistoryRecord {
     jo_route_id?: number | null;
     reported_yield_quantity?: number | null;
     evidence_image_id?: string | null;
+    evidence_file_name?: string | null;
+    evidence_mime_type?: string | null;
+    evidence_file_size?: number | null;
     job_order_no?: string;
     work_center_id?: number | null;
     work_center_name?: string | null;

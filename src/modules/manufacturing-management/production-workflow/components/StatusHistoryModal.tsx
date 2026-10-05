@@ -16,7 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { formatPhtTimestamp } from "../../shared/pht-date";
 import { JobOrder, JobOrderStatusHistoryRecord } from "../types";
 import { fetchJobOrderStatusHistory } from "../services/production-api";
-import { manufacturingFileUrl } from "../services/production-yield-image";
+import { isManufacturingEvidenceVideo, manufacturingFileUrl } from "../services/production-yield-image";
 import { toast } from "sonner";
 
 function formatWorkflowAction(action: string): string {
@@ -132,15 +132,26 @@ export function StatusHistoryModal({
                                         )}
 
                                         {rec.evidence_image_id && (
-                                            <a
-                                                href={manufacturingFileUrl(String(rec.evidence_image_id))}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2 text-xs font-semibold text-amber-700 hover:bg-amber-500/10 dark:text-amber-400"
-                                            >
-                                                <ImageIcon className="h-4 w-4" />
-                                                View workflow evidence image
-                                            </a>
+                                            isManufacturingEvidenceVideo(rec.evidence_mime_type, rec.evidence_file_name) ? (
+                                                <video
+                                                    src={manufacturingFileUrl(String(rec.evidence_image_id))}
+                                                    controls
+                                                    playsInline
+                                                    preload="metadata"
+                                                    aria-label={rec.evidence_file_name || "Workflow evidence video"}
+                                                    className="max-h-64 w-full rounded-lg border border-amber-500/30 bg-black"
+                                                />
+                                            ) : (
+                                                <a
+                                                    href={manufacturingFileUrl(String(rec.evidence_image_id))}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2 text-xs font-semibold text-amber-700 hover:bg-amber-500/10 dark:text-amber-400"
+                                                >
+                                                    <ImageIcon className="h-4 w-4" />
+                                                    View workflow evidence image
+                                                </a>
+                                            )
                                         )}
 
                                         <div className="flex flex-wrap items-center gap-4 text-[11px] text-muted-foreground pt-1 border-t border-border/30 font-medium">

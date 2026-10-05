@@ -1,7 +1,7 @@
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import {
     manufacturingFileUrl,
-    validateManufacturingImage
+    validateManufacturingEvidence
 } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
 
 export class JobOrderCancellationImageError extends Error {
@@ -47,7 +47,7 @@ async function responseMessage(response: Response): Promise<string> {
 }
 
 export function validateJobOrderCancellationImage(file: File): string | null {
-    return validateManufacturingImage(file, "Cancellation evidence");
+    return validateManufacturingEvidence(file, "Cancellation evidence");
 }
 
 export async function uploadJobOrderCancellationImage(file: File, jobOrderNo: string): Promise<string> {
