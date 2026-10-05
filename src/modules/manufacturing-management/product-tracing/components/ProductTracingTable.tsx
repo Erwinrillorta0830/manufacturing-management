@@ -27,6 +27,7 @@ import {
     Check,
     Layers
 } from "lucide-react";
+import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { MovementDetailModal } from "./MovementDetailModal";
 import { BatchMovementsModal, BatchGroupData } from "./BatchMovementsModal";
@@ -246,72 +247,91 @@ export function ProductTracingTable({
         }));
     }, [data]);
 
-    // Export to CSV
-    const handleExportCsv = () => {
+    // Export to Excel
+    const handleExportExcel = () => {
         if (data.length === 0) {
             toast.error("No movements to export.");
             return;
         }
 
-        const headers = [
-            "Movement Key",
-            "Transaction Date",
-            "Reference No",
-            "Transaction Type",
-            "Direction",
-            "Source Module",
-            "Product ID",
-            "Product Code",
-            "Product Name",
-            "Product Type",
-            "Batch No",
-            "Lot ID",
-            "Condition",
-            "Mfg Date",
-            "Exp Date",
-            "Qty In",
-            "Qty Out",
-            "Running Balance",
-            "Unit Cost",
-            "Difference Cost",
-            "Status",
-            "Remarks"
-        ];
+        try {
+            const headers = [
+                "Movement Key",
+                "Transaction Date",
+                "Reference No",
+                "Transaction Type",
+                "Direction",
+                "Source Module",
+                "Product ID",
+                "Product Code",
+                "Product Name",
+                "Product Type",
+                "Batch No",
+                "Lot ID",
+                "Condition",
+                "Mfg Date",
+                "Exp Date",
+                "Qty In",
+                "Qty Out",
+                "Running Balance",
+                "Unit Cost",
+                "Difference Cost",
+                "Status",
+                "Remarks"
+            ];
 
-        const rows = data.map(m => [
-            `"${m.movementKey || ""}"`,
-            `"${m.transactionDate || m.postedAt || ""}"`,
-            `"${m.referenceNo || ""}"`,
-            `"${m.transactionType || ""}"`,
-            `"${m.movementDirection || ""}"`,
-            `"${m.sourceModule || ""}"`,
-            m.productId || "",
-            `"${m.productCode || ""}"`,
-            `"${(m.productName || "").replace(/"/g, '""')}"`,
-            `"${m.productTypeName || ""}"`,
-            `"${m.batchNo || ""}"`,
-            m.lotId || "",
-            `"${m.inventoryCondition || ""}"`,
-            `"${m.manufacturingDate || ""}"`,
-            `"${m.expirationDate || ""}"`,
-            m.quantityIn || 0,
-            m.quantityOut || 0,
-            m.runningBalance || 0,
-            m.unitCost || 0,
-            m.differenceCost || 0,
-            `"${m.sourceStatus || ""}"`,
-            `"${(m.remarks || "").replace(/"/g, '""')}"`
-        ]);
+            const rows = data.map(m => [
+                m.movementKey || "",
+                m.transactionDate || m.postedAt || "",
+                m.referenceNo || "",
+                m.transactionType || "",
+                m.movementDirection || "",
+                m.sourceModule || "",
+                m.productId ?? "",
+                m.productCode || "",
+                m.productName || "",
+                m.productTypeName || "",
+                m.batchNo || "",
+                m.lotId ?? "",
+                m.inventoryCondition || "",
+                m.manufacturingDate || "",
+                m.expirationDate || "",
+                Number(m.quantityIn || 0),
+                Number(m.quantityOut || 0),
+                Number(m.runningBalance || 0),
+                Number(m.unitCost || 0),
+                Number(m.differenceCost || 0),
+                m.sourceStatus || "",
+                m.remarks || ""
+            ]);
 
-        const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
-        const encodedUri = encodeURI(csvContent);
-        const link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
-        link.setAttribute("download", `Product_Tracing_Ledger_${format(new Date(), "yyyyMMdd_HHmmss")}.csv`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        toast.success("CSV export downloaded successfully!");
+            const aoa = [headers, ...rows];
+            const wb = XLSX.utils.book_new();
+            const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+            // Auto-fit column widths based on header and content lengths
+            ws["!cols"] = headers.map((header, colIndex) => {
+                let maxLength = header.length;
+                for (const row of rows) {
+                    const cell = row[colIndex];
+                    if (cell !== null && cell !== undefined) {
+                        const cellLength = String(cell).length;
+                        if (cellLength > maxLength) {
+                            maxLength = cellLength;
+                        }
+                    }
+                }
+                return { wch: Math.min(Math.max(maxLength + 4, 12), 60) };
+            });
+
+            XLSX.utils.book_append_sheet(wb, ws, "Product Tracing");
+            const filename = `Product_Tracing_Ledger_${format(new Date(), "yyyyMMdd_HHmmss")}.xlsx`;
+            XLSX.writeFile(wb, filename);
+            toast.success("Excel export downloaded successfully!");
+        } catch (err: unknown) {
+            console.error("Export Excel error:", err);
+            toast.error("Failed to export Excel file.");
+        }
     };
 
     if (isLoading) {
@@ -371,11 +391,11 @@ export function ProductTracingTable({
                         variant="outline"
                         size="sm"
                         className="h-8 rounded-xl px-3 text-xs font-bold text-muted-foreground hover:text-foreground gap-1.5"
-                        onClick={handleExportCsv}
+                        onClick={handleExportExcel}
                         disabled={data.length === 0}
                     >
                         <Download className="h-3.5 w-3.5" />
-                        Export CSV
+                        Export
                     </Button>
 
                     <Button

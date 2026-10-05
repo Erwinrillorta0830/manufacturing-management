@@ -13,7 +13,6 @@ import {
     Boxes,
     Layers,
 } from "lucide-react";
-import { toast } from "sonner";
 
 import { usePathname } from "next/navigation";
 
