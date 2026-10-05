@@ -25,6 +25,7 @@ import { Step1BasicDetails } from "./buffer-jo/Step1BasicDetails";
 import { Step2BOMReview } from "./buffer-jo/Step2BOMReview";
 import { Step3Scheduling } from "./buffer-jo/Step3Scheduling";
 import { Step4Review } from "./buffer-jo/Step4Review";
+import { addCalendarDaysToDateInput, formatPhtDate, getPhtDateInputValue } from "../../shared/pht-date";
 
 interface CreateBufferJODialogProps {
     isOpen: boolean;
@@ -181,8 +182,9 @@ export function CreateBufferJODialog({
             setJoNumber(code);
 
             // Default due date to +7 days
-            setPlannedDate(new Date().toISOString().split("T")[0]);
-            setDueDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);
+            const phtToday = getPhtDateInputValue();
+            setPlannedDate(phtToday);
+            setDueDate(addCalendarDaysToDateInput(phtToday, 7));
             setPriority(0);
 
             // A new Buffer JO must always choose its target branch explicitly.
@@ -724,7 +726,7 @@ export function CreateBufferJODialog({
         const printWindow = window.open("", "_blank");
         if (!printWindow) return;
 
-        const dateStr = new Date().toLocaleDateString();
+        const dateStr = formatPhtDate(new Date());
         const branchName = selectedBranch?.branch_name || "Main Branch";
 
         let tableRowsHtml = "";
@@ -1020,7 +1022,7 @@ export function CreateBufferJODialog({
                         <div>
                             <strong>Target Product:</strong> ${productName}<br/>
                             <strong>Production Qty:</strong> ${qty.toLocaleString()} units<br/>
-                            <strong>Date Created:</strong> ${new Date().toLocaleDateString()}<br/>
+                            <strong>Date Created:</strong> ${formatPhtDate(new Date())}<br/>
                         </div>
                         <div style="text-align: right;">
                             <strong>Warehouse Branch:</strong> ${branchName}<br/>

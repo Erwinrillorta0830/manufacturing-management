@@ -11,6 +11,7 @@ import { deriveDailyQAOutcome } from "@/modules/manufacturing-management/manufac
 import { hasPagination, paginate } from "../../_pagination";
 import { JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
 import { loadEligibleFinishedGoodsLot, MmLotError } from "../../services/mm-lots.service";
+import { formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "test";
@@ -411,7 +412,9 @@ export async function POST(request: Request) {
             await persistOutputTraceability(ledgerId, jobOrderId, ledger, outputMetadata);
         }
 
-        const timestamp = new Date().toISOString();
+        const inspectionInstant = new Date();
+        const timestamp = formatPhtDateTime(inspectionInstant);
+        const timestampInstant = inspectionInstant.toISOString();
 
         for (const entry of inspectionsList) {
             const { 
@@ -446,7 +449,7 @@ export async function POST(request: Request) {
                 weight_check_passed: weightCheckPassed ? 1 : 0,
                 lab_status: labStatus || "Passed",
                 action_taken: actionTaken || "Released",
-                inspected_at: timestamp,
+                inspected_at: timestampInstant,
                 remarks: remarks || ""
             };
 
@@ -586,7 +589,7 @@ export async function POST(request: Request) {
                     decision: null,
                     supervisor_comments: "",
                     inspection_remarks: String(ins.remarks || ""),
-                    recorded_at: new Date().toISOString(),
+                    recorded_at: timestampInstant,
                     resolved_at: null,
                     resolved_by: null
                 };

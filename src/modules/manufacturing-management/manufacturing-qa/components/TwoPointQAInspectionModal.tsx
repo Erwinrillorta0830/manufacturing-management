@@ -39,6 +39,7 @@ import { fetchMaterialReturnPreview } from "../services/qa-api";
 import { displayJobOrderStatus, isTerminalJobOrderStatus, normalizeJobOrderStatus } from "../../job-order-status";
 import { FinishedGoodsLotSelect } from "../../shared/FinishedGoodsLotSelect";
 import { fetchEligibleFinishedGoodsLots, EligibleFinishedGoodsLot } from "../../shared/finished-goods-lots-api";
+import { getPhtDateInputValue } from "../../shared/pht-date";
 
 interface TwoPointQAInspectionModalProps {
     isOpen: boolean;
@@ -130,11 +131,11 @@ function TwoPointQAFormContent({
     const [eligibleLots, setEligibleLots] = useState<EligibleFinishedGoodsLot[]>([]);
     const [selectedMmLotId, setSelectedMmLotId] = useState<string>("");
     const [loadingLots, setLoadingLots] = useState(true);
-    const [manufacturingDate, setManufacturingDate] = useState<string>(() => new Date().toISOString().split("T")[0]);
+    const todayPht = getPhtDateInputValue();
+    const [manufacturingDate, setManufacturingDate] = useState<string>(() => todayPht);
     const [expiryDate, setExpiryDate] = useState<string>(() => {
-        const nextYear = new Date();
-        nextYear.setFullYear(nextYear.getFullYear() + 1);
-        return nextYear.toISOString().split("T")[0];
+        const [year, month, day] = todayPht.split("-").map(Number);
+        return new Date(Date.UTC(year + 1, month - 1, day)).toISOString().split("T")[0];
     });
     const [unitCost] = useState<string>(String(jobOrder.unit_cost || 0));
     const [remarks, setRemarks] = useState<string>("");

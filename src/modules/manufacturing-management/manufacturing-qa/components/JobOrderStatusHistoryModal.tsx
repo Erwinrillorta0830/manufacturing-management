@@ -25,6 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { JobOrder, JobOrderStatusHistory } from "../types";
 import { fetchJobOrderStatusHistory } from "../services/qa-api";
 import { displayJobOrderStatus, isTerminalJobOrderStatus, normalizeJobOrderStatus } from "../../job-order-status";
+import { formatPhtTimestamp } from "../../shared/pht-date";
 
 interface JobOrderStatusHistoryModalProps {
     isOpen: boolean;
@@ -191,7 +192,7 @@ function JobOrderStatusHistoryContent({
 
                                                 <span className="text-[10px] text-muted-foreground font-mono flex items-center gap-1">
                                                     <Calendar className="h-3 w-3" />
-                                                    {h.changed_at ? new Date(h.changed_at).toLocaleString() : "N/A"}
+                                                    {formatPhtTimestamp(h.changed_at)}
                                                 </span>
                                             </div>
 

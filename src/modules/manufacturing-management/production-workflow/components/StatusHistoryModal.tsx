@@ -13,6 +13,7 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { formatPhtTimestamp } from "../../shared/pht-date";
 import { JobOrder, JobOrderStatusHistoryRecord } from "../types";
 import { fetchJobOrderStatusHistory } from "../services/production-api";
 import { manufacturingFileUrl } from "../services/production-yield-image";
@@ -109,7 +110,7 @@ export function StatusHistoryModal({
                                                 )}
                                             </div>
                                             <span className="text-[11px] font-mono text-muted-foreground font-semibold">
-                                                {new Date(rec.changed_at).toLocaleString()}
+                                                {formatPhtTimestamp(rec.changed_at)}
                                             </span>
                                         </div>
 

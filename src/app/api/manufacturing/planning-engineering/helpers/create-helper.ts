@@ -1,7 +1,8 @@
 /* eslint-disable */
 import { DIRECTUS_URL, headers, DirectusJobOrder, getUomCountForProduct } from "./shared";
 import { getBOMDetailsForVersion, getActiveVersionForProduct } from "../../finished-goods/versions/versions-helper";
-import { getTodayDateString, formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
+import { formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
+import { getPhtDateInputValue } from "@/modules/manufacturing-management/shared/pht-date";
 import { getAvailableInventoryLots } from "./inventory-helper";
 import {
     isCancelledJobOrderStatus,
@@ -352,7 +353,7 @@ export async function createJobOrder(
     const createdReplacementCreditIds: number[] = [];
     const movedReservationRestorations: Array<{ id: number; previousJoMaterialId: number }> = [];
     try {
-        const todayStr = await getTodayDateString();
+        const todayStr = getPhtDateInputValue();
         let productsList = schedulingPlan
             ? [{
                 product_id: schedulingPlan.productId,
@@ -750,7 +751,7 @@ export async function createJobOrder(
                 event_key: `create:${joNoStr}`,
                 remarks: "Initial Job Order Creation",
                 changed_by: joData.created_by ? Number(joData.created_by) : null,
-                changed_at: formatPhtDateTime()
+                changed_at: new Date().toISOString()
             })
         });
         if (!historyRes.ok) {

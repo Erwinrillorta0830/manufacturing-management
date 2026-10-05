@@ -1,7 +1,7 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
 import { updateJobOrder } from "../planning-helper";
-import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import { DIRECTUS_URL, headers, formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 import { isCancelledJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 import { executeJobOrderWorkflow } from "../../job-orders/_workflow-service";
 import {
@@ -373,6 +373,9 @@ export async function handlePATCH(request: Request) {
         // 1. Task status/completion update
         if (body.taskId !== undefined && body.taskPatch !== undefined) {
             const { taskId, taskPatch } = body;
+            const normalizedTaskPatch = taskPatch?.status === "Completed"
+                ? { ...taskPatch, completed_at: new Date().toISOString() }
+                : taskPatch;
             const cancelledResponse = await cancelledJobOrderResponseForTask(Number(taskId));
             if (cancelledResponse) return cancelledResponse;
             const routeContextResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes/${Number(taskId)}?fields=jo_route_id,job_order_id`, { headers, cache: "no-store" });
@@ -383,13 +386,13 @@ export async function handlePATCH(request: Request) {
                 ? routeJobOrderRef?.job_order_id ?? routeJobOrderRef?.id
                 : routeJobOrderRef);
             const targetResponse = await productionTargetResponse(routeJobOrderId);
-            const allowedTargetRouteCompletion = taskPatch?.status === "Completed"
-                && Object.keys(taskPatch || {}).every((key) => ["status", "completed_at", "actual_run_hours"].includes(key));
+            const allowedTargetRouteCompletion = normalizedTaskPatch?.status === "Completed"
+                && Object.keys(normalizedTaskPatch || {}).every((key) => ["status", "completed_at", "actual_run_hours"].includes(key));
             if (targetResponse && !allowedTargetRouteCompletion) return targetResponse;
             const res = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes/${taskId}?fields=jo_route_id,job_order_id,sequence_order,work_center_id,operation_id,planned_setup_hours,planned_run_hours,actual_setup_hours,actual_run_hours,step_batch_size,run_time_hours_factor`, {
                 method: "PATCH",
                 headers,
-                body: JSON.stringify(taskPatch)
+                body: JSON.stringify(normalizedTaskPatch)
             });
             if (!res.ok) throw new Error(`Failed to patch routing task: ${res.status}`);
             const result = await res.json();
@@ -627,7 +630,7 @@ export async function handlePATCH(request: Request) {
                     value_boolean: isPassed,
                     is_passed: isPassed,
                     inspected_by: moduleUser.userId,
-                    inspected_at: new Date().toISOString(),
+                    inspected_at: formatPhtDateTime(),
                     remarks: qaLog.comments || ""
                 };
                 
@@ -655,7 +658,7 @@ export async function handlePATCH(request: Request) {
                     actual_quantity: actual,
                     deviation_quantity: deviation,
                     qa_status: overallPassed && !criticalFailed ? "Passed" : "Failed",
-                    recorded_at: new Date().toISOString(),
+                    recorded_at: formatPhtDateTime(),
                     comments: qaLog.comments || "",
                     photos: qaLog.photos || null
                 };
