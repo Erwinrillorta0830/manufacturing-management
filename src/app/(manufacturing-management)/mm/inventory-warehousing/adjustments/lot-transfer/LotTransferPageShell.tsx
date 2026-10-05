@@ -11,8 +11,8 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { cookies } from "next/headers";
 import { decodeJwtPayload } from "@/lib/auth-utils";
-import LotTransferModule from "@/modules/manufacturing-management/lot-transfer/LotTransferModule";
-import type { LotTransferMode } from "@/modules/manufacturing-management/lot-transfer/types";
+import LotTransferModule from "@/modules/manufacturing-management/adjustments/lot-transfer/LotTransferModule";
+import type { LotTransferMode } from "@/modules/manufacturing-management/adjustments/lot-transfer/types";
 
 interface LotTransferPageShellProps {
     mode: LotTransferMode;
