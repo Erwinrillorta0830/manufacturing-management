@@ -315,14 +315,6 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
                                     This purchase order is complete and is shown for receipt history and reference. No additional warehouse receipt can be started.
                                 </AlertDescription>
                             </Alert>
-                        ) : isPendingQa ? (
-                            <Alert className="border-amber-300 bg-amber-50 text-amber-950">
-                                <ClipboardCheck className="h-4 w-4 text-amber-700" />
-                                <AlertTitle>Partial receipt is awaiting QA</AlertTitle>
-                                <AlertDescription>
-                                    This warehouse receipt has been submitted to QA Receiving. It is visible here for tracking but cannot be edited or followed by another warehouse receipt until QA posts it.
-                                </AlertDescription>
-                            </Alert>
                         ) : (
                             <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-4 text-sm text-blue-900">
                                 <div className="flex items-start gap-3"><ClipboardCheck className="mt-0.5 h-5 w-5 shrink-0 text-blue-700" /><div><p className="font-semibold text-blue-950">Physical quantity confirmation</p><p className="mt-0.5 text-xs text-blue-800">Enter the physical quantities received at the warehouse. Lot allocation, expiration dates, and QA disposition are completed in QA Receiving.</p></div></div>
@@ -333,7 +325,7 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
                             <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
                                 <div>
                                     <h2 className="font-semibold text-primary">PO receiving progress</h2>
-                                    <p className="text-xs text-muted-foreground">Posted receipts are included in Received to date. Active receipts are shown separately until QA posts them.</p>
+                                    <p className="text-xs text-muted-foreground">Tracks all physical receipts recorded at the warehouse towards the PO ordered total.</p>
                                 </div>
                                 {selectedOrder.receiptHistory.length > 0 && (
                                     <span className="text-xs font-semibold text-muted-foreground">
@@ -346,8 +338,8 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
                                 <div className="rounded-md border bg-background/90 px-3 py-2"><p className="text-xs text-muted-foreground">Received to date</p><p className="text-base font-semibold text-emerald-700">{formatQuantity(totalReceivedToDate)}</p></div>
                                 <div className="rounded-md border bg-background/90 px-3 py-2"><p className="text-xs text-muted-foreground">Remaining</p><p className="text-base font-semibold text-amber-700">{formatQuantity(totalRemaining)}</p></div>
                             </div>
-                            {(isStarted || isPendingQa) && (
-                                <p className="mt-3 text-xs font-semibold text-primary">Current receipt quantity: {formatQuantity(totalEntered)}{isPendingQa ? " · Awaiting QA" : " · Draft"}</p>
+                            {isStarted && (
+                                <p className="mt-3 text-xs font-semibold text-primary">Current receipt quantity: {formatQuantity(totalEntered)} · Draft</p>
                             )}
                         </div>
 
@@ -471,14 +463,12 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
                         )}
 
                         <div className="border-t pt-4 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
-                            {isReceived ? (
+                            {isReceived || !hasRemainingQuantity ? (
                                 <span className="text-xs font-medium text-emerald-700">Warehouse receiving is complete for this PO.</span>
-                            ) : isPendingQa ? (
-                                <span className="text-xs font-medium text-amber-700">Receipt is locked while QA completes inspection.</span>
                             ) : !isStarted ? (
-                                <Button onClick={() => void start()} disabled={actionBusy || (isContinuation && !hasRemainingQuantity)} title={isContinuation && !hasRemainingQuantity ? "No remaining quantity is available for another warehouse receipt." : undefined}>
+                                <Button onClick={() => void start()} disabled={actionBusy || !hasRemainingQuantity} title={!hasRemainingQuantity ? "No remaining quantity is available for another warehouse receipt." : undefined}>
                                     {submitting === "start" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                    <PackageCheck className="mr-2 h-4 w-4" /> {isContinuation ? "Start Next Warehouse Receipt" : "Start Warehouse Receiving"}
+                                    <PackageCheck className="mr-2 h-4 w-4" /> {selectedOrder.receiptHistory.length > 0 ? "Start Next Warehouse Receipt" : "Start Warehouse Receiving"}
                                 </Button>
                             ) : (
                                 <div className="flex flex-wrap items-center gap-2">

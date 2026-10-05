@@ -139,9 +139,6 @@ class WarehouseReceivingError extends Error {
 }
 
 function effectiveReceivedQuantity(row: DirectusReceiving): number {
-    if (row.quantity_allocated !== null && row.quantity_allocated !== undefined) {
-        return Math.max(0, numberValue(row.quantity_allocated));
-    }
     return Math.max(0, numberValue(row.received_quantity));
 }
 
@@ -467,15 +464,16 @@ function buildReceiptHistory(
             && isWarehouse(row)
             && isUnposted(row)
             && rowHeaderId === currentHeaderId;
-        const isPosted = !isWarehouse(row) || isOne(row.isPosted);
-        if (!isCurrent && !isPosted) continue;
-
         const header = rowHeaderId ? headersById.get(rowHeaderId) : undefined;
+        const isAwaitingQa = !isCurrent && (!isOne(row.isPosted) || header?.posting_status === "Reserved");
+
         const receiptNumber = String(header?.receiving_ticket_no || row.receipt_no || "Unnumbered receipt").trim();
         const key = rowHeaderId ? `header:${rowHeaderId}` : `legacy:${receiptNumber}`;
         const status: WarehouseReceiptHistoryStatus = isCurrent
-            ? currentStatus === INVENTORY_STATUS.QA_RECEIVING || currentStatus === LEGACY_FOR_PICKUP_STATUS_ID ? "Awaiting QA" : "Current Draft"
-            : rowHeaderId ? "Posted" : "Legacy";
+            ? (currentStatus === INVENTORY_STATUS.QA_RECEIVING || currentStatus === LEGACY_FOR_PICKUP_STATUS_ID ? "Awaiting QA" : "Current Draft")
+            : isAwaitingQa
+                ? "Awaiting QA"
+                : (rowHeaderId ? "Posted" : "Legacy");
         const existing = grouped.get(key);
         const entry = existing || {
             id: rowHeaderId,
@@ -532,7 +530,7 @@ async function buildOrderView(order: DirectusOrder) {
         loadBranch(orderBranchId(order))
     ]);
     const warehouseHeaders = headers.filter(header => String(header.posting_status || "") === "Reserved");
-    const currentWarehouseHeader = [INVENTORY_STATUS.WAREHOUSE_RECEIVING, INVENTORY_STATUS.QA_RECEIVING, LEGACY_FOR_PICKUP_STATUS_ID].some(status => status === statusId(order))
+    const currentWarehouseHeader = statusId(order) === INVENTORY_STATUS.WAREHOUSE_RECEIVING
         ? warehouseHeaders.find(header => Number(header.workflow_revision) === workflowRevision(order)) || null
         : null;
     const warehouseHeaderId = Number(currentWarehouseHeader?.id || 0);
@@ -541,9 +539,13 @@ async function buildOrderView(order: DirectusOrder) {
         && isUnposted(row)
         && headerId(row) === warehouseHeaderId
     );
-    const postedRows = receivingRows.filter(row => !isWarehouse(row) || isOne(row.isPosted));
+    const recordedPriorRows = receivingRows.filter(row => {
+        if (isOne(row.is_reverted) || isOne(row.is_replacement)) return false;
+        if (warehouseHeaderId > 0 && headerId(row) === warehouseHeaderId) return false;
+        return true;
+    });
     const previousByLine = new Map<number, number>();
-    for (const row of postedRows) {
+    for (const row of recordedPriorRows) {
         const id = lineId(row);
         if (!id) continue;
         previousByLine.set(id, (previousByLine.get(id) || 0) + effectiveReceivedQuantity(row));
@@ -610,16 +612,7 @@ async function buildOrderView(order: DirectusOrder) {
                 postingStatus: String(currentWarehouseHeader.posting_status || "Reserved")
             }
             : null,
-        pendingQaReceipt: [INVENTORY_STATUS.QA_RECEIVING, LEGACY_FOR_PICKUP_STATUS_ID].some(status => status === statusId(order)) && currentWarehouseHeader
-            ? {
-                id: Number(currentWarehouseHeader.id),
-                receiptNumber: String(currentWarehouseHeader.receiving_ticket_no || ""),
-                receiptDate: currentWarehouseHeader.receipt_date ? String(currentWarehouseHeader.receipt_date).slice(0, 10) : "",
-                receiptType: String(currentWarehouseHeader.receipt_type || "full").toLowerCase(),
-                quantityStatus: String(currentWarehouseHeader.quantity_status || "PARTIAL"),
-                postingStatus: String(currentWarehouseHeader.posting_status || "Reserved")
-            }
-            : null
+        pendingQaReceipt: null
     };
 }
 
@@ -650,9 +643,13 @@ async function validateWarehouseLines(order: DirectusOrder, command: WarehouseRe
         submittedById.set(line.lineId, line);
     }
     const receivingRows = await loadReceivingRows(relationId(order.purchase_order_id, ["purchase_order_id", "id"]) || 0);
+    const recordedPriorRows = receivingRows.filter(row => {
+        if (isOne(row.is_reverted) || isOne(row.is_replacement)) return false;
+        if (headerIdValue > 0 && headerId(row) === headerIdValue) return false;
+        return true;
+    });
     const postedByLine = new Map<number, number>();
-    for (const row of receivingRows) {
-        if (isWarehouse(row) && isUnposted(row)) continue;
+    for (const row of recordedPriorRows) {
         const id = lineId(row);
         if (id) postedByLine.set(id, (postedByLine.get(id) || 0) + effectiveReceivedQuantity(row));
     }
@@ -791,13 +788,11 @@ async function startWarehouseReceiving(order: DirectusOrder, command: WarehouseR
         return buildOrderView(order);
     }
     if (!WAREHOUSE_RECEIVING_STARTABLE_INVENTORY_STATUS_IDS.some(status => status === currentStatus)) {
-        throw new WarehouseReceivingError("Only Approved or Partially Received purchase orders can be started in Warehouse Receiving.", 409);
+        throw new WarehouseReceivingError("This purchase order cannot be started in Warehouse Receiving.", 409);
     }
-    if (currentStatus === INVENTORY_STATUS.PARTIALLY_RECEIVED) {
-        const currentView = await buildOrderView(order);
-        if (!currentView.lines.some(line => line.remainingQuantity > QUANTITY_EPSILON)) {
-            throw new WarehouseReceivingError("This purchase order has no remaining quantity to receive.", 409);
-        }
+    const currentView = await buildOrderView(order);
+    if (!currentView.lines.some(line => line.remainingQuantity > QUANTITY_EPSILON)) {
+        throw new WarehouseReceivingError("This purchase order has no remaining quantity to receive.", 409);
     }
     const branchId = orderBranchId(order);
     await loadBranch(branchId);
