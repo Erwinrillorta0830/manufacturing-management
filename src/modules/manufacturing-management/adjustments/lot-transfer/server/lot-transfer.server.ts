@@ -394,7 +394,7 @@ export async function createLotTransferServer(
   }
 
   // If unitId not provided, get from source lot
-  let unitId = payload.unitId || sUnit || 1;
+  const unitId = payload.unitId || sUnit || 1;
 
   const requestNo = await generateRequestNo();
   const now = getPhTimestamp();

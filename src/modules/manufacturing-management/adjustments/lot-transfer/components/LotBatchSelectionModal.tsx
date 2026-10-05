@@ -21,7 +21,6 @@ import {
 } from "../services/lot-allocation.engine";
 import {
   fetchLotProductsWithStock,
-  type MMInventoryLot,
   type LotProductWithBatches,
 } from "../services/lot-tracking.service";
 import type { LotTransferFormLine } from "../types";
@@ -47,7 +46,6 @@ interface LotBatchSelectionModalProps {
 export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
   open,
   onOpenChange,
-  branchId,
   productTypeId,
   productTypeName,
   sourceLotId,
@@ -60,10 +58,14 @@ export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
   existingLines,
   onAddLine,
 }) => {
-  const [loading, setLoading] = useState(false);
   const [products, setProducts] = useState<LotProductWithBatches[]>([]);
-  const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
-  const [selectedBatch, setSelectedBatch] = useState<MMInventoryLot | null>(null);
+  const [loadedLotKey, setLoadedLotKey] = useState<string | null>(null);
+  const currentLotKey = open && sourceLotId > 0 ? `${open}-${sourceLotId}` : null;
+  const loading = Boolean(currentLotKey && loadedLotKey !== currentLotKey);
+
+  const [userSelectedProductId, setUserSelectedProductId] = useState<number | null>(null);
+  const [userSelectedBatchId, setUserSelectedBatchId] = useState<number | null>(null);
+  const [customTargetBatchNo, setCustomTargetBatchNo] = useState<string | null>(null);
 
   // Target Lot Capacity Calculations
   const hasCapacityLimit = typeof targetMaxCapacity === "number" && targetMaxCapacity > 0;
@@ -78,31 +80,31 @@ export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
     : Infinity;
   const isTargetLotFull = hasCapacityLimit && remainingTargetCapacity <= 0;
 
-  const maxAllowedQty = useMemo(() => {
-    const batchAvailable = selectedBatch?.available_quantity || 0;
-    if (!hasCapacityLimit) return batchAvailable;
-    return Math.min(batchAvailable, remainingTargetCapacity);
-  }, [selectedBatch, hasCapacityLimit, remainingTargetCapacity]);
-
   // Line input state
   const [transferQty, setTransferQty] = useState<number>(0);
-  const [targetBatchNo, setTargetBatchNo] = useState<string>("");
   const [lineRemarks, setLineRemarks] = useState<string>("");
 
   // Load products & active positive batches available in this lot
   useEffect(() => {
+    let active = true;
     if (open && sourceLotId > 0) {
-      setLoading(true);
       fetchLotProductsWithStock(sourceLotId)
         .then((res: LotProductWithBatches[]) => {
-          setProducts(res);
+          if (active) {
+            setProducts(res);
+            setLoadedLotKey(`${open}-${sourceLotId}`);
+          }
         })
-        .finally(() => setLoading(false));
-    } else {
-      setProducts([]);
-      setSelectedProductId(null);
-      setSelectedBatch(null);
+        .catch(() => {
+          if (active) {
+            setProducts([]);
+            setLoadedLotKey(`${open}-${sourceLotId}`);
+          }
+        });
     }
+    return () => {
+      active = false;
+    };
   }, [open, sourceLotId]);
 
   // Filter products strictly matching the required product type
@@ -116,23 +118,25 @@ export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
     });
   }, [products, productTypeId, productTypeName]);
 
-  // Synchronize selected product when matchingProducts changes
-  useEffect(() => {
-    if (matchingProducts.length > 0) {
-      if (!selectedProductId || !matchingProducts.some((p) => p.productId === selectedProductId)) {
-        const firstAvailable = matchingProducts.find((p) =>
-          p.batches.some(
-            (b) => !existingLines.some((l) => l.sourceInventoryLotId === b.inventory_lot_id)
-          )
-        );
-        setSelectedProductId(firstAvailable ? firstAvailable.productId : matchingProducts[0].productId);
-      }
-    } else {
-      setSelectedProductId(null);
+  const selectedProductId = useMemo(() => {
+    if (userSelectedProductId && matchingProducts.some((p) => p.productId === userSelectedProductId)) {
+      return userSelectedProductId;
     }
-  }, [matchingProducts, selectedProductId, existingLines]);
+    if (matchingProducts.length > 0) {
+      const firstAvailable = matchingProducts.find((p) =>
+        p.batches.some(
+          (b) => !existingLines.some((l) => l.sourceInventoryLotId === b.inventory_lot_id)
+        )
+      );
+      return firstAvailable ? firstAvailable.productId : matchingProducts[0].productId;
+    }
+    return null;
+  }, [matchingProducts, userSelectedProductId, existingLines]);
 
-  const selectedProduct = matchingProducts.find((p) => p.productId === selectedProductId);
+  const selectedProduct = useMemo(() => {
+    return matchingProducts.find((p) => p.productId === selectedProductId) || null;
+  }, [matchingProducts, selectedProductId]);
+
   const availableBatches = useMemo(() => selectedProduct?.batches || [], [selectedProduct]);
 
   const classification = resolveProductClassification(
@@ -191,29 +195,39 @@ export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
     return clean.endsWith("-LT") ? clean : `${clean}-LT`;
   };
 
-  // Synchronize selected batch when selected product or evaluated batches change
-  useEffect(() => {
-    if (selectedProduct && evaluatedBatches.length > 0) {
-      const unaddedEligible = evaluatedBatches.find((b) => !b.isAlreadyAdded && b.eligibility.isEligible);
-      const fallbackUnadded = evaluatedBatches.find((b) => !b.isAlreadyAdded);
-      const chosen = unaddedEligible || fallbackUnadded || null;
-
-      if (chosen) {
-        const found = availableBatches.find((b) => b.inventory_lot_id === chosen.inventory_lot_id) || null;
-        setSelectedBatch(found);
-        setTargetBatchNo(found ? formatDefaultTargetBatchNo(found.batch_no) : "");
-        setTransferQty(0);
-      } else {
-        setSelectedBatch(null);
-        setTargetBatchNo("");
-        setTransferQty(0);
-      }
-    } else {
-      setSelectedBatch(null);
-      setTargetBatchNo("");
-      setTransferQty(0);
+  const selectedBatch = useMemo(() => {
+    if (!selectedProduct || evaluatedBatches.length === 0) return null;
+    if (userSelectedBatchId) {
+      const found = availableBatches.find((b) => b.inventory_lot_id === userSelectedBatchId);
+      if (found) return found;
     }
-  }, [selectedProductId, selectedProduct, evaluatedBatches, availableBatches]);
+    const unaddedEligible = evaluatedBatches.find((b) => !b.isAlreadyAdded && b.eligibility.isEligible);
+    const fallbackUnadded = evaluatedBatches.find((b) => !b.isAlreadyAdded);
+    const chosen = unaddedEligible || fallbackUnadded || null;
+    if (chosen) {
+      return availableBatches.find((b) => b.inventory_lot_id === chosen.inventory_lot_id) || null;
+    }
+    return null;
+  }, [selectedProduct, evaluatedBatches, userSelectedBatchId, availableBatches]);
+
+  const maxAllowedQty = useMemo(() => {
+    const batchAvailable = selectedBatch?.available_quantity || 0;
+    if (!hasCapacityLimit) return batchAvailable;
+    return Math.min(batchAvailable, remainingTargetCapacity);
+  }, [selectedBatch, hasCapacityLimit, remainingTargetCapacity]);
+
+  const targetBatchNo = customTargetBatchNo !== null
+    ? customTargetBatchNo
+    : selectedBatch
+    ? formatDefaultTargetBatchNo(selectedBatch.batch_no)
+    : "";
+
+  const handleSelectProduct = (productId: number) => {
+    setUserSelectedProductId(productId);
+    setUserSelectedBatchId(null);
+    setCustomTargetBatchNo(null);
+    setTransferQty(0);
+  };
 
   const handleSelectBatch = (candidate: typeof evaluatedBatches[0]) => {
     if (candidate.isAlreadyAdded) {
@@ -222,10 +236,21 @@ export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
     }
     const found = availableBatches.find((b) => b.inventory_lot_id === candidate.inventory_lot_id);
     if (found) {
-      setSelectedBatch(found);
-      setTargetBatchNo(formatDefaultTargetBatchNo(found.batch_no));
+      setUserSelectedBatchId(found.inventory_lot_id);
+      setCustomTargetBatchNo(null);
       setTransferQty(0);
     }
+  };
+
+  const handleClose = (isOpen: boolean) => {
+    if (!isOpen) {
+      setUserSelectedProductId(null);
+      setUserSelectedBatchId(null);
+      setCustomTargetBatchNo(null);
+      setTransferQty(0);
+      setLineRemarks("");
+    }
+    onOpenChange(isOpen);
   };
 
   const handleConfirmAdd = () => {
@@ -286,11 +311,11 @@ export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
 
     onAddLine(newLine);
     toast.success(`Batch ${selectedBatch.batch_no} added to transfer!`);
-    onOpenChange(false);
+    handleClose(false);
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="max-w-5xl sm:max-w-5xl w-[94vw] h-[88vh] max-h-[880px] flex flex-col p-6 overflow-hidden">
         <DialogHeader className="shrink-0 pb-3 border-b flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="space-y-1">
@@ -404,7 +429,7 @@ export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
                       key={p.productId}
                       type="button"
                       disabled={isAllAdded}
-                      onClick={() => setSelectedProductId(p.productId)}
+                      onClick={() => handleSelectProduct(p.productId)}
                       className={`text-left p-3 rounded-lg border transition-all ${
                         isAllAdded
                           ? "opacity-50 bg-muted/40 border-dashed cursor-not-allowed"
@@ -582,7 +607,7 @@ export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
                       </label>
                       <Input
                         value={targetBatchNo}
-                        onChange={(e) => setTargetBatchNo(e.target.value)}
+                        onChange={(e) => setCustomTargetBatchNo(e.target.value)}
                         placeholder="Destination batch #"
                         className="h-8 font-mono text-sm"
                         disabled={isTargetLotFull}
@@ -609,7 +634,7 @@ export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
         </div>
 
         <DialogFooter className="pt-3 border-t shrink-0 flex items-center justify-end gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => handleClose(false)}>
             Cancel
           </Button>
           <Button

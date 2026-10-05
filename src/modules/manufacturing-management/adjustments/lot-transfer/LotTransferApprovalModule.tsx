@@ -35,7 +35,7 @@ import { TransferStatusBadge } from "./components/TransferStatusBadge";
 import { lotTransferService } from "./services/lot-transfer.service";
 import { SearchableSelect, type Option } from "./components/SearchableSelect";
 import { fetchBranches } from "./services/lot-tracking.service";
-import type { BranchOption, LotTransfer } from "./types";
+import type { BranchOption, LotTransfer, LotTransferStatus } from "./types";
 
 interface LotTransferApprovalModuleProps {
   userBranchId?: number | null;
@@ -51,7 +51,7 @@ export const LotTransferApprovalModule: React.FC<LotTransferApprovalModuleProps>
   const [transfers, setTransfers] = useState<LotTransfer[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("Submitted");
+  const statusFilter: LotTransferStatus = "Submitted";
 
   // Active transfer for review
   const [selectedTransfer, setSelectedTransfer] = useState<LotTransfer | null>(null);
@@ -89,10 +89,8 @@ export const LotTransferApprovalModule: React.FC<LotTransferApprovalModuleProps>
       const filter: Parameters<typeof lotTransferService.listTransfers>[0] = {
         branchId: filterBranchId || undefined,
         search: search.trim() || undefined,
+        status: statusFilter,
       };
-      if (statusFilter !== "ALL") {
-        filter.status = statusFilter as any;
-      }
       const res = await lotTransferService.listTransfers(filter);
       setTransfers(Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : []);
     } catch {

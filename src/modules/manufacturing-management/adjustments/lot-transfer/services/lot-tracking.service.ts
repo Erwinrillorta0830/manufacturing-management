@@ -594,7 +594,7 @@ export async function fetchLotProductsWithStock(
         expiry_date: (b.expirationDate || b.expiry_date || null) as string | null,
         unit_cost: Number(b.unitCost || b.unit_cost || 0),
         qa_status: String(b.qaStatus || b.qa_status || "GOOD"),
-        status: status as any,
+        status,
         available_quantity: qty,
         product_name: (b.productName || b.product_name || lookups.maps.productNames[String(pId)] || "-") as string,
         product_code: (b.itemCode || b.product_code || b.productCode || "-") as string,

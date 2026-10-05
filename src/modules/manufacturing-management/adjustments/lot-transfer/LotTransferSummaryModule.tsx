@@ -25,12 +25,10 @@ import {
   RefreshCw,
   Search,
   Eye,
-  RotateCcw,
   History,
   Activity,
   ArrowRight,
 } from "lucide-react";
-import { toast } from "sonner";
 import { TransferStatusBadge } from "./components/TransferStatusBadge";
 import { SearchableSelect, type Option } from "./components/SearchableSelect";
 import { lotTransferService } from "./services/lot-transfer.service";
@@ -38,6 +36,7 @@ import { fetchBranches } from "./services/lot-tracking.service";
 import type {
   BranchOption,
   LotTransfer,
+  LotTransferStatus,
   LotTransferStatusHistory,
   LotTransferMovementHistory,
 } from "./types";
@@ -105,11 +104,6 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [loadingAudit, setLoadingAudit] = useState(false);
 
-  // Reversal dialog
-  const [reverseModalOpen, setReverseModalOpen] = useState(false);
-  const [reversalReason, setReversalReason] = useState("");
-  const [actionLoading, setActionLoading] = useState(false);
-
   const loadTransfers = useCallback(async () => {
     setLoading(true);
     try {
@@ -120,7 +114,7 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
         dateTo: dateTo || undefined,
       };
       if (statusFilter !== "ALL") {
-        filter.status = statusFilter as any;
+        filter.status = statusFilter as LotTransferStatus;
       }
       const res = await lotTransferService.listTransfers(filter);
       setTransfers(Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : []);

@@ -27,7 +27,6 @@ import {
   PackageCheck,
   Ban,
   Boxes,
-  RotateCcw,
   ArrowRight,
   Building2,
 } from "lucide-react";
@@ -36,7 +35,7 @@ import { TransferStatusBadge } from "./components/TransferStatusBadge";
 import { SearchableSelect, type Option } from "./components/SearchableSelect";
 import { lotTransferService } from "./services/lot-transfer.service";
 import { fetchBranches } from "./services/lot-tracking.service";
-import type { BranchOption, LotTransfer } from "./types";
+import type { BranchOption, LotTransfer, LotTransferStatus } from "./types";
 
 interface LotTransferPostingModuleProps {
   userBranchId?: number | null;
@@ -52,7 +51,7 @@ export const LotTransferPostingModule: React.FC<LotTransferPostingModuleProps> =
   const [transfers, setTransfers] = useState<LotTransfer[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("Approved");
+  const statusFilter: LotTransferStatus = "Approved";
 
   // Load active branches
   useEffect(() => {
@@ -81,10 +80,6 @@ export const LotTransferPostingModule: React.FC<LotTransferPostingModuleProps> =
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
   const [cancellationReason, setCancellationReason] = useState("");
 
-  // Reversal dialog
-  const [reverseModalOpen, setReverseModalOpen] = useState(false);
-  const [reversalReason, setReversalReason] = useState("");
-
   const loadTransfers = useCallback(async () => {
     if (filterBranchId === null) {
       setTransfers([]);
@@ -96,10 +91,8 @@ export const LotTransferPostingModule: React.FC<LotTransferPostingModuleProps> =
       const filter: Parameters<typeof lotTransferService.listTransfers>[0] = {
         branchId: filterBranchId > 0 ? filterBranchId : undefined,
         search: search.trim() || undefined,
+        status: statusFilter,
       };
-      if (statusFilter !== "ALL") {
-        filter.status = statusFilter as any;
-      }
       const res = await lotTransferService.listTransfers(filter);
       setTransfers(Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : []);
     } catch {

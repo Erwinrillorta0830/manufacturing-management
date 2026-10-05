@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
@@ -23,11 +23,13 @@ export const RowQuantityInput: React.FC<RowQuantityInputProps> = ({
   className,
   placeholder = "0.00",
 }) => {
+  const [prevValue, setPrevValue] = useState(value);
   const [localText, setLocalText] = useState<string>(value > 0 ? String(value) : "");
 
-  useEffect(() => {
+  if (value !== prevValue) {
+    setPrevValue(value);
     setLocalText(value > 0 ? String(value) : "");
-  }, [value]);
+  }
 
   const handleFocusOrClick = (e: React.FocusEvent<HTMLInputElement> | React.MouseEvent<HTMLInputElement>) => {
     e.currentTarget.select();

@@ -44,7 +44,7 @@ import {
   type MMLot,
   type LotTransferLotStats,
 } from "./services/lot-tracking.service";
-import type { BranchOption, LotTransfer, LotTransferFormLine, LotTransferFormValues, ProductTypeOption } from "./types";
+import type { BranchOption, LotTransfer, LotTransferFormLine, LotTransferFormValues, LotTransferStatus, ProductTypeOption } from "./types";
 
 interface LotTransferRequestModuleProps {
   userBranchId?: number | null;
@@ -57,7 +57,6 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
   userBranchId,
   transferId,
   initialCreating = false,
-  backHref,
 }) => {
   // View state: 'list' | 'create' | 'view'
   const [viewState, setViewState] = useState<"list" | "create" | "view">(
@@ -186,7 +185,7 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
         search: search.trim() || undefined,
       };
       if (statusFilter !== "ALL") {
-        filter.status = statusFilter as any;
+        filter.status = statusFilter as LotTransferStatus;
       }
       const res = await lotTransferService.listTransfers(filter);
       setTransfers(Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : []);
