@@ -183,8 +183,6 @@ export default function ReconciliationLotAllocationModal({
         return computeAllocations(reservations || [], requestedQuantity);
     });
 
-    const [showUnbalancedConfirm, setShowUnbalancedConfirm] = useState(false);
-
     const [prevOpen, setPrevOpen] = useState(open);
     const [prevReservations, setPrevReservations] = useState(reservations);
     const [prevReqQty, setPrevReqQty] = useState(requestedQuantity);
@@ -194,7 +192,6 @@ export default function ReconciliationLotAllocationModal({
         setPrevReservations(reservations);
         setPrevReqQty(requestedQuantity);
         setAllocations(computeAllocations(reservations || [], requestedQuantity));
-        setShowUnbalancedConfirm(false);
     }
 
     // Group allocations by Lot
@@ -269,7 +266,15 @@ export default function ReconciliationLotAllocationModal({
     // Confirm & Apply Allocation
     const handleConfirm = () => {
         if (!isBalanced) {
-            setShowUnbalancedConfirm(true);
+            if (isOverAllocated) {
+                toast.error(
+                    `Allocation is unbalanced: +${totalAllocated - requestedQuantity} ${uomName} excess. Adjust allocated batch quantities to match target return.`
+                );
+            } else {
+                toast.error(
+                    `Allocation is unbalanced: ${remainingQty} ${uomName} remaining unallocated. Allocate all units before confirming.`
+                );
+            }
             return;
         }
 
@@ -278,31 +283,25 @@ export default function ReconciliationLotAllocationModal({
         onClose();
     };
 
-    const handleConfirmUnbalanced = () => {
-        onConfirm(allocations);
-        toast.warning(
-            `Batch return allocation confirmed with discrepancy (${
-                isOverAllocated
-                    ? `+${totalAllocated - requestedQuantity} excess`
-                    : `${remainingQty} unallocated`
-            } ${uomName}).`
-        );
-        setShowUnbalancedConfirm(false);
-        onClose();
-    };
-
-    if (!open) return null;
-
     return (
         <AnimatePresence>
-            <div className="fixed inset-0 z-70 flex items-center justify-center p-3 sm:p-6 bg-background/80 backdrop-blur-md overflow-y-auto">
+            {open && (
                 <motion.div
-                    initial={{ opacity: 0, scale: 0.95, y: -8 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.95, y: -8 }}
-                    transition={{ duration: 0.2, ease: "easeOut" }}
-                    className="relative w-full max-w-2xl bg-card border rounded-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
+                    key="reconciliation-lot-backdrop"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="fixed inset-0 z-70 flex items-center justify-center p-3 sm:p-6 bg-background/80 backdrop-blur-md overflow-y-auto"
                 >
+                    <motion.div
+                        key="reconciliation-lot-card"
+                        initial={{ opacity: 0, scale: 0.95, y: -8 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95, y: -8 }}
+                        transition={{ duration: 0.2, ease: "easeOut" }}
+                        className="relative w-full max-w-2xl bg-card border rounded-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
+                    >
                     {/* Header */}
                     <div className="px-6 py-4 border-b flex items-center justify-between bg-muted/20">
                         <div className="flex items-center gap-3">
@@ -464,7 +463,7 @@ export default function ReconciliationLotAllocationModal({
                                 </span>
                             ) : (
                                 <span className="font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                                    <AlertTriangle className="h-3.5 w-3.5" /> Unbalanced: {isOverAllocated ? `+${totalAllocated - requestedQuantity} ${uomName} excess` : `${remainingQty} ${uomName} remaining unallocated`}. Click confirm to proceed.
+                                    <AlertTriangle className="h-3.5 w-3.5" /> Unbalanced: {isOverAllocated ? `+${totalAllocated - requestedQuantity} ${uomName} excess. Reduce batch return quantities to proceed.` : `${remainingQty} ${uomName} remaining unallocated. Allocate remaining quantity to proceed.`}
                                 </span>
                             )}
                         </div>
@@ -480,10 +479,11 @@ export default function ReconciliationLotAllocationModal({
                             <button
                                 type="button"
                                 onClick={handleConfirm}
-                                className={`px-6 py-2 rounded-xl text-xs font-black shadow-xs transition-all flex items-center gap-2 cursor-pointer shadow-sm hover:shadow-md active:scale-95 ${
+                                disabled={!isBalanced}
+                                className={`px-6 py-2 rounded-xl text-xs font-black shadow-xs transition-all flex items-center gap-2 ${
                                     isBalanced
-                                        ? "bg-primary hover:bg-primary/95 text-primary-foreground"
-                                        : "bg-amber-600 hover:bg-amber-700 text-white"
+                                        ? "bg-primary hover:bg-primary/95 text-primary-foreground cursor-pointer shadow-sm hover:shadow-md active:scale-95"
+                                        : "bg-muted text-muted-foreground border border-border opacity-50 cursor-not-allowed pointer-events-none"
                                 }`}
                             >
                                 <Check className="h-4 w-4" />
@@ -491,90 +491,9 @@ export default function ReconciliationLotAllocationModal({
                             </button>
                         </div>
                     </div>
-
-                    {/* Unbalanced Allocation Confirmation Modal */}
-                    <AnimatePresence>
-                        {showUnbalancedConfirm && (
-                            <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
-                                <motion.div
-                                    initial={{ scale: 0.95, opacity: 0, y: 6 }}
-                                    animate={{ scale: 1, opacity: 1, y: 0 }}
-                                    exit={{ scale: 0.95, opacity: 0, y: 6 }}
-                                    transition={{ duration: 0.18, ease: "easeOut" }}
-                                    className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl flex flex-col gap-4"
-                                >
-                                    <div className="flex items-start gap-3">
-                                        <div className="p-2.5 rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/20 shrink-0">
-                                            <AlertTriangle className="h-5 w-5" />
-                                        </div>
-                                        <div>
-                                            <h4 className="text-base font-black text-foreground">
-                                                Confirm Unbalanced Allocation?
-                                            </h4>
-                                            <p className="text-xs text-muted-foreground mt-0.5">
-                                                Batch allocations do not match the target physical return quantity.
-                                            </p>
-                                        </div>
-                                    </div>
-
-                                    {/* Breakdown Card */}
-                                    <div className="rounded-xl border bg-muted/20 p-3.5 space-y-2 text-xs">
-                                        <div className="flex justify-between items-center">
-                                            <span className="text-muted-foreground font-medium">Target Return (Dispatch):</span>
-                                            <span className="font-bold text-foreground font-mono">
-                                                {requestedQuantity} {uomName}
-                                            </span>
-                                        </div>
-                                        <div className="flex justify-between items-center">
-                                            <span className="text-muted-foreground font-medium">Total Allocated across Batches:</span>
-                                            <span className="font-bold text-foreground font-mono">
-                                                {totalAllocated} {uomName}
-                                            </span>
-                                        </div>
-                                        <div className="pt-2 border-t flex justify-between items-center">
-                                            <span className="font-semibold text-foreground">Discrepancy:</span>
-                                            {isOverAllocated ? (
-                                                <span className="font-black text-rose-500 font-mono">
-                                                    +{totalAllocated - requestedQuantity} {uomName} excess
-                                                </span>
-                                            ) : (
-                                                <span className="font-black text-amber-600 dark:text-amber-400 font-mono">
-                                                    {remainingQty} {uomName} unallocated
-                                                </span>
-                                            )}
-                                        </div>
-                                    </div>
-
-                                    <p className="text-[11px] text-muted-foreground leading-relaxed">
-                                        {isOverAllocated
-                                            ? "More units are allocated than physically dispatched. This will return extra inventory units back to storage."
-                                            : "Proceeding with an under-allocated return means the remaining unallocated units will not be traced to a specific batch or lot."}
-                                    </p>
-
-                                    {/* Modal Actions */}
-                                    <div className="flex items-center justify-end gap-2.5 pt-1">
-                                        <button
-                                            type="button"
-                                            onClick={() => setShowUnbalancedConfirm(false)}
-                                            className="px-4 py-2 rounded-xl border bg-background hover:bg-muted text-foreground text-xs font-bold transition-all cursor-pointer shadow-xs"
-                                        >
-                                            Back to Adjust
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={handleConfirmUnbalanced}
-                                            className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-black transition-all cursor-pointer shadow-sm hover:shadow-md active:scale-95 flex items-center gap-1.5"
-                                        >
-                                            <Check className="h-3.5 w-3.5" />
-                                            Confirm Anyway
-                                        </button>
-                                    </div>
-                                </motion.div>
-                            </div>
-                        )}
-                    </AnimatePresence>
                 </motion.div>
-            </div>
-        </AnimatePresence>
-    );
+            </motion.div>
+        )}
+    </AnimatePresence>
+);
 }
