@@ -79,13 +79,6 @@ interface DirectusProductRow {
     cost_per_unit?: number | string | null;
 }
 
-interface DirectusPriceMatrixRow {
-    product_id?: DirectusRelation;
-    price_type_id?: DirectusRelation;
-    price?: number | string | null;
-    status?: string | null;
-}
-
 interface DirectusPriceTypeRow {
     price_type_id?: number | string;
     price_type_name?: string | null;
@@ -195,10 +188,6 @@ export async function fetchPurchaseOrderPriceTypeRules(): Promise<PurchaseOrderP
     }));
 }
 
-function productTypeId(value: DirectusRelation): number | null {
-    return relationId(value, ["type_id", "product_type_id", "id"]);
-}
-
 function isPositiveDecimal(value: unknown): boolean {
     if (value === null || value === undefined || value === "") return false;
     try {
@@ -231,46 +220,9 @@ export function assertEnteredPricesForMissingPriceControl(
     );
 }
 
-function resolveProductType(
-    product: DirectusProductRow,
-    productId: number,
-    rulesByProductType: Map<number, PurchaseOrderPriceTypeRule>
-) {
-    const ownTypeId = productTypeId(product.product_type);
-    const parentTypeId = product.parent_product_type
-        ? productTypeId(product.parent_product_type)
-        : product.parent_id && typeof product.parent_id === "object"
-            ? productTypeId(product.parent_id.product_type)
-            : null;
-
-    if (ownTypeId && parentTypeId && ownTypeId !== parentTypeId) {
-        throw new PurchaseOrderPriceTypeError(
-            `Product ${productId} has a conflicting parent and variant classification.`,
-            "PRICE_TYPE_NOT_CONFIGURED",
-            400,
-            { productId, productTypeId: ownTypeId, parentProductTypeId: parentTypeId }
-        );
-    }
-
-    const resolvedTypeId = ownTypeId || parentTypeId;
-    const rule = resolvedTypeId ? rulesByProductType.get(resolvedTypeId) : undefined;
-    if (!resolvedTypeId || !rule?.priceTypeId) {
-        throw new PurchaseOrderPriceTypeError(
-            `Price Type is not configured for product ${productId}.`,
-            "PRICE_TYPE_NOT_CONFIGURED",
-            400,
-            { productId, productTypeId: resolvedTypeId }
-        );
-    }
-
-    return { productTypeId: resolvedTypeId, rule };
-}
-
 export function resolvePurchaseOrderPriceTypeFromRows(
     productIds: number[],
-    products: DirectusProductRow[],
-    rules: PurchaseOrderPriceTypeRule[],
-    matrixRows: DirectusPriceMatrixRow[]
+    products: DirectusProductRow[]
 ): ResolvedPurchaseOrderPriceType {
     const productsById = new Map(products.map(product => [relationId(product.product_id, ["product_id", "id"]), product]));
     const pricesByProductId: Record<number, string> = {};
@@ -327,13 +279,10 @@ export async function resolvePurchaseOrderPriceType(productIds: number[]): Promi
         );
     }
     const productFilter = uniqueProductIds.join(",");
-    const [selectedProducts, rules] = await Promise.all([
-        directusData<DirectusProductRow[]>(
-            `/items/products?filter[product_id][_in]=${productFilter}&fields=product_id,product_type,parent_id,cost_per_unit,unit_of_measurement,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name&limit=${uniqueProductIds.length}`,
-            "Unable to load products for Price Type determination."
-        ),
-        fetchPurchaseOrderPriceTypeRules()
-    ]);
+    const selectedProducts = await directusData<DirectusProductRow[]>(
+        `/items/products?filter[product_id][_in]=${productFilter}&fields=product_id,product_type,parent_id,cost_per_unit,unit_of_measurement,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name&limit=${uniqueProductIds.length}`,
+        "Unable to load products for Price Type determination."
+    );
     const parentProductIds = [...new Set(selectedProducts
         .map(product => relationId(product.parent_id, ["product_id", "id"]))
         .filter((id): id is number => id !== null))];
@@ -354,5 +303,5 @@ export async function resolvePurchaseOrderPriceType(productIds: number[]): Promi
                 : product;
         });
     }
-    return resolvePurchaseOrderPriceTypeFromRows(uniqueProductIds, products, rules, []);
+    return resolvePurchaseOrderPriceTypeFromRows(uniqueProductIds, products);
 }

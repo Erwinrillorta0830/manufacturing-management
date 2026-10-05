@@ -126,7 +126,6 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
     };
 
     const isStarted = selectedOrder?.status === "Warehouse Receiving";
-    const isContinuation = selectedOrder?.status === "Partially Received";
     const isPendingQa = selectedOrder?.status === "QA Receiving";
     const isReceived = selectedOrder?.status === "Received";
     const hasRemainingQuantity = selectedLines.some(line => line.remainingQuantity > 1e-9);

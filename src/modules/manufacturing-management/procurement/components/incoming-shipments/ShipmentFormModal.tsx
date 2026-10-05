@@ -121,16 +121,6 @@ function ResponsiveCellLabel({ children }: { children: React.ReactNode }) {
     );
 }
 
-function hasConfiguredPrice(value: string | undefined): value is string {
-    if (!value) return false;
-
-    try {
-        return DecimalValue.from(value).compare(0) > 0;
-    } catch {
-        return false;
-    }
-}
-
 export function ShipmentFormModal({
     isModalOpen,
     modalRef,
@@ -156,7 +146,6 @@ export function ShipmentFormModal({
     handleLineFormChange,
     getLineErrors,
     supplierRawMaterials,
-    priceControlCostsMap,
     discountTypes,
     productPerSupplierMap,
     paymentTerms = [],
