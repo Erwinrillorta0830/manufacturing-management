@@ -1,5 +1,6 @@
 import { DIRECTUS_URL, headers } from "./_directus";
 import {
+    BOTTLE_PRODUCT_CATEGORY,
     PACKAGING_MATERIAL_PRODUCT_TYPE,
     RAW_MATERIAL_PRODUCT_TYPE
 } from "./raw-materials/_classification-integrity";
@@ -13,6 +14,7 @@ export type SupplierEligibleCategoryType = typeof SUPPLIER_ELIGIBLE_CATEGORY_TYP
 type ProductClassificationRow = {
     product_id?: unknown;
     product_type?: unknown;
+    product_category?: unknown;
     parent_id?: unknown;
 };
 
@@ -49,7 +51,19 @@ function classificationId(value: unknown): number | null {
     return relationId(value, ["type_id", "product_type_id", "id", "value"]);
 }
 
-export function purchaseOrderCategoryTypeFromProductType(value: unknown): PurchaseOrderCategoryType | null {
+function categoryClassificationId(value: unknown): number | null {
+    return relationId(value, ["category_id", "product_category_id", "id", "value"]);
+}
+
+export function purchaseOrderCategoryTypeFromProductType(
+    value: unknown,
+    categoryValue?: unknown
+): PurchaseOrderCategoryType | null {
+    const categoryId = categoryClassificationId(categoryValue);
+    if (categoryId === BOTTLE_PRODUCT_CATEGORY) {
+        return "RAW_MATERIAL";
+    }
+
     const id = classificationId(value);
     if (id === RAW_MATERIAL_PRODUCT_TYPE) return "RAW_MATERIAL";
     if (id === PACKAGING_MATERIAL_PRODUCT_TYPE) return "PACKAGING";
@@ -76,7 +90,7 @@ async function loadProducts(
 ): Promise<ProductClassificationRow[]> {
     if (productIds.length === 0) return [];
     const response = await fetchImpl(
-        `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${encodeURIComponent(productIds.join(","))}&fields=product_id,product_type,parent_id&limit=-1`,
+        `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${encodeURIComponent(productIds.join(","))}&fields=product_id,product_type,product_category,parent_id&limit=-1`,
         { headers, cache: "no-store" }
     );
     if (!response.ok) {
@@ -120,10 +134,10 @@ export async function resolveProductCategoryTypes(
         const product = rowsById.get(productId);
         const parentId = relationId(product?.parent_id);
         const parent = parentId === null ? undefined : (rowsById.get(parentId) || parentById.get(parentId));
-        const ownHasClassification = hasClassification(product?.product_type);
-        const parentHasClassification = hasClassification(parent?.product_type);
-        const ownType = purchaseOrderCategoryTypeFromProductType(product?.product_type);
-        const parentType = purchaseOrderCategoryTypeFromProductType(parent?.product_type);
+        const ownHasClassification = hasClassification(product?.product_type) || hasClassification(product?.product_category);
+        const parentHasClassification = hasClassification(parent?.product_type) || hasClassification(parent?.product_category);
+        const ownType = purchaseOrderCategoryTypeFromProductType(product?.product_type, product?.product_category);
+        const parentType = purchaseOrderCategoryTypeFromProductType(parent?.product_type, parent?.product_category);
 
         if (ownHasClassification && ownType === null) {
             throw new ProductCategoryTypeValidationError(

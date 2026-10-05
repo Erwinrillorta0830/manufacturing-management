@@ -100,7 +100,7 @@ export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWa
             const detail = await fetchWarehouseReceivingOrder(orderId, controller.signal);
             if (controller.signal.aborted) return;
             setSelectedOrder(detail);
-            const receipt = detail.draft || detail.pendingQaReceipt;
+            const receipt = detail.draft;
             setReceiptNumber(receipt?.receiptNumber || "");
             setReceiptDate(receipt?.receiptDate || today());
             setQuantities(Object.fromEntries(detail.lines.map(line => [line.lineId, String(line.currentReceivedQuantity || "")])));
@@ -170,11 +170,22 @@ export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWa
             if (action === "submit_to_qa") {
                 toast.success(`${result.poNumber} was sent to QA Receiving.`);
                 setSelectedOrder(result);
-                setQuantities(Object.fromEntries(result.lines.map(line => [line.lineId, String(line.currentReceivedQuantity || "")])));
-                setReceiptNumber(result.draft?.receiptNumber || result.pendingQaReceipt?.receiptNumber || receiptNumber);
-                setReceiptDate(result.draft?.receiptDate || result.pendingQaReceipt?.receiptDate || receiptDate);
+                setQuantities(Object.fromEntries(result.lines.map(line => [line.lineId, ""])));
+                setReceiptNumber("");
+                setReceiptDate(today());
                 if (!isDetailMode) {
                     await loadQueue(page, filters);
+                }
+            } else if (action === "start") {
+                setSelectedOrder(result);
+                setQuantities(Object.fromEntries(result.lines.map(line => [line.lineId, ""])));
+                setReceiptNumber(result.draft?.receiptNumber || "");
+                setReceiptDate(result.draft?.receiptDate || today());
+                if (!isDetailMode) {
+                    await loadQueue(page, filters);
+                }
+                if (!options.silent) {
+                    toast.success("Warehouse receiving started.");
                 }
             } else {
                 setSelectedOrder(result);
@@ -185,7 +196,7 @@ export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWa
                     await loadQueue(page, filters);
                 }
                 if (!options.silent) {
-                    toast.success(action === "start" ? "Warehouse receiving started." : "Warehouse receiving draft saved.");
+                    toast.success("Warehouse receiving draft saved.");
                 }
             }
             return result;

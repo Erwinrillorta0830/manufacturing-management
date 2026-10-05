@@ -178,15 +178,15 @@ export default function FIFOInventoryList({
                                             <table className="w-full text-xs text-left">
                                                 <thead>
                                                     <tr className="text-[10px] text-muted-foreground uppercase font-black border-b pb-2">
-                                                        <th className="pb-2">Batch / Lot Number</th>
+                                                        <th className="pb-2.5 pr-4">Batch / Lot Number</th>
                                                         {item.isPackaging ? (
-                                                            <th className="pb-2">Received Date</th>
+                                                            <th className="pb-2.5 px-4">Received Date</th>
                                                         ) : (
-                                                            <th className="pb-2">Expiration Date</th>
+                                                            <th className="pb-2.5 px-4">Expiration Date</th>
                                                         )}
-                                                        <th className="pb-2 text-right">Received Qty</th>
-                                                         <th className="pb-2">PO Number</th>
-                                                        <th className="pb-2 text-right">FIFO Status</th>
+                                                        <th className="pb-2.5 px-4 text-right">Received Qty</th>
+                                                        <th className="pb-2.5 px-6 text-left">PO Number</th>
+                                                        <th className="pb-2.5 pl-4 text-right">FIFO Status</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody>
@@ -194,20 +194,22 @@ export default function FIFOInventoryList({
                                                         const expStatus = getExpirationStatus(batch.expiration_date);
                                                         return (
                                                             <tr key={index} className="border-b last:border-0 hover:bg-muted/10">
-                                                                <td className="py-2.5 font-bold text-foreground flex items-center gap-1.5">
-                                                                    <Bookmark className="h-3.5 w-3.5 text-primary shrink-0" />
-                                                                    {batch.lot_number}
+                                                                <td className="py-3 pr-4 font-bold text-foreground">
+                                                                    <div className="flex items-center gap-1.5">
+                                                                        <Bookmark className="h-3.5 w-3.5 text-primary shrink-0" />
+                                                                        <span>{batch.lot_number}</span>
+                                                                    </div>
                                                                 </td>
-                                                                <td className="py-2.5 font-semibold text-muted-foreground">
+                                                                <td className="py-3 px-4 font-semibold text-muted-foreground">
                                                                     {item.isPackaging ? batch.reception_date : (batch.expiration_date || "N/A")}
                                                                 </td>
-                                                                <td className="py-2.5 text-right font-mono text-foreground font-bold">
+                                                                <td className="py-3 px-4 text-right font-mono text-foreground font-bold">
                                                                     {batch.received_qty.toLocaleString()}
                                                                 </td>
-                                                                <td className="py-2.5 text-muted-foreground font-mono">
-                                                                    {batch.purchase_order_no}
+                                                                <td className="py-3 px-6 text-left text-muted-foreground font-mono font-medium">
+                                                                    {batch.purchase_order_no || "N/A"}
                                                                 </td>
-                                                                <td className="py-2.5 text-right">
+                                                                <td className="py-3 pl-4 text-right">
                                                                     {item.isPackaging ? (
                                                                         <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
                                                                             index === 0 
