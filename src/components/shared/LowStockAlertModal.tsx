@@ -13,7 +13,6 @@ import {
     Boxes,
     Layers,
 } from "lucide-react";
-import { toast } from "sonner";
 
 import { usePathname } from "next/navigation";
 
@@ -192,13 +191,12 @@ export function LowStockAlertModal() {
     const [open, setOpen] = React.useState(false);
     const [loading, setLoading] = React.useState(false);
     const [searchQuery, setSearchQuery] = React.useState("");
+    const isFetchingRef = React.useRef(false);
 
     React.useEffect(() => {
-        // Skip on public / unauthenticated routes
-        const PUBLIC_PATHS = ["/login", "/forgot-password", "/reset-password", "/about", "/contact", "/services"];
-        if (!pathname || PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
-            // When user logs out or visits login/auth routes, clear the session flag
-            // so the alert modal shows again upon next login!
+        // If explicitly on login or auth routes, reset session flag so next login displays the alert
+        const AUTH_PAGES = ["/login", "/forgot-password", "/reset-password"];
+        if (pathname && AUTH_PAGES.some((p) => pathname.startsWith(p))) {
             try {
                 sessionStorage.removeItem(SESSION_KEY);
             } catch {
@@ -207,10 +205,22 @@ export function LowStockAlertModal() {
             return;
         }
 
-        // Session guard — only show once per login session
-        if (sessionStorage.getItem(SESSION_KEY)) {
+        // Only run for authenticated application paths (skip empty/null transitions and root)
+        if (!pathname || pathname === "/") {
             return;
         }
+
+        // Session guard — only show once per login session
+        try {
+            if (sessionStorage.getItem(SESSION_KEY)) {
+                return;
+            }
+        } catch {
+            // ignore
+        }
+
+        if (isFetchingRef.current) return;
+        isFetchingRef.current = true;
 
         let cancelled = false;
 
@@ -221,42 +231,35 @@ export function LowStockAlertModal() {
                     cache: "no-store",
                 });
                 if (!res.ok) {
-                    if (res.status === 401 || res.status === 403) {
-                        try {
-                            sessionStorage.removeItem(SESSION_KEY);
-                        } catch {
-                            // ignore
-                        }
-                        return;
-                    }
-                    const err = (await res.json().catch(() => ({}))) as { error?: string };
-                    toast.error("Low-Stock Check Failed", {
-                        description: err.error ?? `Server responded with ${res.status}`,
-                    });
+                    // Do not wipe SESSION_KEY on transient network/auth glitches during navigation
                     return;
                 }
                 const data = (await res.json()) as ApiResponse;
                 if (!cancelled) {
                     if (data.authenticated === false) {
-                        try {
-                            sessionStorage.removeItem(SESSION_KEY);
-                        } catch {
-                            // ignore
-                        }
+                        // User session not ready yet; do not show and do not lock session
                         return;
                     }
+
+                    // Mark session as checked so switching modules never re-fetches or re-triggers
+                    try {
+                        sessionStorage.setItem(SESSION_KEY, "1");
+                    } catch {
+                        // ignore
+                    }
+
                     const fetchedItems = data.items || [];
                     const fetchedBatches = data.expiry_batches || [];
                     if (fetchedItems.length > 0 || fetchedBatches.length > 0) {
                         setItems(fetchedItems);
                         setExpiryBatches(fetchedBatches);
                         setOpen(true);
-                        sessionStorage.setItem(SESSION_KEY, "1");
                     }
                 }
             } catch {
                 // Silently ignore network aborts during route navigation
             } finally {
+                isFetchingRef.current = false;
                 if (!cancelled) setLoading(false);
             }
         }
@@ -268,6 +271,11 @@ export function LowStockAlertModal() {
     }, [pathname]);
 
     function handleClose() {
+        try {
+            sessionStorage.setItem(SESSION_KEY, "1");
+        } catch {
+            // ignore
+        }
         setOpen(false);
     }
 

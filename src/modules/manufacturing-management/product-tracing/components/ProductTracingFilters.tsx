@@ -322,28 +322,17 @@ export function ProductTracingFilters({
                                 disabled={isLoading}
                             />
 
-                            {/* Transaction Type shadcn Select */}
-                            <div className="space-y-1.5">
-                                <Label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground opacity-70">
-                                    Transaction Type
-                                </Label>
-                                <Select
-                                    value={filters.transaction_type || "ALL"}
-                                    onValueChange={(val) => onFilterChange({ transaction_type: val })}
-                                    disabled={isLoading}
-                                >
-                                    <SelectTrigger className="h-10 w-full rounded-xl border-muted-foreground/20 text-xs font-semibold">
-                                        <SelectValue placeholder="Select Transaction Type" />
-                                    </SelectTrigger>
-                                    <SelectContent className="rounded-xl border shadow-xl">
-                                        {TRANSACTION_TYPES.map(t => (
-                                            <SelectItem key={t.value} value={t.value} className="text-xs font-medium">
-                                                {t.label}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
+                            {/* Transaction Type Searchable Select */}
+                            <SearchableSelect
+                                label="Transaction Type"
+                                placeholder="Select Transaction Type"
+                                emptyText="No transaction type found."
+                                value={filters.transaction_type || "ALL"}
+                                options={TRANSACTION_TYPES}
+                                onChange={(val) => onFilterChange({ transaction_type: val || "ALL" })}
+                                searchPlaceholder="Search transaction type..."
+                                disabled={isLoading}
+                            />
 
                             {/* Inventory Condition shadcn Select */}
                             <div className="space-y-1.5">
