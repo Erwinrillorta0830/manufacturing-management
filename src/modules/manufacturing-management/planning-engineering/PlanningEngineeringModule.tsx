@@ -31,6 +31,7 @@ import { JobOrderStatusBadge } from "../shared/components/JobOrderStatusBadge";
 import { NextStepCallout } from "../shared/components/NextStepCallout";
 import { StatusLegendPopover } from "../shared/components/StatusLegendPopover";
 import { formatPhtTimestamp } from "../shared/pht-date";
+import { isManufacturingEvidenceVideo } from "../production-workflow/services/production-yield-image";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { isCancelledJobOrderStatus, isJobOrderStatus, isTerminatedJobOrder, JOB_ORDER_STATUS, normalizeJobOrderStatus, displayJobOrderStatus } from "../job-order-status";
@@ -437,6 +438,12 @@ export default function PlanningEngineeringModule() {
     const terminalEvidenceImageUrl = isTerminatedDetails
         ? activeFamilyJo?.termination_image_url
         : activeFamilyJo?.cancellation_image_url;
+    const terminalEvidenceMimeType = isTerminatedDetails
+        ? activeFamilyJo?.termination_image_mime_type
+        : activeFamilyJo?.cancellation_image_mime_type;
+    const terminalEvidenceFileName = isTerminatedDetails
+        ? activeFamilyJo?.termination_image_file_name
+        : activeFamilyJo?.cancellation_image_file_name;
     const terminalEvidenceLabel = isTerminatedDetails ? "Termination evidence" : "Cancellation evidence";
     const terminalEvidenceDescription = isTerminatedDetails
         ? "Attachment and audit details recorded when this Job Order was terminated."
@@ -1607,11 +1614,22 @@ export default function PlanningEngineeringModule() {
                                     )}
                                 </div>
                                 {terminalEvidenceImageUrl ? (
-                                    <img
-                                        src={terminalEvidenceImageUrl}
-                                        alt={`${terminalEvidenceLabel} for ${activeFamilyJo?.jo_id || "Job Order"}`}
-                                        className="max-h-80 w-full rounded-lg border border-rose-500/20 bg-background object-contain"
-                                    />
+                                    isManufacturingEvidenceVideo(terminalEvidenceMimeType, terminalEvidenceFileName) ? (
+                                        <video
+                                            src={terminalEvidenceImageUrl}
+                                            controls
+                                            playsInline
+                                            preload="metadata"
+                                            aria-label={`${terminalEvidenceLabel} video for ${activeFamilyJo?.jo_id || "Job Order"}`}
+                                            className="max-h-80 w-full rounded-lg border border-rose-500/20 bg-black"
+                                        />
+                                    ) : (
+                                        <img
+                                            src={terminalEvidenceImageUrl}
+                                            alt={`${terminalEvidenceLabel} for ${activeFamilyJo?.jo_id || "Job Order"}`}
+                                            className="max-h-80 w-full rounded-lg border border-rose-500/20 bg-background object-contain"
+                                        />
+                                    )
                                 ) : (
                                     <p className="rounded-lg border border-dashed border-rose-500/20 bg-background/60 px-4 py-6 text-center text-xs text-muted-foreground">
                                         No {isTerminatedDetails ? "termination" : "cancellation"} evidence image is attached to this record.

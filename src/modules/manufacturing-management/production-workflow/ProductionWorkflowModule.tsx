@@ -46,6 +46,7 @@ import { NextStepCallout } from "../shared/components/NextStepCallout";
 import { StatusLegendPopover } from "../shared/components/StatusLegendPopover";
 import { formatProductionQuantity, resolveJobOrderTargetQuantity } from "./utils/production-quantity";
 import { areJobOrderMaterialsFullyStaged } from "./utils/material-staging-readiness";
+import { isManufacturingEvidenceVideo } from "./services/production-yield-image";
 
 export default function ProductionWorkflowModule() {
     const router = useRouter();
@@ -625,17 +626,28 @@ export default function ProductionWorkflowModule() {
                         )}
                         {selectedJobOrder?.termination_image_url && (
                             <div className="flex flex-col gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-xs sm:flex-row sm:items-center">
-                                <img
-                                    src={selectedJobOrder.termination_image_url}
-                                    alt="Job Order termination evidence"
-                                    className="h-24 w-24 rounded-lg border border-destructive/20 object-cover"
-                                />
+                                {isManufacturingEvidenceVideo(selectedJobOrder.termination_image_mime_type, selectedJobOrder.termination_image_file_name) ? (
+                                    <video
+                                        src={selectedJobOrder.termination_image_url}
+                                        controls
+                                        playsInline
+                                        preload="metadata"
+                                        aria-label={selectedJobOrder.termination_image_file_name || "Job Order termination evidence video"}
+                                        className="max-h-48 w-full max-w-sm rounded-lg border border-destructive/20 bg-black"
+                                    />
+                                ) : (
+                                    <img
+                                        src={selectedJobOrder.termination_image_url}
+                                        alt="Job Order termination evidence"
+                                        className="h-24 w-24 rounded-lg border border-destructive/20 object-cover"
+                                    />
+                                )}
                                 <div className="space-y-1">
                                     <p className="flex items-center gap-1.5 font-bold text-destructive">
                                         <ImagePlus className="h-4 w-4" /> Termination Evidence
                                     </p>
                                     <p className="text-muted-foreground">
-                                        This image was attached when production was terminated for this Job Order.
+                                        This evidence was attached when production was terminated for this Job Order.
                                     </p>
                                 </div>
                             </div>

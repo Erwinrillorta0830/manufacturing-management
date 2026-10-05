@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import { directusFileId, directusFileMetadata, fetchDirectusFileMetadata } from "@/app/api/manufacturing/_directus-file-metadata";
 import { authorizeJobOrderModuleAccess, JOB_ORDER_MODULE_PATHS } from "@/app/api/manufacturing/job-orders/_module-access";
 
 type DirectusRecord = Record<string, unknown>;
@@ -108,15 +109,27 @@ async function fetchOptionalRows(path: string): Promise<DirectusRecord[]> {
     }
 }
 
-function enrichHistoryRecord(record: DirectusRecord, userMap: Map<number, string>, workCenterMap: Map<number, string>) {
+function enrichHistoryRecord(
+    record: DirectusRecord,
+    userMap: Map<number, string>,
+    workCenterMap: Map<number, string>,
+    evidenceFilesById: Map<string, { fileName: string | null; mimeType: string | null; fileSize: number | null }>
+) {
     const persistedWorkCenterId = positiveId(record?.work_center_id);
     const legacyStation = persistedWorkCenterId ? null : parseLegacyWorkCenterRemark(record?.remarks);
     const workCenterId = persistedWorkCenterId || legacyStation?.workCenterId || null;
     const workCenterName = workCenterId
         ? workCenterMap.get(workCenterId) || legacyStation?.workCenterName || `Station #${workCenterId}`
         : "Unassigned";
+    const evidenceFileId = directusFileId(record.evidence_image_id);
+    const evidenceMetadata = directusFileMetadata(record.evidence_image_id)
+        || (evidenceFileId ? evidenceFilesById.get(evidenceFileId) : null);
     return {
         ...record,
+        evidence_image_id: evidenceFileId,
+        evidence_file_name: evidenceMetadata?.fileName || null,
+        evidence_mime_type: evidenceMetadata?.mimeType || null,
+        evidence_file_size: evidenceMetadata?.fileSize ?? null,
         work_center_id: workCenterId,
         previous_status: record.previous_status ?? record.old_status ?? null,
         status: record.status ?? record.new_status ?? "",
@@ -156,7 +169,10 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
             workCenterMap.set(Number(workCenter.work_center_id), String(workCenter.work_center_name ?? ""));
         });
 
-        const data = historyRows.map((row) => enrichHistoryRecord(row, userMap, workCenterMap));
+        const evidenceFilesById = await fetchDirectusFileMetadata(
+            historyRows.map((row) => directusFileId(row.evidence_image_id))
+        );
+        const data = historyRows.map((row) => enrichHistoryRecord(row, userMap, workCenterMap, evidenceFilesById));
         return NextResponse.json({ success: true, data });
     } catch (error) {
         console.error("Error loading Job Order status history:", error);

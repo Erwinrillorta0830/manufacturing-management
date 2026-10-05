@@ -120,16 +120,28 @@ export async function GET(req: Request) {
 
         for (const baseUrl of API_BASE_URLS) {
             try {
+                const requestHeaders = new Headers({ Authorization: `Bearer ${DIRECTUS_TOKEN}` });
+                const range = req.headers.get("range");
+                if (range) requestHeaders.set("range", range);
                 const response = await fetch(`${baseUrl}/assets/${encodeURIComponent(id)}`, {
-                    headers: { Authorization: `Bearer ${DIRECTUS_TOKEN}` },
+                    headers: requestHeaders,
                     cache: "no-store"
                 });
-                if (response.ok) {
+                if (response.ok || response.status === 416) {
                     const responseHeaders = new Headers();
-                    const contentType = response.headers.get("content-type");
-                    if (contentType) responseHeaders.set("content-type", contentType);
-                    const cacheControl = response.headers.get("cache-control");
-                    if (cacheControl) responseHeaders.set("cache-control", cacheControl);
+                    for (const header of [
+                        "accept-ranges",
+                        "cache-control",
+                        "content-disposition",
+                        "content-length",
+                        "content-range",
+                        "content-type",
+                        "etag",
+                        "last-modified"
+                    ]) {
+                        const value = response.headers.get(header);
+                        if (value) responseHeaders.set(header, value);
+                    }
                     return new Response(response.body, {
                         status: response.status,
                         headers: responseHeaders
@@ -144,7 +156,7 @@ export async function GET(req: Request) {
         if (lastResponse) {
             const body = await readResponseBody(lastResponse);
             return NextResponse.json(
-                { error: getUpstreamMessage(body, "Directus rejected the image request."), code: "FILE_READ_FAILED" },
+                { error: getUpstreamMessage(body, "Directus rejected the file request."), code: "FILE_READ_FAILED" },
                 { status: upstreamStatus(lastResponse.status) }
             );
         }

@@ -1,7 +1,6 @@
 /* eslint-disable */
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
-    Camera,
     User,
     Clock,
     DollarSign,
@@ -14,7 +13,6 @@ import {
     Trash2,
     PackagePlus,
     CheckCircle2,
-    FolderOpen,
     ImageIcon,
     Search,
     X
@@ -27,7 +25,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { RoutingTask, JobOrder, User as UserType, RouteOperatorRecord, RejectionReason, ProductionMaterialReservation } from "../types";
 import { submitShiftRunLog, ShiftRunLogPayload, fetchRejectionReasons } from "../services/production-api";
-import { validateProductionYieldImage } from "../services/production-yield-image";
+import { EvidenceMediaInput } from "./EvidenceMediaInput";
 import { AddReservedMaterialDialog, type TopUpTarget } from "./AddReservedMaterialDialog";
 import { toast } from "sonner";
 import { calculatePipelinedLineDurationHours } from "../../planning-engineering/utils/production-timing";
@@ -38,7 +36,6 @@ import {
     preserveExistingActualQuantities,
     sumProductionOutputQuantities
 } from "../utils/material-consumption";
-import { getProductionCameraErrorMessage } from "../utils/production-camera";
 import { hasCompletedTimer } from "../operator-time";
 import { getPhtDateInputValue } from "../../shared/pht-date";
 import { hasReachedProductionTarget } from "../utils/production-output";
@@ -111,17 +108,8 @@ export function JobOrderShiftLogModal({
     const [isTopUpOpen, setIsTopUpOpen] = useState(false);
     const [evidenceImage, setEvidenceImage] = useState<File | null>(null);
     const [evidenceImageError, setEvidenceImageError] = useState<string | null>(null);
-    const [evidenceImagePreview, setEvidenceImagePreview] = useState<string | null>(null);
     const outputQuantitiesRef = useRef<OutputQuantities>({ good: "", rejected: "0", scrap: "0" });
     const manuallyEditedMaterialKeysRef = useRef<Set<string>>(new Set());
-    const [cameraError, setCameraError] = useState<string | null>(null);
-    const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
-    const [isCameraStarting, setIsCameraStarting] = useState(false);
-    const [isCameraReady, setIsCameraReady] = useState(false);
-    const cameraVideoRef = useRef<HTMLVideoElement>(null);
-    const cameraStreamRef = useRef<MediaStream | null>(null);
-    const cameraRequestIdRef = useRef(0);
-    const fileInputRef = useRef<HTMLInputElement>(null);
 
     const filteredShiftMaterials = React.useMemo(() => {
         const query = reservationSearch.trim().toLowerCase();
@@ -154,158 +142,6 @@ export function JobOrderShiftLogModal({
     const hasCompletedJobOrderTimer = allJobOperators.some((operator) =>
         !operator.is_placeholder && hasCompletedTimer(operator.started_at, operator.stopped_at)
     );
-
-    useEffect(() => {
-        if (!evidenceImage) {
-            setEvidenceImagePreview(null);
-            return;
-        }
-
-        const previewUrl = URL.createObjectURL(evidenceImage);
-        setEvidenceImagePreview(previewUrl);
-        return () => URL.revokeObjectURL(previewUrl);
-    }, [evidenceImage]);
-
-    const setEvidenceImageFromFile = (file: File | null): boolean => {
-        if (!file) return false;
-
-        const validationError = validateProductionYieldImage(file);
-        setEvidenceImageError(validationError);
-        setEvidenceImage(validationError ? null : file);
-        return !validationError;
-    };
-
-    const handleEvidenceImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0] || null;
-        event.target.value = "";
-        setCameraError(null);
-        setEvidenceImageFromFile(file);
-    };
-
-    const stopCamera = useCallback(() => {
-        cameraRequestIdRef.current += 1;
-        cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
-        cameraStreamRef.current = null;
-        setCameraStream(null);
-        setIsCameraStarting(false);
-        setIsCameraReady(false);
-    }, []);
-
-    const startCamera = async () => {
-        setCameraError(null);
-        setIsCameraReady(false);
-        cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
-        cameraStreamRef.current = null;
-        setCameraStream(null);
-
-        const requestId = ++cameraRequestIdRef.current;
-        if (!navigator.mediaDevices?.getUserMedia) {
-            setCameraError("No camera detected or camera access is unavailable in this browser. Use Choose File to select an image.");
-            return;
-        }
-
-        setIsCameraStarting(true);
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                audio: false,
-                video: { facingMode: { ideal: "environment" } }
-            });
-
-            if (requestId !== cameraRequestIdRef.current || !open) {
-                stream.getTracks().forEach((track) => track.stop());
-                return;
-            }
-
-            cameraStreamRef.current = stream;
-            setCameraStream(stream);
-        } catch (error) {
-            if (requestId === cameraRequestIdRef.current) {
-                setCameraError(getProductionCameraErrorMessage(error));
-            }
-        } finally {
-            if (requestId === cameraRequestIdRef.current) {
-                setIsCameraStarting(false);
-            }
-        }
-    };
-
-    const captureCameraPhoto = () => {
-        const video = cameraVideoRef.current;
-        if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth || !video.videoHeight) {
-            setCameraError("The camera preview is not ready yet. Wait a moment and try again.");
-            return;
-        }
-        const captureRequestId = cameraRequestIdRef.current;
-
-        const canvas = document.createElement("canvas");
-        const scale = Math.min(1, 2560 / Math.max(video.videoWidth, video.videoHeight));
-        canvas.width = Math.round(video.videoWidth * scale);
-        canvas.height = Math.round(video.videoHeight * scale);
-        const context = canvas.getContext("2d");
-        if (!context) {
-            setCameraError("Could not capture the camera image. Please try again or use Choose File.");
-            return;
-        }
-
-        context.drawImage(video, 0, 0, canvas.width, canvas.height);
-        canvas.toBlob((blob) => {
-            if (captureRequestId !== cameraRequestIdRef.current) return;
-            if (!blob) {
-                setCameraError("Could not capture the camera image. Please try again or use Choose File.");
-                return;
-            }
-
-            const file = new File([blob], `shift-evidence-${Date.now()}.jpg`, {
-                type: "image/jpeg",
-                lastModified: Date.now()
-            });
-            setCameraError(null);
-            if (setEvidenceImageFromFile(file)) stopCamera();
-        }, "image/jpeg", 0.82);
-    };
-
-    const openFilePicker = () => {
-        setCameraError(null);
-        stopCamera();
-        fileInputRef.current?.click();
-    };
-
-    const removeEvidenceImage = () => {
-        setCameraError(null);
-        stopCamera();
-        setEvidenceImage(null);
-        setEvidenceImageError(null);
-    };
-
-    useEffect(() => {
-        if (open) return;
-        setCameraError(null);
-        stopCamera();
-    }, [open, stopCamera]);
-
-    useEffect(() => {
-        return () => {
-            cameraRequestIdRef.current += 1;
-            cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
-            cameraStreamRef.current = null;
-        };
-    }, []);
-
-    useEffect(() => {
-        const video = cameraVideoRef.current;
-        if (!cameraStream || !video) return;
-
-        video.srcObject = cameraStream;
-        void video.play().catch(() => {
-            if (cameraStreamRef.current === cameraStream) {
-                setCameraError("The camera opened, but its preview could not start. Check browser permissions or use Choose File.");
-            }
-        });
-
-        return () => {
-            if (video.srcObject === cameraStream) video.srcObject = null;
-        };
-    }, [cameraStream]);
 
     const getAvailableShifts = useCallback(() => {
         const hours = Number(selectedJobOrder?.shiftOption || 8);
@@ -394,8 +230,6 @@ export function JobOrderShiftLogModal({
     // Fetch full Job Order BOM materials, physical lots, and rejection reasons
     useEffect(() => {
         if (open && selectedJobOrder && (selectedJobOrder.order_id || selectedJobOrder.job_order_id)) {
-            setCameraError(null);
-            stopCamera();
             outputQuantitiesRef.current = { good: "", rejected: "0", scrap: "0" };
             setShiftYieldQty("");
             setRejectedQty("0");
@@ -430,7 +264,7 @@ export function JobOrderShiftLogModal({
             // Fetch all BOM materials for the whole Job Order
             void loadShiftMaterials();
         }
-    }, [open, selectedJobOrder, getAvailableShifts, loadShiftMaterials, stopCamera]);
+    }, [open, selectedJobOrder, getAvailableShifts, loadShiftMaterials]);
 
     useEffect(() => {
         setReservationSearch("");
@@ -513,7 +347,7 @@ export function JobOrderShiftLogModal({
         }
 
         if (!evidenceImage || evidenceImageError) {
-            toast.error("A valid shift evidence image is required.");
+            toast.error("A valid shift evidence image or video is required.");
             return false;
         }
 
@@ -1048,114 +882,26 @@ export function JobOrderShiftLogModal({
                                             <div className="flex items-center gap-1.5">
                                                 <ImageIcon className="h-4 w-4 text-sky-600 dark:text-sky-400" />
                                                 <h5 className="font-bold text-sky-800 dark:text-sky-300 uppercase tracking-wider text-[10px]">
-                                                    Shift Evidence Image <span className="text-destructive">*</span>
+                                                    Shift Evidence Image or Video <span className="text-destructive">*</span>
                                                 </h5>
                                             </div>
                                             <Badge variant="outline" className="text-[9px] text-sky-700 dark:text-sky-300 border-sky-500/20">
                                                 Required
                                             </Badge>
                                         </div>
-                                        <p className="text-[10px] text-muted-foreground">
-                                            Take Photo opens the device camera. If no camera is detected or access is unavailable, use Choose File to select a saved PNG, JPG, or WEBP image. Maximum file size: 5 MB.
-                                        </p>
-                                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                                            <Button
-                                                type="button"
-                                                variant="outline"
-                                                onClick={() => void startCamera()}
-                                                disabled={isCameraStarting || Boolean(cameraStream)}
-                                                className="h-10 w-full rounded-lg border-sky-500/30 text-xs font-semibold"
-                                                aria-label="Take a shift evidence photo"
-                                            >
-                                                <Camera className="mr-2 h-4 w-4" /> {isCameraStarting ? "Opening Camera…" : "Take Photo"}
-                                            </Button>
-                                            <Button
-                                                type="button"
-                                                variant="outline"
-                                                onClick={openFilePicker}
-                                                className="h-10 w-full rounded-lg border-sky-500/30 text-xs font-semibold"
-                                                aria-label="Choose a shift evidence image file"
-                                            >
-                                                <FolderOpen className="mr-2 h-4 w-4" /> Choose File
-                                            </Button>
-                                            <Input
-                                                ref={fileInputRef}
-                                                id="production-evidence-image"
-                                                type="file"
-                                                accept="image/jpeg,image/jpg,image/png,image/webp"
-                                                onChange={handleEvidenceImageChange}
-                                                aria-label="Choose a shift evidence image file"
-                                                className="sr-only"
-                                            />
-                                            {cameraStream && (
-                                                <div className="space-y-2 rounded-lg border border-sky-500/20 bg-background/70 p-2 sm:col-span-2">
-                                                    <video
-                                                        ref={cameraVideoRef}
-                                                        autoPlay
-                                                        muted
-                                                        playsInline
-                                                        onCanPlay={() => setIsCameraReady(true)}
-                                                        aria-label="Live shift evidence camera preview"
-                                                        className="max-h-72 w-full rounded-md bg-black object-contain"
-                                                    />
-                                                    <div className="grid grid-cols-2 gap-2">
-                                                        <Button
-                                                            type="button"
-                                                            onClick={captureCameraPhoto}
-                                                            disabled={!isCameraReady}
-                                                            className="h-9 text-xs"
-                                                        >
-                                                            <Camera className="mr-2 h-4 w-4" /> Capture Photo
-                                                        </Button>
-                                                        <Button
-                                                            type="button"
-                                                            variant="outline"
-                                                            onClick={() => {
-                                                                stopCamera();
-                                                                setCameraError(null);
-                                                            }}
-                                                            className="h-9 text-xs"
-                                                        >
-                                                            Cancel Camera
-                                                        </Button>
-                                                    </div>
-                                                </div>
-                                            )}
-                                            {evidenceImage && (
-                                                <Button
-                                                    type="button"
-                                                    variant="outline"
-                                                    onClick={removeEvidenceImage}
-                                                    className="h-10 rounded-lg border-sky-500/30 text-xs sm:col-span-2"
-                                                >
-                                                    <X className="h-3.5 w-3.5 mr-1" /> Remove
-                                                </Button>
-                                            )}
-                                        </div>
-                                        {cameraError && (
-                                            <p className="text-[10px] font-semibold text-destructive" role="alert">{cameraError}</p>
-                                        )}
-                                        {evidenceImageError && (
-                                            <p className="text-[10px] font-semibold text-destructive" role="alert">{evidenceImageError}</p>
-                                        )}
-                                        {!evidenceImage && !evidenceImageError && !cameraError && (
-                                            <p className="text-[10px] text-muted-foreground" role="status">
-                                                A shift evidence image is required before recording this session.
-                                            </p>
-                                        )}
-                                        {evidenceImage && evidenceImagePreview && (
-                                            <div className="flex items-center gap-3 rounded-lg border border-sky-500/20 bg-background/70 p-2">
-                                                <img
-                                                    src={evidenceImagePreview}
-                                                    alt="Selected shift evidence preview"
-                                                    className="h-16 w-16 rounded-md object-cover border border-border"
-                                                />
-                                                <div className="min-w-0 text-[10px]">
-                                                    <p className="truncate font-semibold text-foreground" title={evidenceImage.name}>{evidenceImage.name}</p>
-                                                    <p className="text-muted-foreground">{(evidenceImage.size / 1024 / 1024).toFixed(2)} MB</p>
-                                                </div>
-                                            </div>
-                                        )}
+                                        <EvidenceMediaInput
+                                            id="production-evidence"
+                                            label="Attach evidence file"
+                                            file={evidenceImage}
+                                            error={evidenceImageError}
+                                            required
+                                            disabled={submittingShiftLog}
+                                            active={open}
+                                            onChange={(file, validationError) => {
+                                                setEvidenceImage(file);
+                                                setEvidenceImageError(validationError);
+                                            }}
+                                        />
                                     </div>
 
                                 </div>

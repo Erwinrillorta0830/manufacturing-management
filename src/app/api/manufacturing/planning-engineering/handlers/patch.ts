@@ -297,7 +297,7 @@ export async function handlePATCH(request: Request) {
             }
             const imageValue = formData.get("image");
             if (imageValue !== null && (typeof File === "undefined" || !(imageValue instanceof File))) {
-                return NextResponse.json({ error: "The breakdown evidence image is invalid." }, { status: 422 });
+                return NextResponse.json({ error: "The breakdown evidence file is invalid." }, { status: 422 });
             }
             breakdownEvidenceImage = typeof File !== "undefined" && imageValue instanceof File ? imageValue : null;
         } else {
@@ -336,11 +336,11 @@ export async function handlePATCH(request: Request) {
                 return NextResponse.json({ error: "Reported yield must be a non-negative number." }, { status: 400 });
             }
             if (!breakdownEvidenceImage) {
-                return NextResponse.json({ error: "A breakdown evidence image is required.", code: "WORKFLOW_EVIDENCE_REQUIRED" }, { status: 422 });
+                return NextResponse.json({ error: "A breakdown evidence image or video is required.", code: "WORKFLOW_EVIDENCE_REQUIRED" }, { status: 422 });
             }
-            const imageError = validateJobOrderWorkflowEvidence(breakdownEvidenceImage);
-            if (imageError) {
-                return NextResponse.json({ error: imageError, code: "WORKFLOW_EVIDENCE_INVALID" }, { status: 422 });
+            const evidenceError = validateJobOrderWorkflowEvidence(breakdownEvidenceImage);
+            if (evidenceError) {
+                return NextResponse.json({ error: evidenceError, code: "WORKFLOW_EVIDENCE_INVALID" }, { status: 422 });
             }
 
             const productionResponse = await productionMutationResponse(parsedJobOrderId);
