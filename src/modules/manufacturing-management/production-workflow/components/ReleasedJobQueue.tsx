@@ -206,7 +206,7 @@ export function ReleasedJobQueue({
                                     <th className="px-3 py-3 font-bold">Job Order</th>
                                     <th className="px-3 py-3 font-bold">Product / Journey</th>
                                     <th className="whitespace-nowrap px-3 py-3 text-right font-bold">Target / Produced</th>
-                                    <th className="px-3 py-3 font-bold">Workstation</th>
+                                    <th className="px-3 py-3 font-bold">Workstations</th>
                                     <th className="px-3 py-3 font-bold">Due</th>
                                     <th className="px-3 py-3 text-right font-bold">Action</th>
                                 </tr>
@@ -221,8 +221,26 @@ export function ReleasedJobQueue({
                                     const canOpenTerminal = isForPicking || isPicked || isInProduction || isOnHold;
                                     const parent = parentByChildId.get(jo.jo_id);
                                     const producedQty = jo.producedQty ?? jo.completed_quantity ?? jo.productionOutputQuantity ?? 0;
-                                    const workstationLabel = jo.primary_work_center_name
-                                        || (jo.primary_work_center_id ? `WC #${jo.primary_work_center_id}` : "Unassigned");
+                                    const routeTasks = jo.routing_tasks?.length
+                                        ? jo.routing_tasks
+                                        : jo.routingTasks || [];
+                                    const workstationEntries: Array<{ key: string; stepNumber: number | null; name: string }> = [...routeTasks]
+                                        .sort((left, right) => left.sequence_order - right.sequence_order)
+                                        .map((task, index) => ({
+                                            key: `${task.id || task.jo_route_id || index}-${task.sequence_order}`,
+                                            stepNumber: task.sequence_order || index + 1,
+                                            name: task.work_center?.work_center_name
+                                                || task.work_center_name
+                                                || (task.work_center_id ? `Work Center #${task.work_center_id}` : "Unassigned")
+                                        }));
+                                    if (workstationEntries.length === 0) {
+                                        workstationEntries.push({
+                                            key: `${jo.jo_id}-primary-workstation`,
+                                            stepNumber: null,
+                                            name: jo.primary_work_center_name
+                                                || (jo.primary_work_center_id ? `WC #${jo.primary_work_center_id}` : "Unassigned")
+                                        });
+                                    }
                                     const journey = resolveJobOrderJourney({
                                         status: jo.status,
                                         allMaterialsStaged: isPicked ? undefined : false
@@ -276,9 +294,20 @@ export function ReleasedJobQueue({
                                                 </div>
                                             </td>
                                             <td className="px-3 py-3 align-top">
-                                                <div className={`flex items-center gap-1.5 text-sm font-semibold ${jo.primary_work_center_id ? "text-foreground" : "text-amber-600 dark:text-amber-400"}`}>
-                                                    <Building2 className="h-3.5 w-3.5 shrink-0" />
-                                                    <span>{workstationLabel}</span>
+                                                <div className="flex items-start gap-1.5 text-sm font-semibold">
+                                                    <Building2 className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${workstationEntries.every((entry) => entry.name === "Unassigned") ? "text-amber-600 dark:text-amber-400" : "text-primary"}`} />
+                                                    <div className="min-w-0 space-y-1">
+                                                        {workstationEntries.map((entry) => (
+                                                            <div key={entry.key} title={entry.stepNumber ? `Step ${entry.stepNumber}: ${entry.name}` : entry.name}>
+                                                                {entry.stepNumber && (
+                                                                    <span className="mr-1 text-[10px] font-medium text-muted-foreground">
+                                                                        Step {entry.stepNumber}:
+                                                                    </span>
+                                                                )}
+                                                                <span>{entry.name}</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
                                                 </div>
                                             </td>
                                             <td className="px-3 py-3 align-top text-sm font-semibold text-muted-foreground">
