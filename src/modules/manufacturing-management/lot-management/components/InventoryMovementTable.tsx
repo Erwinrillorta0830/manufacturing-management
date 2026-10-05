@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from "react";
+import { motion } from "framer-motion";
 import {
     Search,
     Loader2,
@@ -15,6 +16,7 @@ import {
 } from "lucide-react";
 import { InventoryMovement, Lot, ProductItem } from "../types";
 import { SearchableLotSelect } from "./SearchableLotSelect";
+import { SearchableTransactionTypeSelect } from "./SearchableTransactionTypeSelect";
 import {
     Table,
     TableHeader,
@@ -102,7 +104,12 @@ export default function InventoryMovementTable({
         <div className="space-y-4">
             {/* Quick Flow Metric Strip */}
             {stats && (
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-card p-3 rounded-xl border border-border shadow-2xs">
+                <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.22, ease: "easeOut" }}
+                    className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-card p-3 rounded-xl border border-border shadow-2xs"
+                >
                     <div className="flex items-center gap-2.5 px-2">
                         <div className="h-9 w-9 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
                             <ArrowLeftRight className="h-4 w-4" />
@@ -144,11 +151,16 @@ export default function InventoryMovementTable({
                             </p>
                         </div>
                     </div>
-                </div>
+                </motion.div>
             )}
 
             {/* Filter Controls Bar */}
-            <div className="flex flex-col md:flex-row gap-3 justify-between items-start md:items-center bg-card p-3 rounded-xl border border-border">
+            <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.2, delay: 0.05, ease: "easeOut" }}
+                className="flex flex-col md:flex-row gap-3 justify-between items-start md:items-center bg-card p-3 rounded-xl border border-border"
+            >
                 <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto flex-1">
                     {/* Search Input */}
                     <div className="relative flex-1 min-w-[200px] max-w-sm">
@@ -174,19 +186,13 @@ export default function InventoryMovementTable({
                     </Select>
 
                     {/* Transaction Type Filter */}
-                    <Select value={transactionTypeFilter} onValueChange={onTransactionTypeFilterChange}>
-                        <SelectTrigger className="w-[170px] h-9 bg-card">
-                            <SelectValue placeholder="Transaction Type" />
-                        </SelectTrigger>
-                        <SelectContent className="bg-popover border border-border max-h-56">
-                            <SelectItem value="ALL">All Transaction Types</SelectItem>
-                            {availableTransactionTypes.map((t) => (
-                                <SelectItem key={t} value={t}>
-                                    {t.replace(/_/g, " ")}
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
+                    <div className="w-[190px] sm:w-[210px]">
+                        <SearchableTransactionTypeSelect
+                            value={transactionTypeFilter}
+                            onValueChange={onTransactionTypeFilterChange}
+                            availableTransactionTypes={availableTransactionTypes}
+                        />
+                    </div>
 
                     {/* Lot / Rack Filter */}
                     <div className="w-[180px]">
@@ -221,7 +227,7 @@ export default function InventoryMovementTable({
                         </Button>
                     </div>
                 )}
-            </div>
+            </motion.div>
 
             {/* Movements Table */}
             <div className="rounded-md border border-border bg-card overflow-x-auto">
@@ -250,13 +256,18 @@ export default function InventoryMovementTable({
                         )}
                     </div>
                 ) : movements.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center p-20 text-center text-muted-foreground">
+                    <motion.div
+                        initial={{ opacity: 0, scale: 0.96 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ duration: 0.25, ease: "easeOut" }}
+                        className="flex flex-col items-center justify-center p-20 text-center text-muted-foreground"
+                    >
                         <ArrowLeftRight className="h-12 w-12 text-muted-foreground/30 mb-2" />
                         <span className="text-sm font-semibold">No inventory movements found</span>
                         <p className="text-xs max-w-xs mt-1">
                             Movements posted from stock adjustments, production, or transfers will appear here in real-time.
                         </p>
-                    </div>
+                    </motion.div>
                 ) : (
                     <Table className="min-w-[1550px]">
                         <TableHeader>
@@ -278,7 +289,7 @@ export default function InventoryMovementTable({
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {paginatedMovements.map((m) => {
+                            {paginatedMovements.map((m, idx) => {
                                 const isDirectionIn = (m.movementDirection || "").toUpperCase() === "IN";
                                 const rawInvId = m.inventoryLotId ?? m.inventory_lot_id;
                                 const hasInvId = rawInvId !== null && rawInvId !== undefined && Number(rawInvId) > 0;
@@ -289,7 +300,13 @@ export default function InventoryMovementTable({
                                 const qty = isDirectionIn ? Number(m.quantityIn || 0) : Number(m.quantityOut || 0);
 
                                 return (
-                                    <TableRow key={m.movementKey || m.displayNumber}>
+                                    <motion.tr
+                                        key={m.movementKey || m.displayNumber || idx}
+                                        initial={{ opacity: 0, y: 12 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        transition={{ duration: 0.2, delay: idx * 0.025, ease: "easeOut" as const }}
+                                        className="hover:bg-muted/50 transition-colors border-b border-border"
+                                    >
                                         <TableCell className="text-xs text-muted-foreground font-medium">{m.displayNumber}</TableCell>
                                         <TableCell>
                                             <div className="flex flex-col min-w-[130px]">
@@ -421,7 +438,7 @@ export default function InventoryMovementTable({
                                         <TableCell className="text-xs text-muted-foreground max-w-[150px] truncate" title={m.remarks || ""}>
                                             {m.remarks || "-"}
                                         </TableCell>
-                                    </TableRow>
+                                    </motion.tr>
                                 );
                             })}
                         </TableBody>

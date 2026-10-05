@@ -17,6 +17,8 @@ interface BranchRow {
     id?: number;
     branch_name?: string;
     branch_code?: string;
+    isBadStock?: number | null;
+    bad_stock_branch_id?: number | null;
 }
 
 interface UnitRow {
@@ -44,6 +46,7 @@ export async function GET(request: Request) {
         const { searchParams } = new URL(request.url);
         const branchId = Number(searchParams.get("branchId"));
         const productId = Number(searchParams.get("productId"));
+        const badStock = searchParams.get("badStock") === "1";
 
         if (!Number.isSafeInteger(branchId) || branchId <= 0) {
             return NextResponse.json({ error: "A valid branchId is required." }, { status: 400 });
@@ -53,9 +56,28 @@ export async function GET(request: Request) {
         }
 
         const expectedUnitId = await resolveProductUnitId(productId);
+
+        // For bad-stock lots: resolve the production branch's bad_stock_branch_id
+        let lotBranchId = branchId;
+        let productionBranch: BranchRow | null = null;
+        if (badStock) {
+            productionBranch = await readOptionalRow<BranchRow>(
+                `/items/branches/${branchId}?fields=id,branch_name,branch_code,isBadStock,bad_stock_branch_id`,
+                "production branch"
+            );
+            const badStockBranchId = productionBranch?.bad_stock_branch_id;
+            if (!badStockBranchId) {
+                return NextResponse.json(
+                    { error: "No bad-stock holding branch is configured for this production branch." },
+                    { status: 409 }
+                );
+            }
+            lotBranchId = Number(badStockBranchId);
+        }
+
         const [lots, branch, unit] = await Promise.all([
-            loadMmLots({ branchId, unitId: expectedUnitId, onlyActive: true }),
-            readOptionalRow<BranchRow>(`/items/branches/${branchId}?fields=id,branch_name,branch_code`, "branch"),
+            loadMmLots({ branchId: lotBranchId, unitId: expectedUnitId, onlyActive: true }),
+            readOptionalRow<BranchRow>(`/items/branches/${lotBranchId}?fields=id,branch_name,branch_code,isBadStock`, "branch"),
             readOptionalRow<UnitRow>(`/items/units/${expectedUnitId}?fields=unit_id,unit_name,unit_shortcut`, "unit")
         ]);
 

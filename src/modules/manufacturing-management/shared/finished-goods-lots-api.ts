@@ -41,3 +41,16 @@ export async function fetchEligibleFinishedGoodsLots(
     if (!res.ok) throw new Error(json.error || "Failed to load eligible storage lots.");
     return json.data;
 }
+
+export async function fetchEligibleBadStockLots(
+    branchId: number,
+    productId: number
+): Promise<EligibleFinishedGoodsLotsResponse> {
+    const res = await fetch(
+        `/api/manufacturing/lots/eligible?branchId=${encodeURIComponent(String(branchId))}&productId=${encodeURIComponent(String(productId))}&badStock=1`,
+        { cache: "no-store" }
+    );
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || "Failed to load eligible bad-stock storage lots.");
+    return json.data;
+}

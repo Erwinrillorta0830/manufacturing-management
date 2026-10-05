@@ -57,6 +57,35 @@ interface ApiResponse {
 
 const SESSION_KEY = "low_stock_alert_shown";
 
+function isAlertDismissed(): boolean {
+    if (typeof window === "undefined") return false;
+    try {
+        return !!(sessionStorage.getItem(SESSION_KEY) || localStorage.getItem(SESSION_KEY));
+    } catch {
+        return false;
+    }
+}
+
+function markAlertDismissed(): void {
+    if (typeof window === "undefined") return;
+    try {
+        sessionStorage.setItem(SESSION_KEY, "1");
+        localStorage.setItem(SESSION_KEY, "1");
+    } catch {
+        // ignore
+    }
+}
+
+function clearAlertDismissed(): void {
+    if (typeof window === "undefined") return;
+    try {
+        sessionStorage.removeItem(SESSION_KEY);
+        localStorage.removeItem(SESSION_KEY);
+    } catch {
+        // ignore
+    }
+}
+
 function formatCurrency(amount: number): string {
     return new Intl.NumberFormat("en-PH", {
         style: "currency",
@@ -194,14 +223,10 @@ export function LowStockAlertModal() {
     const isFetchingRef = React.useRef(false);
 
     React.useEffect(() => {
-        // If explicitly on login or auth routes, reset session flag so next login displays the alert
+        // If explicitly on login or auth routes, reset session flags so next login displays the alert
         const AUTH_PAGES = ["/login", "/forgot-password", "/reset-password"];
         if (pathname && AUTH_PAGES.some((p) => pathname.startsWith(p))) {
-            try {
-                sessionStorage.removeItem(SESSION_KEY);
-            } catch {
-                // ignore
-            }
+            clearAlertDismissed();
             return;
         }
 
@@ -210,13 +235,9 @@ export function LowStockAlertModal() {
             return;
         }
 
-        // Session guard — only show once per login session
-        try {
-            if (sessionStorage.getItem(SESSION_KEY)) {
-                return;
-            }
-        } catch {
-            // ignore
+        // Session guard — strictly show once per login session across all browser tabs & modules
+        if (isAlertDismissed()) {
+            return;
         }
 
         if (isFetchingRef.current) return;
@@ -231,23 +252,19 @@ export function LowStockAlertModal() {
                     cache: "no-store",
                 });
                 if (!res.ok) {
-                    // Do not wipe SESSION_KEY on transient network/auth glitches during navigation
                     return;
                 }
                 const data = (await res.json()) as ApiResponse;
+
+                if (data.authenticated === false) {
+                    // User session not ready yet; do not lock session
+                    return;
+                }
+
+                // UNCONDITIONALLY mark as checked so opening modules in new tabs/windows never re-triggers
+                markAlertDismissed();
+
                 if (!cancelled) {
-                    if (data.authenticated === false) {
-                        // User session not ready yet; do not show and do not lock session
-                        return;
-                    }
-
-                    // Mark session as checked so switching modules never re-fetches or re-triggers
-                    try {
-                        sessionStorage.setItem(SESSION_KEY, "1");
-                    } catch {
-                        // ignore
-                    }
-
                     const fetchedItems = data.items || [];
                     const fetchedBatches = data.expiry_batches || [];
                     if (fetchedItems.length > 0 || fetchedBatches.length > 0) {
@@ -271,11 +288,7 @@ export function LowStockAlertModal() {
     }, [pathname]);
 
     function handleClose() {
-        try {
-            sessionStorage.setItem(SESSION_KEY, "1");
-        } catch {
-            // ignore
-        }
+        markAlertDismissed();
         setOpen(false);
     }
 

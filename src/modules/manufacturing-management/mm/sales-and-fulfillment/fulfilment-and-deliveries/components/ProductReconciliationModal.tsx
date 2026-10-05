@@ -1927,32 +1927,35 @@ export default function ProductReconciliationModal({
                     </form>
 
                     {/* Multi-Lot & Multi-Batch Allocation Modal for Returned Items */}
-                    {allocationModalItemIndex !== null && lineItems[allocationModalItemIndex] && (() => {
-                        const targetItem = lineItems[allocationModalItemIndex];
-                        const physicalDispatched = (targetItem.reservations || []).reduce(
-                            (sum, r) => sum + getReservationPickedQty(r),
-                            0
-                        );
-                        const itemBaseline = targetItem.invoiced_quantity !== undefined && targetItem.invoiced_quantity !== null
-                            ? targetItem.invoiced_quantity
-                            : targetItem.ordered_quantity;
-                        const maxReturnCap = physicalDispatched > 0 ? Math.min(physicalDispatched, itemBaseline) : itemBaseline;
-                        const targetQty = Math.min(targetItem.returned_quantity, maxReturnCap);
+                    <AnimatePresence>
+                        {allocationModalItemIndex !== null && lineItems[allocationModalItemIndex] && (() => {
+                            const targetItem = lineItems[allocationModalItemIndex];
+                            const physicalDispatched = (targetItem.reservations || []).reduce(
+                                (sum, r) => sum + getReservationPickedQty(r),
+                                0
+                            );
+                            const itemBaseline = targetItem.invoiced_quantity !== undefined && targetItem.invoiced_quantity !== null
+                                ? targetItem.invoiced_quantity
+                                : targetItem.ordered_quantity;
+                            const maxReturnCap = physicalDispatched > 0 ? Math.min(physicalDispatched, itemBaseline) : itemBaseline;
+                            const targetQty = Math.min(targetItem.returned_quantity, maxReturnCap);
 
-                        return (
-                            <ReconciliationLotAllocationModal
-                                open={allocationModalItemIndex !== null}
-                                onClose={() => setAllocationModalItemIndex(null)}
-                                productId={targetItem.product_id}
-                                productName={targetItem.product_name}
-                                productCode={targetItem.product_code}
-                                uomName={targetItem.uom || "units"}
-                                requestedQuantity={targetQty}
-                                reservations={targetItem.reservations || []}
-                                onConfirm={handleConfirmLotAllocation}
-                            />
-                        );
-                    })()}
+                            return (
+                                <ReconciliationLotAllocationModal
+                                    key={`reconciliation-lot-modal-${targetItem.product_id ?? allocationModalItemIndex}`}
+                                    open={allocationModalItemIndex !== null}
+                                    onClose={() => setAllocationModalItemIndex(null)}
+                                    productId={targetItem.product_id}
+                                    productName={targetItem.product_name}
+                                    productCode={targetItem.product_code}
+                                    uomName={targetItem.uom || "units"}
+                                    requestedQuantity={targetQty}
+                                    reservations={targetItem.reservations || []}
+                                    onConfirm={handleConfirmLotAllocation}
+                                />
+                            );
+                        })()}
+                    </AnimatePresence>
                 </motion.div>
             </div>
         </AnimatePresence>
