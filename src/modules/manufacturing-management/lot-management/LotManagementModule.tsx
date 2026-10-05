@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import { motion } from "framer-motion";
 import { LayoutGrid, Warehouse, Layers, RefreshCw, ArrowLeftRight, Search, X, RotateCcw } from "lucide-react";
 import { useLotManagement } from "./hooks/useLotManagement";
 import { useBatchRegistration } from "./hooks/useBatchRegistration";
@@ -686,27 +687,33 @@ export default function LotManagementModule() {
 
                 {/* Tab 4: Inventory Movements (/api/mm-inventory-movements/all) */}
                 <TabsContent value="movement-history" className="mt-0 outline-none">
-                    <InventoryMovementTable
-                        movements={filteredMovements}
-                        lots={lots}
-                        products={products}
-                        loading={loadingMovements}
-                        error={movementError}
-                        searchQuery={movementSearchQuery}
-                        onSearchChange={setMovementSearchQuery}
-                        directionFilter={directionFilter}
-                        onDirectionFilterChange={setDirectionFilter}
-                        transactionTypeFilter={transactionTypeFilter}
-                        onTransactionTypeFilterChange={setTransactionTypeFilter}
-                        lotFilter={movementLotFilter}
-                        onLotFilterChange={setMovementLotFilter}
-                        productFilter={movementProductFilter}
-                        onProductFilterChange={setMovementProductFilter}
-                        availableTransactionTypes={availableTransactionTypes}
-                        onRefresh={loadMovements}
-                        onResetFilters={resetMovementFilters}
-                        stats={movementStats}
-                    />
+                    <motion.div
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.22, ease: "easeOut" }}
+                    >
+                        <InventoryMovementTable
+                            movements={filteredMovements}
+                            lots={lots}
+                            products={products}
+                            loading={loadingMovements}
+                            error={movementError}
+                            searchQuery={movementSearchQuery}
+                            onSearchChange={setMovementSearchQuery}
+                            directionFilter={directionFilter}
+                            onDirectionFilterChange={setDirectionFilter}
+                            transactionTypeFilter={transactionTypeFilter}
+                            onTransactionTypeFilterChange={setTransactionTypeFilter}
+                            lotFilter={movementLotFilter}
+                            onLotFilterChange={setMovementLotFilter}
+                            productFilter={movementProductFilter}
+                            onProductFilterChange={setMovementProductFilter}
+                            availableTransactionTypes={availableTransactionTypes}
+                            onRefresh={loadMovements}
+                            onResetFilters={resetMovementFilters}
+                            stats={movementStats}
+                        />
+                    </motion.div>
                 </TabsContent>
             </Tabs>
 

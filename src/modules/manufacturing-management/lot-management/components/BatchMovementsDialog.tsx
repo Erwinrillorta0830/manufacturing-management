@@ -734,8 +734,14 @@ export default function BatchMovementsDialog({
                                                                     </TableRow>
                                                                 </TableHeader>
                                                                 <TableBody>
-                                                                    {discrepancies.conflictingMovements.map((cm) => (
-                                                                        <TableRow key={cm.key} className="hover:bg-muted/30">
+                                                                    {discrepancies.conflictingMovements.map((cm, cmIdx) => (
+                                                                        <motion.tr
+                                                                            key={cm.key}
+                                                                            initial={{ opacity: 0, y: 8 }}
+                                                                            animate={{ opacity: 1, y: 0 }}
+                                                                            transition={{ duration: 0.16, delay: cmIdx * 0.02, ease: "easeOut" as const }}
+                                                                            className="hover:bg-muted/30 border-b border-border"
+                                                                        >
                                                                             <TableCell className="py-2.5 font-bold">
                                                                                 <div className="flex flex-col">
                                                                                     <span className="text-foreground">{cm.refNo}</span>
@@ -800,7 +806,7 @@ export default function BatchMovementsDialog({
                                                                                     ))}
                                                                                 </div>
                                                                             </TableCell>
-                                                                        </TableRow>
+                                                                        </motion.tr>
                                                                     ))}
                                                                 </TableBody>
                                                             </Table>
@@ -815,7 +821,12 @@ export default function BatchMovementsDialog({
 
                             {/* ─── Direct Movements Section ────────────────────────────────────── */}
                             {batchMovements.length === 0 ? (
-                                <div className="flex flex-col items-center justify-center p-8 text-center text-muted-foreground rounded-xl border border-dashed border-border bg-muted/10">
+                                <motion.div
+                                    initial={{ opacity: 0, scale: 0.98 }}
+                                    animate={{ opacity: 1, scale: 1 }}
+                                    transition={{ duration: 0.2 }}
+                                    className="flex flex-col items-center justify-center p-8 text-center text-muted-foreground rounded-xl border border-dashed border-border bg-muted/10"
+                                >
                                     {discrepancies.conflictingMovements.length > 0 ? (
                                         <>
                                             <AlertTriangle className="h-9 w-9 text-amber-500/70 mb-2" />
@@ -849,7 +860,7 @@ export default function BatchMovementsDialog({
                                             </p>
                                         </>
                                     )}
-                                </div>
+                                </motion.div>
                             ) : (
                                 <div className="flex flex-col gap-2">
                                     <div className="flex items-center justify-between px-1">
@@ -889,7 +900,13 @@ export default function BatchMovementsDialog({
                                                     const dateStr = (m.transactionDate ?? m.transaction_date ?? m.postedAt ?? m.posted_at ?? "") as string;
 
                                                     return (
-                                                        <TableRow key={keyNo || idx}>
+                                                        <motion.tr
+                                                            key={keyNo || idx}
+                                                            initial={{ opacity: 0, y: 10 }}
+                                                            animate={{ opacity: 1, y: 0 }}
+                                                            transition={{ duration: 0.18, delay: idx * 0.02, ease: "easeOut" as const }}
+                                                            className="hover:bg-muted/30 transition-colors border-b border-border"
+                                                        >
                                                             <TableCell className="text-xs text-muted-foreground font-medium pl-4 py-3">{idx + 1}</TableCell>
                                                             <TableCell className="py-3">
                                                                 <div className="flex flex-col">
@@ -941,7 +958,7 @@ export default function BatchMovementsDialog({
                                                             <TableCell className="text-xs text-muted-foreground max-w-[150px] truncate pr-4 py-3" title={m.remarks || ""}>
                                                                 {m.remarks || "-"}
                                                             </TableCell>
-                                                        </TableRow>
+                                                        </motion.tr>
                                                     );
                                                 })}
                                             </TableBody>
