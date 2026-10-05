@@ -1,7 +1,7 @@
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import {
     manufacturingFileUrl,
-    validateManufacturingImage
+    validateManufacturingEvidence
 } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
 
 export class JobOrderTerminationImageError extends Error {
@@ -53,7 +53,7 @@ async function responseMessage(response: Response): Promise<string> {
 }
 
 export function validateJobOrderTerminationImage(file: File): string | null {
-    return validateManufacturingImage(file, "Termination evidence");
+    return validateManufacturingEvidence(file, "Termination evidence");
 }
 
 export async function uploadJobOrderTerminationImage(file: File, jobOrderNo: string): Promise<string> {

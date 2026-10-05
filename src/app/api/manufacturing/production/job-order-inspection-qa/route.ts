@@ -14,6 +14,7 @@ import {
     type JobOrderClosureReadiness,
 } from "../../job-orders/_workflow-service";
 import { productionYieldImageUrl } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
+import { directusFileMetadata, fetchDirectusFileMetadata } from "@/app/api/manufacturing/_directus-file-metadata";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -323,6 +324,7 @@ async function loadJobOrderDetails(id: number) {
         buildQAYieldAssessments(yields, inspections, routes)
             .map((assessment) => [assessment.ledgerId, assessment] as const)
     );
+    const evidenceFilesById = await fetchDirectusFileMetadata(yields.map((yieldRow) => directusFileId(yieldRow.daily_qa_image_id)));
 
     const yieldRows = yields
         .map((yieldRow) => {
@@ -339,9 +341,8 @@ async function loadJobOrderDetails(id: number) {
             const scrapQuantity = Math.max(0, numberValue(yieldRow.scrap_quantity));
             const mmLotId = relationId(yieldRow.mm_lot_id, ["mm_lot_id", "lot_id", "id"]);
             const evidenceImageFileId = directusFileId(yieldRow.daily_qa_image_id);
-            const evidenceImageRecord = yieldRow.daily_qa_image_id && typeof yieldRow.daily_qa_image_id === "object"
-                ? yieldRow.daily_qa_image_id as DirectusRow
-                : null;
+            const evidenceImageMetadata = directusFileMetadata(yieldRow.daily_qa_image_id)
+                || (evidenceImageFileId ? evidenceFilesById.get(evidenceImageFileId) : null);
 
             return {
                 ledgerId: currentLedgerId,
@@ -361,9 +362,9 @@ async function loadJobOrderDetails(id: number) {
                 evidenceImage: evidenceImageFileId
                     ? {
                         fileId: evidenceImageFileId,
-                        fileName: textValue(evidenceImageRecord?.filename_download || evidenceImageRecord?.title) || null,
-                        mimeType: textValue(evidenceImageRecord?.type) || null,
-                        fileSize: numberValue(evidenceImageRecord?.filesize) || null,
+                        fileName: evidenceImageMetadata?.fileName || null,
+                        mimeType: evidenceImageMetadata?.mimeType || null,
+                        fileSize: evidenceImageMetadata?.fileSize ?? null,
                         url: productionYieldImageUrl(evidenceImageFileId)
                     }
                     : null,

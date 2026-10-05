@@ -996,7 +996,7 @@ const selectedTask = useMemo(() => {
             || cancellationMutationSucceededRef.current
         ) return;
         if (cancellationMode === "cancel" && !cancellationImage) {
-            setCancellationError("A cancellation evidence image is required.");
+            setCancellationError("A cancellation evidence image or video is required.");
             return;
         }
 

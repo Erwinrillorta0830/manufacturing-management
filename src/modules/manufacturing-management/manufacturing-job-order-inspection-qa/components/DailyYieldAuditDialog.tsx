@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/select";
 import { FinishedGoodsLotSelect } from "../../shared/FinishedGoodsLotSelect";
 import { formatPhtTimestamp, phtTimestampToEpoch } from "../../shared/pht-date";
+import { isManufacturingEvidenceVideo } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
 import type { DailyYieldAuditController } from "../hooks/useDailyYieldAudit";
 import type { DailyYieldQALog, DailyYieldQAParameter } from "../types";
 
@@ -341,28 +342,39 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-3 rounded-lg border border-sky-500/20 bg-background/70 p-2">
-                                        <button
-                                            type="button"
-                                            onClick={() => setEvidenceExpanded(true)}
-                                            aria-label="Expand end-of-shift evidence image"
-                                            title="Expand image"
-                                            className="group relative shrink-0 cursor-zoom-in rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                                        >
-                                            <Image
+                                        {isManufacturingEvidenceVideo(yieldRecord.evidenceImage.mimeType, yieldRecord.evidenceImage.fileName) ? (
+                                            <video
                                                 src={yieldRecord.evidenceImage.url}
-                                                alt={yieldRecord.evidenceImage.fileName || "End-of-shift evidence"}
-                                                width={80}
-                                                height={80}
-                                                unoptimized
-                                                className="h-20 w-20 rounded-md object-cover border border-border"
+                                                controls
+                                                playsInline
+                                                preload="metadata"
+                                                aria-label="End-of-shift evidence video"
+                                                className="max-h-40 w-full max-w-xs shrink-0 rounded-md border border-border bg-black"
                                             />
-                                            <span className="absolute bottom-1 right-1 rounded-md bg-background/90 p-1 text-muted-foreground opacity-0 shadow-sm transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
-                                                <Expand className="h-3 w-3" />
-                                            </span>
-                                        </button>
+                                        ) : (
+                                            <button
+                                                type="button"
+                                                onClick={() => setEvidenceExpanded(true)}
+                                                aria-label="Expand end-of-shift evidence image"
+                                                title="Expand image"
+                                                className="group relative shrink-0 cursor-zoom-in rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                                            >
+                                                <Image
+                                                    src={yieldRecord.evidenceImage.url}
+                                                    alt={yieldRecord.evidenceImage.fileName || "End-of-shift evidence"}
+                                                    width={80}
+                                                    height={80}
+                                                    unoptimized
+                                                    className="h-20 w-20 rounded-md object-cover border border-border"
+                                                />
+                                                <span className="absolute bottom-1 right-1 rounded-md bg-background/90 p-1 text-muted-foreground opacity-0 shadow-sm transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                                                    <Expand className="h-3 w-3" />
+                                                </span>
+                                            </button>
+                                        )}
                                         <div className="min-w-0 space-y-1 text-[10px]">
                                             <p className="truncate font-semibold text-foreground" title={yieldRecord.evidenceImage.fileName || undefined}>
-                                                {yieldRecord.evidenceImage.fileName || "End-of-shift evidence image"}
+                                                {yieldRecord.evidenceImage.fileName || "End-of-shift evidence"}
                                             </p>
                                             {yieldRecord.evidenceImage.mimeType && (
                                                 <p className="text-muted-foreground">{yieldRecord.evidenceImage.mimeType}</p>
@@ -376,7 +388,7 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                                 rel="noreferrer"
                                                 className="inline-flex font-semibold text-primary hover:underline"
                                             >
-                                                Open full image
+                                                Open file
                                             </a>
                                         </div>
                                     </div>
@@ -693,18 +705,30 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                 {yieldRecord.evidenceImage.fileName || "End-of-shift evidence"}
                             </DialogTitle>
                             <DialogDescription className="text-[11px]">
-                                {yieldRecord.evidenceImage.mimeType || "Evidence image"}
+                                {yieldRecord.evidenceImage.mimeType || "Evidence media"}
                                 {typeof yieldRecord.evidenceImage.fileSize === "number"
                                     ? ` · ${(yieldRecord.evidenceImage.fileSize / 1024 / 1024).toFixed(2)} MB`
                                     : ""}
                             </DialogDescription>
                         </DialogHeader>
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                            src={yieldRecord.evidenceImage.url}
-                            alt={yieldRecord.evidenceImage.fileName || "End-of-shift evidence"}
-                            className="mx-auto max-h-[75vh] w-auto max-w-full rounded-lg border border-border object-contain bg-muted/20"
-                        />
+                        {isManufacturingEvidenceVideo(yieldRecord.evidenceImage.mimeType, yieldRecord.evidenceImage.fileName) ? (
+                            <video
+                                src={yieldRecord.evidenceImage.url}
+                                controls
+                                playsInline
+                                preload="metadata"
+                                className="mx-auto max-h-[75vh] w-full rounded-lg border border-border bg-black object-contain"
+                            />
+                        ) : (
+                            <Image
+                                src={yieldRecord.evidenceImage.url}
+                                alt={yieldRecord.evidenceImage.fileName || "End-of-shift evidence"}
+                                width={1280}
+                                height={720}
+                                unoptimized
+                                className="mx-auto max-h-[75vh] w-auto max-w-full rounded-lg border border-border object-contain bg-muted/20"
+                            />
+                        )}
                         <DialogFooter className="sm:justify-end">
                             <Button type="button" variant="outline" onClick={() => setEvidenceExpanded(false)}>
                                 Close

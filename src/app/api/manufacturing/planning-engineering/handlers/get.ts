@@ -19,6 +19,7 @@ import { getAvailableInventoryLots } from "../helpers/inventory-helper";
 import { paginate } from "../../_pagination";
 import { JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 import { manufacturingFileUrl } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
+import { directusFileMetadata, fetchDirectusFileMetadata } from "@/app/api/manufacturing/_directus-file-metadata";
 import {
     assertCompatibleUoms,
     calculateFullBatchTarget,
@@ -2024,6 +2025,11 @@ export async function handleGET(request: Request) {
         } else {
             // Fetch all Job Orders
             const list = await fetchJobOrders();
+            const evidenceFileIds = list.flatMap((item: any) => [
+                directusFileId(item.cancellation_image_id),
+                directusFileId(item.termination_image_id)
+            ]);
+            const evidenceFilesById = await fetchDirectusFileMetadata(evidenceFileIds);
 
             // Resolve the assigned station names once so the queue can show the
             // workstation and detect Job Orders without a primary workstation.
@@ -2055,6 +2061,10 @@ export async function handleGET(request: Request) {
             const camelCaseList = list.map((item: any) => {
                 const cancellationImageId = directusFileId(item.cancellation_image_id);
                 const terminationImageId = directusFileId(item.termination_image_id);
+                const cancellationFileMetadata = directusFileMetadata(item.cancellation_image_id)
+                    || (cancellationImageId ? evidenceFilesById.get(cancellationImageId) : null);
+                const terminationFileMetadata = directusFileMetadata(item.termination_image_id)
+                    || (terminationImageId ? evidenceFilesById.get(terminationImageId) : null);
 
                 return ({
                 jo_id: item.jo_id,
@@ -2104,8 +2114,14 @@ export async function handleGET(request: Request) {
                 cancellation_reason: item.cancellation_reason || null,
                 cancellation_image_id: cancellationImageId,
                 cancellation_image_url: cancellationImageId ? manufacturingFileUrl(cancellationImageId) : null,
+                cancellation_image_file_name: cancellationFileMetadata?.fileName || null,
+                cancellation_image_mime_type: cancellationFileMetadata?.mimeType || null,
+                cancellation_image_file_size: cancellationFileMetadata?.fileSize ?? null,
                 termination_image_id: terminationImageId,
                 termination_image_url: terminationImageId ? manufacturingFileUrl(terminationImageId) : null,
+                termination_image_file_name: terminationFileMetadata?.fileName || null,
+                termination_image_mime_type: terminationFileMetadata?.mimeType || null,
+                termination_image_file_size: terminationFileMetadata?.fileSize ?? null,
                 parentJobOrderId: item.parent_job_order_id || null,
                 producedQty: item.produced_quantity || 0,
                 productionOutputQuantity: Number(item.production_output_quantity ?? item.produced_quantity ?? 0),

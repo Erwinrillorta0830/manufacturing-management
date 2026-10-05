@@ -1113,14 +1113,14 @@ export async function executeJobOrderWorkflow(
     }
     if (command.action === "place-on-hold" && !text(command.evidenceImageId)) {
         throw new JobOrderWorkflowError(
-            "A breakdown or hold evidence image is required.",
+            "A breakdown or hold evidence image or video is required.",
             422,
             "WORKFLOW_EVIDENCE_REQUIRED"
         );
     }
     if (command.action === "terminate-production" && !text(command.terminationImageId)) {
         throw new JobOrderWorkflowError(
-            "A termination evidence image is required.",
+            "A termination evidence image or video is required.",
             422,
             "TERMINATION_IMAGE_REQUIRED"
         );

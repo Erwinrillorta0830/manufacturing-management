@@ -99,7 +99,7 @@ export async function POST(request: Request) {
             const imageValue = formData.get("image");
             if (imageValue !== null && (typeof File === "undefined" || !(imageValue instanceof File))) {
                 return NextResponse.json(
-                    { error: "The cancellation evidence image is invalid.", code: "CANCELLATION_IMAGE_INVALID" },
+                    { error: "The cancellation evidence file is invalid.", code: "CANCELLATION_IMAGE_INVALID" },
                     { status: 422 }
                 );
             }
@@ -124,14 +124,14 @@ export async function POST(request: Request) {
             }
             if (!cancellationImage) {
                 return NextResponse.json(
-                    { error: "A cancellation evidence image is required.", code: "CANCELLATION_IMAGE_REQUIRED" },
+                    { error: "A cancellation evidence image or video is required.", code: "CANCELLATION_IMAGE_REQUIRED" },
                     { status: 422 }
                 );
             }
-            const imageError = validateJobOrderCancellationImage(cancellationImage);
-            if (imageError) {
+            const evidenceError = validateJobOrderCancellationImage(cancellationImage);
+            if (evidenceError) {
                 return NextResponse.json(
-                    { error: imageError, code: "CANCELLATION_IMAGE_INVALID" },
+                    { error: evidenceError, code: "CANCELLATION_IMAGE_INVALID" },
                     { status: 422 }
                 );
             }
