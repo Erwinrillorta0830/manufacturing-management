@@ -36,6 +36,7 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { FinishedGoodsLotSelect } from "../../shared/FinishedGoodsLotSelect";
+import { formatPhtTimestamp, phtTimestampToEpoch } from "../../shared/pht-date";
 import type { DailyYieldAuditController } from "../hooks/useDailyYieldAudit";
 import type { DailyYieldQALog, DailyYieldQAParameter } from "../types";
 
@@ -50,9 +51,7 @@ function numericText(value: unknown): string {
 
 function formatAuditTimestamp(value: unknown): string {
     if (typeof value !== "string" || !value.trim()) return "—";
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return value;
-    return date.toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" });
+    return formatPhtTimestamp(value);
 }
 
 function isParameterFailed(parameter: DailyYieldQAParameter, value: string): boolean {
@@ -149,14 +148,9 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                 remarks: textValue(record, ["remarks"])
             });
         });
-        const epoch = (value: unknown): number => {
-            if (typeof value !== "string" || !value.trim()) return 0;
-            const time = new Date(value).getTime();
-            return Number.isFinite(time) ? time : 0;
-        };
         return entries
             .map((entry, index) => ({ entry, index }))
-            .sort((left, right) => epoch(left.entry.timestamp) - epoch(right.entry.timestamp) || left.index - right.index)
+            .sort((left, right) => phtTimestampToEpoch(String(left.entry.timestamp || "")) - phtTimestampToEpoch(String(right.entry.timestamp || "")) || left.index - right.index)
             .map(({ entry }) => entry);
     }, [yieldRecord, sortedAuditRoutes]);
 

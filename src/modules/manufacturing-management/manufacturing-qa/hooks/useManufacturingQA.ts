@@ -47,6 +47,7 @@ import {
 import type { FinalQACoa } from "../services/qa-api";
 import type { DailyQAInspectionRequest } from "../services/qa-api";
 import { fetchEligibleFinishedGoodsLots, EligibleFinishedGoodsLot } from "../../shared/finished-goods-lots-api";
+import { formatPhtDate, formatPhtTimestamp } from "../../shared/pht-date";
 
 function relationNumber(value: any, keys: string[] = ["id"]): number {
     if (value && typeof value === "object") {
@@ -79,9 +80,7 @@ function escapePrintHtml(value: unknown): string {
 }
 
 function formatAuditDate(value: string | null | undefined): string {
-    if (!value) return "—";
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
+    return value ? formatPhtDate(value) : "—";
 }
 
 interface InspectionQueueFilters {
@@ -262,7 +261,7 @@ export const printYieldClosingReceipt = (data: PrintReceiptData) => {
                     <h1>Finished Goods Receipt</h1>
                     <p>WMS Ledger & Run Closure Slip</p>
                     <div style="font-size: 8px; color: #94a3b8; margin-top: 4px; font-weight: normal;">
-                        Printed: ${new Date().toLocaleString()}
+                        Printed: ${formatPhtTimestamp(new Date())}
                     </div>
                 </div>
 
@@ -1902,7 +1901,7 @@ export function useManufacturingQA() {
                             <div class="field"><div class="label">Microbiological analysis</div><div class="value">${status}</div></div>
                             <div class="field"><div class="label">Packaging seal audit</div><div class="value">${audit.packaging_seal_passed ? "Passed" : "Failed"}</div></div>
                             <div class="field"><div class="label">Label and expiry compliance</div><div class="value">${audit.label_compliance_passed ? "Passed" : "Failed"}</div></div>
-                            <div class="field"><div class="label">Approved at</div><div class="value">${escapePrintHtml(formatAuditDate(audit.approved_at))}</div></div>
+                            <div class="field"><div class="label">Approved at</div><div class="value">${escapePrintHtml(formatPhtTimestamp(audit.approved_at))}</div></div>
                         </div>
 
                         <h2>Release notes</h2>

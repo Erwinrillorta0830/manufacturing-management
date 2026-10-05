@@ -7,6 +7,7 @@ import { Branch, SalesOrder, SalesOrderDetail, NetRequirementItem } from "../typ
 import { fetchBranches, fetchSalesOrders, fetchNetRequirementsRaw, releaseJobOrder, releaseMultipleJobOrders, directAllocate } from "../services/planning-api";
 import { buildSalesOrderDemandGroups, buildSalesOrderReleaseGroups, canCreateReplacementJobOrder, isSchedulableSalesOrderLine, remainingQuantity } from "../utils/demand-groups";
 import { DEFAULT_PRODUCTION_SHIFT_HOURS, normalizeProductionOutputQuantity } from "../utils/production-timing";
+import { addCalendarDaysToDateInput, getPhtDateInputValue } from "../../shared/pht-date";
 
 function salesOrderDateValue(value: string | undefined): number {
     const timestamp = Date.parse(value || "");
@@ -82,7 +83,7 @@ export function usePlanningEngineering() {
     // Release Modal state
     const [isConfirmOpen, setIsConfirmOpen] = useState(false);
     const [targetQuantity, setTargetQuantity] = useState<number>(0);
-    const [plannedDate, setPlannedDate] = useState<string>(new Date().toISOString().split("T")[0]);
+    const [plannedDate, setPlannedDate] = useState<string>(getPhtDateInputValue());
     const [dueDate, setDueDate] = useState<string>("");
     const [shiftOption, setShiftOption] = useState<string>(String(DEFAULT_PRODUCTION_SHIFT_HOURS));
     const [priority, setPriority] = useState<number>(0);
@@ -671,8 +672,9 @@ export function usePlanningEngineering() {
 
         setTargetQuantity(totalRemaining);
         setJoNumber(code);
-        setPlannedDate(new Date().toISOString().split("T")[0]);
-        setDueDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);
+        const phtToday = getPhtDateInputValue();
+        setPlannedDate(phtToday);
+        setDueDate(addCalendarDaysToDateInput(phtToday, 7));
         setShiftOption(String(DEFAULT_PRODUCTION_SHIFT_HOURS));
         setPriority(0);
         setRemarks(`${isReplacement ? "Replacement production run" : "Production run"} for: ${linesToRelease.map(l => l.order_no).join(", ")}`);

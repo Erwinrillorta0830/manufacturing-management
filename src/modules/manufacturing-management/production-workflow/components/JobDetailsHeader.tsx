@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { JobOrder } from "../types";
 import { displayJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "../../job-order-status";
 import { calculatePipelinedLineDurationHours } from "../../planning-engineering/utils/production-timing";
+import { formatPhtDate } from "../../shared/pht-date";
 
 interface JobDetailsHeaderProps {
     selectedJobOrder: JobOrder;
@@ -74,7 +75,7 @@ export function JobDetailsHeader({ selectedJobOrder, parentJoNo }: JobDetailsHea
                         </div>
                         <div className="bg-muted px-3 py-1.5 rounded-lg">
                             <span className="text-muted-foreground block text-xs">Due Date</span>
-                            <span>{new Date(selectedJobOrder.due_date).toLocaleDateString()}</span>
+                            <span>{selectedJobOrder.due_date ? formatPhtDate(selectedJobOrder.due_date) : "—"}</span>
                         </div>
                         {(() => {
                             const totalHours = selectedJobOrder.routing_tasks

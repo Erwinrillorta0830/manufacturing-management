@@ -550,7 +550,7 @@ export async function recordOperatorRosterAudit(
                 new_status: input.newStatus,
                 workflow_action: input.workflowAction,
                 changed_by: input.changedBy,
-                changed_at: input.changedAt || formatPhtDateTime(),
+                changed_at: input.changedAt || new Date().toISOString(),
                 event_key: input.eventKey,
                 workflow_request_hash: input.workflowRequestHash,
                 remarks: input.remarks

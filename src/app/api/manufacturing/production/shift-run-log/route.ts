@@ -3,7 +3,8 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { authorizeJobOrderModuleAccess, JOB_ORDER_MODULE_PATHS } from "@/app/api/manufacturing/job-orders/_module-access";
 import { cookies } from "next/headers";
-import { DIRECTUS_URL, headers, formatPhtDateTime, getTodayDateString, getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
+import { DIRECTUS_URL, headers, formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
+import { getPhtDateInputValue } from "@/modules/manufacturing-management/shared/pht-date";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
 import {
     loadEligibleFinishedGoodsLot,
@@ -278,9 +279,9 @@ export async function GET(request: Request) {
 // POST handler: Logs the shift yield, consumes hard-staged reservations, records genealogy, and updates Job Order status.
 async function legacyShiftRunPost(request: Request) {
     try {
-        const todayStr = await getTodayDateString();
-        const manilaTimestamp = await getISOStringInConfiguredTimezone();
-        const phtMovementTimestamp = formatPhtDateTime();
+        const todayStr = getPhtDateInputValue();
+        const manilaTimestamp = formatPhtDateTime();
+        const phtMovementTimestamp = manilaTimestamp;
         const sessionUserId = await getUserIdFromSession();
 
         const body = await request.json();

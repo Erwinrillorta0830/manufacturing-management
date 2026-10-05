@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/select";
 import { QAJOInspectionLog, QARejectionReason } from "../types";
 import { ResponsiveDataView } from "./ResponsiveDataView";
+import { formatPhtDate } from "../../shared/pht-date";
 
 interface QAInspectionLogsTableProps {
     logs: QAJOInspectionLog[];
@@ -84,7 +85,7 @@ export function QAInspectionLogsTable({
                 <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                         <p className="font-mono text-sm font-bold text-foreground">{log.job_order_no || `JO-${log.job_order_id}`}</p>
-                        <p className="mt-1 text-sm text-muted-foreground">Log #{log.id} · {log.inspected_at ? new Date(log.inspected_at).toLocaleDateString() : "N/A"}</p>
+                        <p className="mt-1 text-sm text-muted-foreground">Log #{log.id} · {log.inspected_at ? formatPhtDate(log.inspected_at) : "N/A"}</p>
                     </div>
                     <Badge variant={isPassed ? "default" : "destructive"} className={isPassed ? "min-h-7 bg-emerald-600 text-sm" : "min-h-7 text-sm"}>
                         {log.status || (isPassed ? "PASSED" : "REWORK_TRIGGERED")}
@@ -210,7 +211,7 @@ export function QAInspectionLogsTable({
                                                 <div className="flex flex-col">
                                                     <span className="font-bold text-foreground">#{log.id}</span>
                                                     <span className="text-[10px] text-muted-foreground">
-                                                        {log.inspected_at ? new Date(log.inspected_at).toLocaleDateString() : "N/A"}
+                                                        {log.inspected_at ? formatPhtDate(log.inspected_at) : "N/A"}
                                                     </span>
                                                 </div>
                                             </TableCell>

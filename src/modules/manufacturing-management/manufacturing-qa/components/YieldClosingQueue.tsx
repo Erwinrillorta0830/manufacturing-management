@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { JobOrder } from "../types";
 import { ResponsiveDataView } from "./ResponsiveDataView";
 import { displayJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "../../job-order-status";
+import { formatPhtDate } from "../../shared/pht-date";
 
 interface PendingHold {
     jo_id: string | number;
@@ -48,7 +49,7 @@ export function YieldClosingQueue({
                 <dl className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
                     <div><dt className="text-muted-foreground">Target quantity</dt><dd className="font-mono font-semibold">{Number(jo.quantity || 0).toLocaleString()}</dd></div>
                     <div><dt className="text-muted-foreground">Branch</dt><dd className="truncate font-semibold">{getBranchName(jo.branch_id)}</dd></div>
-                    <div><dt className="text-muted-foreground">Due date</dt><dd className="font-mono font-semibold">{jo.due_date ? new Date(jo.due_date).toLocaleDateString() : "N/A"}</dd></div>
+                    <div><dt className="text-muted-foreground">Due date</dt><dd className="font-mono font-semibold">{jo.due_date ? formatPhtDate(jo.due_date) : "N/A"}</dd></div>
                 </dl>
                 <Button className="mt-4 min-h-11 w-full gap-2" onClick={() => handleOpenYieldDialog(jo)} disabled={blocked} title={blocked ? "Unlock quarantine hold first" : "Close yield"}>
                     <TrendingUp className="h-4 w-4" />
@@ -128,7 +129,7 @@ export function YieldClosingQueue({
                                             </Badge>
                                         </TableCell>
                                         <TableCell className="text-muted-foreground text-xs font-mono">
-                                            {jo.due_date ? new Date(jo.due_date).toLocaleDateString() : "N/A"}
+                                            {jo.due_date ? formatPhtDate(jo.due_date) : "N/A"}
                                         </TableCell>
                                         <TableCell>
                                             {(() => {

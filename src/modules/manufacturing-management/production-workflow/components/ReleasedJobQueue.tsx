@@ -11,6 +11,7 @@ import { JobOrderJourneyBar } from "../../shared/components/JobOrderJourneyBar";
 import { JobOrderStatusBadge } from "../../shared/components/JobOrderStatusBadge";
 import { SearchableSelect } from "../../planning-engineering/components/SearchableSelect";
 import { calculatePipelinedLineDurationHours } from "../../planning-engineering/utils/production-timing";
+import { formatPhtDate } from "../../shared/pht-date";
 
 interface ReleasedJobQueueProps {
     filteredJobOrders: JobOrder[];
@@ -281,7 +282,7 @@ export function ReleasedJobQueue({
                                                 </div>
                                             </td>
                                             <td className="px-3 py-3 align-top text-sm font-semibold text-muted-foreground">
-                                                {jo.due_date ? new Date(jo.due_date).toLocaleDateString() : "—"}
+                                                {jo.due_date ? formatPhtDate(jo.due_date) : "—"}
                                             </td>
                                             <td className="px-3 py-3 text-right align-top">
                                                 <Button
