@@ -32,7 +32,6 @@ import {
 } from "../operator-assignment-display";
 
 const SHOP_FLOOR_QUEUE_STATUSES = [
-    JOB_ORDER_STATUS.FOR_PICKING,
     JOB_ORDER_STATUS.PICKED,
     JOB_ORDER_STATUS.IN_PRODUCTION,
     JOB_ORDER_STATUS.ON_HOLD,
@@ -243,7 +242,7 @@ const selectedTask = useMemo(() => {
             setSelectedJobOrderId(match.jo_id);
             setSelectedTaskId(null);
         } else {
-            toast.info("Only For Picking, Picked, In Production, On Hold, or QA Hold Job Orders can be opened in this terminal.");
+            toast.info("This Job Order is not available in the Shop Floor Execution Terminal.");
         }
         setPendingDeepLinkTarget(null);
     }, [pendingDeepLinkTarget, loadingJobs, terminalJobOrders]);
