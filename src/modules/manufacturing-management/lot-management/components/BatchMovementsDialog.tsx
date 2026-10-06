@@ -474,26 +474,41 @@ export default function BatchMovementsDialog({
                         {/* Clean Badges: Branch, Product Type, Stock Quality, Batch No */}
                         <div className="flex items-center gap-1.5 flex-wrap">
                             {branchDisplay && (
-                                <span className="px-2.5 py-0.5 rounded-md text-[11px] font-semibold bg-muted text-foreground border border-border">
+                                <span
+                                    className="px-2.5 py-0.5 rounded-md text-[11px] font-semibold bg-muted text-foreground border border-border"
+                                    title={`Branch: ${branchDisplay}`}
+                                >
                                     {branchDisplay}
                                 </span>
                             )}
 
-                            <span className={`px-2.5 py-0.5 rounded-md text-[11px] font-bold border ${classification.className}`}>
+                            <span
+                                className={`px-2.5 py-0.5 rounded-md text-[11px] font-bold border ${classification.className}`}
+                                title={`Product Type: ${classification.label}`}
+                            >
                                 {classification.label}
                             </span>
 
                             {isBadStock ? (
-                                <span className="px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
+                                <span
+                                    className="px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20"
+                                    title="Stock Quality: Bad Stock"
+                                >
                                     Bad Stock
                                 </span>
                             ) : (
-                                <span className="px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                                <span
+                                    className="px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                                    title="Stock Quality: Good Stock"
+                                >
                                     Good Stock
                                 </span>
                             )}
 
-                            <span className="px-2.5 py-0.5 rounded-md text-[11px] font-mono font-bold bg-primary/10 text-primary border border-primary/20">
+                            <span
+                                className="px-2.5 py-0.5 rounded-md text-[11px] font-mono font-bold bg-primary/10 text-primary border border-primary/20"
+                                title={`Batch Number: ${batch.batchNumber}`}
+                            >
                                 {batch.batchNumber}
                             </span>
                         </div>
@@ -501,70 +516,70 @@ export default function BatchMovementsDialog({
 
                     {/* Metadata chips */}
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2 mt-3 pt-3 border-t border-border/40">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 min-w-0" title={`Product / SKU: ${batch.productName || "-"}`}>
                             <Package className="h-4 w-4 text-muted-foreground shrink-0" />
-                            <div className="truncate">
-                                <p className="text-[10px] text-muted-foreground uppercase font-semibold">Product / SKU</p>
-                                <p className="text-xs font-bold text-foreground truncate">
+                            <div className="truncate min-w-0" title={batch.productName || "-"}>
+                                <p className="text-[10px] text-muted-foreground uppercase font-semibold" title="Product / SKU">Product / SKU</p>
+                                <p className="text-xs font-bold text-foreground truncate" title={batch.productName || "-"}>
                                     {batch.productName || "-"}
                                 </p>
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 min-w-0" title={`Storage Rack: ${batch.lotName || "-"}`}>
                             <Warehouse className="h-4 w-4 text-muted-foreground shrink-0" />
-                            <div className="truncate">
-                                <p className="text-[10px] text-muted-foreground uppercase font-semibold">Storage Rack</p>
-                                <p className="text-xs font-bold text-foreground truncate">
+                            <div className="truncate min-w-0" title={batch.lotName || "-"}>
+                                <p className="text-[10px] text-muted-foreground uppercase font-semibold" title="Storage Rack">Storage Rack</p>
+                                <p className="text-xs font-bold text-foreground truncate" title={batch.lotName || "-"}>
                                     {batch.lotName}
                                 </p>
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 min-w-0" title={`Branch: ${branchDisplay || "-"}`}>
                             <Building2 className="h-4 w-4 text-muted-foreground shrink-0" />
-                            <div className="truncate">
-                                <p className="text-[10px] text-muted-foreground uppercase font-semibold">Branch</p>
-                                <p className="text-xs font-bold text-foreground truncate">
+                            <div className="truncate min-w-0" title={branchDisplay || "-"}>
+                                <p className="text-[10px] text-muted-foreground uppercase font-semibold" title="Branch">Branch</p>
+                                <p className="text-xs font-bold text-foreground truncate" title={branchDisplay || "-"}>
                                     {branchDisplay || "-"}
                                 </p>
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 min-w-0" title={`Manufacturing Date: ${batch.manufacturingDate ? String(batch.manufacturingDate).substring(0, 10) : "N/A"}`}>
                             <Layers className="h-4 w-4 text-muted-foreground shrink-0" />
-                            <div className="truncate">
-                                <p className="text-[10px] text-muted-foreground uppercase font-semibold">Mfg Date</p>
-                                <p className="text-xs font-bold text-foreground truncate">
+                            <div className="truncate min-w-0" title={batch.manufacturingDate ? String(batch.manufacturingDate).substring(0, 10) : "N/A"}>
+                                <p className="text-[10px] text-muted-foreground uppercase font-semibold" title="Manufacturing Date">Mfg Date</p>
+                                <p className="text-xs font-bold text-foreground truncate" title={batch.manufacturingDate ? String(batch.manufacturingDate).substring(0, 10) : "N/A"}>
                                     {batch.manufacturingDate ? String(batch.manufacturingDate).substring(0, 10) : "N/A"}
                                 </p>
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 min-w-0" title={`Expiration Date: ${batch.expirationDate ? String(batch.expirationDate).substring(0, 10) : "N/A"}`}>
                             <Layers className="h-4 w-4 text-amber-500 shrink-0" />
-                            <div className="truncate">
-                                <p className="text-[10px] text-muted-foreground uppercase font-semibold">Expiry Date</p>
-                                <p className={`text-xs font-bold truncate ${isExpired(batch.expirationDate) ? "text-rose-600 dark:text-rose-400 font-black" : "text-foreground"}`}>
+                            <div className="truncate min-w-0" title={batch.expirationDate ? String(batch.expirationDate).substring(0, 10) : "N/A"}>
+                                <p className="text-[10px] text-muted-foreground uppercase font-semibold" title="Expiration Date">Expiry Date</p>
+                                <p className={`text-xs font-bold truncate ${isExpired(batch.expirationDate) ? "text-rose-600 dark:text-rose-400 font-black" : "text-foreground"}`} title={batch.expirationDate ? String(batch.expirationDate).substring(0, 10) : "N/A"}>
                                     {batch.expirationDate ? String(batch.expirationDate).substring(0, 10) : "N/A"}
                                 </p>
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
-                            <div className="truncate">
-                                <p className="text-[10px] text-muted-foreground uppercase font-semibold">Live On-Hand</p>
-                                <p className={`text-xs font-black ${liveQuantity < 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                        <div className="flex items-center gap-2 min-w-0" title={`Live On-Hand: ${liveQuantity.toLocaleString()} ${unitLabel}`}>
+                            <div className="truncate min-w-0" title={`${liveQuantity.toLocaleString()} ${unitLabel}`}>
+                                <p className="text-[10px] text-muted-foreground uppercase font-semibold" title="Live On-Hand">Live On-Hand</p>
+                                <p className={`text-xs font-black truncate ${liveQuantity < 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`} title={`${liveQuantity.toLocaleString()} ${unitLabel}`}>
                                     {liveQuantity.toLocaleString()} {unitLabel}
                                 </p>
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
-                            <div className="truncate">
-                                <p className="text-[10px] text-muted-foreground uppercase font-semibold">Total Valuation</p>
-                                <p className="text-xs font-bold text-foreground">
-                                    ₱{totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        <div className="flex items-center gap-2 min-w-0" title={`Total Valuation: ₱${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}>
+                            <div className="truncate min-w-0" title={`₱${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}>
+                                <p className="text-[10px] text-muted-foreground uppercase font-semibold" title="Total Valuation">Total Valuation</p>
+                                <p className="text-xs font-bold text-foreground truncate" title={`₱${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}>
+                                    ₱${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                 </p>
                             </div>
                         </div>
@@ -573,7 +588,7 @@ export default function BatchMovementsDialog({
 
                 {/* Summary Banner */}
                 <div className="grid grid-cols-3 gap-3 px-5 py-3 bg-muted/40 border-b border-border text-xs font-medium">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2" title={`Total Inbound: +${totalIn.toLocaleString()} ${unitLabel}`}>
                         <span className="flex items-center justify-center h-6 w-6 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
                             <ArrowDownLeft className="h-3.5 w-3.5" />
                         </span>
@@ -585,7 +600,7 @@ export default function BatchMovementsDialog({
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2" title={`Total Outbound: -${totalOut.toLocaleString()} ${unitLabel}`}>
                         <span className="flex items-center justify-center h-6 w-6 rounded-full bg-rose-500/15 text-rose-600 dark:text-rose-400">
                             <ArrowUpRight className="h-3.5 w-3.5" />
                         </span>
@@ -597,7 +612,7 @@ export default function BatchMovementsDialog({
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2" title={`Movements Count: ${batchMovements.length} Record${batchMovements.length === 1 ? "" : "s"}`}>
                         <div>
                             <span className="text-[10px] text-muted-foreground block">Movements Count</span>
                             <span className="font-bold text-foreground">
@@ -722,15 +737,15 @@ export default function BatchMovementsDialog({
                                                             <Table className="min-w-[950px] text-xs">
                                                                 <TableHeader>
                                                                     <TableRow className="bg-muted/30">
-                                                                        <TableHead className="w-[150px]">Ref / Key</TableHead>
-                                                                        <TableHead className="w-[140px]">Source Module</TableHead>
-                                                                        <TableHead className="w-[130px]">Transacted Batch</TableHead>
-                                                                        <TableHead className="min-w-[150px]">Transacted Product</TableHead>
-                                                                        <TableHead className="w-[90px]">UOM</TableHead>
-                                                                        <TableHead className="w-[120px]">Branch / Rack</TableHead>
-                                                                        <TableHead className="text-right w-[90px]">Qty Delta</TableHead>
-                                                                        <TableHead className="w-[140px]">Date</TableHead>
-                                                                        <TableHead className="min-w-[180px]">Discrepancy Reasons</TableHead>
+                                                                        <TableHead className="w-[150px]" title="Movement Reference / Key">Ref / Key</TableHead>
+                                                                        <TableHead className="w-[140px]" title="Operational Transaction Source Module">Source Module</TableHead>
+                                                                        <TableHead className="w-[130px]" title="Batch Number on Transaction">Transacted Batch</TableHead>
+                                                                        <TableHead className="min-w-[150px]" title="Product Material on Transaction">Transacted Product</TableHead>
+                                                                        <TableHead className="w-[90px]" title="Unit of Measure">UOM</TableHead>
+                                                                        <TableHead className="w-[120px]" title="Operating Branch and Storage Rack">Branch / Rack</TableHead>
+                                                                        <TableHead className="text-right w-[90px]" title="Quantity Delta">Qty Delta</TableHead>
+                                                                        <TableHead className="w-[140px]" title="Transaction Date & Time">Date</TableHead>
+                                                                        <TableHead className="min-w-[180px]" title="Specific Discrepancy Reasons">Discrepancy Reasons</TableHead>
                                                                     </TableRow>
                                                                 </TableHeader>
                                                                 <TableBody>
@@ -742,7 +757,7 @@ export default function BatchMovementsDialog({
                                                                             transition={{ duration: 0.16, delay: cmIdx * 0.02, ease: "easeOut" as const }}
                                                                             className="hover:bg-muted/30 border-b border-border"
                                                                         >
-                                                                            <TableCell className="py-2.5 font-bold">
+                                                                            <TableCell className="py-2.5 font-bold" title={`Reference: ${cm.refNo} • Key: ${cm.key}`}>
                                                                                 <div className="flex flex-col">
                                                                                     <span className="text-foreground">{cm.refNo}</span>
                                                                                     {cm.key !== cm.refNo && (
@@ -752,33 +767,33 @@ export default function BatchMovementsDialog({
                                                                                     )}
                                                                                 </div>
                                                                             </TableCell>
-                                                                            <TableCell className="py-2.5">
+                                                                            <TableCell className="py-2.5" title={`Source: ${cm.sourceModule || cm.transType || "-"}`}>
                                                                                 <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-muted text-foreground uppercase border border-border">
                                                                                     {cm.sourceModule || cm.transType || "-"}
                                                                                 </span>
                                                                             </TableCell>
-                                                                            <TableCell className="py-2.5">
+                                                                            <TableCell className="py-2.5" title={`Transacted Batch: ${cm.batchNo || "-"}`}>
                                                                                 <span className="font-mono font-bold text-foreground">
                                                                                     {cm.batchNo || "-"}
                                                                                 </span>
                                                                             </TableCell>
-                                                                            <TableCell className="py-2.5">
+                                                                            <TableCell className="py-2.5" title={`Transacted Product: ${cm.productName || "-"}`}>
                                                                                 <div className="flex flex-col">
-                                                                                    <span className="font-medium text-foreground">{cm.productName || "-"}</span>
+                                                                                    <span className="font-medium text-foreground truncate max-w-[200px]">{cm.productName || "-"}</span>
                                                                                 </div>
                                                                             </TableCell>
-                                                                            <TableCell className="py-2.5 font-medium">
+                                                                            <TableCell className="py-2.5 font-medium" title={`UOM: ${cm.unitName || "-"}`}>
                                                                                 {cm.unitName || "-"}
                                                                             </TableCell>
-                                                                            <TableCell className="py-2.5">
+                                                                            <TableCell className="py-2.5" title={`Branch: ${cm.branchName || "-"} • Rack: ${cm.lotName || "-"}`}>
                                                                                 <div className="flex flex-col text-[10px]">
-                                                                                    <span className="font-medium text-foreground">{cm.branchName || "-"}</span>
+                                                                                    <span className="font-medium text-foreground truncate max-w-[140px]">{cm.branchName || "-"}</span>
                                                                                     {cm.lotName && (
-                                                                                        <span className="text-muted-foreground">{cm.lotName}</span>
+                                                                                        <span className="text-muted-foreground truncate max-w-[140px]">{cm.lotName}</span>
                                                                                     )}
                                                                                 </div>
                                                                             </TableCell>
-                                                                            <TableCell className="py-2.5 text-right font-bold">
+                                                                            <TableCell className="py-2.5 text-right font-bold" title={`Quantity Delta: ${cm.qtyIn > 0 ? `+${cm.qtyIn.toLocaleString()}` : cm.qtyOut > 0 ? `-${cm.qtyOut.toLocaleString()}` : "0"}`}>
                                                                                 {cm.qtyIn > 0 && (
                                                                                     <span className="text-emerald-600 dark:text-emerald-400">
                                                                                         +{cm.qtyIn.toLocaleString()}
@@ -791,10 +806,10 @@ export default function BatchMovementsDialog({
                                                                                 )}
                                                                                 {cm.qtyIn === 0 && cm.qtyOut === 0 && "-"}
                                                                             </TableCell>
-                                                                            <TableCell className="py-2.5 text-[11px] text-muted-foreground whitespace-nowrap">
+                                                                            <TableCell className="py-2.5 text-[11px] text-muted-foreground whitespace-nowrap" title={`Timestamp: ${cm.date ? String(cm.date).replace("T", " ") : "-"}`}>
                                                                                 {cm.date ? String(cm.date).replace("T", " ").slice(0, 16) : "-"}
                                                                             </TableCell>
-                                                                            <TableCell className="py-2.5">
+                                                                            <TableCell className="py-2.5" title={cm.reasons.join(" • ")}>
                                                                                 <div className="flex flex-col gap-1">
                                                                                     {cm.reasons.map((r, rIdx) => (
                                                                                         <span
@@ -875,16 +890,16 @@ export default function BatchMovementsDialog({
                                         <Table className="min-w-[1000px]">
                                             <TableHeader>
                                                 <TableRow className="bg-muted/40">
-                                                    <TableHead className="w-[50px] pl-4">No.</TableHead>
-                                                    <TableHead className="min-w-[160px]">Ref / Key</TableHead>
-                                                    <TableHead className="min-w-[150px]">Type / Module</TableHead>
-                                                    <TableHead className="w-[110px]">Direction</TableHead>
-                                                    <TableHead className="text-right w-[110px]">Qty In</TableHead>
-                                                    <TableHead className="text-right w-[110px]">Qty Out</TableHead>
-                                                    <TableHead className="text-right w-[100px]">Unit Cost</TableHead>
-                                                    <TableHead className="w-[110px]">Condition</TableHead>
-                                                    <TableHead className="w-[160px]">Date & Time</TableHead>
-                                                    <TableHead className="min-w-[180px] pr-4">Remarks</TableHead>
+                                                    <TableHead className="w-[50px] pl-4" title="Line Number">No.</TableHead>
+                                                    <TableHead className="min-w-[160px]" title="Movement Reference & System Key">Ref / Key</TableHead>
+                                                    <TableHead className="min-w-[150px]" title="Transaction Type / Source Module">Type / Module</TableHead>
+                                                    <TableHead className="w-[110px]" title="Movement Direction (IN or OUT)">Direction</TableHead>
+                                                    <TableHead className="text-right w-[110px]" title="Inbound Quantity">Qty In</TableHead>
+                                                    <TableHead className="text-right w-[110px]" title="Outbound Quantity">Qty Out</TableHead>
+                                                    <TableHead className="text-right w-[100px]" title="Unit Cost Valuation (₱)">Unit Cost</TableHead>
+                                                    <TableHead className="w-[110px]" title="Inventory Quality Condition">Condition</TableHead>
+                                                    <TableHead className="w-[160px]" title="Recorded Date & Time">Date & Time</TableHead>
+                                                    <TableHead className="min-w-[180px] pr-4" title="Operational Remarks & Notes">Remarks</TableHead>
                                                 </TableRow>
                                             </TableHeader>
                                             <TableBody>
@@ -898,6 +913,7 @@ export default function BatchMovementsDialog({
                                                     const cost = Number(m.unitCost ?? m.unit_cost ?? 0);
                                                     const cond = (m.inventoryCondition ?? m.inventory_condition ?? "GOOD") as string;
                                                     const dateStr = (m.transactionDate ?? m.transaction_date ?? m.postedAt ?? m.posted_at ?? "") as string;
+                                                    const formattedDate = dateStr ? String(dateStr).replace("T", " ").slice(0, 19) : "-";
 
                                                     return (
                                                         <motion.tr
@@ -907,8 +923,8 @@ export default function BatchMovementsDialog({
                                                             transition={{ duration: 0.18, delay: idx * 0.02, ease: "easeOut" as const }}
                                                             className="hover:bg-muted/30 transition-colors border-b border-border"
                                                         >
-                                                            <TableCell className="text-xs text-muted-foreground font-medium pl-4 py-3">{idx + 1}</TableCell>
-                                                            <TableCell className="py-3">
+                                                            <TableCell className="text-xs text-muted-foreground font-medium pl-4 py-3" title={`Line ${idx + 1}`}>{idx + 1}</TableCell>
+                                                            <TableCell className="py-3" title={`Reference: ${refNo} • Key: ${keyNo || "-"}`}>
                                                                 <div className="flex flex-col">
                                                                     <span className="font-bold text-xs text-foreground">
                                                                         {refNo}
@@ -920,12 +936,12 @@ export default function BatchMovementsDialog({
                                                                     )}
                                                                 </div>
                                                             </TableCell>
-                                                            <TableCell className="py-3">
+                                                            <TableCell className="py-3" title={`Transaction Type: ${transType}`}>
                                                                 <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-muted text-foreground uppercase border border-border">
                                                                     {transType}
                                                                 </span>
                                                             </TableCell>
-                                                            <TableCell className="py-3">
+                                                            <TableCell className="py-3" title={`Direction: ${isDirectionIn ? "Inbound (IN)" : "Outbound (OUT)"}`}>
                                                                 {isDirectionIn ? (
                                                                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
                                                                         <ArrowDownLeft className="h-3 w-3" />
@@ -938,24 +954,24 @@ export default function BatchMovementsDialog({
                                                                     </span>
                                                                 )}
                                                             </TableCell>
-                                                            <TableCell className="text-right font-bold text-emerald-600 dark:text-emerald-400 text-xs py-3">
+                                                            <TableCell className="text-right font-bold text-emerald-600 dark:text-emerald-400 text-xs py-3" title={qIn > 0 ? `Inbound: +${qIn.toLocaleString()}` : "0"}>
                                                                 {qIn > 0 ? `+${qIn.toLocaleString()}` : "-"}
                                                             </TableCell>
-                                                            <TableCell className="text-right font-bold text-rose-600 dark:text-rose-400 text-xs py-3">
+                                                            <TableCell className="text-right font-bold text-rose-600 dark:text-rose-400 text-xs py-3" title={qOut > 0 ? `Outbound: -${qOut.toLocaleString()}` : "0"}>
                                                                 {qOut > 0 ? `-${qOut.toLocaleString()}` : "-"}
                                                             </TableCell>
-                                                            <TableCell className="text-right text-xs py-3">
+                                                            <TableCell className="text-right text-xs py-3" title={`Unit Cost: ₱${cost.toFixed(2)}`}>
                                                                 ₱{cost.toFixed(2)}
                                                             </TableCell>
-                                                            <TableCell className="py-3">
+                                                            <TableCell className="py-3" title={`Condition: ${cond}`}>
                                                                 <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border">
                                                                     {cond}
                                                                 </span>
                                                             </TableCell>
-                                                            <TableCell className="text-xs text-muted-foreground whitespace-nowrap py-3">
-                                                                {dateStr ? String(dateStr).replace("T", " ").slice(0, 19) : "-"}
+                                                            <TableCell className="text-xs text-muted-foreground whitespace-nowrap py-3" title={`Timestamp: ${formattedDate}`}>
+                                                                {formattedDate}
                                                             </TableCell>
-                                                            <TableCell className="text-xs text-muted-foreground max-w-[150px] truncate pr-4 py-3" title={m.remarks || ""}>
+                                                            <TableCell className="text-xs text-muted-foreground max-w-[150px] truncate pr-4 py-3" title={m.remarks ? `Remarks: ${m.remarks}` : "No remarks provided"}>
                                                                 {m.remarks || "-"}
                                                             </TableCell>
                                                         </motion.tr>

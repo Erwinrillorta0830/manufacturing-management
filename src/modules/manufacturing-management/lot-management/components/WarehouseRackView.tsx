@@ -172,14 +172,20 @@ export default function WarehouseRackView({
             if (isGhost && lotBatches.length === 0) return false;
 
             if (selectedProductType !== "ALL") {
-                const hasMatchingType = lotBatches.some(
-                    (b) => resolveProductClassification(b.productType, b.productCategory, b.itemCode, b.productName).code === selectedProductType
-                );
-                if (!hasMatchingType) return false;
+                if (selectedProductType === "EMPTY") {
+                    const activeBatches = lotBatches.filter((b) => Number(b.quantity || 0) !== 0);
+                    if (activeBatches.length > 0) return false;
+                } else {
+                    const activeBatches = lotBatches.filter((b) => Number(b.quantity || 0) > 0);
+                    const hasMatchingType = activeBatches.some(
+                        (b) => resolveProductClassification(b.productType, b.productCategory, b.itemCode, b.productName).code === selectedProductType
+                    );
+                    if (!hasMatchingType) return false;
+                }
             }
 
             if (selectedProductId !== "ALL") {
-                const hasProduct = lotBatches.some((b) => Number(b.productId) === Number(selectedProductId));
+                const hasProduct = lotBatches.some((b) => Number(b.quantity || 0) > 0 && Number(b.productId) === Number(selectedProductId));
                 if (!hasProduct) return false;
             }
 
@@ -311,6 +317,7 @@ export default function WarehouseRackView({
                         }
                         if (Number(b.quantity || 0) === 0) return false;
                         if (selectedProductType !== "ALL") {
+                            if (selectedProductType === "EMPTY") return false;
                             const cls = resolveProductClassification(b.productType, b.productCategory, b.itemCode, b.productName);
                             if (cls.code !== selectedProductType) return false;
                         }
@@ -656,15 +663,21 @@ export default function WarehouseRackView({
                                                                 })()}
                                                             </div>
                                                             <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground flex-wrap">
-                                                                <span className="truncate max-w-[130px] font-semibold text-foreground">
+                                                                <span
+                                                                    className="truncate max-w-[130px] font-semibold text-foreground"
+                                                                    title={batch.productName || "-"}
+                                                                >
                                                                     {batch.productName || "-"}
                                                                 </span>
                                                                 {batch.itemCode && (
-                                                                    <span className="truncate max-w-[110px] font-mono text-[10px]">
+                                                                    <span
+                                                                        className="truncate max-w-[110px] font-mono text-[10px]"
+                                                                        title={batch.itemCode}
+                                                                    >
                                                                         ({batch.itemCode})
                                                                     </span>
                                                                 )}
-                                                                <span>
+                                                                <span title={`Quantity: ${batch.quantity.toLocaleString()} ${batch.uomShortcut || uomLabel}`}>
                                                                     Qty: <strong className={isNegative ? "text-rose-600 dark:text-rose-400 font-black font-mono" : "text-foreground"}>{batch.quantity.toLocaleString()}</strong> {batch.uomShortcut || uomLabel}
                                                                 </span>
                                                             </div>

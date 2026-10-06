@@ -386,6 +386,7 @@ export function useBatchRegistration(
                 }
             }
             if (selectedProductType !== "ALL") {
+                if (selectedProductType === "EMPTY") return false;
                 const cls = resolveProductClassification(b.productType, b.productCategory, b.itemCode, b.productName);
                 if (cls.code !== selectedProductType) {
                     return false;
@@ -504,6 +505,7 @@ export function useBatchRegistration(
                 }
             }
             if (!isAllTypes) {
+                if (selectedProductType === "EMPTY") return false;
                 const cls = resolveProductClassification(b.productType, b.productCategory, b.itemCode, b.productName);
                 if (cls.code !== selectedProductType) {
                     return false;
