@@ -57,10 +57,20 @@ interface ApiResponse {
 
 const SESSION_KEY = "low_stock_alert_shown";
 
+function getTodayDateString(): string {
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 function isAlertDismissed(): boolean {
     if (typeof window === "undefined") return false;
     try {
-        return !!(sessionStorage.getItem(SESSION_KEY) || localStorage.getItem(SESSION_KEY));
+        const today = getTodayDateString();
+        const sessionVal = sessionStorage.getItem(SESSION_KEY);
+        const localVal = localStorage.getItem(SESSION_KEY);
+        // Only consider dismissed if it was already marked for TODAY's date
+        return sessionVal === today || localVal === today;
     } catch {
         return false;
     }
@@ -69,8 +79,9 @@ function isAlertDismissed(): boolean {
 function markAlertDismissed(): void {
     if (typeof window === "undefined") return;
     try {
-        sessionStorage.setItem(SESSION_KEY, "1");
-        localStorage.setItem(SESSION_KEY, "1");
+        const today = getTodayDateString();
+        sessionStorage.setItem(SESSION_KEY, today);
+        localStorage.setItem(SESSION_KEY, today);
     } catch {
         // ignore
     }
