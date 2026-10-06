@@ -63,6 +63,8 @@ export interface LotTransferLotStats {
   matchingBatchesToMove: number;
   matchingQtyToMove: number;
   capacityLeft: number;
+  hasNegativeStock?: boolean;
+  negativeStockQty?: number;
 }
 
 export async function GET(request: Request) {
@@ -244,9 +246,9 @@ export async function GET(request: Request) {
     };
 
     // Reconcile movements and live on-hand by (branchId, lotId, productId, batchNo)
-    const movementNetByBranchInvLotId = new Map<string, { onhand: number; mfgDate?: string; expDate?: string }>();
-    const movementNetByBranchLotProductBatch = new Map<string, { onhand: number; mfgDate?: string; expDate?: string }>();
-    const movementNetByBranchLotProductBatchDate = new Map<string, { onhand: number; mfgDate?: string; expDate?: string }>();
+    const movementNetByBranchInvLotId = new Map<string, { onhand: number; count: number; mfgDate?: string; expDate?: string }>();
+    const movementNetByBranchLotProductBatch = new Map<string, { onhand: number; count: number; mfgDate?: string; expDate?: string }>();
+    const movementNetByBranchLotProductBatchDate = new Map<string, { onhand: number; count: number; mfgDate?: string; expDate?: string }>();
 
     rawMovements.forEach((m) => {
       const branchId = Number(m.branchId || m.branch_id || 1);
@@ -263,8 +265,9 @@ export async function GET(request: Request) {
 
       if (invId > 0) {
         const invKey = `${branchId}_${invId}`;
-        const cur = movementNetByBranchInvLotId.get(invKey) || { onhand: 0 };
+        const cur = movementNetByBranchInvLotId.get(invKey) || { onhand: 0, count: 0 };
         cur.onhand += net;
+        cur.count += 1;
         if (mfgDateStr && !cur.mfgDate) cur.mfgDate = mfgDateStr;
         if (expDateStr && !cur.expDate) cur.expDate = expDateStr;
         movementNetByBranchInvLotId.set(invKey, cur);
@@ -272,16 +275,18 @@ export async function GET(request: Request) {
 
       if (bNo && lotId > 0 && pId > 0) {
         const baseKey = `${branchId}_${lotId}_${pId}_${bNo.toLowerCase()}`;
-        const curBase = movementNetByBranchLotProductBatch.get(baseKey) || { onhand: 0 };
+        const curBase = movementNetByBranchLotProductBatch.get(baseKey) || { onhand: 0, count: 0 };
         curBase.onhand += net;
+        curBase.count += 1;
         if (mfgDateStr && !curBase.mfgDate) curBase.mfgDate = mfgDateStr;
         if (expDateStr && !curBase.expDate) curBase.expDate = expDateStr;
         movementNetByBranchLotProductBatch.set(baseKey, curBase);
 
         if (mfgDateStr || expDateStr) {
           const dateKey = `${branchId}_${lotId}_${pId}_${bNo.toLowerCase()}_${mfgDateStr}_${expDateStr}`;
-          const curDate = movementNetByBranchLotProductBatchDate.get(dateKey) || { onhand: 0 };
+          const curDate = movementNetByBranchLotProductBatchDate.get(dateKey) || { onhand: 0, count: 0 };
           curDate.onhand += net;
+          curDate.count += 1;
           if (mfgDateStr) curDate.mfgDate = mfgDateStr;
           if (expDateStr) curDate.expDate = expDateStr;
           movementNetByBranchLotProductBatchDate.set(dateKey, curDate);
@@ -315,8 +320,10 @@ export async function GET(request: Request) {
 
       if (invId > 0) {
         const invKey = `${branchId}_${invId}`;
-        const cur = movementNetByBranchInvLotId.get(invKey) || { onhand: 0 };
-        cur.onhand = onhand;
+        const cur = movementNetByBranchInvLotId.get(invKey) || { onhand: 0, count: 0 };
+        if (cur.count === 0) {
+          cur.onhand = onhand;
+        }
         if (mfgDate && !cur.mfgDate) cur.mfgDate = mfgDate;
         if (expDate && !cur.expDate) cur.expDate = expDate;
         movementNetByBranchInvLotId.set(invKey, cur);
@@ -324,16 +331,20 @@ export async function GET(request: Request) {
 
       if (bNo && lotId > 0 && pId > 0) {
         const baseKey = `${branchId}_${lotId}_${pId}_${bNo.toLowerCase()}`;
-        const curBase = movementNetByBranchLotProductBatch.get(baseKey) || { onhand: 0 };
-        curBase.onhand = onhand;
+        const curBase = movementNetByBranchLotProductBatch.get(baseKey) || { onhand: 0, count: 0 };
+        if (curBase.count === 0) {
+          curBase.onhand = onhand;
+        }
         if (mfgDate && !curBase.mfgDate) curBase.mfgDate = mfgDate;
         if (expDate && !curBase.expDate) curBase.expDate = expDate;
         movementNetByBranchLotProductBatch.set(baseKey, curBase);
 
         if (mfgDateStr || expDateStr) {
           const dateKey = `${branchId}_${lotId}_${pId}_${bNo.toLowerCase()}_${mfgDateStr}_${expDateStr}`;
-          const curDate = movementNetByBranchLotProductBatchDate.get(dateKey) || { onhand: 0 };
-          curDate.onhand = onhand;
+          const curDate = movementNetByBranchLotProductBatchDate.get(dateKey) || { onhand: 0, count: 0 };
+          if (curDate.count === 0) {
+            curDate.onhand = onhand;
+          }
           if (mfgDate) curDate.mfgDate = mfgDate;
           if (expDate) curDate.expDate = expDate;
           movementNetByBranchLotProductBatchDate.set(dateKey, curDate);
@@ -497,6 +508,28 @@ export async function GET(request: Request) {
       const maxCap = lot.maxCapacity;
       const capacityLeft = maxCap > 0 ? Math.max(0, maxCap - totalOccupancy) : 999999;
 
+      let hasNegativeStock = false;
+      let negativeStockQty = 0;
+      movementNetByBranchLotProductBatch.forEach((cur, key) => {
+        const parts = key.split("_");
+        const keyLotId = Number(parts[1] || 0);
+        if (keyLotId === lId && cur.onhand < 0) {
+          hasNegativeStock = true;
+          negativeStockQty += Math.abs(cur.onhand);
+        }
+      });
+      if (!hasNegativeStock) {
+        movementNetByBranchInvLotId.forEach((cur, key) => {
+          const parts = key.split("_");
+          const invId = Number(parts[1] || 0);
+          const keyLotId = invLotToLotMap.get(invId);
+          if (keyLotId === lId && cur.onhand < 0) {
+            hasNegativeStock = true;
+            negativeStockQty += Math.abs(cur.onhand);
+          }
+        });
+      }
+
       lotStats[lId] = {
         lotId: lId,
         lotName: lot.lotName,
@@ -509,6 +542,8 @@ export async function GET(request: Request) {
         matchingBatchesToMove,
         matchingQtyToMove,
         capacityLeft,
+        hasNegativeStock,
+        negativeStockQty,
       };
     });
 

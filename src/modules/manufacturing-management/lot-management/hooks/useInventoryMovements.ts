@@ -112,6 +112,7 @@ export function useInventoryMovements(
 
                 // Product Type filter
                 if (selectedProductType !== "ALL") {
+                    if (selectedProductType === "EMPTY") return false;
                     const cls = resolveProductClassification(m.productTypeId || m.productTypeName, undefined, m.productCode, m.productName);
                     if (cls.code !== selectedProductType) return false;
                 }

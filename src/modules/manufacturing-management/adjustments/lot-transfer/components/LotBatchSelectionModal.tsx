@@ -12,7 +12,20 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Calendar, Sparkles, AlertTriangle, Check, Layers } from "lucide-react";
+import {
+  Calendar,
+  Sparkles,
+  AlertTriangle,
+  Check,
+  Layers,
+  Package,
+  ArrowRight,
+  Search,
+  X,
+  SlidersHorizontal,
+  Boxes,
+} from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { RowQuantityInput } from "./RowQuantityInput";
 import {
   checkBatchEligibility,
@@ -63,6 +76,10 @@ export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
   const currentLotKey = open && sourceLotId > 0 ? `${open}-${sourceLotId}` : null;
   const loading = Boolean(currentLotKey && loadedLotKey !== currentLotKey);
 
+  // Search & filter state
+  const [productSearch, setProductSearch] = useState<string>("");
+  const [batchSearch, setBatchSearch] = useState<string>("");
+
   const [userSelectedProductId, setUserSelectedProductId] = useState<number | null>(null);
   const [userSelectedBatchId, setUserSelectedBatchId] = useState<number | null>(null);
   const [customTargetBatchNo, setCustomTargetBatchNo] = useState<string | null>(null);
@@ -111,12 +128,24 @@ export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
   const matchingProducts = useMemo(() => {
     if (!productTypeId && !productTypeName) return products;
     return products.filter((p) => {
-      if (productTypeId && p.productTypeId && p.productTypeId === productTypeId) return true;
-      const pClass = resolveProductClassification(p.productTypeName, p.productCategoryName);
-      const selClass = resolveProductClassification(productTypeName, productTypeName);
+      if (productTypeId && p.productTypeId && Number(p.productTypeId) === Number(productTypeId)) return true;
+      const pClass = resolveProductClassification(p.productTypeName || p.productTypeId, p.productCategoryName);
+      const selClass = resolveProductClassification(productTypeName || productTypeId, productTypeName);
       return pClass.code === selClass.code;
     });
   }, [products, productTypeId, productTypeName]);
+
+  // Filter products by user search query (name, description, code)
+  const filteredProducts = useMemo(() => {
+    const q = productSearch.trim().toLowerCase();
+    if (!q) return matchingProducts;
+    return matchingProducts.filter((p) => {
+      const name = (p.productName || "").toLowerCase();
+      const desc = (p.productDescription || "").toLowerCase();
+      const code = (p.productCode || "").toLowerCase();
+      return name.includes(q) || desc.includes(q) || code.includes(q);
+    });
+  }, [matchingProducts, productSearch]);
 
   const selectedProductId = useMemo(() => {
     if (userSelectedProductId && matchingProducts.some((p) => p.productId === userSelectedProductId)) {
@@ -140,7 +169,7 @@ export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
   const availableBatches = useMemo(() => selectedProduct?.batches || [], [selectedProduct]);
 
   const classification = resolveProductClassification(
-    selectedProduct?.productTypeName || productTypeName,
+    selectedProduct?.productTypeName || selectedProduct?.productTypeId || productTypeName || productTypeId,
     selectedProduct?.productCategoryName
   );
 
@@ -169,12 +198,16 @@ export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
             : null,
         qa_status: b.qa_status,
         available_quantity: Number(b.available_quantity || 0),
+        created_at: b.created_at || undefined,
       }));
 
     const sorted = sortBatchesByStrategy(candidates, classification.strategy);
 
     return sorted.map((candidate, idx) => {
-      const eligibility = checkBatchEligibility(candidate, new Date(), { targetIsBadStock });
+      const eligibility = checkBatchEligibility(candidate, new Date(), {
+        targetIsBadStock,
+        classificationCode: classification.code,
+      });
       const isAlreadyAdded = existingLines.some(
         (l) => l.sourceInventoryLotId === candidate.inventory_lot_id
       );
@@ -187,7 +220,14 @@ export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
         isRecommended,
       };
     });
-  }, [availableBatches, classification.strategy, existingLines, targetIsBadStock]);
+  }, [availableBatches, classification.strategy, classification.code, existingLines, targetIsBadStock]);
+
+  // Filter batches by search query
+  const filteredBatches = useMemo(() => {
+    const q = batchSearch.trim().toLowerCase();
+    if (!q) return evaluatedBatches;
+    return evaluatedBatches.filter((b) => b.batch_no.toLowerCase().includes(q));
+  }, [evaluatedBatches, batchSearch]);
 
   const formatDefaultTargetBatchNo = (batchNo: string | null | undefined): string => {
     const clean = String(batchNo ?? "").trim();
@@ -216,6 +256,21 @@ export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
     return Math.min(batchAvailable, remainingTargetCapacity);
   }, [selectedBatch, hasCapacityLimit, remainingTargetCapacity]);
 
+  const isDiscreteUnit = useMemo(() => {
+    const uom = String(selectedProduct?.uomName || targetUomName || "").toLowerCase();
+    return (
+      uom.includes("pc") ||
+      uom.includes("piece") ||
+      uom.includes("bag") ||
+      uom.includes("box") ||
+      uom.includes("can") ||
+      uom.includes("btl") ||
+      uom.includes("bottle")
+    );
+  }, [selectedProduct?.uomName, targetUomName]);
+
+  const minAllowedQty = isDiscreteUnit ? 1 : 0.0001;
+
   const targetBatchNo = customTargetBatchNo !== null
     ? customTargetBatchNo
     : selectedBatch
@@ -227,6 +282,7 @@ export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
     setUserSelectedBatchId(null);
     setCustomTargetBatchNo(null);
     setTransferQty(0);
+    setBatchSearch("");
   };
 
   const handleSelectBatch = (candidate: typeof evaluatedBatches[0]) => {
@@ -249,6 +305,8 @@ export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
       setCustomTargetBatchNo(null);
       setTransferQty(0);
       setLineRemarks("");
+      setProductSearch("");
+      setBatchSearch("");
     }
     onOpenChange(isOpen);
   };
@@ -259,8 +317,8 @@ export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
       return;
     }
 
-    if (transferQty <= 0) {
-      toast.error("Transfer quantity must be greater than zero.");
+    if (transferQty < minAllowedQty) {
+      toast.error(`Transfer quantity must be at least ${minAllowedQty} ${selectedProduct.uomName || ""}.`);
       return;
     }
 
@@ -281,6 +339,14 @@ export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
 
     if (!targetBatchNo.trim()) {
       toast.error("Target batch number cannot be empty.");
+      return;
+    }
+
+    const isDuplicateTarget = existingLines.some(
+      (l) => l.targetBatchNo.toLowerCase() === targetBatchNo.trim().toLowerCase()
+    );
+    if (isDuplicateTarget) {
+      toast.error(`Target batch number "${targetBatchNo.trim()}" is already used in this transfer request.`);
       return;
     }
 
@@ -314,58 +380,71 @@ export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
     handleClose(false);
   };
 
+  const isFefo = classification.strategy === "FEFO";
+
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-5xl sm:max-w-5xl w-[94vw] h-[88vh] max-h-[880px] flex flex-col p-6 overflow-hidden">
-        <DialogHeader className="shrink-0 pb-3 border-b flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div className="space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <DialogTitle className="flex items-center gap-2 text-xl font-bold">
-                <Layers className="w-5 h-5 text-primary" />
-                Select Batch to Transfer
-              </DialogTitle>
-              {productTypeName && (
-                <Badge variant="secondary" className="text-xs font-semibold">
-                  {productTypeName}
+      <DialogContent className="max-w-6xl sm:max-w-6xl w-[96vw] h-[92vh] max-h-[920px] flex flex-col p-0 overflow-hidden gap-0 shadow-2xl">
+        {/* Header */}
+        <DialogHeader className="shrink-0 px-6 py-3.5 border-b bg-muted/20">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                  <Layers className="w-4.5 h-4.5 text-primary" />
+                </div>
+                <DialogTitle className="text-lg font-bold">
+                  Select Batch to Transfer
+                </DialogTitle>
+                {productTypeName && (
+                  <Badge variant="secondary" className="text-xs font-semibold">
+                    {productTypeName}
+                  </Badge>
+                )}
+                <Badge
+                  variant="outline"
+                  className={`text-xs font-semibold gap-1 ${
+                    isFefo
+                      ? "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30"
+                      : "bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/30"
+                  }`}
+                >
+                  {isFefo ? (
+                    <>
+                      <Sparkles className="w-3 h-3 text-amber-500" />
+                      FEFO (Nearest Expiry First)
+                    </>
+                  ) : (
+                    <>
+                      <Calendar className="w-3 h-3 text-blue-500" />
+                      FIFO (Earliest Inward First)
+                    </>
+                  )}
                 </Badge>
-              )}
-              <Badge
-                variant="outline"
-                className={`text-xs font-semibold gap-1 ${
-                  classification.strategy === "FEFO"
-                    ? "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30"
-                    : "bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/30"
-                }`}
-              >
-                {classification.strategy === "FEFO" ? (
+              </div>
+              <DialogDescription className="text-xs flex items-center gap-1.5 text-muted-foreground">
+                <span>Transfer from: <strong className="text-foreground">{sourceLotName || `Lot #${sourceLotId}`}</strong></span>
+                <ArrowRight className="w-3 h-3 shrink-0 text-muted-foreground" />
+                <span>To: <strong className="text-foreground">{targetLotName || `Lot #${targetLotId}`}</strong></span>
+                {productTypeName && (
                   <>
-                    <Sparkles className="w-3 h-3 text-amber-500" />
-                    FEFO (Nearest Expiry First)
-                  </>
-                ) : (
-                  <>
-                    <Calendar className="w-3 h-3 text-blue-500" />
-                    FIFO (Earliest Inward First)
+                    <span className="text-muted-foreground/50">•</span>
+                    <span>Classification: <strong className="text-foreground">{productTypeName}</strong></span>
                   </>
                 )}
-              </Badge>
+              </DialogDescription>
             </div>
-            <DialogDescription className="text-xs">
-              Transfer stock from <strong className="text-foreground">{sourceLotName || `Lot #${sourceLotId}`}</strong> to{" "}
-              <strong className="text-foreground">{targetLotName || `Lot #${targetLotId}`}</strong>.
-              Scoped to <strong className="text-foreground">{productTypeName || "selected product classification"}</strong>.
-            </DialogDescription>
-          </div>
 
-          {hasCapacityLimit && (
-            <div className="border rounded-lg px-3 py-1.5 bg-muted/20 shrink-0 text-right sm:text-right">
-              <div className="text-[10px] uppercase font-semibold text-muted-foreground">
-                Destination Lot Capacity
-              </div>
-              <div className="text-xs font-mono font-bold flex items-center gap-1.5 justify-end">
-                <span className={isTargetLotFull ? "text-destructive" : "text-foreground"}>
+            {hasCapacityLimit && (
+              <div className={`border rounded-xl px-3.5 py-1.5 shrink-0 text-right ${
+                isTargetLotFull ? "bg-destructive/10 border-destructive/30" : "bg-card border-border shadow-sm"
+              }`}>
+                <div className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wide">
+                  Destination Capacity
+                </div>
+                <div className="text-xs font-mono font-bold text-foreground">
                   {projectedOccupancy.toLocaleString()} / {targetMaxCapacity.toLocaleString()} {targetUomName || ""}
-                </span>
+                </div>
                 <Badge
                   variant={isTargetLotFull ? "destructive" : "secondary"}
                   className="text-[9px] px-1.5 py-0 font-medium"
@@ -373,50 +452,73 @@ export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
                   {isTargetLotFull ? "Full" : `${remainingTargetCapacity.toLocaleString()} space left`}
                 </Badge>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto space-y-4 py-3 pr-1">
-          {/* Target Lot Full Warning */}
-          {hasCapacityLimit && isTargetLotFull && (
-            <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg text-destructive text-xs flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0" />
-              <span>
-                Destination storage lot <strong>{targetLotName || `Lot #${targetLotId}`}</strong> has reached maximum capacity ({projectedOccupancy.toLocaleString()} / {targetMaxCapacity.toLocaleString()} {targetUomName || ""}). Cannot allocate additional quantity.
-              </span>
-            </div>
-          )}
-          {/* Product selector */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Select Product
-              </label>
-              {productTypeName && (
-                <span className="text-[11px] text-muted-foreground">
-                  Showing <strong>{productTypeName}</strong> only ({matchingProducts.length} {matchingProducts.length === 1 ? "product" : "products"})
+        {/* 2-COLUMN MASTER-DETAIL BODY */}
+        <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+          {/* ─── LEFT COLUMN: PRODUCT MASTER LIST (~38% width) ─── */}
+          <div className="w-full md:w-[360px] lg:w-[400px] shrink-0 border-r flex flex-col bg-muted/10 overflow-hidden">
+            {/* Product Search & Count */}
+            <div className="p-3 border-b space-y-2 bg-background/80 backdrop-blur-sm">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <Package className="w-3.5 h-3.5 text-primary" />
+                  Products ({matchingProducts.length})
                 </span>
-              )}
-            </div>
-            {loading && products.length === 0 ? (
-              <div className="h-14 w-full bg-muted/60 animate-pulse rounded-md" />
-            ) : matchingProducts.length === 0 ? (
-              <div className="text-sm text-muted-foreground p-8 border rounded-lg bg-muted/20 text-center space-y-1.5">
-                <p className="font-semibold text-foreground">
-                  {products.length === 0
-                    ? "No Stock Available in Source Lot"
-                    : `No ${productTypeName || "Compatible"} Stock Available`}
-                </p>
-                <p className="text-xs text-muted-foreground max-w-sm mx-auto">
-                  {products.length === 0
-                    ? `Storage lot "${sourceLotName || `#${sourceLotId}`}" currently has no active products with positive inventory to transfer.`
-                    : `Storage lot "${sourceLotName || `#${sourceLotId}`}" contains inventory, but none belongs to "${productTypeName || "the selected product classification"}".`}
-                </p>
+                {matchingProducts.length > 0 && (
+                  <span className="text-[11px] text-muted-foreground">
+                    {filteredProducts.length} of {matchingProducts.length}
+                  </span>
+                )}
               </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-48 overflow-y-auto p-0.5">
-                {matchingProducts.map((p) => {
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-muted-foreground" />
+                <Input
+                  value={productSearch}
+                  onChange={(e) => setProductSearch(e.target.value)}
+                  placeholder="Search product, SKU, code..."
+                  className="h-8 pl-8 pr-7 text-xs bg-card"
+                />
+                {productSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setProductSearch("")}
+                    className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Product Cards List */}
+            <div className="flex-1 overflow-y-auto p-2.5 space-y-2">
+              {loading && products.length === 0 ? (
+                <div className="space-y-2 p-1">
+                  {[1, 2, 3, 4].map((i) => (
+                    <div key={i} className="h-20 bg-muted/60 animate-pulse rounded-lg" />
+                  ))}
+                </div>
+              ) : matchingProducts.length === 0 ? (
+                <div className="text-center p-8 text-xs text-muted-foreground space-y-1.5">
+                  <Package className="w-7 h-7 mx-auto opacity-30" />
+                  <p className="font-semibold text-foreground">No Stock Available</p>
+                  <p className="max-w-[220px] mx-auto text-[11px]">
+                    {products.length === 0
+                      ? "Source lot currently has no positive inventory to transfer."
+                      : `No products match classification "${productTypeName || "selected"}".`}
+                  </p>
+                </div>
+              ) : filteredProducts.length === 0 ? (
+                <div className="text-center p-6 text-xs text-muted-foreground space-y-1">
+                  <Search className="w-6 h-6 mx-auto opacity-30" />
+                  <p className="font-medium text-foreground">No matching products</p>
+                  <p className="text-[11px]">Try adjusting your search query.</p>
+                </div>
+              ) : (
+                filteredProducts.map((p, i) => {
                   const isSelected = p.productId === selectedProductId;
                   const totalQty = p.batches.reduce((sum, b) => sum + (Number(b.available_quantity) || 0), 0);
                   const unaddedCount = p.batches.filter(
@@ -425,119 +527,192 @@ export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
                   const isAllAdded = unaddedCount === 0;
 
                   return (
-                    <button
+                    <motion.button
                       key={p.productId}
                       type="button"
                       disabled={isAllAdded}
                       onClick={() => handleSelectProduct(p.productId)}
-                      className={`text-left p-3 rounded-lg border transition-all ${
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: Math.min(i * 0.03, 0.2), duration: 0.18 }}
+                      whileHover={!isAllAdded ? { scale: 1.01 } : {}}
+                      whileTap={!isAllAdded ? { scale: 0.99 } : {}}
+                      className={`text-left p-3 rounded-lg border transition-all duration-150 w-full relative ${
                         isAllAdded
-                          ? "opacity-50 bg-muted/40 border-dashed cursor-not-allowed"
+                          ? "opacity-45 bg-muted/30 border-dashed cursor-not-allowed"
                           : isSelected
-                          ? "border-primary bg-primary/10 ring-2 ring-primary/40 shadow-sm"
-                          : "border-border hover:bg-muted/50"
+                          ? "bg-primary/10 border-primary ring-1 ring-primary/40 shadow-sm border-l-4 border-l-primary"
+                          : "bg-card border-border hover:border-primary/30 hover:bg-muted/30"
                       }`}
                     >
                       <div className="flex items-start justify-between gap-1.5">
-                        <div className="text-sm font-semibold leading-tight truncate text-foreground">
+                        <div className="text-xs font-semibold leading-snug text-foreground line-clamp-2">
                           {p.productDescription || p.productName}
                         </div>
+                        {isSelected && !isAllAdded && (
+                          <div className="shrink-0 w-4 h-4 rounded-full bg-primary flex items-center justify-center mt-0.5">
+                            <Check className="w-2.5 h-2.5 text-primary-foreground" />
+                          </div>
+                        )}
                         {isAllAdded && (
-                          <Badge variant="secondary" className="text-[10px] shrink-0 font-normal">
+                          <Badge variant="secondary" className="text-[9px] px-1.5 py-0 shrink-0 font-normal">
                             All Added
                           </Badge>
                         )}
                       </div>
-                      <div className="flex items-center gap-1.5 mt-1 text-xs text-muted-foreground truncate">
-                        {p.productDescription && p.productName && (
-                          <span className="font-medium text-muted-foreground/90">{p.productName}</span>
-                        )}
+
+                      <div className="flex items-center gap-1.5 mt-1 text-[11px] text-muted-foreground truncate">
                         {p.productCode && (
-                          <span>• Code: {p.productCode}</span>
+                          <span className="font-mono">Code: {p.productCode}</span>
                         )}
-                        <span>• UOM: {p.uomName || "-"}</span>
+                        <span>•</span>
+                        <span>{p.uomName || "-"}</span>
                       </div>
-                      <div className="mt-1.5 text-[11px] font-mono text-muted-foreground/80 flex items-center justify-between border-t pt-1">
+
+                      <div className="mt-2 text-[11px] font-mono text-muted-foreground/80 flex items-center justify-between border-t pt-1.5">
                         <span>{p.batches.length} {p.batches.length === 1 ? "batch" : "batches"}</span>
-                        <span className="font-semibold text-foreground">{totalQty.toLocaleString()} {p.uomName || ""}</span>
+                        <span className={`font-bold ${isSelected ? "text-primary" : "text-foreground"}`}>
+                          {totalQty.toLocaleString()} {p.uomName || ""}
+                        </span>
                       </div>
-                    </button>
+                    </motion.button>
                   );
-                })}
-              </div>
-            )}
+                })
+              )}
+            </div>
           </div>
 
-          {products.length > 0 && (
-            <>
-              {/* Batches Table with FEFO/FIFO badges */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          {/* ─── RIGHT COLUMN: BATCH DETAILS & CONFIGURE (~62% width) ─── */}
+          <div className="flex-1 flex flex-col overflow-hidden bg-background">
+            {/* Top Sub-section: Available Batches Header & Filter */}
+            <div className="px-5 py-3 border-b flex items-center justify-between gap-3 bg-muted/5">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <Boxes className="w-4 h-4 text-primary" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-foreground">
                     Available Batches in Source Lot
-                  </label>
-                  <div className="text-xs text-muted-foreground flex items-center gap-1.5">
-                    <span>Rule:</span>
-                    <span className="font-semibold text-primary">{classification.strategy}</span>
-                    <span>({classification.label})</span>
-                  </div>
+                  </span>
+                  <Badge
+                    variant="outline"
+                    className={`text-[10px] px-1.5 py-0 gap-1 font-semibold ${
+                      isFefo
+                        ? "border-amber-500/40 text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/20"
+                        : "border-blue-500/40 text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/20"
+                    }`}
+                  >
+                    {isFefo ? <Sparkles className="w-2.5 h-2.5" /> : <Calendar className="w-2.5 h-2.5" />}
+                    {classification.strategy} Priority
+                  </Badge>
                 </div>
+                {selectedProduct && (
+                  <p className="text-[11px] text-muted-foreground truncate">
+                    Selected Product: <strong className="text-foreground">{selectedProduct.productDescription || selectedProduct.productName}</strong>
+                  </p>
+                )}
+              </div>
 
-                {loading && availableBatches.length === 0 ? (
-                  <div className="h-32 bg-muted/50 animate-pulse rounded-md" />
-                ) : evaluatedBatches.length === 0 ? (
-                  <div className="text-sm text-muted-foreground p-6 border rounded-md bg-muted/20 text-center">
-                    All batches for this product have already been added to the transfer.
-                  </div>
-                ) : (
-                  <div className="border rounded-md divide-y min-h-[160px] max-h-[260px] overflow-y-auto">
-                    {evaluatedBatches.map((b) => {
+              {/* Batch Search Input */}
+              {evaluatedBatches.length > 3 && (
+                <div className="relative w-44 shrink-0">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-muted-foreground" />
+                  <Input
+                    value={batchSearch}
+                    onChange={(e) => setBatchSearch(e.target.value)}
+                    placeholder="Search batch #..."
+                    className="h-8 pl-8 text-xs bg-card"
+                  />
+                  {batchSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setBatchSearch("")}
+                      className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Middle: Scrollable Batches List */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+              {loading && availableBatches.length === 0 ? (
+                <div className="space-y-2">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="h-16 bg-muted/50 animate-pulse rounded-lg" />
+                  ))}
+                </div>
+              ) : availableBatches.length === 0 ? (
+                <div className="text-sm text-muted-foreground p-8 border rounded-xl bg-muted/20 text-center space-y-1">
+                  <Package className="w-7 h-7 mx-auto opacity-40 text-muted-foreground" />
+                  <p className="font-semibold text-foreground">No Batches Available</p>
+                  <p className="text-xs">No active inventory batches with positive quantity found for this product in this lot.</p>
+                </div>
+              ) : evaluatedBatches.length > 0 && evaluatedBatches.every((b) => b.isAlreadyAdded) ? (
+                <div className="text-sm text-muted-foreground p-8 border rounded-xl bg-muted/20 text-center space-y-1">
+                  <Check className="w-7 h-7 mx-auto text-emerald-500 opacity-60" />
+                  <p className="font-semibold text-foreground">All Batches Already Added</p>
+                  <p className="text-xs">All inventory batches for this product have already been included in this transfer request.</p>
+                </div>
+              ) : filteredBatches.length === 0 ? (
+                <div className="text-center p-8 text-xs text-muted-foreground space-y-1">
+                  <Search className="w-6 h-6 mx-auto opacity-30" />
+                  <p className="font-medium text-foreground">No batches match &ldquo;{batchSearch}&rdquo;</p>
+                  <p className="text-[11px]">Clear the batch search to view all batches.</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <AnimatePresence initial={false}>
+                    {filteredBatches.map((b, idx) => {
                       const isSelected = selectedBatch?.inventory_lot_id === b.inventory_lot_id;
                       const isBlocked = !b.eligibility.isEligible || b.isAlreadyAdded;
 
                       return (
-                        <div
+                        <motion.div
                           key={b.inventory_lot_id}
+                          initial={{ opacity: 0, y: -6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: Math.min(idx * 0.03, 0.2), duration: 0.18 }}
                           onClick={() => !isBlocked && handleSelectBatch(b)}
-                          className={`p-3.5 flex items-center justify-between text-sm transition-colors cursor-pointer ${
+                          className={`p-3 rounded-xl border transition-all duration-150 cursor-pointer flex items-center justify-between gap-3 ${
                             isSelected
-                              ? "bg-primary/10 border-l-4 border-l-primary"
+                              ? "bg-primary/8 border-primary ring-1 ring-primary/40 shadow-sm border-l-4 border-l-primary"
                               : isBlocked
-                              ? "opacity-50 cursor-not-allowed bg-muted/30"
-                              : "hover:bg-muted/40"
+                              ? "opacity-50 cursor-not-allowed bg-muted/20 border-border"
+                              : "bg-card border-border hover:border-primary/30 hover:bg-muted/30"
                           }`}
                         >
-                          <div className="flex flex-col gap-1.5 min-w-0 flex-1">
+                          <div className="flex flex-col gap-1 min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className="font-mono font-semibold text-foreground">{b.batch_no}</span>
+                              <span className="font-mono font-bold text-foreground text-xs">{b.batch_no}</span>
                               {b.isRecommended && (
-                                <Badge className="bg-amber-500 hover:bg-amber-600 text-white gap-1 text-[10px] px-2 py-0.5">
+                                <Badge className="bg-amber-500 hover:bg-amber-600 text-white gap-1 text-[9px] px-1.5 py-0 font-medium">
                                   <Sparkles className="w-2.5 h-2.5" />
-                                  {classification.strategy} Priority
+                                  {classification.strategy} Recommended
                                 </Badge>
                               )}
                               {b.isAlreadyAdded && (
-                                <Badge variant="outline" className="text-xs text-muted-foreground">
+                                <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-muted-foreground">
                                   Already Added
                                 </Badge>
                               )}
                               {b.eligibility.isEligible && (b.qa_status === "DAMAGED" || b.qa_status === "QUARANTINED" || b.eligibility.isExpired) && (
-                                <Badge variant="outline" className="border-amber-500 text-amber-600 bg-amber-50 dark:bg-amber-950/20 text-[10px] px-1.5 py-0 font-medium">
+                                <Badge variant="outline" className="border-amber-500 text-amber-600 bg-amber-50 dark:bg-amber-950/20 text-[9px] px-1.5 py-0 font-medium">
                                   Quarantine Relocation
                                 </Badge>
                               )}
                               {!b.eligibility.isEligible && (
-                                <Badge variant="destructive" className="gap-1 text-[10px] px-2 py-0.5">
+                                <Badge variant="destructive" className="gap-1 text-[9px] px-1.5 py-0">
                                   <AlertTriangle className="w-2.5 h-2.5" />
                                   {b.eligibility.reason || "Ineligible"}
                                 </Badge>
                               )}
                             </div>
 
-                            <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
+                            <div className="flex items-center gap-3 text-[11px] text-muted-foreground flex-wrap">
                               {b.expiry_date && (
                                 <span className="flex items-center gap-1 font-mono">
-                                  <Calendar className="w-3 h-3" />
+                                  <Calendar className="w-3 h-3 text-muted-foreground" />
                                   Exp: {b.expiry_date}
                                   {b.eligibility.daysUntilExpiry !== null && (
                                     <span className={b.eligibility.daysUntilExpiry < 30 ? "text-amber-600 font-semibold" : ""}>
@@ -549,38 +724,68 @@ export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
                               {b.manufacturing_date && (
                                 <span className="font-mono">Mfg: {b.manufacturing_date}</span>
                               )}
-                              <span>QA: {b.qa_status || "GOOD"}</span>
+                              <span>QA: <strong className="text-foreground font-normal">{b.qa_status || "GOOD"}</strong></span>
                             </div>
                           </div>
 
-                          <div className="text-right pl-4 shrink-0">
-                            <div className="font-mono font-bold text-foreground text-base">
-                              {b.available_quantity.toLocaleString()} {selectedProduct?.uomName || ""}
+                          <div className="text-right pl-3 shrink-0 flex items-center gap-3">
+                            <div>
+                              <div className="font-mono font-bold text-foreground text-sm">
+                                {b.available_quantity.toLocaleString()}
+                              </div>
+                              <div className="text-[10px] text-muted-foreground">
+                                {selectedProduct?.uomName || ""} available
+                              </div>
                             </div>
-                            <div className="text-xs text-muted-foreground">Available</div>
+                            <div className={`w-5 h-5 rounded-full flex items-center justify-center border transition-all ${
+                              isSelected
+                                ? "bg-primary border-primary text-primary-foreground shadow-sm"
+                                : "border-muted-foreground/30 bg-muted/20"
+                            }`}>
+                              {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                            </div>
                           </div>
-                        </div>
+                        </motion.div>
                       );
                     })}
-                  </div>
-                )}
-              </div>
+                  </AnimatePresence>
+                </div>
+              )}
+            </div>
 
-              {/* Allocation input details */}
+            {/* Bottom: Docked / Persistent "Configure Line Item" Section */}
+            <AnimatePresence>
               {selectedBatch && (
-                <div className="p-4 border rounded-lg bg-card space-y-3">
-                  <div className="flex items-center justify-between text-sm font-semibold border-b pb-2">
-                    <span className="text-foreground">Configure Line Item</span>
-                    <span className="text-xs text-muted-foreground font-mono">
+                <motion.div
+                  key={selectedBatch.inventory_lot_id}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 12 }}
+                  transition={{ duration: 0.2 }}
+                  className="shrink-0 border-t bg-muted/15 p-4 space-y-3"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <SlidersHorizontal className="w-3.5 h-3.5 text-primary" />
+                      <span className="text-xs font-bold uppercase tracking-wider text-foreground">
+                        Configure Transfer Quantity
+                      </span>
+                    </div>
+                    <div className="text-xs text-muted-foreground font-mono">
                       Selected Batch: <strong className="text-foreground">{selectedBatch.batch_no}</strong>
-                    </span>
+                      {selectedBatch.expiry_date && (
+                        <span className="ml-2 text-muted-foreground/70">
+                          (Exp: {selectedBatch.expiry_date})
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1.5">
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between h-5">
                         <label className="text-xs font-semibold text-foreground">
-                          Transfer Quantity
+                          Transfer Quantity *
                         </label>
                         <span className="text-[11px] text-muted-foreground font-mono">
                           Max: <strong className="text-foreground">{maxAllowedQty.toLocaleString()} {selectedProduct?.uomName || ""}</strong>
@@ -595,63 +800,79 @@ export const LotBatchSelectionModal: React.FC<LotBatchSelectionModalProps> = ({
                         value={transferQty}
                         onChange={setTransferQty}
                         max={maxAllowedQty}
-                        min={0.0001}
+                        min={minAllowedQty}
                         placeholder="Enter quantity"
+                        className="bg-card text-sm"
                         disabled={isTargetLotFull}
                       />
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-foreground">
-                        Target Batch Number
-                      </label>
+                      <div className="flex items-center justify-between h-5">
+                        <label className="text-xs font-semibold text-foreground">
+                          Target Batch Number *
+                        </label>
+                        <span className="text-[11px] text-muted-foreground/70 font-mono">
+                          Format: [batch]-LT
+                        </span>
+                      </div>
                       <Input
                         value={targetBatchNo}
                         onChange={(e) => setCustomTargetBatchNo(e.target.value)}
                         placeholder="Destination batch #"
-                        className="h-8 font-mono text-sm"
+                        className="h-8 font-mono text-sm bg-card"
                         disabled={isTargetLotFull}
                       />
                     </div>
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-foreground">
-                      Line Remarks (Optional)
-                    </label>
+                    <div className="flex items-center justify-between h-5">
+                      <label className="text-xs font-semibold text-foreground">
+                        Line Remarks <span className="font-normal text-muted-foreground">(Optional)</span>
+                      </label>
+                    </div>
                     <Input
                       value={lineRemarks}
                       onChange={(e) => setLineRemarks(e.target.value)}
                       placeholder="e.g. Relocating near packaging line"
-                      className="h-8 text-sm"
+                      className="h-8 text-sm bg-card"
                       disabled={isTargetLotFull}
                     />
                   </div>
-                </div>
+                </motion.div>
               )}
-            </>
-          )}
+            </AnimatePresence>
+          </div>
         </div>
 
-        <DialogFooter className="pt-3 border-t shrink-0 flex items-center justify-end gap-2">
-          <Button variant="outline" onClick={() => handleClose(false)}>
-            Cancel
-          </Button>
-          <Button
-            onClick={handleConfirmAdd}
-            disabled={
-              !selectedBatch ||
-              Number(selectedBatch.available_quantity || 0) <= 0 ||
-              transferQty <= 0 ||
-              transferQty > maxAllowedQty ||
-              !targetBatchNo.trim() ||
-              isTargetLotFull
-            }
-            className="gap-1.5"
-          >
-            <Check className="w-4 h-4" />
-            Add to Transfer
-          </Button>
+        {/* Footer */}
+        <DialogFooter className="px-6 py-3 border-t shrink-0 flex items-center justify-between bg-muted/20">
+          <div className="text-xs text-muted-foreground">
+            {existingLines.length > 0 && (
+              <span><strong>{existingLines.length}</strong> line{existingLines.length !== 1 ? "s" : ""} already added in this request</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => handleClose(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleConfirmAdd}
+              disabled={
+                !selectedBatch ||
+                Number(selectedBatch.available_quantity || 0) <= 0 ||
+                transferQty <= 0 ||
+                transferQty > maxAllowedQty ||
+                !targetBatchNo.trim() ||
+                isTargetLotFull
+              }
+              className="gap-1.5 min-w-[140px]"
+            >
+              <Check className="w-4 h-4" />
+              Add to Transfer
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

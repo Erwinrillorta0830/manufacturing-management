@@ -238,6 +238,21 @@ export const lotTransferService = {
   },
 
   /**
+   * Reverse a posted transfer
+   */
+  async reverseTransfer(id: number, reason: string): Promise<LotTransfer> {
+    const res = await fetch(`${BASE_API}/${id}/reverse`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason }),
+    });
+
+    const result = await handleResponse<LotTransfer>(res, "Failed to reverse lot transfer");
+    toast.success(`Lot transfer ${result.requestNo} reversed successfully!`);
+    return result;
+  },
+
+  /**
    * Fetch available product types (Raw Materials, Finished Goods, Packaging)
    */
   async fetchProductTypes(): Promise<import("../types").ProductTypeOption[]> {

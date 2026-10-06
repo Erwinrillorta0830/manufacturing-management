@@ -272,20 +272,20 @@ export default function InventoryMovementTable({
                     <Table className="min-w-[1550px]">
                         <TableHeader>
                             <TableRow>
-                                <TableHead className="w-[50px]">No.</TableHead>
-                                <TableHead className="min-w-[160px]">Movement Ref & Key</TableHead>
-                                <TableHead className="w-[110px]">Direction</TableHead>
-                                <TableHead className="min-w-[160px]">Transaction Type</TableHead>
-                                <TableHead className="min-w-[150px]">Storage Rack (Lot)</TableHead>
-                                <TableHead className="min-w-[140px]">Branch</TableHead>
-                                <TableHead className="min-w-[200px]">Product / SKU</TableHead>
-                                <TableHead className="min-w-[140px]">Batch No</TableHead>
-                                <TableHead className="text-right w-[110px]">Quantity</TableHead>
-                                <TableHead className="text-right w-[100px]">Unit Cost</TableHead>
-                                <TableHead className="text-right w-[110px]">Diff Cost</TableHead>
-                                <TableHead className="w-[110px]">Condition</TableHead>
-                                <TableHead className="w-[160px]">Date & Time</TableHead>
-                                <TableHead className="min-w-[160px]">Remarks</TableHead>
+                                <TableHead className="w-[50px]" title="Line Number">No.</TableHead>
+                                <TableHead className="min-w-[160px]" title="Movement Reference Number & Unique System Key">Movement Ref & Key</TableHead>
+                                <TableHead className="w-[110px]" title="Inventory Flow Direction (IN or OUT)">Direction</TableHead>
+                                <TableHead className="min-w-[160px]" title="Operational Transaction Type & Source Module">Transaction Type</TableHead>
+                                <TableHead className="min-w-[150px]" title="Physical Warehouse Storage Lot / Rack">Storage Rack (Lot)</TableHead>
+                                <TableHead className="min-w-[140px]" title="Operating Facility Branch & Code">Branch</TableHead>
+                                <TableHead className="min-w-[200px]" title="Master Product Description, Name & SKU Code">Product / SKU</TableHead>
+                                <TableHead className="min-w-[140px]" title="Assigned Production or Intake Batch Number">Batch No</TableHead>
+                                <TableHead className="text-right w-[110px]" title="Transacted Movement Quantity">Quantity</TableHead>
+                                <TableHead className="text-right w-[100px]" title="Valuation Unit Cost (₱)">Unit Cost</TableHead>
+                                <TableHead className="text-right w-[110px]" title="Financial Cost Variance / Difference (₱)">Diff Cost</TableHead>
+                                <TableHead className="w-[110px]" title="Inventory Condition & Source Status">Condition</TableHead>
+                                <TableHead className="w-[160px]" title="Recorded Transaction Date & Timestamp">Date & Time</TableHead>
+                                <TableHead className="min-w-[160px]" title="Operational Transaction Remarks & Notes">Remarks</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -298,6 +298,20 @@ export default function InventoryMovementTable({
                                 const matchedLot = lots.find((l) => Number(l.lotId) === Number(effectiveLotId));
                                 const resolvedLotName = matchedLot?.lotName || (Number(effectiveLotId) === 0 ? "Unassigned / Pending Storage Rack (Ghost Rack)" : (m.lotName || "-"));
                                 const qty = isDirectionIn ? Number(m.quantityIn || 0) : Number(m.quantityOut || 0);
+                                const branchName = matchedLot?.branchName || (m.branchName as string) || (m.branch_name as string) || null;
+                                const branchCode = matchedLot?.branchCode;
+                                const matchedProduct = m.productId ? productMap.get(Number(m.productId)) : undefined;
+                                const displayDescription =
+                                    m.productDescription ||
+                                    m.description ||
+                                    matchedProduct?.description ||
+                                    m.productName ||
+                                    "-";
+                                const formattedDate = m.transactionDate
+                                    ? m.transactionDate.replace("T", " ")
+                                    : m.postedAt
+                                    ? m.postedAt.replace("T", " ")
+                                    : "-";
 
                                 return (
                                     <motion.tr
@@ -307,8 +321,10 @@ export default function InventoryMovementTable({
                                         transition={{ duration: 0.2, delay: idx * 0.025, ease: "easeOut" as const }}
                                         className="hover:bg-muted/50 transition-colors border-b border-border"
                                     >
-                                        <TableCell className="text-xs text-muted-foreground font-medium">{m.displayNumber}</TableCell>
-                                        <TableCell>
+                                        <TableCell className="text-xs text-muted-foreground font-medium" title={`Line ${m.displayNumber}`}>
+                                            {m.displayNumber}
+                                        </TableCell>
+                                        <TableCell title={`Reference: ${m.referenceNo || "-"} • Key: ${m.movementKey || "-"}`}>
                                             <div className="flex flex-col min-w-[130px]">
                                                 <span className="font-bold text-xs text-foreground">
                                                     {m.referenceNo || m.movementKey || "-"}
@@ -320,7 +336,7 @@ export default function InventoryMovementTable({
                                                 )}
                                             </div>
                                         </TableCell>
-                                        <TableCell>
+                                        <TableCell title={`Direction: ${isDirectionIn ? "Inbound (IN)" : "Outbound (OUT)"}`}>
                                             {isDirectionIn ? (
                                                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
                                                     <ArrowDownLeft className="h-3 w-3" />
@@ -333,7 +349,7 @@ export default function InventoryMovementTable({
                                                 </span>
                                             )}
                                         </TableCell>
-                                        <TableCell>
+                                        <TableCell title={`Type: ${(m.transactionType || m.sourceModule || "MOVEMENT").replace(/_/g, " ")}${m.stockType ? ` • Stock Type: ${m.stockType}` : ""}`}>
                                             <div className="flex flex-col items-start gap-0.5">
                                                 <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-muted text-foreground uppercase border border-border">
                                                     {(m.transactionType || m.sourceModule || "MOVEMENT").replace(/_/g, " ")}
@@ -345,46 +361,33 @@ export default function InventoryMovementTable({
                                                 )}
                                             </div>
                                         </TableCell>
-                                        <TableCell className="font-semibold text-xs text-foreground">
-                                            {resolvedLotName}
+                                        <TableCell className="font-semibold text-xs text-foreground max-w-[200px]" title={`Storage Rack: ${resolvedLotName}`}>
+                                            <span className="truncate block">
+                                                {resolvedLotName}
+                                            </span>
                                         </TableCell>
-                                        <TableCell>
-                                            {(() => {
-                                                const branchName = matchedLot?.branchName || (m.branchName as string) || (m.branch_name as string) || null;
-                                                const branchCode = matchedLot?.branchCode;
-                                                if (!branchName) return <span className="text-muted-foreground text-xs">-</span>;
-                                                return (
-                                                    <div className="flex items-center gap-1.5">
-                                                        <Building2 className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                                                        <div className="flex flex-col min-w-0">
-                                                            <span className="text-xs font-semibold text-foreground truncate" title={branchName}>
-                                                                {branchName}
-                                                            </span>
-                                                            {branchCode && (
-                                                                <span className="font-mono text-[10px] text-muted-foreground">{branchCode}</span>
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })()}
-                                        </TableCell>
-                                        <TableCell>
-                                            <div className="flex flex-col min-w-[150px] max-w-[220px]">
-                                                {(() => {
-                                                    const matchedProduct = m.productId ? productMap.get(Number(m.productId)) : undefined;
-                                                    const displayDescription =
-                                                        m.productDescription ||
-                                                        m.description ||
-                                                        matchedProduct?.description ||
-                                                        m.productName ||
-                                                        "-";
-
-                                                    return (
-                                                        <span className="font-semibold text-xs text-foreground truncate" title={displayDescription}>
-                                                            {displayDescription}
+                                        <TableCell title={branchName ? `Branch: ${branchName}${branchCode ? ` (${branchCode})` : ""}` : "-"}>
+                                            {!branchName ? (
+                                                <span className="text-muted-foreground text-xs">-</span>
+                                            ) : (
+                                                <div className="flex items-center gap-1.5">
+                                                    <Building2 className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                                    <div className="flex flex-col min-w-0">
+                                                        <span className="text-xs font-semibold text-foreground truncate">
+                                                            {branchName}
                                                         </span>
-                                                    );
-                                                })()}
+                                                        {branchCode && (
+                                                            <span className="font-mono text-[10px] text-muted-foreground">{branchCode}</span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </TableCell>
+                                        <TableCell title={`Product: ${displayDescription}${m.productCode ? ` • SKU: ${m.productCode}` : ""}`}>
+                                            <div className="flex flex-col min-w-[150px] max-w-[220px]">
+                                                <span className="font-semibold text-xs text-foreground truncate">
+                                                    {displayDescription}
+                                                </span>
                                                 {m.productCode && (
                                                     <span className="font-mono text-[10px] text-muted-foreground truncate">
                                                         {m.productCode}
@@ -392,7 +395,7 @@ export default function InventoryMovementTable({
                                                 )}
                                             </div>
                                         </TableCell>
-                                        <TableCell className="font-bold text-xs">
+                                        <TableCell className="font-bold text-xs" title={m.batchNo ? `Batch No: ${m.batchNo}` : "No Batch Assigned"}>
                                             {m.batchNo ? (
                                                 <span className="px-1.5 py-0.5 rounded bg-primary/5 text-primary border border-primary/20 font-mono">
                                                     {m.batchNo}
@@ -401,7 +404,7 @@ export default function InventoryMovementTable({
                                                 <span className="text-muted-foreground">-</span>
                                             )}
                                         </TableCell>
-                                        <TableCell className="text-right font-black text-xs">
+                                        <TableCell className="text-right font-black text-xs" title={`Quantity: ${isDirectionIn ? "+" : "-"}${qty.toLocaleString()} units`}>
                                             {isDirectionIn ? (
                                                 <span className="text-emerald-600 dark:text-emerald-400">
                                                     +{qty.toLocaleString()}
@@ -412,15 +415,15 @@ export default function InventoryMovementTable({
                                                 </span>
                                             )}
                                         </TableCell>
-                                        <TableCell className="text-right text-xs">
+                                        <TableCell className="text-right text-xs" title={Number(m.unitCost || 0) > 0 ? `Unit Cost: ₱${Number(m.unitCost).toFixed(2)}` : "No unit cost recorded"}>
                                             {Number(m.unitCost || 0) > 0 ? `₱${Number(m.unitCost).toFixed(2)}` : "-"}
                                         </TableCell>
-                                        <TableCell className="text-right text-xs font-semibold">
+                                        <TableCell className="text-right text-xs font-semibold" title={Number(m.differenceCost || 0) > 0 ? `Difference Cost: ₱${Number(m.differenceCost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "No cost difference"}>
                                             {Number(m.differenceCost || 0) > 0
                                                 ? `₱${Number(m.differenceCost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                                                 : "-"}
                                         </TableCell>
-                                        <TableCell>
+                                        <TableCell title={`Condition: ${m.inventoryCondition || "GOOD"}${m.sourceStatus ? ` • Status: ${m.sourceStatus}` : ""}`}>
                                             <div className="flex flex-col items-start gap-0.5">
                                                 <span className="text-[10px] font-extrabold px-2 py-0.5 rounded uppercase border bg-muted text-muted-foreground border-border">
                                                     {m.inventoryCondition || "GOOD"}
@@ -432,10 +435,10 @@ export default function InventoryMovementTable({
                                                 )}
                                             </div>
                                         </TableCell>
-                                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap" title={`Timestamp: ${formattedDate}`}>
                                             {m.transactionDate ? m.transactionDate.replace("T", " ").slice(0, 19) : (m.postedAt ? m.postedAt.replace("T", " ").slice(0, 19) : "-")}
                                         </TableCell>
-                                        <TableCell className="text-xs text-muted-foreground max-w-[150px] truncate" title={m.remarks || ""}>
+                                        <TableCell className="text-xs text-muted-foreground max-w-[150px] truncate" title={m.remarks ? `Remarks: ${m.remarks}` : "No remarks provided"}>
                                             {m.remarks || "-"}
                                         </TableCell>
                                     </motion.tr>

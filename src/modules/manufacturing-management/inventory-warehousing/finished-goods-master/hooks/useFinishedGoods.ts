@@ -190,6 +190,45 @@ export function useFinishedGoods(initialTab: string = "details") {
         return products.find(p => p.id === selectedProductId) || null;
     }, [products, selectedProductId]);
 
+    // Check if product master details have been modified
+    const hasProductDetailsChanged = useMemo(() => {
+        if (!selectedProduct) return false;
+
+        const normalize = (val: unknown) => (val === undefined || val === null ? "" : String(val).trim());
+        const normalizeNum = (val: unknown, fallback = 0) => {
+            const n = Number(val);
+            return Number.isFinite(n) ? n : fallback;
+        };
+
+        if (editedDetails.title !== undefined && normalize(editedDetails.title) !== normalize(selectedProduct.title)) return true;
+        if (editedDetails.sku !== undefined && normalize(editedDetails.sku) !== normalize(selectedProduct.sku)) return true;
+        if (editedDetails.description !== undefined && normalize(editedDetails.description) !== normalize(selectedProduct.description)) return true;
+        if (editedDetails.barcode !== undefined && normalize(editedDetails.barcode) !== normalize(selectedProduct.barcode)) return true;
+        if (editedDetails.baseUom !== undefined && normalize(editedDetails.baseUom) !== normalize(selectedProduct.baseUom)) return true;
+        if (editedDetails.product_brand !== undefined && normalize(editedDetails.product_brand) !== normalize(selectedProduct.product_brand)) return true;
+        if (editedDetails.product_category !== undefined && normalize(editedDetails.product_category) !== normalize(selectedProduct.product_category)) return true;
+        if (editedDetails.product_class !== undefined && normalize(editedDetails.product_class) !== normalize(selectedProduct.product_class)) return true;
+        if (editedDetails.product_segment !== undefined && normalize(editedDetails.product_segment) !== normalize(selectedProduct.product_segment)) return true;
+        if (editedDetails.product_section !== undefined && normalize(editedDetails.product_section) !== normalize(selectedProduct.product_section)) return true;
+        if (editedDetails.product_shelf_life !== undefined && normalizeNum(editedDetails.product_shelf_life) !== normalizeNum(selectedProduct.product_shelf_life)) return true;
+        if (editedDetails.unit_of_measurement_count !== undefined && normalizeNum(editedDetails.unit_of_measurement_count) !== normalizeNum(selectedProduct.unit_of_measurement_count)) return true;
+        if (editedDetails.maintaining_quantity !== undefined && normalizeNum(editedDetails.maintaining_quantity) !== normalizeNum(selectedProduct.maintaining_quantity)) return true;
+        if (editedDetails.targetSellingPrice !== undefined && normalizeNum(editedDetails.targetSellingPrice) !== normalizeNum(selectedProduct.targetSellingPrice)) return true;
+        if (editedDetails.densityFactor !== undefined && normalizeNum(editedDetails.densityFactor, 1) !== normalizeNum(selectedProduct.densityFactor, 1)) return true;
+        if (editedDetails.product_image !== undefined && normalize(editedDetails.product_image) !== normalize(selectedProduct.product_image)) return true;
+        if (editedDetails.parent_id !== undefined && normalize(editedDetails.parent_id) !== normalize(selectedProduct.parent_id)) return true;
+        if (editedDetails.has_bom !== undefined) {
+            const currentHasBom = selectedProduct.has_bom !== undefined ? Boolean(selectedProduct.has_bom) : selectedProduct.has_versions !== false;
+            if (Boolean(editedDetails.has_bom) !== currentHasBom) return true;
+        }
+        if (editedDetails.status !== undefined) {
+            const currentStatus = selectedProduct.status || (selectedProduct.isActive ? "Active" : "Inactive");
+            if (normalize(editedDetails.status).toLowerCase() !== normalize(currentStatus).toLowerCase()) return true;
+        }
+
+        return false;
+    }, [editedDetails, selectedProduct]);
+
     // Fetch Forex Rate in a separate, non-blocking useEffect
     useEffect(() => {
         async function loadForexRate() {
@@ -1067,8 +1106,15 @@ export function useFinishedGoods(initialTab: string = "details") {
             }
         }
 
-        // Validate routing operation steps only if product has a BOM
-        if (validatedDetails.hasBom) {
+        // Check if the current version is locked
+        const isCurrentVersionLocked = validatedDetails.hasBom && Boolean(
+            selectedVersion &&
+            selectedVersion.status !== "Draft" &&
+            selectedVersion.status !== "Revision Required"
+        );
+
+        // Validate routing operation steps only if product has an editable BOM version
+        if (validatedDetails.hasBom && !isCurrentVersionLocked) {
             for (let i = 0; i < editedRoutes.length; i++) {
                 const r = editedRoutes[i];
                 const stepNum = r.sequence_order || i + 1;
@@ -1298,7 +1344,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                         ? activeBOMId
                         : (versions.find(v => v.version_id > 0)?.version_id || null));
 
-                if (!validatedDetails.hasBom || !targetVersionId) {
+                if (!validatedDetails.hasBom || !targetVersionId || isCurrentVersionLocked) {
                     await updateProduct(numericProductId, {
                         product_name: validatedDetails.title,
                         product_code: validatedDetails.sku,
@@ -1445,7 +1491,11 @@ export function useFinishedGoods(initialTab: string = "details") {
                 }
                 setHasUnsavedChanges(false);
                 setEditFieldErrors({});
-                toast.success("Finished good configuration saved successfully!");
+                if (isCurrentVersionLocked) {
+                    toast.success("Product details updated successfully!");
+                } else {
+                    toast.success("Finished good configuration saved successfully!");
+                }
             }
         } catch (err) {
             clearInterval(interval);
@@ -2137,6 +2187,7 @@ export function useFinishedGoods(initialTab: string = "details") {
         setEditedOverheads,
         hasUnsavedChanges,
         setHasUnsavedChanges,
+        hasProductDetailsChanged,
         overheadTypes,
         setOverheadTypes,
         operationTypes,

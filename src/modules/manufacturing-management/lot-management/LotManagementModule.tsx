@@ -172,6 +172,7 @@ export default function LotManagementModule() {
 
     const availableProductsForSelect = useMemo(() => {
         if (selectedProductType === "ALL") return products;
+        if (selectedProductType === "EMPTY") return [];
         return products.filter((p) => {
             const pType = (p as { productType?: unknown; product_type?: unknown }).productType || (p as { productType?: unknown; product_type?: unknown }).product_type;
             const pCat = (p as { productCategory?: unknown; category_name?: unknown }).productCategory || (p as { productCategory?: unknown; category_name?: unknown }).category_name;
@@ -226,20 +227,30 @@ export default function LotManagementModule() {
             baseLots = baseLots.filter((l) => Number(l.lotId) === 0 || Number(l.uomId) === Number(selectedUomId));
         }
         if (selectedProductType !== "ALL") {
-            const relevantLotIds = new Set(
-                batches
-                    .filter((b) => {
-                        const cls = resolveProductClassification(b.productType, b.productCategory, b.itemCode, b.productName);
-                        return cls.code === selectedProductType;
-                    })
-                    .map((b) => (!b.lotId || !knownLotIds.has(Number(b.lotId)) ? 0 : Number(b.lotId)))
-            );
-            baseLots = baseLots.filter((l) => relevantLotIds.has(Number(l.lotId)));
+            if (selectedProductType === "EMPTY") {
+                const lotsWithActiveBatches = new Set(
+                    batches
+                        .filter((b) => Number(b.quantity || 0) !== 0)
+                        .map((b) => (!b.lotId || !knownLotIds.has(Number(b.lotId)) ? 0 : Number(b.lotId)))
+                );
+                baseLots = baseLots.filter((l) => !lotsWithActiveBatches.has(Number(l.lotId)));
+            } else {
+                const relevantLotIds = new Set(
+                    batches
+                        .filter((b) => {
+                            if (Number(b.quantity || 0) <= 0) return false;
+                            const cls = resolveProductClassification(b.productType, b.productCategory, b.itemCode, b.productName);
+                            return cls.code === selectedProductType;
+                        })
+                        .map((b) => (!b.lotId || !knownLotIds.has(Number(b.lotId)) ? 0 : Number(b.lotId)))
+                );
+                baseLots = baseLots.filter((l) => relevantLotIds.has(Number(l.lotId)));
+            }
         }
         if (selectedProductId === "ALL") return baseLots;
         const relevantLotIds = new Set(
             batches
-                .filter((b) => Number(b.productId) === Number(selectedProductId))
+                .filter((b) => Number(b.quantity || 0) > 0 && Number(b.productId) === Number(selectedProductId))
                 .map((b) => (!b.lotId || !knownLotIds.has(Number(b.lotId)) ? 0 : Number(b.lotId)))
         );
         return baseLots.filter((l) => relevantLotIds.has(Number(l.lotId)));
@@ -268,6 +279,7 @@ export default function LotManagementModule() {
                 }
             }
             if (selectedProductType !== "ALL") {
+                if (selectedProductType === "EMPTY") return false;
                 const cls = resolveProductClassification(b.productType, b.productCategory, b.itemCode, b.productName);
                 if (cls.code !== selectedProductType) {
                     return false;
@@ -339,15 +351,25 @@ export default function LotManagementModule() {
             baseLots = baseLots.filter((l) => Number(l.uomId) === Number(selectedUomId));
         }
         if (selectedProductType !== "ALL") {
-            const relevantLotIds = new Set(
-                batches
-                    .filter((b) => {
-                        const cls = resolveProductClassification(b.productType, b.productCategory, b.itemCode, b.productName);
-                        return cls.code === selectedProductType;
-                    })
-                    .map((b) => b.lotId)
-            );
-            baseLots = baseLots.filter((l) => relevantLotIds.has(l.lotId));
+            if (selectedProductType === "EMPTY") {
+                const lotsWithActiveBatches = new Set(
+                    batches
+                        .filter((b) => Number(b.quantity || 0) !== 0)
+                        .map((b) => Number(b.lotId || 0))
+                );
+                baseLots = baseLots.filter((l) => !lotsWithActiveBatches.has(Number(l.lotId)));
+            } else {
+                const relevantLotIds = new Set(
+                    batches
+                        .filter((b) => {
+                            if (Number(b.quantity || 0) <= 0) return false;
+                            const cls = resolveProductClassification(b.productType, b.productCategory, b.itemCode, b.productName);
+                            return cls.code === selectedProductType;
+                        })
+                        .map((b) => Number(b.lotId || 0))
+                );
+                baseLots = baseLots.filter((l) => relevantLotIds.has(Number(l.lotId)));
+            }
         }
         if (selectedLotIds.length > 0) {
             baseLots = baseLots.filter((l) => selectedLotIds.includes(Number(l.lotId)));
@@ -355,7 +377,7 @@ export default function LotManagementModule() {
         if (selectedProductId !== "ALL") {
             const relevantLotIds = new Set(
                 batches
-                    .filter((b) => Number(b.productId) === Number(selectedProductId))
+                    .filter((b) => Number(b.quantity || 0) > 0 && Number(b.productId) === Number(selectedProductId))
                     .map((b) => b.lotId)
             );
             baseLots = baseLots.filter((l) => relevantLotIds.has(l.lotId));

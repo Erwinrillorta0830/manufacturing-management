@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -28,7 +29,10 @@ import {
   History,
   Activity,
   ArrowRight,
+  Building2,
+  RotateCcw,
 } from "lucide-react";
+import { toast } from "sonner";
 import { TransferStatusBadge } from "./components/TransferStatusBadge";
 import { SearchableSelect, type Option } from "./components/SearchableSelect";
 import { lotTransferService } from "./services/lot-transfer.service";
@@ -66,14 +70,14 @@ interface LotTransferSummaryModuleProps {
 }
 
 export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> = ({
-  userBranchId,
   transferId,
 }) => {
   const [activeBranches, setActiveBranches] = useState<BranchOption[]>([]);
-  const [filterBranchId, setFilterBranchId] = useState<number | null>(userBranchId || null);
+  const [filterBranchId, setFilterBranchId] = useState<number | "all" | null>(null);
 
   const [transfers, setTransfers] = useState<LotTransfer[]>([]);
   const [loading, setLoading] = useState(false);
+  const [auditLoadingId, setAuditLoadingId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [dateFrom, setDateFrom] = useState<string>("");
@@ -88,7 +92,11 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
 
   const branchOptions: Option[] = useMemo(() => {
     return [
-      { value: 0, label: "All Active Branches" },
+      {
+        value: "all",
+        label: "All Active Branches",
+        subLabel: "Audit register across all facilities",
+      },
       ...activeBranches.map((b) => ({
         value: b.id,
         label: b.branchName,
@@ -104,11 +112,21 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [loadingAudit, setLoadingAudit] = useState(false);
 
+  // Reversal state for posted transfers
+  const [reverseModalOpen, setReverseModalOpen] = useState(false);
+  const [reversalReason, setReversalReason] = useState("");
+  const [reversalLoading, setReversalLoading] = useState(false);
+
   const loadTransfers = useCallback(async () => {
+    if (filterBranchId === null) {
+      setTransfers([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const filter: Parameters<typeof lotTransferService.listTransfers>[0] = {
-        branchId: filterBranchId || undefined,
+        branchId: filterBranchId === "all" ? undefined : filterBranchId,
         search: search.trim() || undefined,
         dateFrom: dateFrom || undefined,
         dateTo: dateTo || undefined,
@@ -129,17 +147,13 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
     loadTransfers();
   }, [loadTransfers]);
 
-  useEffect(() => {
-    if (transferId) {
-      lotTransferService.getTransferById(transferId).then((data) => {
-        handleOpenDetail(data);
-      });
-    }
-  }, [transferId]);
+  const listAnimKey = useMemo(() => {
+    return `${filterBranchId ?? "none"}-${statusFilter}-${search}-${dateFrom}-${dateTo}`;
+  }, [filterBranchId, statusFilter, search, dateFrom, dateTo]);
 
-  const handleOpenDetail = async (item: LotTransfer) => {
+  const handleOpenDetail = useCallback(async (item: LotTransfer) => {
+    setAuditLoadingId(item.id);
     setSelectedTransfer(item);
-    setDetailModalOpen(true);
     setLoadingAudit(true);
 
     try {
@@ -151,9 +165,44 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
       setSelectedTransfer(full);
       setStatusHistory(historyRes);
       setMovements(movRes);
-    } catch {
+      setDetailModalOpen(true);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to load audit history";
+      toast.error(msg);
     } finally {
       setLoadingAudit(false);
+      setAuditLoadingId(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (transferId) {
+      lotTransferService.getTransferById(transferId).then((data) => {
+        if (data?.branchId) {
+          setFilterBranchId(data.branchId);
+        }
+        handleOpenDetail(data);
+      });
+    }
+  }, [transferId, handleOpenDetail]);
+
+  const handleConfirmReversal = async () => {
+    if (!selectedTransfer || !reversalReason.trim()) {
+      toast.error("Please provide a reason for reversing this transfer.");
+      return;
+    }
+    setReversalLoading(true);
+    try {
+      await lotTransferService.reverseTransfer(selectedTransfer.id, reversalReason.trim());
+      setReverseModalOpen(false);
+      setDetailModalOpen(false);
+      setReversalReason("");
+      loadTransfers();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to reverse lot transfer";
+      toast.error(msg);
+    } finally {
+      setReversalLoading(false);
     }
   };
 
@@ -172,15 +221,18 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
         </div>
 
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={loadTransfers}
-            disabled={loading}
-            className="h-9 w-9"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-          </Button>
+          <motion.div whileTap={{ scale: 0.95 }}>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={loadTransfers}
+              disabled={loading || filterBranchId === null}
+              className="h-9 w-9"
+              title="Refresh audit register"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+            </Button>
+          </motion.div>
         </div>
       </div>
 
@@ -190,8 +242,15 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
         <div>
           <SearchableSelect
             options={branchOptions}
-            value={filterBranchId || 0}
-            onChange={(val) => setFilterBranchId(Number(val) > 0 ? Number(val) : null)}
+            value={filterBranchId !== null ? filterBranchId : ""}
+            onChange={(val) => {
+              if (val === "all") {
+                setFilterBranchId("all");
+              } else {
+                const num = Number(val);
+                setFilterBranchId(Number.isNaN(num) || num <= 0 ? null : num);
+              }
+            }}
             placeholder="Select a branch..."
             triggerClassName="h-9"
           />
@@ -202,7 +261,8 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search request #, batch..."
+            disabled={filterBranchId === null}
+            placeholder={filterBranchId === null ? "Select a branch first to search..." : "Search request #, batch..."}
             className="pl-9 h-9"
           />
         </div>
@@ -210,7 +270,8 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="h-9 px-3 border rounded-md text-sm bg-background font-medium"
+          disabled={filterBranchId === null}
+          className="h-9 px-3 border rounded-md text-sm bg-background font-medium disabled:opacity-50"
         >
           <option value="ALL">All Statuses</option>
           <option value="Draft">Draft</option>
@@ -226,16 +287,18 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
           type="date"
           value={dateFrom}
           onChange={(e) => setDateFrom(e.target.value)}
+          disabled={filterBranchId === null}
           placeholder="From Date"
-          className="h-9"
+          className="h-9 disabled:opacity-50"
         />
 
         <Input
           type="date"
           value={dateTo}
           onChange={(e) => setDateTo(e.target.value)}
+          disabled={filterBranchId === null}
           placeholder="To Date"
-          className="h-9"
+          className="h-9 disabled:opacity-50"
         />
       </div>
 
@@ -253,76 +316,142 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
             </TableRow>
           </TableHeader>
           <TableBody>
-            {loading && (transfers || []).length === 0 ? (
+            {filterBranchId === null ? (
               <TableRow>
-                <TableCell colSpan={6} className="h-32 text-center text-muted-foreground">
-                  <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 opacity-40" />
-                  Loading summary...
+                <TableCell colSpan={6} className="h-72 text-center">
+                  <motion.div
+                    initial={{ opacity: 0, y: 16, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    transition={{ duration: 0.28, ease: "easeOut" }}
+                    className="flex flex-col items-center justify-center max-w-md mx-auto text-center p-6 space-y-3.5"
+                  >
+                    <div className="w-14 h-14 rounded-2xl bg-primary/10 text-primary flex items-center justify-center shadow-sm ring-8 ring-primary/5">
+                      <Building2 className="w-7 h-7 text-primary" />
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-base font-bold text-foreground">Select an Operating Branch</h3>
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        Please select an active branch from the dropdown above to view the audit register of manufacturing lot transfers.
+                      </p>
+                    </div>
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-muted/60 text-[11px] font-medium text-muted-foreground border">
+                      <History className="w-3.5 h-3.5 text-primary" />
+                      <span>Audit & Lifecycle Register</span>
+                    </div>
+                  </motion.div>
+                </TableCell>
+              </TableRow>
+            ) : loading && (transfers || []).length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={6} className="h-36 text-center text-muted-foreground">
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="flex flex-col items-center justify-center gap-2"
+                  >
+                    <RefreshCw className="w-6 h-6 animate-spin mx-auto opacity-50 text-primary" />
+                    <span className="text-sm font-medium">Loading summary & audit records...</span>
+                  </motion.div>
                 </TableCell>
               </TableRow>
             ) : (transfers || []).length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="h-32 text-center text-muted-foreground">
-                  No lot transfer records found.
+                <TableCell colSpan={6} className="h-44 text-center text-muted-foreground">
+                  <motion.div
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="flex flex-col items-center justify-center gap-2 py-4"
+                  >
+                    <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center text-muted-foreground/60">
+                      <FileText className="w-5 h-5" />
+                    </div>
+                    <span className="font-semibold text-foreground text-sm">No lot transfer records found</span>
+                    <span className="text-xs text-muted-foreground max-w-sm">
+                      {search || statusFilter !== "ALL" || dateFrom || dateTo
+                        ? "No transfers match the selected filter criteria for this branch."
+                        : "No lot transfer records have been registered under this branch."}
+                    </span>
+                  </motion.div>
                 </TableCell>
               </TableRow>
             ) : (
-              (transfers || []).map((item) => {
-                const branchDisplay = item.branchName && item.branchName !== "-" ? item.branchName : item.branchId ? `Branch #${item.branchId}` : "-";
-                const sourceLotDisplay = item.sourceLotName || `Lot #${item.sourceLotId}`;
-                const targetLotDisplay = item.targetLotName || `Lot #${item.targetLotId}`;
-                const lineCount = item.lineCount || item.details?.length || 1;
+              <AnimatePresence mode="popLayout" initial={false}>
+                {(transfers || []).map((item, idx) => {
+                  const branchDisplay = item.branchName && item.branchName !== "-" ? item.branchName : item.branchId ? `Branch #${item.branchId}` : "-";
+                  const sourceLotDisplay = item.sourceLotName || `Lot #${item.sourceLotId}`;
+                  const targetLotDisplay = item.targetLotName || `Lot #${item.targetLotId}`;
+                  const lineCount = item.lineCount || item.details?.length || 1;
 
-                return (
-                  <TableRow key={item.id} className="hover:bg-muted/40 transition-colors">
-                    <TableCell title={`${item.requestNo} • ${item.transferDate} • ${branchDisplay}`}>
-                      <div className="font-mono font-bold text-xs text-foreground">
-                        {item.requestNo}
-                      </div>
-                      <div className="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">
-                        <span>{item.transferDate}</span>
-                        <span>•</span>
-                        <span className="truncate max-w-[130px]">{branchDisplay}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell title={`Status: ${item.status}`}>
-                      <TransferStatusBadge status={item.status} />
-                    </TableCell>
-                    <TableCell title={`${sourceLotDisplay} → ${targetLotDisplay}`}>
-                      <div className="flex items-center gap-1 text-xs font-semibold text-foreground flex-wrap">
-                        <span>{sourceLotDisplay}</span>
-                        <ArrowRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                        <span>{targetLotDisplay}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right" title={`${item.quantity.toLocaleString()} total units across ${lineCount} line(s)`}>
-                      <div className="font-mono font-bold text-xs text-foreground">
-                        {item.quantity.toLocaleString()}
-                      </div>
-                      <div className="text-[11px] font-mono text-muted-foreground">
-                        {lineCount} {lineCount === 1 ? "line" : "lines"}
-                      </div>
-                    </TableCell>
-                    <TableCell title={item.reason || "No operational justification provided"}>
-                      <div className="text-xs text-muted-foreground max-w-[220px] truncate">
-                        {item.reason || "-"}
-                      </div>
-                    </TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleOpenDetail(item)}
-                      className="h-8 text-xs gap-1.5"
+                  return (
+                    <motion.tr
+                      key={`${listAnimKey}-${item.id}`}
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 10 }}
+                      transition={{
+                        duration: 0.22,
+                        delay: Math.min(idx * 0.035, 0.35),
+                        ease: "easeOut",
+                      }}
+                      className="hover:bg-muted/40 transition-colors border-b"
                     >
-                      <Eye className="w-3.5 h-3.5" />
-                      View Audit
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              );
-            })
-          )}
+                      <TableCell title={`${item.requestNo} • ${item.transferDate} • ${branchDisplay}`}>
+                        <div className="font-mono font-bold text-xs text-foreground">
+                          {item.requestNo}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">
+                          <span>{item.transferDate}</span>
+                          <span>•</span>
+                          <span className="truncate max-w-[130px]">{branchDisplay}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell title={`Status: ${item.status}`}>
+                        <TransferStatusBadge status={item.status} />
+                      </TableCell>
+                      <TableCell title={`${sourceLotDisplay} → ${targetLotDisplay}`}>
+                        <div className="flex items-center gap-1 text-xs font-semibold text-foreground flex-wrap">
+                          <span>{sourceLotDisplay}</span>
+                          <ArrowRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                          <span>{targetLotDisplay}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right" title={`${item.quantity.toLocaleString()} total units across ${lineCount} line(s)`}>
+                        <div className="font-mono font-bold text-xs text-foreground">
+                          {item.quantity.toLocaleString()}
+                        </div>
+                        <div className="text-[11px] font-mono text-muted-foreground">
+                          {lineCount} {lineCount === 1 ? "line" : "lines"}
+                        </div>
+                      </TableCell>
+                      <TableCell title={item.reason || "No operational justification provided"}>
+                        <div className="text-xs text-muted-foreground max-w-[220px] truncate">
+                          {item.reason || "-"}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <motion.div whileTap={{ scale: 0.95 }} className="inline-block">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleOpenDetail(item)}
+                            disabled={auditLoadingId === item.id}
+                            className="h-8 text-xs gap-1.5"
+                          >
+                            {auditLoadingId === item.id ? (
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Eye className="w-3.5 h-3.5" />
+                            )}
+                            View Audit
+                          </Button>
+                        </motion.div>
+                      </TableCell>
+                    </motion.tr>
+                  );
+                })}
+              </AnimatePresence>
+            )}
           </TableBody>
         </Table>
       </div>
@@ -398,7 +527,13 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
                       const unitSuffix = selectedTransfer.unitName ? ` ${selectedTransfer.unitName}` : "";
 
                       return (
-                        <TableRow key={d.detailId || i}>
+                        <motion.tr
+                          key={d.detailId || i}
+                          initial={{ opacity: 0, y: -6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.18, delay: Math.min(i * 0.03, 0.3) }}
+                          className="hover:bg-muted/30 transition-colors border-b"
+                        >
                           <TableCell className="text-center font-mono text-xs text-muted-foreground" title={`Line ${d.lineNo || i + 1}`}>
                             {d.lineNo || i + 1}
                           </TableCell>
@@ -408,7 +543,7 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
                             </div>
                             <div className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5">
                               {pDesc && pName && <span>{pName}</span>}
-                              {pCode && <span>• Code: {pCode}</span>}
+                              {pCode && <span>{pCode}</span>}
                             </div>
                           </TableCell>
                           <TableCell className="font-mono text-xs font-semibold" title={d.sourceBatchNo}>
@@ -429,7 +564,7 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
                           <TableCell className="text-xs text-muted-foreground" title={lineRemarks}>
                             {lineRemarks}
                           </TableCell>
-                        </TableRow>
+                        </motion.tr>
                       );
                     })}
                   </TableBody>
@@ -453,8 +588,14 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
                   </div>
                 ) : (
                   <div className="divide-y text-xs">
-                    {statusHistory.map((h) => (
-                      <div key={h.id} className="p-3 flex items-center justify-between">
+                    {statusHistory.map((h, hIdx) => (
+                      <motion.div
+                        key={h.id}
+                        initial={{ opacity: 0, x: -8 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ duration: 0.2, delay: Math.min(hIdx * 0.04, 0.3) }}
+                        className="p-3 flex items-center justify-between"
+                      >
                         <div className="space-y-0.5">
                           <div className="flex items-center gap-2">
                             <span className="font-medium">{h.oldStatus || "New"}</span>
@@ -467,7 +608,7 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
                           <div>{h.changedByName || "System User"}</div>
                           <div className="text-[10px] font-mono">{formatAuditTimestamp(h.changedAt)}</div>
                         </div>
-                      </div>
+                      </motion.div>
                     ))}
                   </div>
                 )}
@@ -492,8 +633,14 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {movements.map((m) => (
-                        <TableRow key={m.movementId}>
+                      {movements.map((m, mIdx) => (
+                        <motion.tr
+                          key={m.movementId}
+                          initial={{ opacity: 0, y: -6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.18, delay: Math.min(mIdx * 0.03, 0.3) }}
+                          className="border-b"
+                        >
                           <TableCell className="font-mono text-xs">{m.movementId}</TableCell>
                           <TableCell className="text-xs">{m.transactionType || "Lot Transfer"}</TableCell>
                           <TableCell>
@@ -509,7 +656,7 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
                             {m.movementDirection === "OUT" ? `-${m.quantity}` : `+${m.quantity}`}
                           </TableCell>
                           <TableCell className="text-xs text-muted-foreground">{m.remarks || "-"}</TableCell>
-                        </TableRow>
+                        </motion.tr>
                       ))}
                     </TableBody>
                   </Table>
@@ -518,13 +665,79 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
             </div>
 
             <DialogFooter className="pt-3 border-t flex items-center justify-between">
-              <Button variant="outline" onClick={() => setDetailModalOpen(false)}>
-                Close
-              </Button>
+              <div>
+                {selectedTransfer.status === "Posted" && (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => setReverseModalOpen(true)}
+                    className="gap-1.5 text-xs h-8"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    Reverse Transfer
+                  </Button>
+                )}
+              </div>
+              <motion.div whileTap={{ scale: 0.96 }}>
+                <Button variant="outline" onClick={() => setDetailModalOpen(false)}>
+                  Close
+                </Button>
+              </motion.div>
             </DialogFooter>
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Reversal Confirmation Dialog */}
+      <Dialog open={reverseModalOpen} onOpenChange={setReverseModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <RotateCcw className="w-5 h-5" />
+              Reverse Lot Transfer {selectedTransfer?.requestNo}
+            </DialogTitle>
+            <DialogDescription>
+              Reversing this transfer will create compensating opposite inventory movements, returning stock from{" "}
+              <strong className="text-foreground">{selectedTransfer?.targetLotName || `Lot #${selectedTransfer?.targetLotId}`}</strong> back to{" "}
+              <strong className="text-foreground">{selectedTransfer?.sourceLotName || `Lot #${selectedTransfer?.sourceLotId}`}</strong>.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2 py-2">
+            <label className="text-xs font-semibold text-foreground">
+              Reason for Reversal *
+            </label>
+            <Input
+              value={reversalReason}
+              onChange={(e) => setReversalReason(e.target.value)}
+              placeholder="e.g. Relocation clerical error / wrong destination bin selected"
+              className="text-sm"
+            />
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setReverseModalOpen(false);
+                setReversalReason("");
+              }}
+              disabled={reversalLoading}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmReversal}
+              disabled={reversalLoading || !reversalReason.trim()}
+              className="gap-1.5"
+            >
+              {reversalLoading && <RefreshCw className="w-4 h-4 animate-spin" />}
+              Confirm Reversal
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
 
     </div>
