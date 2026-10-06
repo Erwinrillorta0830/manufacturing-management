@@ -123,7 +123,7 @@ export async function getProfitabilityBatchDetails(ledgerId: number, signal: Abo
     const [jobOrders, yields, routes, genealogy] = await Promise.all([
         fetchRows("manufacturing_job_orders", "job_order_id,branch_id", new URLSearchParams({ "filter[job_order_id][_eq]": String(jobOrderId) }), signal),
         fetchRows("manufacturing_job_order_yield_ledger", "ledger_id,job_order_id,yield_quantity,rejected_quantity,commit_status,lot_number,mm_lot_id,manufacturing_date", new URLSearchParams({ "filter[job_order_id][_eq]": String(jobOrderId) }), signal),
-        fetchRows("manufacturing_job_order_routes", "jo_route_id,job_order_id,sequence_order,operation_name,work_center_id,actual_setup_hours,actual_run_hours", new URLSearchParams({ "filter[job_order_id][_eq]": String(jobOrderId) }), signal),
+        fetchRows("manufacturing_job_order_routes", "jo_route_id,job_order_id,sequence_order,operation_id,work_center_id,actual_setup_hours,actual_run_hours", new URLSearchParams({ "filter[job_order_id][_eq]": String(jobOrderId) }), signal),
         fetchRows("jo_material_genealogy", "job_order_id,batch_no,component_product_id,component_mm_lot_id,component_lot_id,component_batch_no,consumed_quantity", new URLSearchParams({ "filter[job_order_id][_eq]": String(jobOrderId) }), signal)
     ]);
     const ledgerIds = yields.map((row) => id(row, "ledger_id", ["ledger_id", "id"])).filter(Boolean);
@@ -148,17 +148,19 @@ export async function getProfitabilityBatchDetails(ledgerId: number, signal: Abo
     const normalizedTargetBatch = normalizedBatch(batchNumber);
     const batchGenealogy = genealogy.filter((row) => normalizedBatch(row.batch_no) === normalizedTargetBatch);
     const routeIds = routes.map((row) => id(row, "jo_route_id", ["jo_route_id", "id"])).filter(Boolean);
+    const operationIds = routes.map((row) => id(row, "operation_id", ["operation_id", "id"])).filter(Boolean);
     const inventoryLotIds = batchGenealogy.map((row) =>
         id(row, "component_mm_lot_id", ["lot_id", "id"]) || id(row, "component_lot_id", ["lot_id", "id"])
     ).filter(Boolean);
     const productIds = batchGenealogy.map((row) => id(row, "component_product_id", ["product_id", "id"])).filter(Boolean);
 
-    const [operators, inventoryLots, products, mmLots, workCenters] = await Promise.all([
+    const [operators, inventoryLots, products, mmLots, workCenters, operations] = await Promise.all([
         fetchRowsByIds("manufacturing_job_order_route_operators", "jo_route_operator_id,jo_route_id,operator_id,logged_hours,hourly_rate", "jo_route_id", routeIds, signal),
         fetchRowsByIds("mm_inventory_lots", "inventory_lot_id,lot_id,product_id,branch_id,batch_no,unit_cost", "lot_id", inventoryLotIds, signal),
         fetchRowsByIds("products", "product_id,product_name,product_code", "product_id", productIds, signal),
         fetchRowsByIds("mm_lots", "lot_id,lot_name", "lot_id", inventoryLotIds, signal),
-        fetchRowsByIds("manufacturing_work_centers", "work_center_id,work_center_name,overhead_cost_per_hour", "work_center_id", routes.map((row) => id(row, "work_center_id", ["work_center_id", "id"])), signal)
+        fetchRowsByIds("manufacturing_work_centers", "work_center_id,work_center_name,overhead_cost_per_hour", "work_center_id", routes.map((row) => id(row, "work_center_id", ["work_center_id", "id"])), signal),
+        fetchRowsByIds("manufacturing_operations", "id,operation_name", "id", operationIds, signal)
     ]);
     const operatorIds = operators.map((row) => id(row, "operator_id", ["user_id", "id"])).filter(Boolean);
     const users = await fetchRowsByIds("user", "user_id,user_fname,user_lname", "user_id", operatorIds, signal).catch((error) => {
@@ -176,7 +178,14 @@ export async function getProfitabilityBatchDetails(ledgerId: number, signal: Abo
         );
         inventoryLotsByKey.set(key, [...(inventoryLotsByKey.get(key) || []), lot]);
     }
-    const routeById = new Map(routes.map((row) => [id(row, "jo_route_id", ["jo_route_id", "id"]), row]));
+    const operationNameById = new Map(operations.map((row) => [id(row, "id"), text(row.operation_name)]));
+    const routeById = new Map<number, DirectusRow>();
+    for (const row of routes) {
+        const routeId = id(row, "jo_route_id", ["jo_route_id", "id"]);
+        if (!routeId) continue;
+        const operationId = id(row, "operation_id", ["operation_id", "id"]);
+        routeById.set(routeId, { ...row, operation_name: operationNameById.get(operationId) || "" });
+    }
     const routeIdsByJobOrder = new Map([[jobOrderId, routeIds]]);
     const operatorByRoute = groupById(operators, "jo_route_id", ["jo_route_id", "id"]);
     const userById = new Map(users.map((row) => [id(row, "user_id", ["user_id", "id"]), row]));
