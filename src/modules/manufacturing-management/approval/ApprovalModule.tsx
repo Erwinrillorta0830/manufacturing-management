@@ -104,6 +104,7 @@ function FinanceDecisionControls({
     cancel,
     onReload
 }: FinanceDecisionControlsProps) {
+    const router = useRouter();
     const [remarks, setRemarks] = useState("");
     const [submitting, setSubmitting] = useState<"approve" | "revision" | "cancel" | null>(null);
     const [remarksError, setRemarksError] = useState<string | null>(null);

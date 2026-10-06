@@ -147,8 +147,7 @@ async function directusRows(path: string, message: string): Promise<Record<strin
 
 function mapHeaderOption(
     header: ReceiptHeaderRow,
-    linkedRows: ReceiptLineRow[],
-    currentWorkflowRevision: number
+    linkedRows: ReceiptLineRow[]
 ): QaReceiptOption | null {
     const id = relationId(header.id);
     if (!id) return null;
@@ -248,7 +247,7 @@ export async function fetchQaReceiptOptions(
         const headerId = relationId(header.id);
         if (!headerId) return [];
         const linkedRows = rowsForPurchaseOrder.filter(row => relationId(row.receiving_header_id) === headerId);
-        const option = mapHeaderOption(header, linkedRows, currentWorkflowRevision);
+        const option = mapHeaderOption(header, linkedRows);
         return option ? [option] : [];
     });
     const legacyOptions = mapLegacyOptions(rowsForPurchaseOrder.filter(row => relationId(row.receiving_header_id) === null));
