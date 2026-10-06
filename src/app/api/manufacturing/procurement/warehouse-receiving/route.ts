@@ -366,7 +366,10 @@ async function patchPurchaseOrderConditionally(
 async function patchHeader(headerId: number, data: Record<string, unknown>) {
     const result = await directusJson(`/items/purchase_order_receiving_headers/${headerId}`, {
         method: "PATCH",
-        body: JSON.stringify(data)
+        body: JSON.stringify({
+            ...data,
+            updated_at: formatPhtDateTime()
+        })
     });
     if (!result.response.ok) throw new WarehouseReceivingError("Unable to persist the warehouse receiving draft.", 503);
 }
@@ -824,7 +827,8 @@ async function startWarehouseReceiving(order: DirectusOrder, command: WarehouseR
                 workflow_revision: nextRevision,
                 idempotency_key: idempotencyKey,
                 posting_status: "Reserved",
-                created_by: actorId
+                created_by: actorId,
+                created_at: formatPhtDateTime()
             })
         });
         if (!result.response.ok) throw new WarehouseReceivingError("Unable to create the warehouse receiving draft.", 503);

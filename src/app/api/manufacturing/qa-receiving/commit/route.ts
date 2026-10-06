@@ -643,7 +643,6 @@ export async function POST(request: Request) {
         if (parsed.data.receivingHeaderId && (
             !warehouseTicket
             || warehouseTicket.purchase_order_id !== parsed.data.shipmentId
-            || warehouseTicket.workflow_revision !== parsed.data.workflowRevision
             || warehouseTicket.receiving_ticket_no !== parsed.data.receiptNumber.trim()
             || (warehouseTicket.posting_status !== "Reserved" && warehouseTicket.posting_status !== "Failed")
         )) {
