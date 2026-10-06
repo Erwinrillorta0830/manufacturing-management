@@ -1,0 +1,307 @@
+import { procurementDirectusFetch } from "@/app/api/manufacturing/procurement/_directus";
+import {
+    DecimalValue,
+    UNIT_PRICE_DECIMAL_SCALE
+} from "@/modules/manufacturing-management/decimal";
+
+export type PurchaseOrderPriceTypeErrorCode =
+    | "PRICE_TYPE_NOT_CONFIGURED"
+    | "MIXED_PRICE_TYPES"
+    | "PRICE_MATRIX_NOT_CONFIGURED"
+    | "PRICE_TYPE_LOOKUP_UNAVAILABLE";
+
+export type PurchaseOrderMissingPriceReason =
+    | "MATRIX_ROW_MISSING"
+    | "MATRIX_ROW_NOT_APPROVED"
+    | "MATRIX_PRICE_INVALID";
+
+export interface PurchaseOrderMissingPriceDetail {
+    productId: number;
+    unitId: number | null;
+    unitLabel: string | null;
+    priceTypeId: number;
+    priceTypeName: string;
+    reason: PurchaseOrderMissingPriceReason;
+}
+
+export interface PurchaseOrderProductUnit {
+    unitId: number | null;
+    unitLabel: string | null;
+}
+
+export interface PurchaseOrderPriceTypeRule {
+    productTypeId: number;
+    productTypeName: string;
+    priceTypeId: number | null;
+    priceTypeName: string | null;
+}
+
+export interface ResolvedPurchaseOrderPriceType {
+    priceTypeId: number;
+    priceTypeName: string;
+    productTypeIds: number[];
+    pricesByProductId: Record<number, string>;
+    priceSourceProductIds: Record<number, number>;
+    missingProductIds: number[];
+    missingPriceDetails: PurchaseOrderMissingPriceDetail[];
+    unitsByProductId: Record<number, PurchaseOrderProductUnit>;
+}
+
+export class PurchaseOrderPriceTypeError extends Error {
+    constructor(
+        message: string,
+        public readonly code: PurchaseOrderPriceTypeErrorCode,
+        public readonly status = 400,
+        public readonly details?: unknown
+    ) {
+        super(message);
+        this.name = "PurchaseOrderPriceTypeError";
+    }
+}
+
+type DirectusRelation = number | string | Record<string, unknown> | null | undefined;
+
+interface DirectusProductTypeRow {
+    id?: number | string;
+    type_id?: number | string;
+    type_name?: string | null;
+    name?: string | null;
+    default_purchase_price_type_id?: DirectusRelation;
+    default_purchase_price_type?: DirectusRelation;
+}
+
+interface DirectusProductRow {
+    product_id?: number | string;
+    product_type?: DirectusRelation;
+    parent_id?: DirectusRelation & { product_type?: DirectusRelation; cost_per_unit?: number | string | null };
+    parent_product_type?: DirectusRelation;
+    unit_of_measurement?: DirectusRelation;
+    cost_per_unit?: number | string | null;
+}
+
+interface DirectusPriceTypeRow {
+    price_type_id?: number | string;
+    price_type_name?: string | null;
+}
+
+function relationId(value: DirectusRelation, keys: string[]): number | null {
+    if (typeof value === "number" || typeof value === "string") {
+        const parsed = Number(value);
+        return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+    }
+    if (!value || typeof value !== "object") return null;
+    for (const key of keys) {
+        const parsed = Number(value[key]);
+        if (Number.isSafeInteger(parsed) && parsed > 0) return parsed;
+    }
+    return null;
+}
+
+function relationName(value: DirectusRelation, keys: string[]): string | null {
+    if (!value || typeof value !== "object") return null;
+    for (const key of keys) {
+        const name = value[key];
+        if (typeof name === "string" && name.trim()) return name.trim();
+    }
+    return null;
+}
+
+function productUnit(product: DirectusProductRow): PurchaseOrderProductUnit {
+    const unitId = relationId(product.unit_of_measurement, ["unit_id", "id"]);
+    const unitLabel = relationName(product.unit_of_measurement, ["unit_shortcut", "unit_name", "name"]);
+    return {
+        unitId,
+        unitLabel: unitLabel || (unitId ? `UOM #${unitId}` : null)
+    };
+}
+
+function directusErrorMessage(body: unknown, fallback: string): string {
+    if (!body || typeof body !== "object") return fallback;
+    const errors = (body as { errors?: Array<{ message?: string }> }).errors;
+    return errors?.[0]?.message || fallback;
+}
+
+async function directusData<T>(path: string, message: string): Promise<T> {
+    const response = await procurementDirectusFetch(path);
+    if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new PurchaseOrderPriceTypeError(
+            directusErrorMessage(body, message),
+            "PRICE_TYPE_LOOKUP_UNAVAILABLE",
+            response.status >= 500 ? 503 : response.status
+        );
+    }
+    return (await response.json()).data as T;
+}
+
+function normalizeRule(row: DirectusProductTypeRow): PurchaseOrderPriceTypeRule | null {
+    const productTypeId = relationId(row.id ?? row.type_id, ["type_id", "id"]);
+    if (!productTypeId) return null;
+    const priceType = row.default_purchase_price_type_id ?? row.default_purchase_price_type;
+    return {
+        productTypeId,
+        productTypeName: String(row.type_name || row.name || `Product Type #${productTypeId}`),
+        priceTypeId: relationId(priceType, ["price_type_id", "id"]),
+        priceTypeName: relationName(priceType, ["price_type_name", "name"])
+    };
+}
+
+export async function fetchPurchaseOrderPriceTypeRules(): Promise<PurchaseOrderPriceTypeRule[]> {
+    let rows: DirectusProductTypeRow[];
+    try {
+        rows = await directusData<DirectusProductTypeRow[]>(
+            "/items/product_type?fields=id,name,default_purchase_price_type_id,default_purchase_price_type_id.price_type_id,default_purchase_price_type_id.price_type_name&sort=name&limit=-1",
+            "Unable to load product-type price rules."
+        );
+    } catch (error) {
+        // Some dummy/legacy Directus schemas store the mapping as an integer
+        // without a relation definition, so nested relation fields are invalid.
+        if (!(error instanceof PurchaseOrderPriceTypeError)) throw error;
+        rows = await directusData<DirectusProductTypeRow[]>(
+            "/items/product_type?fields=id,name,default_purchase_price_type_id&sort=name&limit=-1",
+            "Unable to load product-type price rules."
+        );
+    }
+    const rules = rows.map(normalizeRule).filter((rule): rule is PurchaseOrderPriceTypeRule => Boolean(rule));
+    const priceTypeIds = [...new Set(rules
+        .map(rule => rule.priceTypeId)
+        .filter((id): id is number => id !== null))];
+    if (priceTypeIds.length === 0) return rules;
+
+    const priceTypes = await directusData<DirectusPriceTypeRow[]>(
+        "/items/price_types?fields=price_type_id,price_type_name&limit=-1",
+        "Unable to load Price Type names."
+    );
+    const namesById = new Map(
+        priceTypes
+            .map(priceType => {
+                const id = relationId(priceType.price_type_id, ["price_type_id", "id"]);
+                const name = priceType.price_type_name?.trim();
+                return id && name ? [id, name] as const : null;
+            })
+            .filter((entry): entry is readonly [number, string] => Boolean(entry))
+    );
+
+    return rules.map(rule => ({
+        ...rule,
+        priceTypeName: rule.priceTypeName || (rule.priceTypeId ? namesById.get(rule.priceTypeId) || null : null)
+    }));
+}
+
+function isPositiveDecimal(value: unknown): boolean {
+    if (value === null || value === undefined || value === "") return false;
+    try {
+        return DecimalValue.from(String(value)).compare(0) > 0;
+    } catch {
+        return false;
+    }
+}
+
+export function assertEnteredPricesForMissingPriceControl(
+    lines: readonly { productId: number; unitPrice: unknown }[],
+    missingProductIds: readonly number[],
+    missingPriceDetails: readonly PurchaseOrderMissingPriceDetail[] = []
+): void {
+    const missingProductIdSet = new Set(missingProductIds);
+    const invalidProductIds = lines
+        .filter(line => missingProductIdSet.has(line.productId) && !isPositiveDecimal(line.unitPrice))
+        .map(line => line.productId);
+
+    if (invalidProductIds.length === 0) return;
+
+    throw new PurchaseOrderPriceTypeError(
+        "A configured Price Control value is missing for one or more selected product UOMs. Configure the matrix value or enter a positive manual unit price.",
+        "PRICE_MATRIX_NOT_CONFIGURED",
+        400,
+        {
+            missingProductIds: [...new Set(invalidProductIds)],
+            missingPriceDetails: missingPriceDetails.filter(detail => invalidProductIds.includes(detail.productId))
+        }
+    );
+}
+
+export function resolvePurchaseOrderPriceTypeFromRows(
+    productIds: number[],
+    products: DirectusProductRow[]
+): ResolvedPurchaseOrderPriceType {
+    const productsById = new Map(products.map(product => [relationId(product.product_id, ["product_id", "id"]), product]));
+    const pricesByProductId: Record<number, string> = {};
+    const priceSourceProductIds: Record<number, number> = {};
+
+    for (const productId of productIds) {
+        const product = productsById.get(productId);
+        const cost = product?.cost_per_unit ?? (typeof product?.parent_id === "object" ? product.parent_id?.cost_per_unit : null);
+        if (isPositiveDecimal(cost)) {
+            pricesByProductId[productId] = DecimalValue.from(String(cost)).toFixed(UNIT_PRICE_DECIMAL_SCALE);
+            priceSourceProductIds[productId] = productId;
+        }
+    }
+
+    const missingProductIds = productIds.filter(productId => !pricesByProductId[productId]);
+    const priceTypeId = 0;
+    const priceTypeName = "Price List";
+    const missingPriceDetails = missingProductIds.map(productId => {
+        return {
+            productId,
+            ...productUnit(productsById.get(productId) || {}),
+            priceTypeId,
+            priceTypeName,
+            reason: "MATRIX_ROW_MISSING" as const
+        } satisfies PurchaseOrderMissingPriceDetail;
+    });
+    const unitsByProductId = Object.fromEntries(
+        products
+            .map(product => {
+                const productId = relationId(product.product_id, ["product_id", "id"]);
+                return productId ? [productId, productUnit(product)] as const : null;
+            })
+            .filter((entry): entry is readonly [number, PurchaseOrderProductUnit] => entry !== null)
+    );
+    return {
+        priceTypeId,
+        priceTypeName,
+        productTypeIds: [],
+        pricesByProductId,
+        priceSourceProductIds,
+        missingProductIds,
+        missingPriceDetails,
+        unitsByProductId
+    };
+}
+
+export async function resolvePurchaseOrderPriceType(productIds: number[]): Promise<ResolvedPurchaseOrderPriceType> {
+    const uniqueProductIds = [...new Set(productIds)];
+    if (uniqueProductIds.length === 0) {
+        throw new PurchaseOrderPriceTypeError(
+            "At least one purchase-order product is required for Price Type determination.",
+            "PRICE_TYPE_NOT_CONFIGURED",
+            400
+        );
+    }
+    const productFilter = uniqueProductIds.join(",");
+    const selectedProducts = await directusData<DirectusProductRow[]>(
+        `/items/products?filter[product_id][_in]=${productFilter}&fields=product_id,product_type,parent_id,cost_per_unit,unit_of_measurement,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name&limit=${uniqueProductIds.length}`,
+        "Unable to load products for Price Type determination."
+    );
+    const parentProductIds = [...new Set(selectedProducts
+        .map(product => relationId(product.parent_id, ["product_id", "id"]))
+        .filter((id): id is number => id !== null))];
+    let products = selectedProducts;
+    if (parentProductIds.length > 0) {
+        const parentProducts = await directusData<DirectusProductRow[]>(
+            `/items/products?filter[product_id][_in]=${parentProductIds.join(",")}&fields=product_id,product_type&limit=${parentProductIds.length}`,
+            "Unable to load parent products for Price Type determination."
+        );
+        const parentTypes = new Map(parentProducts.map(product => [
+            relationId(product.product_id, ["product_id", "id"]),
+            product.product_type
+        ]));
+        products = selectedProducts.map(product => {
+            const parentId = relationId(product.parent_id, ["product_id", "id"]);
+            return parentId && parentTypes.has(parentId)
+                ? { ...product, parent_product_type: parentTypes.get(parentId) }
+                : product;
+        });
+    }
+    return resolvePurchaseOrderPriceTypeFromRows(uniqueProductIds, products);
+}

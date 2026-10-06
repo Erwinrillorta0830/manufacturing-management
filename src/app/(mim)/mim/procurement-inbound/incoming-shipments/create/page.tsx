@@ -1,4 +1,4 @@
-import PurchaseOrderModule from "@/modules/manufacturing-management/purchase-order/PurchaseOrderModule";
+import PurchaseOrderModule from "@/modules/manufacturing-management/procurement-and-inbound/incoming-shipments/PurchaseOrderModule";
 import IncomingShipmentsPageShell from "../_page-shell";
 
 export const runtime = "nodejs";

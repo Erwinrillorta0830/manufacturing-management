@@ -15,13 +15,13 @@ import {
     ShieldCheck,
 } from "lucide-react";
 import { toast } from "sonner";
-import { usePurchaseOrderApproval, type PurchaseOrderApprovalMode } from "../purchase-order-approval/hooks/usePurchaseOrderApproval";
-import type { PurchaseOrderApprovalDetail, PurchaseOrderDecisionStage } from "../purchase-order/types";
-import type { IncomingShipment, Supplier } from "../procurement/types";
+import { usePurchaseOrderApproval, type PurchaseOrderApprovalMode } from "@/modules/manufacturing-management/approvals-hub/finance-approval/hooks/usePurchaseOrderApproval";
+import type { PurchaseOrderApprovalDetail, PurchaseOrderDecisionStage } from "@/modules/manufacturing-management/procurement-and-inbound/incoming-shipments/types";
+import type { IncomingShipment, Supplier } from "@/modules/manufacturing-management/procurement/types";
 import RevisionSnapshotComparison from "./components/RevisionSnapshotComparison";
-import { downloadPurchaseOrderPrintable } from "../purchase-order/services/purchase-order-print-api";
-import { calculatePercentageDiscount } from "../procurement/discount-calculation";
-import { EXCHANGE_RATE_DECIMAL_SCALE, PROCUREMENT_MONEY_DECIMAL_SCALE } from "../decimal";
+import { downloadPurchaseOrderPrintable } from "@/modules/manufacturing-management/procurement-and-inbound/incoming-shipments/services/purchase-order-print-api";
+import { calculatePercentageDiscount } from "@/modules/manufacturing-management/procurement/discount-calculation";
+import { EXCHANGE_RATE_DECIMAL_SCALE, PROCUREMENT_MONEY_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { CancelPurchaseOrderDialog } from "../procurement/components/incoming-shipments/CancelPurchaseOrderDialog";
 import { formatPhtDateTime } from "./pht-date-time";

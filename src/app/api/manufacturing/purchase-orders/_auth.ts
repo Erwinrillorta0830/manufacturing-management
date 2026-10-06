@@ -5,12 +5,12 @@ import type { ApprovalStage } from "./_domain";
 const ACCESS_TOKEN_COOKIE = "vos_access_token";
 
 export const PURCHASE_ORDER_MODULE_PATHS = {
-    procurement: "/mm/incoming-shipments",
+    procurement: "/mm/incoming-purchase-shipments",
     suppliers: "/mm/suppliers",
     rawMaterials: "/mm/raw-materials",
     financeApproval: "/mm/finance-approval",
     warehouseReceiving: "/mm/warehouse-receiving",
-    receiving: "/mm/qa-receiving",
+    receiving: "/mm/qa-receiving-inspections",
     expenses: "/mm/shipment-expenses"
 } as const;
 

@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import PurchaseAmountPageShell from "../../_page-shell";
-import PurchaseAmountPostingModule from "@/modules/manufacturing-management/procurement/components/PurchaseAmountPostingModule";
+import PurchaseAmountPostingModule from "@/modules/manufacturing-management/procurement-and-inbound/purchase-amount/PurchaseAmountPostingModule";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

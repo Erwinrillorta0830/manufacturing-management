@@ -18,8 +18,7 @@ import {
     fetchLinkedProducts
 } from "../services/procurement-api";
 import type { SupplierStatusFilter } from "../services/procurement-api";
-import { purchaseOrderMaterialTypeFromProduct } from "../components/incoming-shipments/types";
-import { fetchPurchaseOrderCatalog } from "../../purchase-order/services/purchase-order-api";
+import { fetchPurchaseOrderCatalog } from "@/modules/manufacturing-management/procurement-and-inbound/incoming-shipments/services/purchase-order-api";
 import {
     PHILIPPINES_COUNTRY,
     canonicalizeSupplierCountry,
@@ -186,8 +185,8 @@ export function useProcurement(defaultTab: string = "suppliers") {
 
     useEffect(() => {
         void fetchPurchaseOrderCatalog()
-            .then(catalog => setPaymentModes(catalog.paymentModes))
-            .catch(error => toast.error((error as Error).message || "Failed to load configured payment types."));
+            .then((catalog: any) => setPaymentModes(catalog.paymentModes))
+            .catch((error: any) => toast.error((error as Error).message || "Failed to load configured payment types."));
     }, []);
 
     useEffect(() => {

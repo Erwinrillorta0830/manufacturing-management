@@ -8,7 +8,7 @@ import PurchaseOrderDetailModal from "./incoming-shipments/PurchaseOrderDetailMo
 import { useIncomingShipmentsForm } from "../hooks/useIncomingShipmentsForm";
 import { Globe, MapPin, Building2 } from "lucide-react";
 import { toast } from "sonner";
-import { downloadPurchaseOrderPrintable } from "../../purchase-order/services/purchase-order-print-api";
+import { downloadPurchaseOrderPrintable } from "@/modules/manufacturing-management/procurement-and-inbound/incoming-shipments/services/purchase-order-print-api";
 import { isSupplierEligibleProductType } from "../supplier-product-eligibility";
 
 export type { ManifestLineFormItem, ShipmentFormState, IncomingShipmentsProps } from "./incoming-shipments/types";
@@ -323,7 +323,7 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                     setSelectedShipment={setSelectedShipment}
                     isSupplierForeign={isSupplierForeign}
                     getShipmentHref={undefined}
-                    createHref={isQueueMode && canonicalDrafting ? "/mm/incoming-shipments/create" : undefined}
+                    createHref={isQueueMode && canonicalDrafting ? "/mm/incoming-purchase-shipments/create" : undefined}
                     onOpenCreateModal={() => { setIsOverridden(false); setIsModalOpen(true); }}
                 />
             )}

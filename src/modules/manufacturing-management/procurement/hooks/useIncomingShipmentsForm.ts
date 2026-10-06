@@ -22,15 +22,15 @@ import { resolveProductParentId } from "../product-relation";
 import {
     fetchPurchaseOrderFxRate,
     resolvePurchaseOrderCommercialTerms
-} from "../../purchase-order/services/purchase-order-api";
+} from "@/modules/manufacturing-management/procurement-and-inbound/incoming-shipments/services/purchase-order-api";
 import type {
     PurchaseOrderCommercialResolution,
     PurchaseOrderMissingPriceDetail
-} from "../../purchase-order/types";
+} from "@/modules/manufacturing-management/procurement-and-inbound/incoming-shipments/types";
 import {
     defaultPurchaseOrderPaymentModeId,
     resolveSupplierPaymentTermId
-} from "../../purchase-order/commercial-terms";
+} from "@/modules/manufacturing-management/procurement-and-inbound/incoming-shipments/commercial-terms";
 
 export interface UseIncomingShipmentsFormProps {
     suppliers: Supplier[];
@@ -400,7 +400,7 @@ export function useIncomingShipmentsForm({
         if (!Number.isFinite(quantity) || quantity <= 0) errors.push("Qty Ordered must be greater than zero");
         if (normalizedUnitPrice === null) {
             if (canonicalDrafting && priceControlMissingProductIds.includes(Number(line.product_id))) {
-                const missingPrice = commercialResolution?.missingPriceDetails.find(detail => detail.productId === Number(line.product_id));
+                const missingPrice = commercialResolution?.missingPriceDetails.find((detail: any) => detail.productId === Number(line.product_id));
                 const unitLabel = missingPrice?.unitLabel || line.selected_uom || "the selected UOM";
                 errors.push(`Price Control is not configured for ${unitLabel}; configure the matrix or enter a positive manual unit price`);
             } else {
@@ -413,7 +413,7 @@ export function useIncomingShipmentsForm({
             priceControlMissingProductIds.includes(Number(line.product_id)) &&
             DecimalValue.from(normalizedUnitPrice).compare(0) <= 0
         ) {
-            const missingPrice = commercialResolution?.missingPriceDetails.find(detail => detail.productId === Number(line.product_id));
+            const missingPrice = commercialResolution?.missingPriceDetails.find((detail: any) => detail.productId === Number(line.product_id));
             const unitLabel = missingPrice?.unitLabel || line.selected_uom || "the selected UOM";
             errors.push(`Price Control is not configured for ${unitLabel}; configure the matrix or enter a positive manual unit price`);
         }
@@ -656,13 +656,13 @@ export function useIncomingShipmentsForm({
         });
 
         resolvePurchaseOrderCommercialTerms(Number(shipmentForm.supplier_id), productIds, controller.signal)
-            .then(resolution => {
+            .then((resolution: any) => {
                 if (controller.signal.aborted) return;
                 const prices: Record<number, string> = {};
                 const supplierDiscounts: Record<number, { discount_type_id?: number; total_percent?: number }> = {};
-                const linesByProductId = new Map(resolution.lines.map(line => [line.productId, line]));
+                const linesByProductId = new Map(resolution.lines.map((line: any) => [line.productId, line]));
 
-                resolution.lines.forEach(line => {
+                resolution.lines.forEach((line: any) => {
                     const normalizedPrice = tryNormalizePurchaseOrderUnitPrice(line.pricePhp);
                     if (normalizedPrice !== null && DecimalValue.from(normalizedPrice).compare(0) > 0) {
                         prices[line.productId] = normalizedPrice;
@@ -683,7 +683,7 @@ export function useIncomingShipmentsForm({
                     : { ...previous, price_type: resolution.priceTypeName });
                 setLinesForm(previous => previous.map(line => {
                     if (!line.product_id) return line;
-                    const resolved = linesByProductId.get(Number(line.product_id));
+                    const resolved: any = linesByProductId.get(Number(line.product_id));
                     if (!resolved) return line;
 
                     const normalizedPricePhp = tryNormalizePurchaseOrderUnitPrice(resolved.pricePhp);
@@ -724,7 +724,7 @@ export function useIncomingShipmentsForm({
                     };
                 }));
             })
-            .catch(error => {
+            .catch((error: any) => {
                 if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) return;
                 console.error("Error resolving purchase-order commercial terms:", error);
                 setCommercialResolution(null);

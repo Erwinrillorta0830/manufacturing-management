@@ -1,0 +1,264 @@
+export type {
+    IncomingShipment as PurchaseOrder,
+    ShipmentLineItem as PurchaseOrderLine,
+    Supplier,
+    RawMaterial,
+    LinkedProduct,
+    PurchaseOrderPaymentMode,
+    PurchaseOrderPriceTypeRule
+} from "@/modules/manufacturing-management/procurement/types";
+import type { PurchaseOrderPaymentMode, PurchaseOrderPriceTypeRule } from "@/modules/manufacturing-management/procurement/types";
+import type { PurchaseOrderRevisionSnapshot } from "./revision-snapshot";
+
+export type { PurchaseOrderRevisionSnapshot } from "./revision-snapshot";
+
+export interface PurchaseOrderListMeta {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+}
+
+export interface PurchaseOrderListResponse<T> {
+    data: T[];
+    meta: PurchaseOrderListMeta;
+}
+
+export interface PurchaseOrderDetailResponse {
+    data: {
+        shipment: import("@/modules/manufacturing-management/procurement/types").IncomingShipment;
+        lines: import("@/modules/manufacturing-management/procurement/types").ShipmentLineItem[];
+    };
+}
+
+export interface PurchaseOrderListQuery {
+    page?: number;
+    limit?: number;
+    search?: string;
+    status?: string;
+    supplierId?: number;
+    inventoryStatus?: number;
+    paymentStatus?: number;
+    startDate?: string;
+    endDate?: string;
+    sort?: "date_encoded" | "purchase_order_no" | "reference" | "total_amount" | "inventory_status";
+    direction?: "asc" | "desc";
+    approvalStage?: PurchaseOrderDecisionStage;
+}
+
+export interface PurchaseOrderCatalog {
+    suppliers: Array<{
+        id: number;
+        supplier_name: string;
+        payment_terms?: string;
+        delivery_terms?: string;
+        is_foreign?: number;
+        currency?: string;
+        country?: string;
+    }>;
+    branches: Array<{ id: number; branch_name: string; branch_code?: string }>;
+    paymentTypes: Array<{ id: number; payment_name?: string; name?: string }>;
+    paymentModes: PurchaseOrderPaymentMode[];
+    paymentTerms: Array<{
+        id: number;
+        payment_name: string;
+        payment_days?: number | null;
+        payment_description?: string | null;
+    }>;
+    jobOrders: Array<{ job_order_id: number; job_order_no?: string }>;
+    priceTypeRules: PurchaseOrderPriceTypeRule[];
+}
+
+export type PurchaseOrderDiscountSource = "supplier" | "manual" | "none";
+
+export type PurchaseOrderMissingPriceReason =
+    | "MATRIX_ROW_MISSING"
+    | "MATRIX_ROW_NOT_APPROVED"
+    | "MATRIX_PRICE_INVALID";
+
+export interface PurchaseOrderMissingPriceDetail {
+    productId: number;
+    unitId: number | null;
+    unitLabel: string | null;
+    priceTypeId: number;
+    priceTypeName: string;
+    reason: PurchaseOrderMissingPriceReason;
+}
+
+export interface PurchaseOrderCommercialResolutionLine {
+    productId: number;
+    parentProductId: number | null;
+    unitId: number | null;
+    unitLabel: string | null;
+    pricePhp: string | null;
+    priceSourceProductId: number | null;
+    discountTypeId: number | null;
+    discountTypeName: string | null;
+    discountPercent: string;
+    discountSourceProductId: number | null;
+}
+
+export interface PurchaseOrderCommercialResolution {
+    priceTypeId: number;
+    priceTypeName: string;
+    missingPriceProductIds: number[];
+    missingPriceDetails: PurchaseOrderMissingPriceDetail[];
+    lines: PurchaseOrderCommercialResolutionLine[];
+}
+
+export interface PurchaseOrderDraftPayload {
+    externalReference?: string;
+    remark?: string;
+    supplierId: number;
+    branchId: number;
+    paymentArrangementId: number;
+    paymentModeId: number;
+    paymentTermsId: number;
+    deliveryTerms: string;
+    currencyCode: "PHP" | "USD";
+    exchangeRate: number;
+    expectedTotals: {
+        grossPhp: number;
+        discountPhp: number;
+        vatPhp: number;
+        withholdingPhp: number;
+        netPhp: number;
+        netForeign: number;
+    };
+    lines: Array<{
+        productId: number;
+        categoryType: "RAW_MATERIAL" | "PACKAGING" | "FINISHED_GOODS";
+        parentProductId?: number | null;
+        purchaseIntent: "MRP_Demand" | "Buffer_Stock";
+        jobOrderId: number | null;
+        quantity: number;
+        unitPrice: number;
+        discountMode: "Percentage";
+        discountType: number | null;
+        discountSource: PurchaseOrderDiscountSource;
+        discountPercent: number;
+        discountAmount: number;
+        vatPercent: number;
+        withholdingPercent: number;
+    }>;
+}
+
+export interface PurchaseOrderDraftResponse {
+    success: true;
+    purchaseOrderId: number;
+    purchaseOrderNo: string;
+    status: string;
+    currencyCode: "PHP" | "USD";
+    exchangeRate: number | string;
+    priceType: string;
+    priceTypeId: number;
+    totals: {
+        grossPhp: number | string;
+        discountPhp: number | string;
+        vatPhp: number | string;
+        withholdingPhp: number | string;
+        netPhp: number | string;
+        netForeign: number | string;
+    };
+}
+
+export interface PurchaseOrderRevisionResponse {
+    success: true;
+    purchaseOrderId: number;
+    status: string;
+    workflowRevision: number;
+    revisedAt: string;
+    revisedBy: number;
+}
+
+export type PurchaseOrderApprovalStage = "Finance" | "Complete" | "Rejected" | "Revision";
+export type PurchaseOrderDecisionStage = "Finance";
+
+export interface PurchaseOrderApprovalHistory {
+    history_id: number;
+    action: string;
+    approval_stage: "Plant" | "Finance" | "System";
+    actor_id: number;
+    actor_name: string;
+    actor_role_id?: number | null;
+    remarks?: string | null;
+    from_inventory_status?: number | null;
+    to_inventory_status?: number | null;
+    revision_before: number;
+    revision_after: number;
+    revision_snapshot?: PurchaseOrderRevisionSnapshot | null;
+    created_at: string;
+}
+
+export interface PurchaseOrderApprovalReferenceLabel {
+    id: number;
+    label: string;
+}
+
+export interface PurchaseOrderApprovalReferenceLabels {
+    suppliers: PurchaseOrderApprovalReferenceLabel[];
+    branches: PurchaseOrderApprovalReferenceLabel[];
+    paymentArrangements: PurchaseOrderApprovalReferenceLabel[];
+    paymentTerms: PurchaseOrderApprovalReferenceLabel[];
+}
+
+export interface PurchaseOrderApprovalDetail {
+    order: {
+        purchase_order_id: number;
+        purchase_order_no?: string | null;
+        date_encoded?: string | null;
+        reference?: string | null;
+        supplier_name?: number | string | { id?: number | string } | null;
+        branch_id?: number | null;
+        payment_type?: number | null;
+        payment_mode?: number | null;
+        delivery_terms?: string | null;
+        price_type?: string | null;
+        remark?: string | null;
+        inventory_status: number;
+        payment_status?: number | null;
+        payment_terms?: number | null;
+        total_amount?: number | string | null;
+        gross_amount?: number | string | null;
+        currency_code?: string | null;
+        exchange_rate?: number | string | null;
+        total_foreign_currency?: number | string | null;
+        workflow_revision?: number | null;
+        lead_time_receiving?: string | null;
+        approver_id?: number | null;
+        finance_id?: number | null;
+        date_approved?: string | null;
+        date_financed?: string | null;
+        revised_at?: string | null;
+        revised_by?: number | null;
+        for_revision_at?: string | null;
+    };
+    revisionCount: number;
+    referenceLabels: PurchaseOrderApprovalReferenceLabels;
+    stage: PurchaseOrderApprovalStage;
+    pendingStages?: PurchaseOrderDecisionStage[];
+    matchedRule: {
+        ruleId: number;
+        ruleName: string;
+        requiresFinance: boolean;
+        allowSelfApproval: boolean;
+        snapshot: boolean;
+    };
+    categoryIds: number[];
+    history: PurchaseOrderApprovalHistory[];
+}
+
+export interface PurchaseOrderApprovalCommand {
+    action: "approve" | "revision" | "cancel";
+    workflowRevision: number;
+    expectedRuleId?: number;
+    remarks?: string;
+}
+
+export interface FinanceApprovalDetailResponse {
+    data: {
+        shipment: import("@/modules/manufacturing-management/procurement/types").IncomingShipment;
+        lineItems: import("@/modules/manufacturing-management/procurement/types").ShipmentLineItem[];
+        approvalDetail: PurchaseOrderApprovalDetail;
+    };
+}

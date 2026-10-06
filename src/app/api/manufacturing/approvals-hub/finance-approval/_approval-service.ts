@@ -1,0 +1,576 @@
+import { procurementDirectusFetch } from "@/app/api/manufacturing/procurement/_directus";
+import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { formatPhtDateTime } from "@/app/api/manufacturing/services/core-api.service";
+
+import {
+    derivePurchaseOrderWorkflowStage,
+    pendingPurchaseOrderApprovalStages,
+    selectPurchaseOrderApprovalRule,
+    countPurchaseOrderRevisionCycles,
+    type PurchaseOrderApprovalRule
+} from "./_domain";
+import { INVENTORY_STATUS, PAYMENT_STATUS } from "@/app/api/manufacturing/procurement/_domain";
+import type { ApprovalStage } from "./_domain";
+import type { AuthorizedPurchaseOrderUser } from "@/app/api/manufacturing/procurement-and-inbound/incoming-shipments/_auth";
+import type { z } from "zod";
+import type { purchaseOrderApprovalSchema } from "@/app/api/manufacturing/procurement-and-inbound/incoming-shipments/_schemas";
+import {
+    normalizeDecimal,
+    PROCUREMENT_MONEY_DECIMAL_SCALE
+} from "@/modules/manufacturing-management/decimal";
+import {
+    parsePurchaseOrderRevisionSnapshot,
+    type PurchaseOrderRevisionSnapshot
+} from "@/modules/manufacturing-management/procurement-and-inbound/incoming-shipments/revision-snapshot";
+
+type ApprovalCommand = z.infer<typeof purchaseOrderApprovalSchema>;
+
+export class PurchaseOrderApprovalError extends Error {
+    constructor(message: string, public readonly status = 400, public readonly details?: unknown) {
+        super(message);
+    }
+}
+
+interface ApprovalOrder {
+    purchase_order_id: number;
+    purchase_order_no?: string | null;
+    date_encoded?: string | null;
+    reference?: string | null;
+    supplier_name?: number | string | { id?: number | string } | null;
+    branch_id?: number | null;
+    payment_type?: number | null;
+    payment_mode?: number | null;
+    delivery_terms?: string | null;
+    price_type?: string | null;
+    remark?: string | null;
+    encoder_id?: number | null;
+    approver_id?: number | null;
+    finance_id?: number | null;
+    date_approved?: string | null;
+    date_financed?: string | null;
+    lead_time_receiving?: string | null;
+    inventory_status: number;
+    payment_status?: number | null;
+    payment_terms?: number | null;
+    total_amount?: number | string | null;
+    gross_amount?: number | string | null;
+    currency_code?: string | null;
+    exchange_rate?: number | string | null;
+    total_foreign_currency?: number | string | null;
+    is_import?: boolean | number | null;
+    workflow_revision?: number | null;
+    approval_rule_id?: number | null;
+    approval_requires_finance?: boolean | number | null;
+    approval_allow_self_approval?: boolean | number | null;
+    revised_at?: string | null;
+    revised_by?: number | null;
+    for_revision_at?: string | null;
+    cancelled_at?: string | null;
+    cancelled_by?: number | null;
+}
+
+interface ApprovalHistoryRow {
+    history_id: number;
+    action: string;
+    approval_stage: "Plant" | "Finance" | "System";
+    actor_id: number;
+    actor_role_id?: number | null;
+    remarks?: string | null;
+    from_inventory_status?: number | null;
+    to_inventory_status?: number | null;
+    revision_before: number;
+    revision_after: number;
+    revision_snapshot?: PurchaseOrderRevisionSnapshot | string | null;
+    created_at: string;
+}
+
+interface ApprovalActorRow {
+    user_id: number;
+    user_fname?: string | null;
+    user_mname?: string | null;
+    user_lname?: string | null;
+    user_email?: string | null;
+}
+
+interface ApprovalReferenceLabel {
+    id: number;
+    label: string;
+}
+
+interface ApprovalReferenceLabels {
+    suppliers: ApprovalReferenceLabel[];
+    branches: ApprovalReferenceLabel[];
+    paymentArrangements: ApprovalReferenceLabel[];
+    paymentTerms: ApprovalReferenceLabel[];
+}
+
+interface ApprovalSupplierRow {
+    id: number;
+    supplier_name?: string | null;
+}
+
+interface ApprovalBranchRow {
+    id: number;
+    branch_name?: string | null;
+    branch_code?: string | null;
+}
+
+interface ApprovalPaymentTermRow {
+    id: number;
+    payment_name?: string | null;
+    payment_description?: string | null;
+}
+
+const PAYMENT_ARRANGEMENT_LABELS: ApprovalReferenceLabel[] = [
+    { id: 1, label: "Advance Payment" },
+    { id: 2, label: "Partial Payment" },
+    { id: 3, label: "Full Payment" },
+    { id: 4, label: "Refund" },
+    { id: 5, label: "Installment" }
+];
+
+const ORDER_FIELDS = [
+    "purchase_order_id", "purchase_order_no", "date_encoded", "reference", "supplier_name", "branch_id", "payment_type", "payment_mode", "payment_terms", "delivery_terms", "price_type", "remark", "encoder_id", "approver_id", "finance_id",
+    "date_approved", "date_financed", "lead_time_receiving", "inventory_status", "payment_status", "total_amount", "gross_amount",
+    "currency_code", "exchange_rate", "total_foreign_currency", "is_import",
+    "workflow_revision", "approval_rule_id", "approval_requires_finance", "approval_allow_self_approval", "revised_at", "revised_by", "for_revision_at"
+].join(",");
+
+const approvalLocks = new Map<number, Promise<void>>();
+
+async function withApprovalLock<T>(purchaseOrderId: number, operation: () => Promise<T>): Promise<T> {
+    const previous = approvalLocks.get(purchaseOrderId) || Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>(resolve => {
+        release = resolve;
+    });
+    const queued = previous.then(() => current);
+    approvalLocks.set(purchaseOrderId, queued);
+
+    await previous;
+    try {
+        return await operation();
+    } finally {
+        release();
+        if (approvalLocks.get(purchaseOrderId) === queued) approvalLocks.delete(purchaseOrderId);
+    }
+}
+
+async function directusData<T>(path: string, message: string): Promise<T> {
+    const response = await procurementDirectusFetch(path);
+    if (!response.ok) throw new PurchaseOrderApprovalError(message, response.status >= 500 ? 503 : response.status);
+    return (await response.json()).data as T;
+}
+
+function relationId(value: unknown, key: string): number | null {
+    if (typeof value === "number") return Number.isSafeInteger(value) && value > 0 ? value : null;
+    if (!value || typeof value !== "object") return null;
+    const parsed = Number((value as Record<string, unknown>)[key]);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function asBoolean(value: unknown): boolean {
+    return value === true || Number(value) === 1;
+}
+
+function mapRule(row: Record<string, unknown>): PurchaseOrderApprovalRule & { ruleName: string } {
+    return {
+        ruleId: Number(row.rule_id),
+        ruleName: String(row.rule_name || `Rule ${row.rule_id}`),
+        priority: Number(row.priority || 0),
+        minimumTotalPhp: normalizeDecimal(String(row.minimum_total_php ?? 0), PROCUREMENT_MONEY_DECIMAL_SCALE),
+        maximumTotalPhp: row.maximum_total_php == null ? null : normalizeDecimal(String(row.maximum_total_php), PROCUREMENT_MONEY_DECIMAL_SCALE),
+        currencyCode: typeof row.currency_code === "string" ? row.currency_code : null,
+        importScope: row.import_scope === "Domestic" || row.import_scope === "Import" ? row.import_scope : "Any",
+        productCategoryId: relationId(row.product_category_id, "category_id"),
+        requiresFinance: asBoolean(row.requires_finance),
+        allowSelfApproval: asBoolean(row.allow_self_approval),
+        effectiveFrom: typeof row.effective_from === "string" ? row.effective_from : null,
+        effectiveTo: typeof row.effective_to === "string" ? row.effective_to : null,
+        isActive: asBoolean(row.is_active)
+    };
+}
+
+async function loadOrder(id: number): Promise<ApprovalOrder> {
+    return directusData<ApprovalOrder>(
+        `/items/purchase_order/${id}?fields=${ORDER_FIELDS}`,
+        "Purchase order was not found."
+    );
+}
+
+async function loadCategoryIds(id: number): Promise<number[]> {
+    const rows = await directusData<Array<{ product_id?: { product_category?: unknown; parent_id?: { product_category?: unknown } } }>>(
+        `/items/purchase_order_products?filter[purchase_order_id][_eq]=${id}&fields=product_id.product_category.category_id,product_id.parent_id.product_category.category_id&limit=-1`,
+        "Unable to load purchase-order categories."
+    );
+    return [...new Set(rows.flatMap(row => {
+        const product = row.product_id;
+        const idValue = relationId(product?.product_category, "category_id")
+            || relationId(product?.parent_id?.product_category, "category_id");
+        return idValue ? [idValue] : [];
+    }))];
+}
+
+async function loadRules(): Promise<Array<PurchaseOrderApprovalRule & { ruleName: string }>> {
+    const rows = await directusData<Record<string, unknown>[]>(
+        "/items/purchase_order_approval_rules?fields=*&sort=-priority&limit=-1",
+        "Unable to load approval rules."
+    );
+    return rows.map(mapRule);
+}
+
+async function resolveRule(order: ApprovalOrder, categoryIds: number[]) {
+    const rules = await loadRules();
+    if (order.approval_rule_id) {
+        const stored = rules.find(rule => rule.ruleId === Number(order.approval_rule_id));
+        if (stored) return {
+            ...stored,
+            requiresFinance: true,
+            allowSelfApproval: asBoolean(order.approval_allow_self_approval),
+            snapshot: true
+        };
+        throw new PurchaseOrderApprovalError("The purchase order references an unavailable approval rule.", 409);
+    }
+    const selected = selectPurchaseOrderApprovalRule(rules, {
+        totalPhp: normalizeDecimal(order.total_amount || order.gross_amount || 0, PROCUREMENT_MONEY_DECIMAL_SCALE),
+        currencyCode: order.currency_code || "PHP",
+        isImport: asBoolean(order.is_import) || (order.currency_code || "PHP") !== "PHP",
+        productCategoryIds: categoryIds,
+        businessDate: await getTodayDateString()
+    });
+    if (!selected) throw new PurchaseOrderApprovalError("No active approval rule matches this purchase order.", 409);
+    return { ...rules.find(rule => rule.ruleId === selected.ruleId)!, requiresFinance: true, snapshot: false };
+}
+
+function approvalState(order: ApprovalOrder, requiresFinance: boolean) {
+    return {
+        inventoryStatus: Number(order.inventory_status),
+        approverId: Number(order.approver_id) || null,
+        financeId: Number(order.finance_id) || null,
+        requiresFinance
+    };
+}
+
+async function loadHistory(id: number): Promise<ApprovalHistoryRow[]> {
+    return directusData<ApprovalHistoryRow[]>(
+        `/items/purchase_order_approval_history?filter[purchase_order_id][_eq]=${id}&fields=history_id,action,approval_stage,actor_id,actor_role_id,remarks,from_inventory_status,to_inventory_status,revision_before,revision_after,revision_snapshot,created_at&sort=created_at,history_id&limit=-1`,
+        "Unable to load approval history."
+    );
+}
+
+function approvalActorDisplayName(actor: ApprovalActorRow): string {
+    const fullName = [actor.user_fname, actor.user_mname, actor.user_lname]
+        .map(part => typeof part === "string" ? part.trim() : "")
+        .filter(Boolean)
+        .join(" ");
+    return fullName || actor.user_email?.trim() || "Unknown user";
+}
+
+async function loadHistoryActorNames(history: ApprovalHistoryRow[]): Promise<Map<number, string>> {
+    const actorIds = [...new Set(history
+        .map(entry => Number(entry.actor_id))
+        .filter(id => Number.isSafeInteger(id) && id > 0))];
+    if (actorIds.length === 0) return new Map();
+
+    const params = new URLSearchParams({
+        fields: "user_id,user_fname,user_mname,user_lname,user_email",
+        limit: String(actorIds.length)
+    });
+    params.set("filter[user_id][_in]", actorIds.join(","));
+    const actors = await directusData<ApprovalActorRow[]>(
+        `/items/user?${params.toString()}`,
+        "Unable to load approval actor names."
+    );
+
+    return new Map(actors.map(actor => [
+        Number(actor.user_id),
+        approvalActorDisplayName(actor)
+    ]));
+}
+
+function positiveReferenceId(value: unknown): number | null {
+    const candidates = value && typeof value === "object"
+        ? ["id", "supplier_id", "branch_id", "payment_terms_id"].map(key => (value as Record<string, unknown>)[key])
+        : [value];
+    for (const candidate of candidates) {
+        const id = Number(candidate);
+        if (Number.isSafeInteger(id) && id > 0) return id;
+    }
+    return null;
+}
+
+function referenceHeaders(order: ApprovalOrder, history: ApprovalHistoryRow[]): Record<string, unknown>[] {
+    return [
+        order as unknown as Record<string, unknown>,
+        ...history.flatMap(entry => {
+            const snapshot = parsePurchaseOrderRevisionSnapshot(entry.revision_snapshot);
+            return snapshot ? [snapshot.header] : [];
+        })
+    ];
+}
+
+async function loadReferenceRows<T>(collection: string, ids: Set<number>, fields: string): Promise<T[]> {
+    if (ids.size === 0) return [];
+    const params = new URLSearchParams({ fields, limit: String(ids.size) });
+    params.set("filter[id][_in]", [...ids].join(","));
+    try {
+        const response = await procurementDirectusFetch(`/items/${collection}?${params.toString()}`);
+        if (!response.ok) return [];
+        const body = await response.json();
+        return Array.isArray(body?.data) ? body.data as T[] : [];
+    } catch {
+        return [];
+    }
+}
+
+async function loadReferenceLabels(order: ApprovalOrder, history: ApprovalHistoryRow[]): Promise<ApprovalReferenceLabels> {
+    const supplierIds = new Set<number>();
+    const branchIds = new Set<number>();
+    const paymentTermIds = new Set<number>();
+
+    referenceHeaders(order, history).forEach(header => {
+        const supplierId = positiveReferenceId(header.supplier_name);
+        const branchId = positiveReferenceId(header.branch_id);
+        const paymentTermsId = positiveReferenceId(header.payment_terms);
+        if (supplierId) supplierIds.add(supplierId);
+        if (branchId) branchIds.add(branchId);
+        if (paymentTermsId) paymentTermIds.add(paymentTermsId);
+    });
+
+    const [suppliers, branches, paymentTerms] = await Promise.all([
+        loadReferenceRows<ApprovalSupplierRow>("suppliers", supplierIds, "id,supplier_name"),
+        loadReferenceRows<ApprovalBranchRow>("branches", branchIds, "id,branch_name,branch_code"),
+        loadReferenceRows<ApprovalPaymentTermRow>("payment_terms", paymentTermIds, "id,payment_name,payment_description")
+    ]);
+
+    return {
+        suppliers: suppliers
+            .map(row => ({ id: Number(row.id), label: row.supplier_name?.trim() || "Unknown supplier" }))
+            .filter(row => Number.isSafeInteger(row.id) && row.id > 0),
+        branches: branches
+            .map(row => {
+                const name = row.branch_name?.trim() || "Unknown branch";
+                const code = row.branch_code?.trim();
+                return { id: Number(row.id), label: code ? `${name} (${code})` : name };
+            })
+            .filter(row => Number.isSafeInteger(row.id) && row.id > 0),
+        paymentArrangements: PAYMENT_ARRANGEMENT_LABELS,
+        paymentTerms: paymentTerms
+            .map(row => ({
+                id: Number(row.id),
+                label: row.payment_name?.trim() || row.payment_description?.trim() || "Unknown payment terms"
+            }))
+            .filter(row => Number.isSafeInteger(row.id) && row.id > 0)
+    };
+}
+
+export async function getPurchaseOrderApprovalDetail(id: number, requestedStage?: ApprovalStage) {
+    const [order, categoryIds, history] = await Promise.all([loadOrder(id), loadCategoryIds(id), loadHistory(id)]);
+    const [rule, actorNames, referenceLabels] = await Promise.all([
+        resolveRule(order, categoryIds),
+        loadHistoryActorNames(history),
+        loadReferenceLabels(order, history)
+    ]);
+    const state = approvalState(order, rule.requiresFinance);
+    const pendingStages = pendingPurchaseOrderApprovalStages(state);
+    const parsedHistory = history.map(entry => ({
+        ...entry,
+        revision_snapshot: parsePurchaseOrderRevisionSnapshot(entry.revision_snapshot)
+    }));
+    return {
+        order,
+        revisionCount: countPurchaseOrderRevisionCycles(history),
+        referenceLabels,
+        stage: requestedStage && pendingStages.includes(requestedStage)
+            ? requestedStage
+            : derivePurchaseOrderWorkflowStage(state),
+        pendingStages,
+        matchedRule: {
+            ruleId: rule.ruleId,
+            ruleName: rule.ruleName,
+            requiresFinance: true,
+            allowSelfApproval: true,
+            snapshot: rule.snapshot
+        },
+        categoryIds,
+        history: parsedHistory.map(entry => ({
+            ...entry,
+            actor_name: actorNames.get(Number(entry.actor_id)) || "Unknown user"
+        }))
+    };
+}
+
+async function conditionalPatch(filter: Record<string, unknown>, data: Record<string, unknown>): Promise<ApprovalOrder | null> {
+    const params = new URLSearchParams({ fields: ORDER_FIELDS });
+    const response = await procurementDirectusFetch(`/items/purchase_order?${params.toString()}`, {
+        method: "PATCH",
+        body: JSON.stringify({ query: { filter, limit: 1 }, data })
+    });
+    if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new PurchaseOrderApprovalError(body?.errors?.[0]?.message || "Unable to update the purchase-order workflow.", 503);
+    }
+    const rows = ((await response.json()).data || []) as ApprovalOrder[];
+    return rows.length === 1 ? rows[0] : null;
+}
+
+function rollbackPayload(order: ApprovalOrder) {
+    return {
+        inventory_status: order.inventory_status,
+        payment_status: order.payment_status ?? null,
+        approver_id: order.approver_id || null,
+        finance_id: order.finance_id || null,
+        date_approved: order.date_approved || null,
+        date_financed: order.date_financed || null,
+        lead_time_receiving: order.lead_time_receiving || null,
+        approval_rule_id: order.approval_rule_id || null,
+        approval_requires_finance: order.approval_requires_finance ?? null,
+        approval_allow_self_approval: order.approval_allow_self_approval ?? null,
+        remark: order.remark || null,
+        for_revision_at: order.for_revision_at || null,
+        cancelled_at: order.cancelled_at || null,
+        cancelled_by: order.cancelled_by ?? null,
+        workflow_revision: Number(order.workflow_revision || 0)
+    };
+}
+
+async function submitPurchaseOrderApprovalUnlocked(
+    id: number,
+    command: ApprovalCommand,
+    actor: AuthorizedPurchaseOrderUser,
+    requestedStage: ApprovalStage
+) {
+    const order = await loadOrder(id);
+    const revision = Number(order.workflow_revision || 0);
+    if (revision !== command.workflowRevision) {
+        throw new PurchaseOrderApprovalError("This purchase order changed. Reload it before submitting another action.", 409);
+    }
+    const categoryIds = await loadCategoryIds(id);
+    const rule = await resolveRule(order, categoryIds);
+    if (!rule.snapshot && command.expectedRuleId !== rule.ruleId) {
+        throw new PurchaseOrderApprovalError("The matched approval rule changed. Reload the purchase order and review it again.", 409);
+    }
+    const state = approvalState(order, rule.requiresFinance);
+    const pendingStages = pendingPurchaseOrderApprovalStages(state);
+    if (!pendingStages.includes(requestedStage)) {
+        throw new PurchaseOrderApprovalError(
+            `This purchase order is not awaiting ${requestedStage} approval.`,
+            409
+        );
+    }
+    const stage = requestedStage;
+    if (command.action !== "approve" && command.action !== "revision" && command.action !== "cancel") {
+        throw new PurchaseOrderApprovalError("Finance approval accepts only approve, revision, or cancel.", 400);
+    }
+
+    const nowPht = formatPhtDateTime();
+    const nextRevision = revision + 1;
+    const targetStatus = command.action === "revision"
+        ? INVENTORY_STATUS.REVISION
+        : command.action === "cancel"
+            ? INVENTORY_STATUS.CANCELLED
+            : INVENTORY_STATUS.APPROVED;
+    const update: Record<string, unknown> = {
+        workflow_revision: nextRevision,
+        inventory_status: targetStatus,
+        approval_rule_id: rule.ruleId,
+        approval_requires_finance: 1,
+        approval_allow_self_approval: 1
+    };
+    if (command.action === "revision") update.for_revision_at = formatPhtDateTime();
+    if (command.action === "cancel") {
+        update.cancelled_at = formatPhtDateTime();
+        update.cancelled_by = actor.userId;
+    }
+    if (command.action === "approve") {
+        update.approver_id = actor.userId;
+        update.date_approved = nowPht;
+        update.lead_time_receiving = null;
+        update.finance_id = actor.userId;
+        update.date_financed = nowPht;
+        update.payment_status = PAYMENT_STATUS.PENDING;
+    }
+
+    const stageFilter = {
+        finance_id: { _null: true },
+        _or: [
+            { inventory_status: { _eq: INVENTORY_STATUS.REQUESTED } },
+            {
+                _and: [
+                    { inventory_status: { _eq: INVENTORY_STATUS.APPROVED } },
+                    { approver_id: { _null: true } }
+                ]
+            }
+        ]
+    };
+    const allowedStatuses = [INVENTORY_STATUS.REQUESTED, INVENTORY_STATUS.APPROVED];
+    const updated = await conditionalPatch({
+        purchase_order_id: { _eq: id },
+        inventory_status: { _in: allowedStatuses },
+        workflow_revision: { _eq: revision },
+        ...stageFilter
+    }, update);
+    if (!updated) {
+        throw new PurchaseOrderApprovalError("Another approval action changed this purchase order. Reload and try again.", 409);
+    }
+
+    const action = command.action === "revision"
+        ? "Revision"
+        : command.action === "cancel"
+            ? "Cancelled"
+            : "Finance Approved";
+    const historyResponse = await procurementDirectusFetch("/items/purchase_order_approval_history", {
+        method: "POST",
+        body: JSON.stringify({
+            purchase_order_id: id,
+            action,
+            approval_stage: stage,
+            actor_id: actor.userId,
+            actor_role_id: actor.roleId,
+            remarks: command.remarks || null,
+            from_inventory_status: order.inventory_status,
+            to_inventory_status: targetStatus,
+            revision_before: revision,
+            revision_after: nextRevision,
+            created_at: nowPht
+        })
+    });
+    if (!historyResponse.ok) {
+        const rolledBack = await conditionalPatch({
+            purchase_order_id: { _eq: id },
+            workflow_revision: { _eq: nextRevision }
+        }, rollbackPayload(order)).catch(() => null);
+        if (!rolledBack) {
+            console.error("Purchase-order approval audit compensation requires intervention.", { id, revision, nextRevision, action });
+        }
+        throw new PurchaseOrderApprovalError(
+            rolledBack
+                ? "Approval history could not be recorded. The workflow change was rolled back."
+                : "Approval history could not be recorded and automatic rollback failed.",
+            503,
+            { cleanupRequired: !rolledBack, purchaseOrderId: id, revision: nextRevision }
+        );
+    }
+
+    return {
+        success: true,
+        action,
+        stage,
+        status: targetStatus === INVENTORY_STATUS.APPROVED
+            ? "Approved"
+            : targetStatus === INVENTORY_STATUS.CANCELLED
+                ? "Cancelled"
+                : "Revision",
+        workflowRevision: nextRevision
+    };
+}
+
+export async function submitPurchaseOrderApproval(
+    id: number,
+    command: ApprovalCommand,
+    actor: AuthorizedPurchaseOrderUser,
+    requestedStage: ApprovalStage
+) {
+    return withApprovalLock(id, () => submitPurchaseOrderApprovalUnlocked(id, command, actor, requestedStage));
+}
+
