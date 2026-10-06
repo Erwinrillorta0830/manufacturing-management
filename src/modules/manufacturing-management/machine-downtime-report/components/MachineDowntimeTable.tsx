@@ -1,9 +1,17 @@
 "use client";
 
-import { AlertTriangle, ChevronLeft, ChevronRight, Clock3, History, RotateCcw, Search, Wrench } from "lucide-react";
+import { useState } from "react";
+import { AlertTriangle, ChevronLeft, ChevronRight, ClipboardList, Clock3, History, RotateCcw, Search, Wrench } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { phtTimestampToEpoch } from "@/modules/manufacturing-management/shared/pht-date";
@@ -125,6 +133,7 @@ export function MachineDowntimeTable({
     onOpenHistory,
     onStartMaintenance
 }: MachineDowntimeTableProps) {
+    const [jobOrdersAsset, setJobOrdersAsset] = useState<MachineAssetReport | null>(null);
     const hasActiveFilters = searchQuery.trim() !== "" || conditionFilter !== "All" || eventFilter !== "All";
 
     return (
@@ -190,10 +199,18 @@ export function MachineDowntimeTable({
                                 Production asset #{asset.assetId} · {asset.trackedEpisodeCount} tracked episode{asset.trackedEpisodeCount === 1 ? "" : "s"} · Pre-rollout history unavailable
                             </p>
                         </div>
-                        <Button type="button" variant="outline" size="sm" onClick={() => onOpenHistory(asset.assetId)}>
-                            <History className="mr-1.5 h-4 w-4" />
-                            Maintenance history
-                        </Button>
+                        <div className="flex flex-wrap gap-2">
+                            {asset.haltedJobOrders.length > 0 && (
+                                <Button type="button" variant="outline" size="sm" onClick={() => setJobOrdersAsset(asset)}>
+                                    <ClipboardList className="mr-1.5 h-4 w-4" />
+                                    Job Orders
+                                </Button>
+                            )}
+                            <Button type="button" variant="outline" size="sm" onClick={() => onOpenHistory(asset.assetId)}>
+                                <History className="mr-1.5 h-4 w-4" />
+                                Maintenance history
+                            </Button>
+                        </div>
                     </CardHeader>
                     <CardContent className="p-0">
                         {asset.historyMismatch && (
@@ -207,18 +224,7 @@ export function MachineDowntimeTable({
                                 <Clock3 className="h-4 w-4" />
                                 No recorded terminations or cancellations are linked to a used route on this machine.
                             </div>
-                        ) : (
-                            <div>
-                                {asset.haltedJobOrders.map((jobOrder) => (
-                                    <HaltedJobRows
-                                        key={jobOrder.jobOrderId}
-                                        jobOrder={jobOrder}
-                                        assetId={asset.assetId}
-                                        onStartMaintenance={onStartMaintenance}
-                                    />
-                                ))}
-                            </div>
-                        )}
+                        ) : null}
                     </CardContent>
                 </Card>
             ))}
@@ -263,6 +269,39 @@ export function MachineDowntimeTable({
                     </div>
                 </div>
             )}
+
+            <Dialog
+                open={jobOrdersAsset !== null}
+                onOpenChange={(open) => {
+                    if (!open) setJobOrdersAsset(null);
+                }}
+            >
+                <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
+                    <DialogHeader>
+                        <DialogTitle>Job Orders</DialogTitle>
+                        <DialogDescription>
+                            {jobOrdersAsset
+                                ? jobOrdersAsset.assetName + " - Production asset #" + jobOrdersAsset.assetId
+                                : "Related job orders"}
+                        </DialogDescription>
+                    </DialogHeader>
+                    {jobOrdersAsset && (
+                        <div className="max-h-[65vh] overflow-y-auto rounded-md border">
+                            {jobOrdersAsset.haltedJobOrders.map((jobOrder) => (
+                                <HaltedJobRows
+                                    key={jobOrder.jobOrderId}
+                                    jobOrder={jobOrder}
+                                    assetId={jobOrdersAsset.assetId}
+                                    onStartMaintenance={(assetId, selectedJobOrder, routeStep) => {
+                                        setJobOrdersAsset(null);
+                                        onStartMaintenance(assetId, selectedJobOrder, routeStep);
+                                    }}
+                                />
+                            ))}
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }
