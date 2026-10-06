@@ -6,7 +6,7 @@ import { fetchActiveSupplierCurrencies, fetchPHProvinces, fetchPHCities, fetchPH
 import { SUPPLIER_COUNTRY_OPTIONS, isPhilippinesCountry } from "../supplier-country";
 import { CreatableSelect } from "../../finished-goods-master/components/CreatableSelect";
 import { SearchableCountrySelect } from "@/app/(manufacturing-management)/mm/suppliers/_components/SearchableCountrySelect";
-import { PURCHASE_ORDER_DELIVERY_TERMS } from "../../purchase-order/commercial-terms";
+import { PURCHASE_ORDER_DELIVERY_TERMS } from "@/modules/manufacturing-management/procurement-and-inbound/incoming-shipments/commercial-terms";
 import { toast } from "sonner";
 
 export interface SupplierFormModalProps {
@@ -779,7 +779,7 @@ export default function SupplierFormModal({
                                         className="w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary text-foreground font-semibold font-medium"
                                     >
                                         <option value="">-- Select Delivery Terms --</option>
-                                        {PURCHASE_ORDER_DELIVERY_TERMS.map(option => (
+                                        {PURCHASE_ORDER_DELIVERY_TERMS.map((option) => (
                                             <option key={option.value} value={option.value}>{option.label}</option>
                                         ))}
                                     </select>

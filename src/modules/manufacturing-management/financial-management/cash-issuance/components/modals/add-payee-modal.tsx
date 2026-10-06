@@ -8,7 +8,7 @@ import { fetchActiveSupplierCurrencies, fetchPHProvinces, fetchPHCities, fetchPH
 import { SUPPLIER_COUNTRY_OPTIONS, isPhilippinesCountry, PHILIPPINES_COUNTRY } from "@/modules/manufacturing-management/procurement/supplier-country";
 import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods-master/components/CreatableSelect";
 import { SearchableCountrySelect } from "../SearchableCountrySelect";
-import { PURCHASE_ORDER_DELIVERY_TERMS } from "@/modules/manufacturing-management/purchase-order/commercial-terms";
+import { PURCHASE_ORDER_DELIVERY_TERMS } from "@/modules/manufacturing-management/procurement-and-inbound/incoming-shipments/commercial-terms";
 import { createSupplier } from "@/modules/manufacturing-management/procurement/services/procurement-api";
 import { disbursementProvider } from "../../providers/fetchProvider";
 import { SupplierCurrencyOption, SupplierFormState, PSGCItem, SupplierRepresentative } from "@/modules/manufacturing-management/procurement/types";

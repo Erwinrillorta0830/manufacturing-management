@@ -21,7 +21,7 @@ import {
 import {
     parsePurchaseOrderRevisionSnapshot,
     type PurchaseOrderRevisionSnapshot
-} from "@/modules/manufacturing-management/purchase-order/revision-snapshot";
+} from "@/modules/manufacturing-management/procurement-and-inbound/incoming-shipments/revision-snapshot";
 
 type ApprovalCommand = z.infer<typeof purchaseOrderApprovalSchema>;
 

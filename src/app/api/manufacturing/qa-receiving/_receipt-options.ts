@@ -1,5 +1,5 @@
 import { procurementDirectusFetch } from "../procurement/_directus";
-import type { QaReceiptOption } from "@/modules/manufacturing-management/qa-receiving/types";
+import type { QaReceiptOption } from "@/modules/manufacturing-management/shop-floor-and-quality/qa-receiving-inspections/types";
 
 export interface QaReceiptSelection {
     key: string;

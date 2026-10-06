@@ -13,7 +13,7 @@ import { RawProductSelector } from "./RawProductSelector";
 import { formatMoney } from "./ShipmentBadges";
 import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods-master/components/CreatableSelect";
 import { normalizeProductRelationId } from "../../product-relation";
-import { PURCHASE_ORDER_DELIVERY_TERMS } from "../../../purchase-order/commercial-terms";
+import { PURCHASE_ORDER_DELIVERY_TERMS } from "@/modules/manufacturing-management/procurement-and-inbound/incoming-shipments/commercial-terms";
 import { calculatePercentageDiscount } from "../../discount-calculation";
 import {
     DecimalValue,
@@ -25,7 +25,7 @@ import {
     normalizePurchaseOrderUnitPrice,
     tryNormalizePurchaseOrderUnitPrice
 } from "../../price-precision";
-import type { PurchaseOrderMissingPriceDetail } from "../../../purchase-order/types";
+import type { PurchaseOrderMissingPriceDetail } from "@/modules/manufacturing-management/procurement-and-inbound/incoming-shipments/types";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export interface UOMOption {

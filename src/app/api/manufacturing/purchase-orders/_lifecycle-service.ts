@@ -28,7 +28,7 @@ import {
 import {
     buildPurchaseOrderRevisionSnapshot,
     type PurchaseOrderRevisionSnapshot
-} from "@/modules/manufacturing-management/purchase-order/revision-snapshot";
+} from "@/modules/manufacturing-management/procurement-and-inbound/incoming-shipments/revision-snapshot";
 import {
     validatePurchaseOrderCategoryTypes,
     type PurchaseOrderCategoryType

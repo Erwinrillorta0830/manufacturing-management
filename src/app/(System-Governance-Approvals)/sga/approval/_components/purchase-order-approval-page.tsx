@@ -10,9 +10,9 @@ import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { cookies } from "next/headers";
-import PurchaseOrderApprovalModule from "@/modules/manufacturing-management/purchase-order-approval/PurchaseOrderApprovalModule";
-import type { PurchaseOrderDecisionStage } from "@/modules/manufacturing-management/purchase-order/types";
-import type { PurchaseOrderApprovalMode } from "@/modules/manufacturing-management/purchase-order-approval/hooks/usePurchaseOrderApproval";
+import PurchaseOrderApprovalModule from "@/modules/manufacturing-management/approvals-hub/finance-approval/PurchaseOrderApprovalModule";
+import type { PurchaseOrderDecisionStage } from "@/modules/manufacturing-management/procurement-and-inbound/incoming-shipments/types";
+import type { PurchaseOrderApprovalMode } from "@/modules/manufacturing-management/approvals-hub/finance-approval/hooks/usePurchaseOrderApproval";
 
 const COOKIE_NAME = "vos_access_token";
 

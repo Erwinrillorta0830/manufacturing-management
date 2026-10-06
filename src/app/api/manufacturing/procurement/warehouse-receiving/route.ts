@@ -20,8 +20,8 @@ import type {
     WarehouseReceiptHistoryStatus,
     WarehouseReceivingReceiptHistory,
     WarehouseReceivingReceiptHistoryLine
-} from "@/modules/manufacturing-management/warehouse-receiving/types";
-import { isReceiptQuantityOverRemaining, WAREHOUSE_RECEIPT_QUANTITY_EPSILON } from "@/modules/manufacturing-management/warehouse-receiving/quantity-validation";
+} from "@/modules/manufacturing-management/procurement-and-inbound/warehouse-receiving/types";
+import { isReceiptQuantityOverRemaining, WAREHOUSE_RECEIPT_QUANTITY_EPSILON } from "@/modules/manufacturing-management/procurement-and-inbound/warehouse-receiving/quantity-validation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
