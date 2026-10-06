@@ -88,7 +88,9 @@ export function MaintenanceEpisodeDialog({
                 <DialogHeader>
                     <DialogTitle>Maintenance history</DialogTitle>
                     <DialogDescription>
-                        {asset ? asset.assetName + " · Production asset #" + asset.assetId : "Select a machine"}
+                        {asset
+                            ? `${asset.assetName} · Classification: ${asset.classificationName} · Assigned To: ${asset.assignedToName}`
+                            : "Select a machine"}
                     </DialogDescription>
                 </DialogHeader>
 
@@ -103,9 +105,6 @@ export function MaintenanceEpisodeDialog({
                                 <span className="text-muted-foreground">Tracked episodes</span>
                                 <span className="font-medium">{asset.trackedEpisodeCount}</span>
                             </div>
-                            <p className="mt-2 text-xs text-muted-foreground">
-                                Maintenance history before report rollout is unavailable.
-                            </p>
                         </div>
 
                         <section className="space-y-2">
