@@ -171,16 +171,10 @@ export async function resolveCustomerDiscountPrice(input: SalesOrderPricingInput
           if (!supplierIds.includes(ruleSup)) {
               continue; // Rule requires a specific supplier, but it doesn't match this product.
           }
-      } else {
-          // ruleSup is null. This means it is a Finished Goods discount.
-          // It MUST ONLY apply to products that are Finished Goods (i.e. have no suppliers).
-          if (supplierIds.length > 0) {
-              continue; // Product is a raw material, so this Finished Goods discount doesn't apply.
-          }
       }
       
       // 3. Rule is valid for this product! Calculate its specificity score.
-      let score = 1; // Base score for global blanket rules
+      let score = 1; // Base score for global blanket rules (both category and supplier null)
       if (ruleCat && ruleSup) score = 3;
       else if (ruleCat || ruleSup) score = 2;
       
