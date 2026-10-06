@@ -6,7 +6,7 @@ import IncomingShipments from "./components/IncomingShipments";
 import ShipmentExpenses from "./components/ShipmentExpenses";
 import RawMaterialsMaster from "./components/RawMaterialsMaster";
 import ForexManagementModule from "./components/ForexManagementModule";
-import PurchaseAmountPostingModule from "./components/PurchaseAmountPostingModule";
+import PurchaseAmountPostingModule from "@/modules/manufacturing-management/procurement-and-inbound/purchase-amount/PurchaseAmountPostingModule";
 import LandedCostAuditSummary from "./components/LandedCostAuditSummary";
 import { useProcurement } from "./hooks/useProcurement";
 import type { IncomingShipment } from "./types";

@@ -12,10 +12,10 @@ import {
     X,
 } from "lucide-react";
 import { toast } from "sonner";
-import type { PurchaseOrderApprovalDetail, PurchaseOrderDecisionStage } from "../../purchase-order/types";
+import type { PurchaseOrderApprovalDetail, PurchaseOrderDecisionStage } from "@/modules/manufacturing-management/procurement-and-inbound/incoming-shipments/types";
 import type { IncomingShipment, ShipmentLineItem } from "../../procurement/types";
 import RevisionSnapshotComparison from "./RevisionSnapshotComparison";
-import { downloadPurchaseOrderPrintable } from "../../purchase-order/services/purchase-order-print-api";
+import { downloadPurchaseOrderPrintable } from "@/modules/manufacturing-management/procurement-and-inbound/incoming-shipments/services/purchase-order-print-api";
 import { calculatePercentageDiscount } from "../../procurement/discount-calculation";
 import { EXCHANGE_RATE_DECIMAL_SCALE, PROCUREMENT_MONEY_DECIMAL_SCALE } from "../../decimal";
 import { CancelPurchaseOrderDialog } from "../../procurement/components/incoming-shipments/CancelPurchaseOrderDialog";

@@ -1,8 +1,7 @@
 import React from "react";
 import type { IncomingShipment, ShipmentLineItem, Supplier, RawMaterial, LinkedProduct, PurchaseOrderPaymentMode, PurchaseOrderPriceTypeRule } from "../../types";
 export type { IncomingShipment, ShipmentLineItem, Supplier, RawMaterial, LinkedProduct, PurchaseOrderPaymentMode, PurchaseOrderPriceTypeRule };
-import type { PurchaseOrderListQuery } from "../../../purchase-order/types";
-import type { PurchaseOrderDiscountSource } from "../../../purchase-order/types";
+import type { PurchaseOrderListQuery, PurchaseOrderDiscountSource } from "@/modules/manufacturing-management/procurement-and-inbound/incoming-shipments/types";
 import { normalizeProductRelationId } from "../../product-relation";
 
 export type PurchaseOrderMaterialType = "raw_material" | "packaging" | "finished_goods";

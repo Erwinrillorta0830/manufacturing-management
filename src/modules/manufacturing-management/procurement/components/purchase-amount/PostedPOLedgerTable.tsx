@@ -26,8 +26,8 @@ import {
     downloadPurchaseOrderPrintable,
     fetchPurchaseOrderArchiveStatus,
     type PurchaseOrderArchiveStatus
-} from "../../../purchase-order/services/purchase-order-print-api";
-import { formatPhtDateTime } from "../../../approval/pht-date-time";
+} from "@/modules/manufacturing-management/procurement-and-inbound/incoming-shipments/services/purchase-order-print-api";
+import { formatPhtDateTime } from "@/modules/manufacturing-management/approval/pht-date-time";
 import type { POLineItem, PurchaseAmountLandingRow, PurchaseOrderOption, ChartOfAccount } from "./types";
 import { PROCUREMENT_MONEY_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 

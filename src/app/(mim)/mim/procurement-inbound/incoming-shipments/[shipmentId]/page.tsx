@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import IncomingShipmentsPageShell from "../_page-shell";
-import PurchaseOrderModule from "@/modules/manufacturing-management/purchase-order/PurchaseOrderModule";
+import PurchaseOrderModule from "@/modules/manufacturing-management/procurement-and-inbound/incoming-shipments/PurchaseOrderModule";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,7 +12,7 @@ function positiveInteger(value: string): number | null {
 
 function safeReturnTo(value: string | string[] | undefined): string | undefined {
     const candidate = Array.isArray(value) ? value[0] : value;
-    if (!candidate || !candidate.startsWith("/mm/incoming-shipments") || candidate.startsWith("//")) return undefined;
+    if (!candidate || !candidate.startsWith("/mm/incoming-purchase-shipments") || candidate.startsWith("//")) return undefined;
     return candidate;
 }
 
@@ -34,7 +34,7 @@ export default async function IncomingShipmentDetailPage({
             <PurchaseOrderModule
                 mode="detail"
                 shipmentId={numericShipmentId}
-                backHref={returnTo || "/mm/incoming-shipments"}
+                backHref={returnTo || "/mm/incoming-purchase-shipments"}
             />
         </IncomingShipmentsPageShell>
     );
