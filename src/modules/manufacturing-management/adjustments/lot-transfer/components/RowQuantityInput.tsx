@@ -32,7 +32,12 @@ export const RowQuantityInput: React.FC<RowQuantityInputProps> = ({
   }
 
   const handleFocusOrClick = (e: React.FocusEvent<HTMLInputElement> | React.MouseEvent<HTMLInputElement>) => {
-    e.currentTarget.select();
+    const parsed = parseFloat(localText);
+    if (isNaN(parsed) || parsed === 0) {
+      setLocalText("");
+    } else {
+      e.currentTarget.select();
+    }
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {

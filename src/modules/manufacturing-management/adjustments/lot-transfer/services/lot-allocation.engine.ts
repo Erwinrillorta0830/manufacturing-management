@@ -28,6 +28,17 @@ export function resolveProductClassification(productType: unknown, categoryName?
   label: string;
   strategy: "FEFO" | "FIFO";
 } {
+  const numId = typeof productType === "number" ? productType : Number(productType);
+  if (numId === 389) {
+    return { code: "RM", label: "Raw Materials / Ingredients", strategy: "FEFO" };
+  }
+  if (numId === 388) {
+    return { code: "FG", label: "Finished Goods", strategy: "FEFO" };
+  }
+  if (numId === 390) {
+    return { code: "PKG", label: "Packaging Materials", strategy: "FIFO" };
+  }
+
   const raw = String(productType || categoryName || "").toUpperCase();
 
   if (raw.includes("RAW") || raw.includes("INGREDIENT") || raw.includes("RM")) {
@@ -45,12 +56,14 @@ export function resolveProductClassification(productType: unknown, categoryName?
 export function checkBatchEligibility(
   batch: BatchCandidate,
   referenceDate: Date = new Date(),
-  options?: { targetIsBadStock?: boolean }
+  options?: { targetIsBadStock?: boolean; classificationCode?: ProductClassification }
 ): BatchEligibilityResult {
   let isExpired = false;
   let daysUntilExpiry: number | null = null;
+  const isPackaging = options?.classificationCode === "PKG";
 
-  if (batch.expiry_date) {
+  // Per manufacturing guide: Packaging Materials do not follow perishable expiration rules
+  if (!isPackaging && batch.expiry_date) {
     const exp = new Date(batch.expiry_date);
     if (isNaN(exp.getTime())) {
       // invalid date

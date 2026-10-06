@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -34,7 +35,6 @@ import {
 import { toast } from "sonner";
 import { TransferStatusBadge } from "./components/TransferStatusBadge";
 import { SearchableSelect, type Option } from "./components/SearchableSelect";
-import { RowQuantityInput } from "./components/RowQuantityInput";
 import { LotBatchSelectionModal } from "./components/LotBatchSelectionModal";
 import { lotTransferService } from "./services/lot-transfer.service";
 import {
@@ -85,6 +85,8 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  // Used to re-trigger row animations when data changes
+  const [listAnimKey, setListAnimKey] = useState(0);
 
   // Lots available for the selected branch in form
   const [lots, setLots] = useState<MMLot[]>([]);
@@ -189,6 +191,7 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
       }
       const res = await lotTransferService.listTransfers(filter);
       setTransfers(Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : []);
+      setListAnimKey((k) => k + 1);
     } catch {
       setTransfers([]);
     } finally {
@@ -253,10 +256,11 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
         const unitLabel = l.unit_name || stats?.unitName || "";
         const matchingCount = stats ? stats.matchingBatchesToMove : 0;
         const matchingQty = stats ? stats.matchingQtyToMove : 0;
+        const occupied = stats ? stats.totalOccupancy : 0;
         return {
           value: l.lot_id,
           label: l.lot_name,
-          subLabel: `${matchingCount} ${matchingCount === 1 ? "batch" : "batches"} to move (${matchingQty.toLocaleString()} ${unitLabel}) • Occupancy: ${stats?.totalOccupancy.toLocaleString()}/${stats?.maxCapacity && stats.maxCapacity > 0 ? stats.maxCapacity.toLocaleString() : "∞"} ${unitLabel}`,
+          subLabel: `${matchingCount} ${matchingCount === 1 ? "batch" : "batches"} to move (${matchingQty.toLocaleString()} ${unitLabel}) • Occupancy: ${occupied.toLocaleString()}/${stats?.maxCapacity && stats.maxCapacity > 0 ? stats.maxCapacity.toLocaleString() : "∞"} ${unitLabel}`,
         };
       });
   }, [lots, lotBatchStats]);
@@ -279,7 +283,7 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
   const sourceLot = lots.find((l) => l.lot_id === sourceLotId);
   const targetLot = lots.find((l) => l.lot_id === targetLotId);
 
-  // Target lot options - strictly hide incompatible UOM lots, inactive lots, and source lot
+  // Target lot options - strictly hide incompatible UOM lots, inactive lots, source lot, and lots containing different product types (empty lots can store any)
   const targetLotOptions: Option[] = useMemo(() => {
     return lots
       .filter((l) => {
@@ -291,18 +295,49 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
         if (sourceLot?.unit_id && l.unit_id && sourceLot.unit_id !== l.unit_id) {
           return false;
         }
+
+        const stats = lotBatchStats[l.lot_id];
+        const totalBatches = stats ? stats.totalBatchCount : 0;
+        const totalOccupancy = stats ? stats.totalOccupancy : 0;
+        const matchingBatches = stats ? stats.matchingBatchesToMove : 0;
+        const hasNegative = Boolean(stats?.hasNegativeStock || totalOccupancy < 0);
+        // Those lots with negative qty batches are strictly NOT empty lots
+        const isEmpty = (!stats || (totalBatches === 0 && totalOccupancy === 0)) && !hasNegative;
+
+        // If the lot is empty (all batches = 0 and no negative balance), it can store ANY product type
+        if (isEmpty) return true;
+
+        // If the lot already has batches/stock or has negative stock, it is ONLY eligible if it currently holds the selected product classification
+        // If matchingBatches === 0 while not clean empty, it holds a DIFFERENT product type -> strictly hide it to prevent cross-contamination
+        if (formProductTypeId && matchingBatches === 0) {
+          return false;
+        }
+
         return true;
       })
       .map((l) => {
         const stats = lotBatchStats[l.lot_id];
         const occupied = stats ? stats.totalOccupancy : 0;
+        const totalBatches = stats ? stats.totalBatchCount : 0;
+        const matchingBatches = stats ? stats.matchingBatchesToMove : 0;
+        const hasNegative = Boolean(stats?.hasNegativeStock || occupied < 0);
         const max = l.max_batch_capacity;
-        const availableSpace = max > 0 ? Math.max(0, max - occupied) : 999999;
+        const effectiveOccupied = Math.max(0, occupied);
+        const availableSpace = max > 0 ? Math.max(0, max - effectiveOccupied) : 999999;
         const unitLabel = l.unit_name || stats?.unitName || "";
-        const subLabel =
-          max > 0
-            ? `Capacity Left: ${availableSpace.toLocaleString()} / Max: ${max.toLocaleString()} ${unitLabel} (Current: ${occupied.toLocaleString()})`
-            : `Current Stock: ${occupied.toLocaleString()} ${unitLabel}`;
+        const isEmpty = (!stats || (totalBatches === 0 && occupied === 0)) && !hasNegative;
+
+        let subLabel = "";
+        if (isEmpty) {
+          subLabel = max > 0
+            ? `Empty Lot (Available for any product) • Capacity: ${max.toLocaleString()} ${unitLabel}`
+            : "Empty Lot (Available for any product)";
+        } else {
+          subLabel = max > 0
+            ? `${matchingBatches} matching ${matchingBatches === 1 ? "batch" : "batches"} • Capacity Left: ${availableSpace.toLocaleString()} / Max: ${max.toLocaleString()} ${unitLabel} (Used: ${occupied.toLocaleString()})`
+            : `${matchingBatches} matching ${matchingBatches === 1 ? "batch" : "batches"} • Current Stock: ${occupied.toLocaleString()} ${unitLabel}`;
+        }
+
         return {
           value: l.lot_id,
           label: l.lot_name,
@@ -310,7 +345,7 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
           disabled: max > 0 && availableSpace <= 0,
         };
       });
-  }, [lots, sourceLotId, sourceLot, lotBatchStats]);
+  }, [lots, sourceLotId, sourceLot, lotBatchStats, formProductTypeId]);
 
   // UOM Compatibility Analysis
   const uomMismatch = useMemo(() => {
@@ -390,12 +425,6 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
     setLines((prev) => prev.filter((_, i) => i !== idx));
   };
 
-  const handleLineQtyChange = (idx: number, qty: number) => {
-    setLines((prev) =>
-      prev.map((line, i) => (i === idx ? { ...line, quantity: qty } : line))
-    );
-  };
-
   const resetForm = () => {
     setFormBranchId(null);
     setFormProductTypeId(null);
@@ -431,6 +460,44 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
       toast.error("Please add at least one line item to transfer.");
       return;
     }
+
+    const invalidQtyLine = lines.find(
+      (l) => !l.quantity || Number(l.quantity) <= 0 || isNaN(Number(l.quantity))
+    );
+    if (invalidQtyLine) {
+      toast.error(
+        `Invalid quantity for batch ${invalidQtyLine.sourceBatchNo || `Line #${invalidQtyLine.lineNo}`}. Quantity must be strictly greater than zero.`
+      );
+      return;
+    }
+
+    const overStockLine = lines.find(
+      (l) => Number(l.quantity) > Number(l.sourceOnHand)
+    );
+    if (overStockLine) {
+      toast.error(
+        `Transfer quantity (${overStockLine.quantity}) exceeds available stock (${overStockLine.sourceOnHand}) for batch ${overStockLine.sourceBatchNo}.`
+      );
+      return;
+    }
+
+    const emptyTargetLine = lines.find((l) => !l.targetBatchNo || !l.targetBatchNo.trim());
+    if (emptyTargetLine) {
+      toast.error(
+        `Target batch number is missing for batch ${emptyTargetLine.sourceBatchNo || `Line #${emptyTargetLine.lineNo}`}.`
+      );
+      return;
+    }
+
+    const targetBatchNos = lines.map((l) => l.targetBatchNo.trim().toLowerCase());
+    const duplicateTarget = targetBatchNos.find((tb, i) => targetBatchNos.indexOf(tb) !== i);
+    if (duplicateTarget) {
+      toast.error(
+        `Duplicate target batch number "${duplicateTarget}" detected in transfer lines.`
+      );
+      return;
+    }
+
     if (uomMismatch) {
       toast.error(uomMismatch);
       return;
@@ -497,9 +564,17 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
 
   return (
     <div className="flex-1 flex flex-col p-4 space-y-4 max-w-7xl mx-auto w-full">
+      <AnimatePresence mode="wait">
       {/* View: CREATE TRANSFER */}
       {viewState === "create" && (
-        <div className="space-y-6">
+        <motion.div
+          key="create"
+          initial={{ opacity: 0, x: 24 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: -24 }}
+          transition={{ duration: 0.22, ease: "easeOut" }}
+          className="space-y-6"
+        >
           <div className="flex items-center justify-between border-b pb-4">
             <div>
               <div className="flex items-center gap-2">
@@ -653,7 +728,7 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
               <div className="flex items-center justify-between">
                 <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                   <Layers className="w-3.5 h-3.5 text-primary" />
-                  Source Storage Lot *
+                  Source Lot *
                 </label>
                 {sourceLot && (
                   (() => {
@@ -685,6 +760,9 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
                   const newSourceId = Number(val);
                   setSourceLotId(newSourceId);
                   const newSource = lots.find((l) => l.lot_id === newSourceId);
+                  if (targetLotId === newSourceId) {
+                    setTargetLotId(null);
+                  }
                   if (targetLot && newSource?.unit_id && targetLot.unit_id && newSource.unit_id !== targetLot.unit_id) {
                     setTargetLotId(null);
                     toast.warning("Destination lot reset because its UOM is incompatible with the selected source lot.");
@@ -705,7 +783,7 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
               <div className="flex items-center justify-between">
                 <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                   <ArrowRight className="w-3.5 h-3.5 text-primary" />
-                  Destination Storage Lot *
+                  Destination Lot *
                 </label>
                 {targetLot && (
                   (() => {
@@ -852,93 +930,108 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
             </div>
 
             {lines.length === 0 ? (
-              <div className="py-12 text-center text-muted-foreground space-y-2">
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.2 }}
+                className="py-12 text-center text-muted-foreground space-y-2"
+              >
                 <Layers className="w-8 h-8 mx-auto opacity-30" />
                 <p className="text-sm">No batches added to this transfer yet.</p>
                 <p className="text-xs text-muted-foreground/75">
                   Select branch and storage lots above, then click &ldquo;Add Batch to Transfer&rdquo;.
                 </p>
-              </div>
+              </motion.div>
             ) : (
               <Table>
                 <TableHeader>
                   <TableRow className="bg-muted/30">
                     <TableHead className="w-12 text-center" title="Line Number">#</TableHead>
-                    <TableHead title="Product Name / SKU">Product</TableHead>
-                    <TableHead title="Source Batch Number">Source Batch</TableHead>
-                    <TableHead title="Target Batch Number">Target Batch #</TableHead>
-                    <TableHead title="Manufacturing Date">Mfg Date</TableHead>
-                    <TableHead title="Expiration Date">Expiry Date</TableHead>
-                    <TableHead className="text-right" title="Available Stock in Source Lot">Available</TableHead>
-                    <TableHead className="w-36 text-right" title="Quantity to Transfer">Transfer Qty</TableHead>
-                    <TableHead title="Remarks">Remarks</TableHead>
+                    <TableHead className="min-w-[220px]" title="Product Name / SKU">Product</TableHead>
+                    <TableHead className="w-28" title="Source Batch Number">Source Batch</TableHead>
+                    <TableHead className="w-32" title="Target Batch Number">Target Batch #</TableHead>
+                    <TableHead className="w-24" title="Manufacturing Date">Mfg Date</TableHead>
+                    <TableHead className="w-24" title="Expiration Date">Expiry Date</TableHead>
+                    <TableHead className="w-24 text-right" title="Available Stock in Source Lot">Available</TableHead>
+                    <TableHead className="w-28 text-right" title="Quantity to Transfer">Transfer Qty</TableHead>
+                    <TableHead className="max-w-[180px]" title="Remarks">Remarks</TableHead>
                     <TableHead className="w-12 text-center" title="Action"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {lines.map((line, idx) => {
-                    const pDesc = line.productDescription;
-                    const pName = line.productName && line.productName !== "-" ? line.productName : "";
-                    const pCode = line.productCode && line.productCode !== "-" ? line.productCode : "";
-                    const primaryTitle = pDesc || pName || (line.productId ? `Product #${line.productId}` : "-");
-                    const mfgDate = line.sourceManufacturingDate ? String(line.sourceManufacturingDate).slice(0, 10) : "-";
-                    const expDate = line.sourceExpiryDate ? String(line.sourceExpiryDate).slice(0, 10) : "-";
-                    const lineRemarks = line.lineRemarks || reason || "-";
+                  <AnimatePresence initial={false}>
+                    {lines.map((line, idx) => {
+                      const pDesc = line.productDescription ? line.productDescription.trim() : "";
+                      const pName = line.productName && line.productName !== "-" ? line.productName.trim() : "";
+                      const pCode = line.productCode && line.productCode !== "-" ? line.productCode.trim() : "";
+                      const primaryTitle = pName || pDesc || (line.productId ? `Product #${line.productId}` : "-");
+                      const showSecondaryDesc = Boolean(pDesc && pDesc.toLowerCase() !== primaryTitle.toLowerCase());
+                      const mfgDate = line.sourceManufacturingDate ? String(line.sourceManufacturingDate).slice(0, 10) : "-";
+                      const expDate = line.sourceExpiryDate ? String(line.sourceExpiryDate).slice(0, 10) : "-";
+                      const lineRemarks = line.lineRemarks || reason || "-";
 
-                    return (
-                      <TableRow key={idx}>
-                        <TableCell className="text-center font-mono text-xs text-muted-foreground" title={`Line ${idx + 1}`}>
-                          {idx + 1}
-                        </TableCell>
-                        <TableCell title={primaryTitle}>
-                          <div className="font-semibold text-sm leading-tight text-foreground">
-                            {primaryTitle}
-                          </div>
-                          <div className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5">
-                            {pDesc && pName && <span>{pName}</span>}
-                            {pCode && <span>• Code: {pCode}</span>}
-                          </div>
-                        </TableCell>
-                        <TableCell className="font-mono text-xs font-medium" title={line.sourceBatchNo || "-"}>
-                          {line.sourceBatchNo || "-"}
-                        </TableCell>
-                        <TableCell className="font-mono text-xs" title={line.targetBatchNo}>
-                          {line.targetBatchNo}
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap" title={mfgDate}>
-                          {mfgDate}
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap" title={expDate}>
-                          {expDate}
-                        </TableCell>
-                        <TableCell className="text-right font-mono text-xs" title={`${line.sourceOnHand.toLocaleString()} ${line.uomName || "-"}`}>
-                          {line.sourceOnHand.toLocaleString()} {line.uomName || "-"}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <RowQuantityInput
-                            value={line.quantity}
-                            onChange={(val) => handleLineQtyChange(idx, val)}
-                            max={line.sourceOnHand}
-                            min={0.0001}
-                          />
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground" title={lineRemarks}>
-                          {lineRemarks}
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleRemoveLine(idx)}
-                            className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                            title="Remove batch line"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
+                      return (
+                        <motion.tr
+                          key={line.sourceInventoryLotId || idx}
+                          initial={{ opacity: 0, y: -10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, x: -16 }}
+                          transition={{ duration: 0.22 }}
+                          className="border-b transition-colors hover:bg-muted/30"
+                        >
+                          <TableCell className="text-center font-mono text-xs text-muted-foreground" title={`Line ${idx + 1}`}>
+                            {idx + 1}
+                          </TableCell>
+                          <TableCell className="min-w-[220px] max-w-[280px]" title={primaryTitle}>
+                            <div className="font-semibold text-sm leading-snug text-foreground">
+                              {primaryTitle}
+                            </div>
+                            <div className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5 flex-wrap">
+                              {showSecondaryDesc && <span className="truncate max-w-[160px]">{pDesc}</span>}
+                              {pCode && <span className="font-mono text-[11px]">{pCode}</span>}
+                            </div>
+                          </TableCell>
+                          <TableCell className="font-mono text-xs font-semibold whitespace-nowrap" title={line.sourceBatchNo || "-"}>
+                            {line.sourceBatchNo || "-"}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs font-semibold text-primary whitespace-nowrap" title={line.targetBatchNo}>
+                            {line.targetBatchNo}
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground whitespace-nowrap" title={mfgDate}>
+                            {mfgDate}
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground whitespace-nowrap" title={expDate}>
+                            {expDate}
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-xs text-muted-foreground whitespace-nowrap" title={`${line.sourceOnHand.toLocaleString()} ${line.uomName || "-"}`}>
+                            {line.sourceOnHand.toLocaleString()} {line.uomName || "-"}
+                          </TableCell>
+                          <TableCell className="text-right whitespace-nowrap" title={`${line.quantity.toLocaleString()} ${line.uomName || ""}`}>
+                            <span className="font-mono text-sm font-semibold text-foreground">
+                              {line.quantity.toLocaleString()}
+                            </span>
+                            <span className="text-xs text-muted-foreground ml-1 font-normal">
+                              {line.uomName || ""}
+                            </span>
+                          </TableCell>
+                          <TableCell className="max-w-[180px] truncate text-xs text-muted-foreground" title={lineRemarks}>
+                            {lineRemarks}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleRemoveLine(idx)}
+                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                              title="Remove batch line"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </TableCell>
+                        </motion.tr>
+                      );
+                    })}
+                  </AnimatePresence>
                 </TableBody>
               </Table>
             )}
@@ -963,12 +1056,19 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
               onAddLine={handleAddLine}
             />
           )}
-        </div>
+        </motion.div>
       )}
 
       {/* View: LIST TRANSFERS */}
       {viewState === "list" && (
-        <div className="space-y-4">
+        <motion.div
+          key="list"
+          initial={{ opacity: 0, x: -24 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: 24 }}
+          transition={{ duration: 0.22, ease: "easeOut" }}
+          className="space-y-4"
+        >
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b pb-4">
             <div>
               <h1 className="text-xl font-bold tracking-tight">Lot Transfer Requests</h1>
@@ -977,16 +1077,18 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
               </p>
             </div>
 
-            <Button
-              onClick={() => {
-                resetForm();
-                setViewState("create");
-              }}
-              className="gap-1.5"
-            >
-              <Plus className="w-4 h-4" />
-              New Transfer Request
-            </Button>
+            <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
+              <Button
+                onClick={() => {
+                  resetForm();
+                  setViewState("create");
+                }}
+                className="gap-1.5 shadow-sm"
+              >
+                <Plus className="w-4 h-4" />
+                New Transfer Request
+              </Button>
+            </motion.div>
           </div>
 
           {/* Search & Filter Bar with Active Branch Combobox */}
@@ -1060,115 +1162,150 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
                 {loading && transfers.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={6} className="h-32 text-center text-muted-foreground">
-                      <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 opacity-40" />
-                      Loading lot transfers...
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="flex flex-col items-center justify-center gap-2"
+                      >
+                        <RefreshCw className="w-6 h-6 animate-spin mx-auto opacity-40 text-primary" />
+                        <span>Loading lot transfers...</span>
+                      </motion.div>
                     </TableCell>
                   </TableRow>
                 ) : transfers.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={6} className="h-32 text-center text-muted-foreground">
-                      No lot transfer requests found.
+                      <motion.div
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.2 }}
+                        className="flex flex-col items-center justify-center gap-1.5 py-4"
+                      >
+                        <Layers className="w-7 h-7 opacity-30 mx-auto" />
+                        <span className="font-medium text-foreground">No lot transfer requests found.</span>
+                        <span className="text-xs text-muted-foreground">Try adjusting your branch, status filter, or search query.</span>
+                      </motion.div>
                     </TableCell>
                   </TableRow>
                 ) : (
-                  transfers.map((item) => {
-                    const branchDisplay = item.branchName && item.branchName !== "-" ? item.branchName : item.branchId ? `Branch #${item.branchId}` : "-";
-                    const sourceLotDisplay = item.sourceLotName || `Lot #${item.sourceLotId}`;
-                    const targetLotDisplay = item.targetLotName || `Lot #${item.targetLotId}`;
-                    const lineCount = item.lineCount || item.details?.length || 1;
+                  <AnimatePresence mode="popLayout" initial={false}>
+                    {transfers.map((item, idx) => {
+                      const branchDisplay = item.branchName && item.branchName !== "-" ? item.branchName : item.branchId ? `Branch #${item.branchId}` : "-";
+                      const sourceLotDisplay = item.sourceLotName || `Lot #${item.sourceLotId}`;
+                      const targetLotDisplay = item.targetLotName || `Lot #${item.targetLotId}`;
+                      const lineCount = item.lineCount || item.details?.length || 1;
 
-                    return (
-                      <TableRow key={item.id} className="hover:bg-muted/40 transition-colors">
-                        <TableCell title={`${item.requestNo} • ${item.transferDate} • ${branchDisplay}`}>
-                          <div className="font-mono font-bold text-xs text-foreground">
-                            {item.requestNo}
-                          </div>
-                          <div className="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">
-                            <span>{item.transferDate}</span>
-                            <span>•</span>
-                            <span className="truncate max-w-[130px]">{branchDisplay}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell title={`Status: ${item.status}`}>
-                          <TransferStatusBadge status={item.status} />
-                        </TableCell>
-                        <TableCell title={`${sourceLotDisplay} → ${targetLotDisplay}`}>
-                          <div className="flex items-center gap-1 text-xs font-semibold text-foreground flex-wrap">
-                            <span>{sourceLotDisplay}</span>
-                            <ArrowRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                            <span>{targetLotDisplay}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right" title={`${item.quantity.toLocaleString()} total units across ${lineCount} line(s)`}>
-                          <div className="font-mono font-bold text-xs text-foreground">
-                            {item.quantity.toLocaleString()}
-                          </div>
-                          <div className="text-[11px] font-mono text-muted-foreground">
-                            {lineCount} {lineCount === 1 ? "line" : "lines"}
-                          </div>
-                        </TableCell>
-                        <TableCell title={item.reason || "No operational justification provided"}>
-                          <div className="text-xs text-muted-foreground max-w-[220px] truncate">
-                            {item.reason || "-"}
-                          </div>
-                        </TableCell>
-                      <TableCell className="text-right space-x-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={async () => {
-                            try {
-                              setLoading(true);
-                              const full = await lotTransferService.getTransferById(item.id);
-                              setActiveTransfer(full);
-                              setViewState("view");
-                            } catch {
-                              setActiveTransfer(item);
-                              setViewState("view");
-                            } finally {
-                              setLoading(false);
-                            }
+                      return (
+                        <motion.tr
+                          key={`${listAnimKey}-${item.id}`}
+                          initial={{ opacity: 0, y: -10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: 10 }}
+                          transition={{
+                            duration: 0.22,
+                            delay: Math.min(idx * 0.035, 0.35),
+                            ease: "easeOut",
                           }}
-                          className="h-8 text-xs gap-1"
+                          className="hover:bg-muted/40 transition-colors border-b"
                         >
-                          <Eye className="w-3.5 h-3.5" />
-                          View
-                        </Button>
-                        {item.status === "Draft" && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleSubmitDraft(item.id)}
-                            disabled={submittingDraftId === item.id}
-                            className="h-8 text-xs gap-1 text-primary min-w-[75px]"
-                          >
-                            {submittingDraftId === item.id ? (
-                              <>
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                                Submitting...
-                              </>
-                            ) : (
-                              <>
-                                <Send className="w-3 h-3" />
-                                Submit
-                              </>
+                          <TableCell title={`${item.requestNo} • ${item.transferDate} • ${branchDisplay}`}>
+                            <div className="font-mono font-bold text-xs text-foreground">
+                              {item.requestNo}
+                            </div>
+                            <div className="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">
+                              <span>{item.transferDate}</span>
+                              <span>•</span>
+                              <span className="truncate max-w-[130px]">{branchDisplay}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell title={`Status: ${item.status}`}>
+                            <TransferStatusBadge status={item.status} />
+                          </TableCell>
+                          <TableCell title={`${sourceLotDisplay} → ${targetLotDisplay}`}>
+                            <div className="flex items-center gap-1 text-xs font-semibold text-foreground flex-wrap">
+                              <span>{sourceLotDisplay}</span>
+                              <ArrowRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                              <span>{targetLotDisplay}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right" title={`${item.quantity.toLocaleString()} total units across ${lineCount} line(s)`}>
+                            <div className="font-mono font-bold text-xs text-foreground">
+                              {item.quantity.toLocaleString()}
+                            </div>
+                            <div className="text-[11px] font-mono text-muted-foreground">
+                              {lineCount} {lineCount === 1 ? "line" : "lines"}
+                            </div>
+                          </TableCell>
+                          <TableCell title={item.reason || "No operational justification provided"}>
+                            <div className="text-xs text-muted-foreground max-w-[220px] truncate">
+                              {item.reason || "-"}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right space-x-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={async () => {
+                                try {
+                                  setLoading(true);
+                                  const full = await lotTransferService.getTransferById(item.id);
+                                  setActiveTransfer(full);
+                                  setViewState("view");
+                                } catch {
+                                  setActiveTransfer(item);
+                                  setViewState("view");
+                                } finally {
+                                  setLoading(false);
+                                }
+                              }}
+                              className="h-8 text-xs gap-1"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              View
+                            </Button>
+                            {item.status === "Draft" && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleSubmitDraft(item.id)}
+                                disabled={submittingDraftId === item.id}
+                                className="h-8 text-xs gap-1 text-primary min-w-[75px]"
+                              >
+                                {submittingDraftId === item.id ? (
+                                  <>
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                    Submitting...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Send className="w-3 h-3" />
+                                    Submit
+                                  </>
+                                )}
+                              </Button>
                             )}
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })
-              )}
+                          </TableCell>
+                        </motion.tr>
+                      );
+                    })}
+                  </AnimatePresence>
+                )}
               </TableBody>
             </Table>
           </div>
-        </div>
+        </motion.div>
       )}
 
       {/* View: DETAIL VIEW */}
       {viewState === "view" && activeTransfer && (
-        <div className="space-y-6">
+        <motion.div
+          key="view"
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -16 }}
+          transition={{ duration: 0.22, ease: "easeOut" }}
+          className="space-y-6"
+        >
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
             <div className="flex items-center gap-3 flex-wrap">
               <Button
@@ -1436,8 +1573,9 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
               </TableBody>
             </Table>
           </div>
-        </div>
+        </motion.div>
       )}
+      </AnimatePresence>
     </div>
   );
 };
