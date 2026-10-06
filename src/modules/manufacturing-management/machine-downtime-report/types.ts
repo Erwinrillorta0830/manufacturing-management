@@ -47,6 +47,8 @@ export interface MachineAssetReport {
     assetId: number;
     assetName: string;
     assetType: string;
+    classificationName: string;
+    assignedToName: string;
     condition: MachineCondition;
     trackedEpisodeCount: number;
     history: MaintenanceEpisode[];

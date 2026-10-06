@@ -193,14 +193,27 @@ export default function JobOrderProfitabilityReportModule() {
                     </div>
                 </div>
                 {report.loading ? (
-                    <div className="overflow-x-auto"><table className="w-full min-w-[1450px] text-sm"><thead className="bg-muted/60 text-left text-xs uppercase tracking-wide text-muted-foreground"><tr>{["Batch / JO", "Sales Order", "Product", "Mfg. Date", "QA good / allocated", "Materials", "Labor", "Overhead", "Allocated COGS", "Revenue", "Gross profit / margin"].map((header) => <th key={header} className="px-3 py-3">{header}</th>)}</tr></thead><tbody className="divide-y">{Array.from({ length: 6 }, (_, index) => <tr key={index}>{Array.from({ length: 11 }, (_, cell) => <td key={cell} className="px-3 py-3"><Skeleton className="h-4 w-24" /></td>)}</tr>)}</tbody></table></div>
+                    <table className="w-full table-fixed text-[10px] sm:text-xs lg:text-sm">
+                        <colgroup>
+                            {["5%", "11%", "6%", "12%", "6%", "10%", "7%", "7%", "7%", "9%", "8%", "12%"].map((width, index) => <col key={index} style={{ width }} />)}
+                        </colgroup>
+                        <thead className="bg-muted/60 text-left text-[9px] uppercase tracking-wide text-muted-foreground sm:text-[10px] lg:text-xs">
+                            <tr><th className="px-1 py-2 sm:px-2 lg:py-3"></th>{["Batch / JO", "Sales Order", "Product / Branch", "Mfg. Date", "QA good / allocated", "Materials", "Labor", "Overhead", "Allocated COGS", "Revenue", "Gross profit / margin"].map((header) => <th key={header} className="break-words px-1 py-2 sm:px-2 lg:py-3">{header}</th>)}</tr>
+                        </thead>
+                        <tbody className="divide-y">
+                            {Array.from({ length: 6 }, (_, index) => <tr key={index}>{Array.from({ length: 12 }, (_, cell) => <td key={cell} className="px-1 py-2 sm:px-2 lg:py-3"><Skeleton className={`h-4 ${cell === 0 ? "w-5" : "w-full max-w-24"}`} /></td>)}</tr>)}
+                        </tbody>
+                    </table>
                 ) : report.rows.length === 0 ? (
                     <div className="p-12 text-center text-sm text-muted-foreground">No committed, QA-passed batches match these filters.</div>
                 ) : (
-                    <div className="overflow-x-auto">
-                        <table className="w-full min-w-[1450px] text-sm">
-                            <thead className="bg-muted/60 text-left text-xs uppercase tracking-wide text-muted-foreground">
-                                <tr><th className="w-10 px-3 py-3"></th><th className="px-3 py-3">Batch / Job Order</th><th className="px-3 py-3">Sales Order</th><th className="px-3 py-3">Product / Branch</th><th className="px-3 py-3">Mfg. Date</th><th className="px-3 py-3 text-right">QA good / allocated</th><th className="px-3 py-3 text-right">Materials</th><th className="px-3 py-3 text-right">Labor</th><th className="px-3 py-3 text-right">Overhead</th><th className="px-3 py-3 text-right">Allocated COGS</th><th className="px-3 py-3 text-right">Revenue</th><th className="px-3 py-3 text-right">Gross profit / margin</th></tr>
+                    <div>
+                        <table className="w-full table-fixed text-[10px] sm:text-xs lg:text-sm">
+                            <colgroup>
+                                {["5%", "11%", "6%", "12%", "6%", "10%", "7%", "7%", "7%", "9%", "8%", "12%"].map((width, index) => <col key={index} style={{ width }} />)}
+                            </colgroup>
+                            <thead className="bg-muted/60 text-left text-[9px] uppercase tracking-wide text-muted-foreground sm:text-[10px] lg:text-xs">
+                                <tr><th className="px-1 py-2 sm:px-2 lg:py-3"></th><th className="break-words px-1 py-2 sm:px-2 lg:py-3">Batch / Job Order</th><th className="break-words px-1 py-2 sm:px-2 lg:py-3">Sales Order</th><th className="break-words px-1 py-2 sm:px-2 lg:py-3">Product / Branch</th><th className="break-words px-1 py-2 sm:px-2 lg:py-3">Mfg. Date</th><th className="break-words px-1 py-2 text-right sm:px-2 lg:py-3">QA good / allocated</th><th className="break-words px-1 py-2 text-right sm:px-2 lg:py-3">Materials</th><th className="break-words px-1 py-2 text-right sm:px-2 lg:py-3">Labor</th><th className="break-words px-1 py-2 text-right sm:px-2 lg:py-3">Overhead</th><th className="break-words px-1 py-2 text-right sm:px-2 lg:py-3">Allocated COGS</th><th className="break-words px-1 py-2 text-right sm:px-2 lg:py-3">Revenue</th><th className="break-words px-1 py-2 text-right sm:px-2 lg:py-3">Gross profit / margin</th></tr>
                             </thead>
                             <tbody className="divide-y">
                                 {report.rows.map((row) => {
@@ -208,18 +221,18 @@ export default function JobOrderProfitabilityReportModule() {
                                     return (
                                         <Fragment key={row.key}>
                                             <tr className="align-top hover:bg-muted/20">
-                                                <td className="px-3 py-3"><button type="button" aria-label={`${expanded ? "Collapse" : "Expand"} ${row.jobOrderNo} batch ${row.batchNumber}`} onClick={() => report.toggleExpanded(row.key, row.yieldLedgerId)} className="rounded border px-2 py-1 text-xs hover:bg-muted">{expanded ? "−" : "+"}</button></td>
-                                                <td className="px-3 py-3"><div className="font-semibold">{row.batchNumber}</div><div className="mt-0.5 text-xs text-muted-foreground">{row.jobOrderNo}{row.lotNumber && row.lotNumber !== row.batchNumber ? ` · Lot ${row.lotNumber}` : ""}</div></td>
-                                                <td className="px-3 py-3"><div>{row.salesOrderNumbers.length ? row.salesOrderNumbers.join(", ") : <span className="text-muted-foreground">Unlinked</span>}</div><div className="mt-1 text-xs text-muted-foreground">JO {row.status}</div></td>
-                                                <td className="px-3 py-3"><div className="font-medium">{row.productName}</div><div className="mt-0.5 text-xs text-muted-foreground">{row.productCode}{row.productCode ? " · " : ""}{row.branchName}</div></td>
-                                                <td className="px-3 py-3 whitespace-nowrap">{row.manufacturingDate || "—"}</td>
-                                                <td className="px-3 py-3 text-right tabular-nums"><div>{quantity.format(row.goodQuantity)} {row.uom}</div><div className="mt-0.5 text-xs text-muted-foreground">{quantity.format(row.allocatedQuantity)} allocated</div>{row.unallocatedQuantity > 0 && <div className="text-xs text-amber-700">{quantity.format(row.unallocatedQuantity)} unallocated</div>}</td>
-                                                <td className="px-3 py-3 text-right tabular-nums">{money(row.directMaterialsCost)}</td>
-                                                <td className="px-3 py-3 text-right tabular-nums">{money(row.directLaborCost)}</td>
-                                                <td className="px-3 py-3 text-right tabular-nums">{money(row.manufacturingOverheadCost)}</td>
-                                                <td className="px-3 py-3 text-right tabular-nums">{money(row.allocatedCogs)}</td>
-                                                <td className="px-3 py-3 text-right tabular-nums">{money(row.revenue)}</td>
-                                                <td className={`px-3 py-3 text-right font-semibold tabular-nums ${row.grossProfit === null ? "text-muted-foreground" : row.grossProfit < 0 ? "text-red-600" : "text-emerald-700"}`}><div>{money(row.grossProfit)}</div><div className="mt-0.5 text-xs font-normal">{row.grossMarginPercent === null ? "Margin N/A" : `${row.grossMarginPercent.toFixed(2)}%`}</div>{!row.complete && <span className="mt-1 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800">Incomplete</span>}</td>
+                                                <td className="break-words px-1 py-2 sm:px-2 lg:py-3"><button type="button" aria-label={`${expanded ? "Collapse" : "Expand"} ${row.jobOrderNo} batch ${row.batchNumber}`} onClick={() => report.toggleExpanded(row.key, row.yieldLedgerId)} className="rounded border px-1.5 py-1 text-xs hover:bg-muted">{expanded ? "−" : "+"}</button></td>
+                                                <td className="break-words [overflow-wrap:anywhere] px-1 py-2 sm:px-2 lg:py-3"><div className="font-semibold">{row.batchNumber}</div><div className="mt-0.5 text-[9px] text-muted-foreground sm:text-[10px]">{row.jobOrderNo}{row.lotNumber && row.lotNumber !== row.batchNumber ? ` · Lot ${row.lotNumber}` : ""}</div></td>
+                                                <td className="break-words [overflow-wrap:anywhere] px-1 py-2 sm:px-2 lg:py-3"><div>{row.salesOrderNumbers.length ? row.salesOrderNumbers.join(", ") : <span className="text-muted-foreground">Unlinked</span>}</div><div className="mt-1 text-[9px] text-muted-foreground sm:text-[10px]">JO {row.status}</div></td>
+                                                <td className="break-words [overflow-wrap:anywhere] px-1 py-2 sm:px-2 lg:py-3"><div className="font-medium">{row.productName}</div><div className="mt-0.5 text-[9px] text-muted-foreground sm:text-[10px]">{row.productCode}{row.productCode ? " · " : ""}{row.branchName}</div></td>
+                                                <td className="break-words px-1 py-2 sm:px-2 lg:py-3">{row.manufacturingDate || "—"}</td>
+                                                <td className="break-words [overflow-wrap:anywhere] px-1 py-2 text-right tabular-nums sm:px-2 lg:py-3"><div>{quantity.format(row.goodQuantity)} {row.uom}</div><div className="mt-0.5 text-[9px] text-muted-foreground sm:text-[10px]">{quantity.format(row.allocatedQuantity)} allocated</div>{row.unallocatedQuantity > 0 && <div className="text-[9px] text-amber-700 sm:text-[10px]">{quantity.format(row.unallocatedQuantity)} unallocated</div>}</td>
+                                                <td className="break-words [overflow-wrap:anywhere] px-1 py-2 text-right tabular-nums sm:px-2 lg:py-3">{money(row.directMaterialsCost)}</td>
+                                                <td className="break-words [overflow-wrap:anywhere] px-1 py-2 text-right tabular-nums sm:px-2 lg:py-3">{money(row.directLaborCost)}</td>
+                                                <td className="break-words [overflow-wrap:anywhere] px-1 py-2 text-right tabular-nums sm:px-2 lg:py-3">{money(row.manufacturingOverheadCost)}</td>
+                                                <td className="break-words [overflow-wrap:anywhere] px-1 py-2 text-right tabular-nums sm:px-2 lg:py-3">{money(row.allocatedCogs)}</td>
+                                                <td className="break-words [overflow-wrap:anywhere] px-1 py-2 text-right tabular-nums sm:px-2 lg:py-3">{money(row.revenue)}</td>
+                                                <td className={`break-words [overflow-wrap:anywhere] px-1 py-2 text-right font-semibold tabular-nums sm:px-2 lg:py-3 ${row.grossProfit === null ? "text-muted-foreground" : row.grossProfit < 0 ? "text-red-600" : "text-emerald-700"}`}><div>{money(row.grossProfit)}</div><div className="mt-0.5 text-[9px] font-normal sm:text-[10px]">{row.grossMarginPercent === null ? "Margin N/A" : `${row.grossMarginPercent.toFixed(2)}%`}</div>{!row.complete && <span className="mt-1 inline-block rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-medium text-amber-800 sm:text-[10px]">Incomplete</span>}</td>
                                             </tr>
                                             {expanded && <tr><td colSpan={12} className="p-0">
                                                 {report.batchDetails[row.yieldLedgerId]?.status === "loaded" && report.batchDetails[row.yieldLedgerId].detail ? (
