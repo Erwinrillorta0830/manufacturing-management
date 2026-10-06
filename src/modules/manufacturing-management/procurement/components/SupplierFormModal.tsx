@@ -779,7 +779,7 @@ export default function SupplierFormModal({
                                         className="w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary text-foreground font-semibold font-medium"
                                     >
                                         <option value="">-- Select Delivery Terms --</option>
-                                        {PURCHASE_ORDER_DELIVERY_TERMS.map((option: any) => (
+                                        {PURCHASE_ORDER_DELIVERY_TERMS.map((option) => (
                                             <option key={option.value} value={option.value}>{option.label}</option>
                                         ))}
                                     </select>

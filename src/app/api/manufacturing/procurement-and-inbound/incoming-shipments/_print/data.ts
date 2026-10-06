@@ -243,7 +243,7 @@ function paymentArrangement(value: unknown): string {
 async function loadLines(purchaseOrderId: number, currency: LandedCostCurrencyContract): Promise<PurchaseOrderPrintLine[]> {
     const lines = await fetchShipmentLineItems(purchaseOrderId);
     if (lines.length > 0) {
-        return lines.map((line: any) => {
+        return lines.map((line) => {
             const product = asRecord(line.product_id) || {};
             const ordered = number(line.quantity_ordered);
             const received = number(line.quantity_received);
@@ -389,16 +389,16 @@ async function loadReceivingData(
         mmLotIds.length ? loadMmLots({ ids: mmLotIds, onlyActive: false }) : [],
         receivingIds.length ? directusRows(`/items/inventory_movements?filter[source_document_id][_in]=${receivingIds.join(",")}&fields=source_document_id,manufacturing_date&limit=-1`, "Unable to load receiving manufacturing dates.", true) : []
     ]);
-    const branches = new Map(branchRows.map((row: any) => [relationId(row, ["id"]), `${text(row.branch_name, "Branch")} ${text(row.branch_code, "")}`.trim()]));
-    const lots = new Map(lotRows.map((row: any) => [relationId(row, ["lot_id", "id"]), text(row.lot_name || row.lot_code, relationId(row, ["lot_id", "id"]) ? `Lot #${relationId(row, ["lot_id", "id"])}` : "N/A")]));
-    const mmLots = new Map(mmLotRows.map((row: any) => [relationId(row, ["lot_id", "id"]), text(row.lot_name, relationId(row, ["lot_id", "id"]) ? `Lot #${relationId(row, ["lot_id", "id"])}` : "N/A")]));
-    const movementDates = new Map(movementDateRows.map((row: any) => [relationId(row.source_document_id, ["purchase_order_product_id", "id"]), dateText(row.manufacturing_date)]));
+    const branches = new Map(branchRows.map((row: DirectusRow) => [relationId(row, ["id"]), `${text(row.branch_name, "Branch")} ${text(row.branch_code, "")}`.trim()]));
+    const lots = new Map(lotRows.map((row: DirectusRow) => [relationId(row, ["lot_id", "id"]), text(row.lot_name || row.lot_code, relationId(row, ["lot_id", "id"]) ? `Lot #${relationId(row, ["lot_id", "id"])}` : "N/A")]));
+    const mmLots = new Map(mmLotRows.map((row: DirectusRow) => [relationId(row, ["lot_id", "id"]), text(row.lot_name, relationId(row, ["lot_id", "id"]) ? `Lot #${relationId(row, ["lot_id", "id"])}` : "N/A")]));
+    const movementDates = new Map(movementDateRows.map((row: DirectusRow) => [relationId(row.source_document_id, ["purchase_order_product_id", "id"]), dateText(row.manufacturing_date)]));
     const committedHeaderIds = new Set(
         filteredRows
-            .map((row: any) => relationId(row.receiving_header_id, ["id"]))
+            .map((row: DirectusRow) => relationId(row.receiving_header_id, ["id"]))
             .filter((id): id is number => id !== null)
     );
-    const printableHeaderRows = (selectedHeader ? [selectedHeader] : headerRows).filter((row: any) => {
+    const printableHeaderRows = (selectedHeader ? [selectedHeader] : headerRows).filter((row: DirectusRow) => {
         const postingStatus = text(row.posting_status, "").toLowerCase();
         if (postingStatus && postingStatus !== "posted") return false;
         if (selectedHeader) return true;
@@ -407,7 +407,7 @@ async function loadReceivingData(
         return headerId !== null && committedHeaderIds.has(headerId);
     });
     const receivingHeaders: ReceivingPrintHeader[] = printableHeaderRows
-        .map((row: any) => {
+        .map((row: DirectusRow) => {
             const headerId = relationId(row, ["id"]);
             if (!headerId) return null;
             const branchId = relationId(row.branch_id, ["id", "branch_id"]);
@@ -421,7 +421,7 @@ async function loadReceivingData(
             };
         })
         .filter((header): header is ReceivingPrintHeader => Boolean(header));
-    const records: ReceivingPrintRecord[] = filteredRows.map((row: any) => {
+    const records: ReceivingPrintRecord[] = filteredRows.map((row: DirectusRow) => {
         const productLine = productById.get(relationId(row.product_id, ["product_id"]));
         const header = asRecord(row.receiving_header_id);
         const headerId = relationId(row.receiving_header_id, ["id"]);
@@ -483,10 +483,10 @@ async function loadMovements(
         lotIds.length ? directusRows(`/items/lots?filter[lot_id][_in]=${lotIds.join(",")}&fields=*&limit=-1`, "Unable to load movement lots.", true) : [],
         mmLotIds.length ? loadMmLots({ ids: mmLotIds, onlyActive: false }) : []
     ]);
-    const branches = new Map(branchRows.map((row: any) => [relationId(row, ["id"]), `${text(row.branch_name, "Branch")} ${text(row.branch_code, "")}`.trim()]));
-    const lots = new Map(lotRows.map((row: any) => [relationId(row, ["lot_id", "id"]), text(row.lot_name || row.lot_code, "N/A")]));
-    const mmLots = new Map(mmLotRows.map((row: any) => [relationId(row, ["lot_id", "id"]), text(row.lot_name, "N/A")]));
-    return movementRows.map((row: any): StorageMovementPrintRecord => {
+    const branches = new Map(branchRows.map((row: DirectusRow) => [relationId(row, ["id"]), `${text(row.branch_name, "Branch")} ${text(row.branch_code, "")}`.trim()]));
+    const lots = new Map(lotRows.map((row: DirectusRow) => [relationId(row, ["lot_id", "id"]), text(row.lot_name || row.lot_code, "N/A")]));
+    const mmLots = new Map(mmLotRows.map((row: DirectusRow) => [relationId(row, ["lot_id", "id"]), text(row.lot_name, "N/A")]));
+    return movementRows.map((row: DirectusRow): StorageMovementPrintRecord => {
         const productId = relationId(row.product_id, ["product_id"]);
         const branchId = relationId(row.branch_id, ["id", "branch_id"]);
         const lotId = relationId(row.lot_id, ["lot_id", "id"]);
@@ -563,19 +563,19 @@ async function loadLandedCost(
         "Unable to load landed-cost allocations.",
         true
     );
-    const accountIds = [...new Set(canonical.expenses.map((expense: any) => relationId(expense.chart_of_account_id, ["id", "coa_id"])).filter((id: any): id is number => id !== null))];
+    const accountIds = [...new Set(canonical.expenses.map((expense) => relationId(expense.chart_of_account_id, ["id", "coa_id"])).filter((id): id is number => id !== null))];
     const accountRows = accountIds.length
         ? await directusRows(`/items/chart_of_accounts?filter[coa_id][_in]=${accountIds.join(",")}&fields=coa_id,gl_code,account_title&limit=-1`, "Unable to load landed-cost accounts.", true)
         : [];
-    const accounts = new Map(accountRows.map((row: any) => [relationId(row, ["id", "coa_id"]), `${text(row.gl_code, "GL")} ${text(row.account_title || row.account_name, "N/A")}`.trim()]));
+    const accounts = new Map(accountRows.map((row: DirectusRow) => [relationId(row, ["id", "coa_id"]), `${text(row.gl_code, "GL")} ${text(row.account_title || row.account_name, "N/A")}`.trim()]));
     const lineById = new Map(lines.map(line => [line.lineId, line]));
-    const expenses: LandedCostExpensePrintRecord[] = canonical.expenses.map((expense: any) => ({
-        expenseId: expense.expense_id || null,
+    const expenses: LandedCostExpensePrintRecord[] = canonical.expenses.map((expense) => ({
+        expenseId: (expense.expense_id as number) || null,
         expenseType: text(expense.expense_type),
         account: accounts.get(relationId(expense.chart_of_account_id, ["id", "coa_id"])) || (expense.chart_of_account_id ? `Account #${expense.chart_of_account_id}` : "N/A"),
         amount: number(expense.amount_php)
     }));
-    const allocations: LandedCostAllocationPrintRecord[] = allocationRows.map((row: any) => {
+    const allocations: LandedCostAllocationPrintRecord[] = allocationRows.map((row: DirectusRow) => {
         const lineId = relationId(row.purchase_order_product_id, ["purchase_order_product_id", "id"]);
         const line = lineById.get(lineId || 0);
         return {
@@ -598,7 +598,7 @@ async function loadLandedCost(
         roundingVariance: number(computation.rounding_variance),
         expenses,
         allocations,
-        attachments: canonical.attachments.map((attachment: any) => text(attachment.file_name || attachment.directus_file_id))
+        attachments: canonical.attachments.map((attachment) => text(attachment.file_name || attachment.directus_file_id))
     };
 }
 

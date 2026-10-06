@@ -67,7 +67,7 @@ function toSharedLotAllocations(
 
 function fromSharedLotAllocations(result: LotBatchSelectionResult): ReceivingLotAllocationInput[] {
     const groups = result.lot_allocations || [];
-    return groups.flatMap(group => (group.batches || []).map((batch: any) => ({
+    return groups.flatMap(group => (group.batches || []).map((batch) => ({
         clientId: uuidv4(),
         allocationGroupId: `lot-${group.lot_id}`,
         storageLotId: String(group.lot_id),

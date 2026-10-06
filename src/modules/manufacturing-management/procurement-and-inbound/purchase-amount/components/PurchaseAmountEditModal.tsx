@@ -184,7 +184,7 @@ export default function PurchaseAmountEditModal({
                                 <div className="space-y-3">
                                     <p className="text-[11px] text-muted-foreground">Choose the rule used by the server for every landed-cost allocation.</p>
                                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                                        {LANDED_COST_METHOD_OPTIONS.map(({ value, label, description }: any) => {
+                                        {LANDED_COST_METHOD_OPTIONS.map(({ value, label, description }) => {
                                             const selected = allocationRule === value;
                                             return (
                                                 <button

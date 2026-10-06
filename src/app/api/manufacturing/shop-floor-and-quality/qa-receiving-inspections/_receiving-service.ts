@@ -451,7 +451,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             ? await validateReplacementContext({
                 dispositionId: replacementDispositionId,
                 shipmentId,
-                lines: submittedLineItemUpdates.map((item: any) => ({
+                lines: submittedLineItemUpdates.map((item) => ({
                     lineId: item.line_id,
                     productId: item.product_id,
                     receivedQuantity: Number(item.quantity_received),
@@ -459,7 +459,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 }))
             })
             : null;
-        const lineItemUpdates = submittedLineItemUpdates.map((item: any) => ({
+        const lineItemUpdates = submittedLineItemUpdates.map((item) => ({
             ...item,
             quantity_rejected: deriveRejectedQuantity(item.quantity_received, item.quantity_accepted),
             rejection_reason: item.rejection_reason?.trim() || null
@@ -468,11 +468,11 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         if (activeShipments.has(shipmentId)) throw new ReceivingError("This shipment is already being received.", 409);
         activeShipments.add(shipmentId);
 
-        const lineIds = lineItemUpdates.map((item: any) => item.line_id);
+        const lineIds = lineItemUpdates.map((item) => item.line_id);
         if (new Set(lineIds).size !== lineIds.length) throw new ReceivingError("Duplicate purchase-order lines are not allowed.", 400);
-        const requestedLotIds: number[] = [...new Set(lineItemUpdates.flatMap((item: any) => [
-            ...item.accepted_lot_allocations.map((allocation: any) => Number(allocation.storage_lot_id)),
-            ...item.rejected_lot_allocations.map((allocation: any) => Number(allocation.storage_lot_id))
+        const requestedLotIds: number[] = [...new Set(lineItemUpdates.flatMap((item) => [
+            ...item.accepted_lot_allocations.map((allocation) => Number(allocation.storage_lot_id)),
+            ...item.rejected_lot_allocations.map((allocation) => Number(allocation.storage_lot_id))
         ]))];
 
         const [headerRes, linesRes, branchesRes, movementTypesRes] = await Promise.all([
@@ -507,15 +507,15 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         const badBranch = badBranchId
             ? branches.find(branch => Number(branch.id) === badBranchId)
             : undefined;
-        if (lineItemUpdates.some((item: any) => Number(item.quantity_rejected) > 0)
+        if (lineItemUpdates.some((item) => Number(item.quantity_rejected) > 0)
             && (!badBranch || Number(badBranch.isActive) !== 1 || Number(badBranch.isBadStock) !== 1)) {
             throw new ReceivingError("The selected destination has no active Bad Order branch configured for rejected inventory.", 409);
         }
-        const requestedAcceptedLotIds: number[] = [...new Set(lineItemUpdates.flatMap((item: any) =>
-            item.accepted_lot_allocations.map((allocation: any) => Number(allocation.storage_lot_id))
+        const requestedAcceptedLotIds: number[] = [...new Set(lineItemUpdates.flatMap((item) =>
+            item.accepted_lot_allocations.map((allocation) => Number(allocation.storage_lot_id))
         ))];
-        const requestedRejectedLotIds: number[] = [...new Set(lineItemUpdates.flatMap((item: any) =>
-            item.rejected_lot_allocations.map((allocation: any) => Number(allocation.storage_lot_id))
+        const requestedRejectedLotIds: number[] = [...new Set(lineItemUpdates.flatMap((item) =>
+            item.rejected_lot_allocations.map((allocation) => Number(allocation.storage_lot_id))
         ))];
         const overlappingLotIds = requestedAcceptedLotIds.filter(id => requestedRejectedLotIds.includes(id));
         if (overlappingLotIds.length > 0) {
@@ -540,7 +540,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             throw new ReceivingError("One or more selected storage lots do not exist, are inactive, or belong to another branch.", 409);
         }
         const passedMovementTypeId = movementTypeId(movementTypes, "Purchase Receiving QA");
-        const rejectedMovementTypeId = lineItemUpdates.some((item: any) => Number(item.quantity_rejected) > 0)
+        const rejectedMovementTypeId = lineItemUpdates.some((item) => Number(item.quantity_rejected) > 0)
             ? movementTypeId(movementTypes, "QA Reject / Bad Order Receipt")
             : null;
         const poLineIds = poLines
@@ -549,22 +549,22 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         const submittedLineIds = new Set(lineIds);
         const poLineIdSet = new Set(poLineIds);
         const missingLineIds = poLineIds.filter(lineId => !submittedLineIds.has(lineId));
-        const unknownLineIds = lineIds.filter((lineId: any) => !poLineIdSet.has(lineId));
+        const unknownLineIds = lineIds.filter((lineId: number) => !poLineIdSet.has(lineId));
         if (poLineIds.length !== poLines.length || unknownLineIds.length > 0) {
             throw new ReceivingError("One or more purchase-order lines do not exist.", 400);
         }
         if (!replacementDispositionId && missingLineIds.length > 0) {
             throw new ReceivingError(`Every purchase-order line must be included. Missing line(s): ${missingLineIds.join(", ")}.`, 400);
         }
-        if (lineItemUpdates.some((item: any) => item.accepted_lot_allocations.some((allocation: any) => !validLotIds.has(allocation.storage_lot_id)))) {
+        if (lineItemUpdates.some((item) => item.accepted_lot_allocations.some((allocation) => !validLotIds.has(allocation.storage_lot_id)))) {
             throw new ReceivingError("One or more accepted inventory storage lots do not exist.", 400);
         }
-        if (lineItemUpdates.some((item: any) => item.rejected_lot_allocations.some((allocation: any) => !validLotIds.has(allocation.storage_lot_id)))) {
+        if (lineItemUpdates.some((item) => item.rejected_lot_allocations.some((allocation) => !validLotIds.has(allocation.storage_lot_id)))) {
             throw new ReceivingError("One or more rejected inventory storage lots do not exist.", 400);
         }
         if (!branches.some(branch => Number(branch.id) === branchId)) throw new ReceivingError("The selected receiving branch does not exist.", 400);
 
-        const receiptNumbers = lineItemUpdates.map((item: any) => receiptNumberForLine(referenceNumber, item.line_id));
+        const receiptNumbers = lineItemUpdates.map((item) => receiptNumberForLine(referenceNumber, item.line_id));
         let receiptsRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,receiving_header_id,product_id,branch_id,receipt_no,receipt_date,received_date,received_quantity,quantity_allocated,isPosted,is_reverted,is_replacement,batch_no,mm_lot_id,expiry_date,unit_price,discounted_amount,discount_type,total_amount,allocated_expense_php,final_landed_unit_cost,qa_status,rejection_reason,receipt_type,quarantine_disposition_id,is_over_received,over_delivery_quantity,receiving_method&limit=-1`, { headers, cache: "no-store" });
         if (!receiptsRes.ok) {
             receiptsRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,receiving_header_id,product_id,branch_id,receipt_no,receipt_date,received_date,received_quantity,quantity_allocated,isPosted,is_reverted,is_replacement,batch_no,mm_lot_id,expiry_date,unit_price,discounted_amount,discount_type,total_amount,allocated_expense_php,final_landed_unit_cost,qa_status,rejection_reason,receipt_type,quarantine_disposition_id,is_over_received,over_delivery_quantity,receiving_method&limit=-1`, { headers, cache: "no-store" });
@@ -615,7 +615,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 });
             }
             const receivingByLine = new Map<number, number>(existingReceipts.map((row: Record<string, unknown>) => [
-                lineItemUpdates.find((item: any) => receiptNumberForLine(referenceNumber, item.line_id) === String(row.receipt_no))?.line_id || 0,
+                lineItemUpdates.find((item) => receiptNumberForLine(referenceNumber, item.line_id) === String(row.receipt_no))?.line_id || 0,
                 Number(row.purchase_order_product_id)
             ]));
             const allocationChanges: AllocationChange[] = [];
@@ -661,7 +661,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         const productTypesByLot = new Map<number, Set<number>>();
         const uomByLot = new Map<number, number>();
 
-        const prepared = lineItemUpdates.map((item: any) => {
+        const prepared = lineItemUpdates.map((item) => {
             const poLine = poLineMap.get(item.line_id);
             if (!poLine || relationId(poLine.purchase_order_id, "purchase_order_id") !== shipmentId) {
                 throw new ReceivingError(`Line ${item.line_id} does not belong to this purchase order.`, 400);
@@ -733,7 +733,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 unit_price_foreign: poLine.unit_price_foreign as number | string | null | undefined
             }, currency);
             const accepted = received - rejected;
-            const acceptedAllocationDrafts = item.accepted_lot_allocations.map((allocation: any) => ({
+            const acceptedAllocationDrafts = item.accepted_lot_allocations.map((allocation) => ({
                 storageLotId: allocation.storage_lot_id,
                 quantity: allocation.quantity,
                 batchNumber: allocation.batch_no,
@@ -747,7 +747,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             );
             const allocationError = receivingLotAllocationError(accepted, acceptedAllocationDrafts);
             if (allocationError) throw new ReceivingError(`${allocationError} Product ${productId}.`, 400);
-            const rejectedAllocationDrafts = item.rejected_lot_allocations.map((allocation: any) => ({
+            const rejectedAllocationDrafts = item.rejected_lot_allocations.map((allocation) => ({
                 storageLotId: allocation.storage_lot_id,
                 quantity: allocation.quantity,
                 batchNumber: allocation.batch_no,
@@ -844,11 +844,11 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             }
         }
 
-        const preparedByLine = new Map(prepared.map((line: any) => [line.item.line_id, line]));
-        const receivingStatus = evaluateReceivingStatus(poLines.map((poLine: any) => {
+        const preparedByLine = new Map(prepared.map((line) => [line.item.line_id, line]));
+        const receivingStatus = evaluateReceivingStatus(poLines.map((poLine: Record<string, unknown>) => {
             const lineId = Number(poLine.purchase_order_product_id);
-            const previous: any = previouslyReceivedByLine.get(lineId) || { received: 0, rejected: 0, accepted: 0 };
-            const current: any = preparedByLine.get(lineId);
+            const previous = previouslyReceivedByLine.get(lineId) || { received: 0, rejected: 0, accepted: 0 };
+            const current = preparedByLine.get(lineId);
             return {
                 orderedQuantity: Number(poLine.ordered_quantity || 0),
                 receivedQuantity: Number(previous.received || 0) + Number(current?.received || 0),
@@ -862,7 +862,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
 
         const expenses = await fetchShipmentExpenses(shipmentId);
         const allocationMethod = normalizeAllocationMethod(String(expenses[0]?.allocation_method || "Value"));
-        const allocations = calculateLandedCostAllocations(prepared.map((line: any) => {
+        const allocations = calculateLandedCostAllocations(prepared.map((line) => {
             return {
                 key: line.item.line_id,
                 quantity: line.accepted,
@@ -873,7 +873,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 category_type: line.categoryType as PurchaseOrderCategoryType,
                 weightUnit: line.weightBreakdown.weightUnitCode
             };
-        }), expenses.reduce((sum: number, expense: any) => sum + Number(expense.amount_php || 0), 0), allocationMethod);
+        }), expenses.reduce((sum: number, expense) => sum + Number(expense.amount_php || 0), 0), allocationMethod);
 
         const receiptIds: number[] = [];
         const createdReceiptIds: number[] = [];
@@ -1014,13 +1014,13 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 }
                 freshCapacityByLot.set(lotId, capacityInspection.capacity);
             }
-            const capacityInputs: LotCapacityAllocationInput[] = prepared.flatMap((line: any) => [
-                ...line.acceptedLotAllocations.map((allocation: any, index: number) => ({
+            const capacityInputs: LotCapacityAllocationInput[] = prepared.flatMap((line) => [
+                ...line.acceptedLotAllocations.map((allocation, index: number) => ({
                     key: allocationCapacityKey(line.item.line_id, "Passed", index),
                     lotId: allocation.storageLotId,
                     quantity: allocation.quantity
                 })),
-                ...line.rejectedLotAllocations.map((allocation: any, index: number) => ({
+                ...line.rejectedLotAllocations.map((allocation, index: number) => ({
                     key: allocationCapacityKey(line.item.line_id, "Rejected", index),
                     lotId: allocation.storageLotId,
                     quantity: allocation.quantity
@@ -1063,7 +1063,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                     qaStatus: string;
                     targetBranchId: number;
                 }> = [
-                    ...line.acceptedLotAllocations.map((a: any) => ({
+                    ...line.acceptedLotAllocations.map((a) => ({
                         kind: "Passed" as const,
                         storageLotId: a.storageLotId,
                         batchNumber: a.batchNumber,
@@ -1073,7 +1073,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                         qaStatus: a.qaStatus,
                         targetBranchId: branchId
                     })),
-                    ...line.rejectedLotAllocations.map((a: any) => ({
+                    ...line.rejectedLotAllocations.map((a) => ({
                         kind: "Rejected" as const,
                         storageLotId: a.storageLotId,
                         batchNumber: a.batchNumber,
@@ -1339,10 +1339,10 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             }
 
             for (const productId of productIds) {
-                const productLines = prepared.filter((line: any) => line.productId === productId && line.accepted > 0);
+                const productLines = prepared.filter((line) => line.productId === productId && line.accepted > 0);
                 if (productLines.length === 0) continue;
-                const totalAccepted = productLines.reduce((sum: number, line: any) => sum + line.accepted, 0);
-                const weightedCost = productLines.reduce((sum: number, line: any) => sum + allocations.get(line.item.line_id)!.finalLandedUnitCost * line.accepted, 0) / totalAccepted;
+                const totalAccepted = productLines.reduce((sum: number, line) => sum + line.accepted, 0);
+                const weightedCost = productLines.reduce((sum: number, line) => sum + allocations.get(line.item.line_id)!.finalLandedUnitCost * line.accepted, 0) / totalAccepted;
                 const product = productMap.get(productId)!;
                 productChanges.set(productId, {
                     cost_per_unit: product.cost_per_unit,

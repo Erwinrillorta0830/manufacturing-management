@@ -64,7 +64,7 @@ const rawOnlySummary = buildLotStoredProductSummaryMap(
 ).get(lot.lot_id);
 
 assert.equal(rawOnlySummary?.primary_classification_label, "Raw Material");
-assert.deepEqual(rawOnlySummary?.stored_products.map((product: any) => product.product_id), [1]);
+assert.deepEqual(rawOnlySummary?.stored_products.map((product) => product.product_id), [1]);
 assert.equal(findQALotContentConflicts(rawOnlySummary, "RM", 3).length, 0);
 
 const mixedSummary = buildLotStoredProductSummaryMap(
@@ -86,7 +86,7 @@ const mixedSummary = buildLotStoredProductSummaryMap(
 
 assert.equal(mixedSummary?.primary_classification_label, "Raw Material & Finished Good");
 assert.deepEqual(
-  findQALotContentConflicts(mixedSummary, "RM", 3).map((product: any) => product.product_id),
+  findQALotContentConflicts(mixedSummary, "RM", 3).map((product) => product.product_id),
   [2]
 );
 assert.equal(findQALotContentConflicts(mixedSummary, "OTHER", 3).length, 0);
@@ -107,7 +107,7 @@ const draftSummary = buildLotStoredProductSummaryMap(
   registeredLots
 ).get(lot.lot_id);
 assert.deepEqual(
-  findQALotContentConflicts(draftSummary, "RM", 3).map((product: any) => product.product_id),
+  findQALotContentConflicts(draftSummary, "RM", 3).map((product) => product.product_id),
   [2]
 );
 

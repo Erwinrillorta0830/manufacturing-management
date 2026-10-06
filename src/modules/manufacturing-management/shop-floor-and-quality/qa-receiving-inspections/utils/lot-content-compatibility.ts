@@ -17,7 +17,7 @@ export function findQALotContentConflicts(
     return [];
   }
 
-  return summary.stored_products.filter((stored: any) => {
+  return summary.stored_products.filter((stored) => {
     if (targetProductId && stored.product_id === targetProductId) return false;
     if (stored.classification === "OTHER" || stored.classification === targetClassification) return false;
     return stored.onhand_quantity > 0 || Number(stored.draft_quantity || 0) > 0;

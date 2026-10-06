@@ -343,7 +343,7 @@ export function QAMultiLotBatchAllocationModal({
     lotGroups.forEach((group) => {
       // Group by unique batch_no within the lot to prevent duplicate counting across split rows
       const batchMap = new Map<string, number>();
-      (group.batches || []).forEach((b: any) => {
+      (group.batches || []).forEach((b) => {
         const clean = String(b.batch_no || '').trim();
         if (!clean) return;
         const current = batchMap.get(clean) || 0;
@@ -471,7 +471,7 @@ export function QAMultiLotBatchAllocationModal({
       }
 
       const conflictingNames = conflicts
-        .map((p: any) => p.product_name || p.product_code || `Product #${p.product_id}`)
+        .map((p) => p.product_name || p.product_code || `Product #${p.product_id}`)
         .slice(0, 3)
         .join(', ');
 
@@ -534,7 +534,7 @@ export function QAMultiLotBatchAllocationModal({
         if (!isMounted) return;
 
         const filteredLots = allowedLotIds && allowedLotIds.length > 0
-          ? (lotsData || []).filter((l: any) => allowedLotIds.includes(l.lot_id))
+          ? (lotsData || []).filter((l) => allowedLotIds.includes(Number(l.lot_id)))
           : (lotsData || []);
         setLots(filteredLots);
         setBranchOnhandList(branchOnhandData || []);
@@ -574,7 +574,7 @@ export function QAMultiLotBatchAllocationModal({
           }
         });
 
-        (branchOnhandData || []).forEach((bo: any) => {
+        (branchOnhandData || []).forEach((bo) => {
           const bNo = String(bo.batchNo || '').trim();
           if (bNo) {
             const key = bNo.toLowerCase();
@@ -600,22 +600,22 @@ export function QAMultiLotBatchAllocationModal({
         const bCountMap = new Map<number, number>();
         const sQtyMap = new Map<number, number>();
 
-        (lotsData || []).forEach((lot: any) => {
+        (lotsData || []).forEach((lot) => {
           const lId = Number(lot.lot_id);
-          const onhandForLot = (branchOnhandData || []).filter((bo: any) => getLotId(bo) === lId);
-          const invLotsForLot = (branchInvLotsData || []).filter((ib: any) => getLotId(ib) === lId);
+          const onhandForLot = (branchOnhandData || []).filter((bo) => getLotId(bo) === lId);
+          const invLotsForLot = (branchInvLotsData || []).filter((ib) => getLotId(ib) === lId);
 
           bCountMap.set(lId, invLotsForLot.length);
 
           let lotStock = 0;
           let hasOnhandData = false;
           if (onhandForLot.length > 0) {
-            lotStock = onhandForLot.reduce((sum: number, bo: any) => sum + Number(bo.onhandQuantity || 0), 0);
+            lotStock = onhandForLot.reduce((sum: number, bo) => sum + Number(bo.onhandQuantity || 0), 0);
             hasOnhandData = true;
           }
 
           if (!hasOnhandData && invLotsForLot.length > 0) {
-            lotStock = invLotsForLot.reduce((sum: number, ib: any) => sum + Number(ib.available_quantity || 0), 0);
+            lotStock = invLotsForLot.reduce((sum: number, ib) => sum + Number(ib.available_quantity || 0), 0);
           }
 
           sQtyMap.set(lId, lotStock);
@@ -629,7 +629,7 @@ export function QAMultiLotBatchAllocationModal({
                 const sLotId = Number(grp.lot_id);
                 if (sLotId > 0) {
                   const batches = grp.batches || [];
-                  const grpQty = batches.reduce((sum: number, b: any) => sum + Number(b?.quantity || 0), 0) || Number(grp.allocated_quantity || 0);
+                  const grpQty = batches.reduce((sum: number, b) => sum + Number(b?.quantity || 0), 0) || Number(grp.allocated_quantity || 0);
                   const grpBchCount = batches.length || 1;
                   if (grpQty > 0 || grpBchCount > 0) {
                     sQtyMap.set(sLotId, (sQtyMap.get(sLotId) || 0) + grpQty);
@@ -682,7 +682,7 @@ export function QAMultiLotBatchAllocationModal({
             sibling.lot_allocations.forEach((group) => {
               const batches = group.batches || [];
               const quantity =
-                batches.reduce((sum: number, batch: any) => sum + Number(batch?.quantity || 0), 0) ||
+                batches.reduce((sum: number, batch) => sum + Number(batch?.quantity || 0), 0) ||
                 Number(group.allocated_quantity || 0);
               addDraftAllocation(Number(group.lot_id), quantity);
             });
@@ -691,7 +691,7 @@ export function QAMultiLotBatchAllocationModal({
           }
         });
 
-        const storedSummaryOnhand = (branchOnhandData || []).map((balance: any) => ({
+        const storedSummaryOnhand = (branchOnhandData || []).map((balance) => ({
           ...balance,
           productType: balance.productTypeId || balance.productTypeName,
         }));
@@ -701,7 +701,7 @@ export function QAMultiLotBatchAllocationModal({
           activeDraftAllocations,
           branchInvLotsData || []
         );
-        storedMap.forEach((summary: any, lotId: any) => {
+        storedMap.forEach((summary, lotId) => {
           summary.active_batch_count = summary.is_empty ? 0 : (bCountMap.get(lotId) || 0);
         });
 
@@ -716,7 +716,7 @@ export function QAMultiLotBatchAllocationModal({
             ? qaDisposition === 'rejected'
             : Boolean(initialValues?.qa_status && initialValues.qa_status !== 'GOOD');
 
-          const compatibleLot = (lotsData || []).find((l: any) => {
+          const compatibleLot = (lotsData || []).find((l) => {
             if (l.status && l.status !== 'ACTIVE') return false;
             if (!isLotMatchingUom(l)) return false;
             const lotIsBad = isBadStockLotForDisposition(l, qaDisposition);
@@ -725,21 +725,21 @@ export function QAMultiLotBatchAllocationModal({
             const stored = storedMap.get(Number(l.lot_id));
             if (!stored || stored.is_empty) return true;
             return findQALotContentConflicts(stored, targetClass.code, productId).length === 0;
-          }) || (lotsData || []).find((l: any) => {
+          }) || (lotsData || []).find((l) => {
             if (l.status && l.status !== 'ACTIVE') return false;
             if (!isLotMatchingUom(l)) return false;
             const lotIsBad = isBadStockLotForDisposition(l, qaDisposition);
             if (preferBad && !lotIsBad) return false;
             if (!preferBad && lotIsBad) return false;
             return true;
-          }) || (lotsData || []).find((l: any) => {
+          }) || (lotsData || []).find((l) => {
             if (l.status && l.status !== 'ACTIVE') return false;
             if (!isLotMatchingUom(l)) return false;
             return true;
-          }) || (initialValues?.lot_id ? (lotsData || []).find((l: any) => Number(l.lot_id) === Number(initialValues.lot_id) && isLotMatchingUom(l)) : undefined);
+          }) || (initialValues?.lot_id ? (lotsData || []).find((l) => Number(l.lot_id) === Number(initialValues.lot_id) && isLotMatchingUom(l)) : undefined);
 
           const hydrated = initialLotAllocations.map((g) => {
-            let matchedLot = (lotsData || []).find((l: any) => Number(l.lot_id) === Number(g.lot_id));
+            let matchedLot = (lotsData || []).find((l) => Number(l.lot_id) === Number(g.lot_id));
             if (matchedLot && !qaStorageLots && !isLotMatchingUom(matchedLot)) {
               matchedLot = undefined;
             }
@@ -761,7 +761,7 @@ export function QAMultiLotBatchAllocationModal({
               is_bad_stock: isLotBad,
               active_batch_count: bCountMap.get(lId) || 0,
               current_stock_quantity: sQtyMap.get(lId) || 0,
-              batches: (g.batches || []).map((b: any) => {
+              batches: (g.batches || []).map((b) => {
                 const bKey = String(b.batch_no || '').trim().toLowerCase();
                 const lookedUp = bKey ? batchMetaMap.get(bKey) : undefined;
                 const mfg = b.manufacturing_date
@@ -823,7 +823,7 @@ export function QAMultiLotBatchAllocationModal({
         // 2. If legacy initialValues provided (single lot & batch)
         if (initialValues?.lot_id && initialValues?.batch_no) {
           const lId = Number(initialValues.lot_id);
-          const matchedLot = (lotsData || []).find((l: any) => Number(l.lot_id) === lId);
+          const matchedLot = (lotsData || []).find((l) => Number(l.lot_id) === lId);
           const initialQty = (initialValues as { quantity?: number; total_quantity?: number })?.quantity ?? initialValues.total_quantity ?? 0;
           const initKey = String(initialValues.batch_no || '').trim().toLowerCase();
           const initLookedUp = initKey ? batchMetaMap.get(initKey) : undefined;
@@ -886,7 +886,7 @@ export function QAMultiLotBatchAllocationModal({
           ? qaDisposition === 'rejected'
           : Boolean(initialValues?.qa_status && initialValues.qa_status !== 'GOOD');
 
-        const compatibleLot = (lotsData || []).find((l: any) => {
+        const compatibleLot = (lotsData || []).find((l) => {
           if (l.status && l.status !== 'ACTIVE') return false;
           if (!isLotMatchingUom(l)) return false;
           const lotIsBad = isBadStockLotForDisposition(l, qaDisposition);
@@ -895,18 +895,18 @@ export function QAMultiLotBatchAllocationModal({
           const stored = storedMap.get(Number(l.lot_id));
           if (!stored || stored.is_empty) return true;
           return findQALotContentConflicts(stored, targetClass.code, productId).length === 0;
-        }) || (lotsData || []).find((l: any) => {
+        }) || (lotsData || []).find((l) => {
           if (l.status && l.status !== 'ACTIVE') return false;
           if (!isLotMatchingUom(l)) return false;
           const lotIsBad = isBadStockLotForDisposition(l, qaDisposition);
           if (preferBad && !lotIsBad) return false;
           if (!preferBad && lotIsBad) return false;
           return true;
-        }) || (lotsData || []).find((l: any) => {
+        }) || (lotsData || []).find((l) => {
           if (l.status && l.status !== 'ACTIVE') return false;
           if (!isLotMatchingUom(l)) return false;
           return true;
-        }) || (initialValues?.lot_id ? (lotsData || []).find((l: any) => Number(l.lot_id) === Number(initialValues.lot_id) && isLotMatchingUom(l)) : undefined);
+        }) || (initialValues?.lot_id ? (lotsData || []).find((l) => Number(l.lot_id) === Number(initialValues.lot_id) && isLotMatchingUom(l)) : undefined);
 
         if (compatibleLot) {
           const lId = Number(compatibleLot.lot_id);
@@ -990,7 +990,7 @@ export function QAMultiLotBatchAllocationModal({
   // Compute total allocated quantity across all lots & batches
   const totalAllocated = useMemo(() => {
     return lotGroups.reduce((lotSum, group) => {
-      const batchSum = (group.batches || []).reduce((bSum: number, b: any) => bSum + Number(b.quantity || 0), 0);
+      const batchSum = (group.batches || []).reduce((bSum: number, b) => bSum + Number(b.quantity || 0), 0);
       return lotSum + batchSum;
     }, 0);
   }, [lotGroups]);
@@ -1010,7 +1010,7 @@ export function QAMultiLotBatchAllocationModal({
     // Prioritize selecting an active, UOM-matching, and product-type compatible lot (and matching bad stock state)
     const currentIsBad = qaDisposition
       ? qaDisposition === 'rejected'
-      : lotGroups.some((g) => (g.batches || []).some((b: any) => b.qa_status && b.qa_status !== 'GOOD'));
+      : lotGroups.some((g) => (g.batches || []).some((b) => b.qa_status && b.qa_status !== 'GOOD'));
 
     const nextLot =
       lots.find((l) => {
@@ -1045,7 +1045,7 @@ export function QAMultiLotBatchAllocationModal({
         : isNextLotBad ? 'DAMAGED' : 'GOOD';
 
     // Calculate unallocated quantity remaining for multi-lot split
-    const currentAllocated = lotGroups.reduce((sum, g) => sum + (g.batches || []).reduce((bSum: number, b: any) => bSum + Number(b.quantity || 0), 0), 0);
+    const currentAllocated = lotGroups.reduce((sum, g) => sum + (g.batches || []).reduce((bSum: number, b) => bSum + Number(b.quantity || 0), 0), 0);
     const targetTotal = requestedQuantity || ((initialValues as { quantity?: number; total_quantity?: number })?.quantity ?? initialValues?.total_quantity ?? 0);
     const remainingQty = targetTotal > currentAllocated ? targetTotal - currentAllocated : 0;
 
@@ -1108,7 +1108,7 @@ export function QAMultiLotBatchAllocationModal({
         if (i === groupIndex) {
           const defaultQA: QAStatus = newLotIsBad ? 'DAMAGED' : 'GOOD';
           const preservedBatches = (g.batches && g.batches.length > 0)
-            ? g.batches.map((b: any) => ({
+            ? g.batches.map((b) => ({
                 ...b,
                 qa_status: qaStatusForDisposition(qaDisposition, b.qa_status),
               }))
@@ -1174,7 +1174,7 @@ export function QAMultiLotBatchAllocationModal({
     setLotGroups(
       lotGroups.map((g, i) => {
         if (i === groupIndex) {
-          const updatedBatches = g.batches.filter((_: any, bIdx: number) => bIdx !== batchIndex);
+          const updatedBatches = g.batches.filter((_, bIdx: number) => bIdx !== batchIndex);
           return {
             ...g,
             batches: updatedBatches,
@@ -1210,7 +1210,7 @@ export function QAMultiLotBatchAllocationModal({
     // 1. Build stream of batch allocations to distribute
     const allBatches: BatchRowAllocation[] = [];
     lotGroups.forEach((g) => {
-      (g.batches || []).forEach((b: any) => {
+      (g.batches || []).forEach((b) => {
         if (b.quantity > 0 || (allBatches.length === 0 && b.batch_no)) {
           allBatches.push({ ...b });
         }
@@ -1280,7 +1280,7 @@ export function QAMultiLotBatchAllocationModal({
       const lotBatches: BatchRowAllocation[] = [];
       let totalLotAllocated = 0;
 
-      const existingBatchNos = (g.batches || []).map((b: any) => b.batch_no);
+      const existingBatchNos = (g.batches || []).map((b) => b.batch_no);
       const isLotBad = isBadStockLotForDisposition(matchedLot, qaDisposition);
 
       while (remainingStream.length > 0 && (spaceForThisLot > 0 || isLastGroup)) {
@@ -1380,7 +1380,7 @@ export function QAMultiLotBatchAllocationModal({
     // Calculate how much quantity is allocated to other lots
     const allocatedElsewhere = lotGroups.reduce((sum, g, idx) => {
       if (idx === gIdx) return sum;
-      return sum + (Number(g.allocated_quantity) || (g.batches || []).reduce((bs: number, b: any) => bs + Number(b.quantity || 0), 0));
+      return sum + (Number(g.allocated_quantity) || (g.batches || []).reduce((bs: number, b) => bs + Number(b.quantity || 0), 0));
     }, 0);
 
     const neededForThisLot = Math.max(0, targetTotal - allocatedElsewhere);
@@ -1395,9 +1395,9 @@ export function QAMultiLotBatchAllocationModal({
 
     if (currentBatches.length > 1) {
       // Pro-rate across existing batch splits
-      const currentSum = currentBatches.reduce((s: number, b: any) => s + Number(b.quantity || 0), 0);
+      const currentSum = currentBatches.reduce((s: number, b) => s + Number(b.quantity || 0), 0);
       let rem = neededForThisLot;
-      currentBatches.forEach((b: any, bIdx: number) => {
+      currentBatches.forEach((b, bIdx: number) => {
         if (rem <= 0) {
           updatedBatches.push({ ...b, quantity: 0 });
           return;
@@ -1469,7 +1469,7 @@ export function QAMultiLotBatchAllocationModal({
     setLotGroups(
       lotGroups.map((g, i) => {
         if (i === groupIndex) {
-          const updatedBatches = g.batches.map((b: any, bIdx: number) => {
+          const updatedBatches = g.batches.map((b, bIdx: number) => {
             if (bIdx === batchIndex) {
               const updated = { ...b, [field]: value };
               if (field === 'batch_no' && typeof value === 'string' && value.trim()) {
@@ -1542,7 +1542,7 @@ export function QAMultiLotBatchAllocationModal({
           const resolvedQA = meta?.qaStatus || lookedUp?.qaStatus;
           const resolvedCost = lookedUp?.unitCost;
 
-          const updatedBatches = g.batches.map((b: any, bIdx: number) => {
+          const updatedBatches = g.batches.map((b, bIdx: number) => {
             if (bIdx === batchIndex) {
               const targetQA = qaStatusForDisposition(qaDisposition, resolvedQA || b.qa_status);
 
@@ -1572,7 +1572,7 @@ export function QAMultiLotBatchAllocationModal({
         if (i === groupIndex) {
           return {
             ...g,
-            batches: (g.batches || []).map((b: any) => ({
+            batches: (g.batches || []).map((b) => ({
               ...b,
               ...(mfgDate ? { manufacturing_date: mfgDate } : {}),
               ...(expDate ? { expiry_date: expDate } : {}),
@@ -1628,7 +1628,7 @@ export function QAMultiLotBatchAllocationModal({
       // 3.5 Bad Stock vs Standard Storage Lot Check
       const lotIsBad = isBadStockLotForDisposition(lotObj, qaDisposition);
 
-      (g.batches || []).forEach((b: any, bIdx: number) => {
+      (g.batches || []).forEach((b, bIdx: number) => {
         const batchIsBad = b.qa_status && b.qa_status !== 'GOOD';
         if (batchIsBad && !lotIsBad) {
           errors.push(
@@ -1643,7 +1643,7 @@ export function QAMultiLotBatchAllocationModal({
 
       // 4. Current Quantity vs Allocating Quantity vs Max Capacity Check
       const currentStockQty = g.current_stock_quantity || 0;
-      const allocatingQty = (g.batches || []).reduce((sum: number, b: any) => sum + Number(b.quantity || 0), 0);
+      const allocatingQty = (g.batches || []).reduce((sum: number, b) => sum + Number(b.quantity || 0), 0);
       const projectedTotalStock = currentStockQty + allocatingQty;
       const maxCap = g.max_batch_capacity || 0;
       const availableSpace = Math.max(0, maxCap - currentStockQty);
@@ -1673,7 +1673,7 @@ export function QAMultiLotBatchAllocationModal({
         errors.push(`Lot #${gIdx + 1} (${g.lot_name}): Must contain at least 1 batch split.`);
       } else {
         const seenBatchesInGroup = new Set<string>();
-        g.batches.forEach((b: any, bIdx: number) => {
+        g.batches.forEach((b, bIdx: number) => {
           const bQty = Number(b.quantity || 0);
           const cleanBatchNo = String(b.batch_no || '').trim().toLowerCase();
           if (!b.batch_no || cleanBatchNo === '') {
@@ -1772,7 +1772,7 @@ export function QAMultiLotBatchAllocationModal({
         push(`${label}: the lot has a negative inventory balance and must be reconciled before receiving.`);
       }
 
-      const allocatingQuantity = (group.batches || []).reduce((sum: number, batch: any) => sum + Number(batch.quantity || 0), 0);
+      const allocatingQuantity = (group.batches || []).reduce((sum: number, batch) => sum + Number(batch.quantity || 0), 0);
       const configuredCapacity = Number(lot.capacity ?? lot.max_batch_capacity ?? 0);
       const remainingCapacity = Number(lot.remainingCapacity ?? (configuredCapacity > 0 ? configuredCapacity - Math.max(0, occupied) : Number.POSITIVE_INFINITY));
       if (Number.isFinite(remainingCapacity) && allocatingQuantity > remainingCapacity + 1e-9) {
@@ -2033,7 +2033,7 @@ export function QAMultiLotBatchAllocationModal({
                 // Negative batch deficit calculations for this lot group
                 // Deduplicate by unique batch number to prevent deficit multiplication across split rows
                 const groupBatchMap = new Map<string, { deficit: number; allocated: number }>();
-                (group.batches || []).forEach((b: any) => {
+                (group.batches || []).forEach((b) => {
                   const bNo = String(b.batch_no || '').trim();
                   if (!bNo) return;
                   const onhand = getExistingBatchOnhand(Number(group.lot_id), bNo);
@@ -2053,7 +2053,7 @@ export function QAMultiLotBatchAllocationModal({
                   net: val.deficit + val.allocated,
                 }));
 
-                const groupQtyTotal = (group.batches || []).reduce((sum: number, b: any) => sum + Number(b.quantity || 0), 0);
+                const groupQtyTotal = (group.batches || []).reduce((sum: number, b) => sum + Number(b.quantity || 0), 0);
                 const hasDeficitBatchesSelected = groupDeficits.length > 0;
                 const lotTotalDeficit = groupDeficits.reduce((sum, d) => sum + d.deficit, 0); // e.g. -23
                 const absDeficit = Math.abs(lotTotalDeficit); // 23
@@ -2076,8 +2076,8 @@ export function QAMultiLotBatchAllocationModal({
                   ? qaDisposition === 'rejected'
                   : isBadStockLotForDisposition(groupLot, qaDisposition);
                 const hasBadStockConflict = isGroupBadStock
-                  ? (group.batches || []).some((b: any) => b.qa_status === 'GOOD')
-                  : (group.batches || []).some((b: any) => b.qa_status && b.qa_status !== 'GOOD');
+                  ? (group.batches || []).some((b) => b.qa_status === 'GOOD')
+                  : (group.batches || []).some((b) => b.qa_status && b.qa_status !== 'GOOD');
 
                 const availableSpace = maxCap > 0 ? Math.max(0, maxCap - projectedTotalStock) : 0;
                 const isCapacityExceeded = maxCap > 0 && projectedTotalStock > maxCap;
@@ -2098,7 +2098,7 @@ export function QAMultiLotBatchAllocationModal({
                 const positiveZonePct = Number((100 - deficitZonePct).toFixed(2));
 
                 const lotHasBatchErrors = (group.batches || []).some(
-                  (b: any) =>
+                  (b) =>
                     !b.batch_no ||
                     !String(b.batch_no).trim() ||
                     !b.quantity ||
@@ -2137,7 +2137,7 @@ export function QAMultiLotBatchAllocationModal({
                             {(() => {
                               const groupIsBad = qaDisposition
                                 ? qaDisposition === 'rejected'
-                                : (group.batches || []).some((b: any) => b.qa_status && b.qa_status !== 'GOOD');
+                                : (group.batches || []).some((b) => b.qa_status && b.qa_status !== 'GOOD');
                               const optionsLots = lots.filter((l) => {
                                 if (l.status && l.status !== 'ACTIVE') return false;
                                 if (!isLotMatchingUom(l)) return false;
@@ -2198,7 +2198,7 @@ export function QAMultiLotBatchAllocationModal({
                                       };
                                     })}
                                     value={String(group.lot_id)}
-                                    onValueChange={(val: any) => handleChangeLot(gIdx, val)}
+                                    onValueChange={(val: string) => handleChangeLot(gIdx, val)}
                                     placeholder="Select Storage Lot / Bay..."
                                     searchPlaceholder="Search lot name..."
                                     disabled={readOnly}
@@ -2320,7 +2320,7 @@ export function QAMultiLotBatchAllocationModal({
                           <span>
                             {groupStoredSummary.stored_products
                               .slice(0, 2)
-                              .map((p: any) => {
+                              .map((p) => {
                                 const draftTag = p.is_draft ? ' (in current draft)' : '';
                                 return `${p.product_name || p.product_code || 'Product'} (${p.onhand_quantity.toLocaleString()} ${lotUomName || productUomName})${draftTag}`;
                               })
@@ -2697,7 +2697,7 @@ export function QAMultiLotBatchAllocationModal({
                       </div>
 
                       <div className="space-y-2.5">
-                        {group.batches.map((batch: any, bIdx: number) => {
+                        {group.batches.map((batch, bIdx: number) => {
                           const existingOnhand = getExistingBatchOnhand(Number(group.lot_id), batch.batch_no);
                           const isDeficit = existingOnhand && Number(existingOnhand.onhandQuantity) < 0;
 
@@ -2781,13 +2781,13 @@ export function QAMultiLotBatchAllocationModal({
                                     );
                                   })()}
                                   disabledBatchNumbers={(group.batches || [])
-                                    .filter((_: any, idx: number) => idx !== bIdx)
-                                    .map((b: any) => b.batch_no)
+                                    .filter((_, idx: number) => idx !== bIdx)
+                                    .map((b) => b.batch_no)
                                     .filter(Boolean)}
                                   productUomName={productUomName}
                                   placeholder="Search or select batch..."
-                                  onSelectBatch={(selectedBatchNo: any, meta: any) => {
-                                    handleSelectBatchWithMeta(gIdx, bIdx, selectedBatchNo, meta);
+                                  onSelectBatch={(selectedBatchNo: string, meta?: Record<string, unknown>) => {
+                                    handleSelectBatchWithMeta(gIdx, bIdx, selectedBatchNo, meta as Parameters<typeof handleSelectBatchWithMeta>[3]);
                                   }}
                                   title={batch.batch_no || "Search or select batch..."}
                                   className={`h-9 text-xs ${!batch.batch_no || !String(batch.batch_no).trim() ? 'border-destructive ring-1 ring-destructive/40 bg-destructive/5' : ''}`}

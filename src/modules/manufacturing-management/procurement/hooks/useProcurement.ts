@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { normalizeSupplierType, Supplier, SupplierRepresentative, SupplierFormState, IncomingShipment, ShipmentLineItem, ShipmentExpense, RawMaterial, LinkedProduct, RegisterRawMaterialPayload, PackagingVariant, ShipmentData, LineItem } from "../types";
+import { purchaseOrderMaterialTypeFromProduct } from "../components/incoming-shipments/types";
 import type { ShipmentFormState, ManifestLineFormItem } from "../components/IncomingShipments";
 import {
     fetchSuppliers,
@@ -185,8 +186,8 @@ export function useProcurement(defaultTab: string = "suppliers") {
 
     useEffect(() => {
         void fetchPurchaseOrderCatalog()
-            .then((catalog: any) => setPaymentModes(catalog.paymentModes))
-            .catch((error: any) => toast.error((error as Error).message || "Failed to load configured payment types."));
+            .then((catalog) => setPaymentModes(catalog.paymentModes))
+            .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Failed to load configured payment types."));
     }, []);
 
     useEffect(() => {

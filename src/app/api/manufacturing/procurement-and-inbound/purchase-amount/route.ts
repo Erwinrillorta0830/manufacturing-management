@@ -46,7 +46,7 @@ function weightedAverage(
 }
 
 function buildCanonicalLineItems(snapshot: Awaited<ReturnType<typeof loadLandedCostSnapshot>>) {
-    return snapshot.lines.map((line: any) => {
+    return snapshot.lines.map((line) => {
         const product = {
             ...(line.product as Record<string, unknown>),
             product_id: line.productId,
@@ -171,7 +171,7 @@ export async function GET(request: Request) {
         // it is never treated as the foreign invoice price.
         const snapshot = await loadLandedCostSnapshot(purchaseOrderId);
         const lineItems = buildCanonicalLineItems(snapshot);
-        const pricingFingerprint = buildPricingFingerprint(lineItems.map((item: any) => ({
+        const pricingFingerprint = buildPricingFingerprint(lineItems.map((item) => ({
             key: item.purchase_order_product_id,
             listPrice: Number(item.list_price || 0),
             discountPercent: Number(item.discount_percent || 0),
@@ -288,7 +288,7 @@ export async function GET(request: Request) {
             pricingFingerprint,
             pricingAsOf: new Date().toISOString()
         });
-    } catch (error: any) {
+    } catch (error: unknown) {
         const message = error instanceof Error ? error.message : "Internal Server Error";
         return NextResponse.json({
             error: message,
@@ -329,7 +329,7 @@ export async function POST(request: Request) {
         });
 
         return NextResponse.json(result);
-    } catch (error: any) {
+    } catch (error: unknown) {
         const message = error instanceof Error ? error.message : "Allocation Error";
         return NextResponse.json({
             error: message,

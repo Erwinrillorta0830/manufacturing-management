@@ -427,8 +427,8 @@ export async function POST(request: Request) {
         ]);
         const storageLots = [...acceptedStorageLots, ...rejectedStorageLots];
         const lotBranchById = new Map<number, number>([
-            ...acceptedStorageLots.map((lot: any) => [Number(lot.lot_id), purchaseOrderBranchId] as const),
-            ...rejectedStorageLots.map((lot: any) => [Number(lot.lot_id), Number(badStockBranch?.id)] as const)
+            ...acceptedStorageLots.map((lot) => [Number(lot.lot_id), purchaseOrderBranchId] as const),
+            ...rejectedStorageLots.map((lot) => [Number(lot.lot_id), Number(badStockBranch?.id)] as const)
         ]);
         const storageLotIds = storageLots
             .map(lot => Number(lot.lot_id))
@@ -775,11 +775,11 @@ export async function POST(request: Request) {
                 }
                 readingBySpecId.set(reading.specId, reading.actualReading);
             }
-            const configuredIds = new Set(specifications.map((specification: any) => specification.specId));
+            const configuredIds = new Set(specifications.map((specification) => specification.specId));
             if (line.readings.some(reading => !configuredIds.has(reading.specId)) || readingBySpecId.size !== configuredIds.size) {
                 throw new ReceivingPreviewError(`Line ${line.lineId} QA readings do not match the current product specifications.`);
             }
-            const decision = evaluateQaChecklist(specifications.map((specification: any) => ({
+            const decision = evaluateQaChecklist(specifications.map((specification) => ({
                 specification,
                 reading: readingBySpecId.get(specification.specId)
             })));
@@ -934,7 +934,7 @@ export async function POST(request: Request) {
                 lines: data
             }
         });
-    } catch (error: any) {
+    } catch (error: unknown) {
         const normalizedError = error instanceof ProcurementDirectusError
             ? receivingPreviewDependencyError(error)
             : error;
