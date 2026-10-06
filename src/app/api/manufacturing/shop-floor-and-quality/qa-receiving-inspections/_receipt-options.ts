@@ -113,9 +113,12 @@ function receiptTotals(rows: ReceiptLineRow[]): Pick<QaReceiptOption, "receivedQ
 
     for (const row of rows) {
         const allocatedQty = Number(row.quantity_allocated ?? 0);
+        const hasAllocated = row.quantity_allocated !== undefined && row.quantity_allocated !== null && allocatedQty > 0;
         const qaStatus = String(row.qa_status || "").trim().toUpperCase();
+        const rawReceived = Math.max(0, Number(row.received_quantity || 0));
+        const rawRejected = Math.max(0, Number(row.quantity_rejected || 0));
 
-        if (row.quantity_allocated !== undefined && row.quantity_allocated !== null) {
+        if (hasAllocated) {
             receivedQuantity += Math.max(0, allocatedQty);
             if (qaStatus && qaStatus !== "GOOD") {
                 rejectedQuantity += Math.max(0, allocatedQty);
@@ -123,8 +126,6 @@ function receiptTotals(rows: ReceiptLineRow[]): Pick<QaReceiptOption, "receivedQ
                 acceptedQuantity += Math.max(0, allocatedQty);
             }
         } else {
-            const rawReceived = Math.max(0, Number(row.received_quantity || 0));
-            const rawRejected = Math.max(0, Number(row.quantity_rejected || 0));
             receivedQuantity += rawReceived;
             rejectedQuantity += rawRejected;
             acceptedQuantity += Math.max(0, rawReceived - rawRejected);
@@ -146,8 +147,7 @@ async function directusRows(path: string, message: string): Promise<Record<strin
 
 function mapHeaderOption(
     header: ReceiptHeaderRow,
-    linkedRows: ReceiptLineRow[],
-    currentWorkflowRevision: number
+    linkedRows: ReceiptLineRow[]
 ): QaReceiptOption | null {
     const id = relationId(header.id);
     if (!id) return null;
@@ -165,9 +165,10 @@ function mapHeaderOption(
         || null;
     const postingStatus = String(header.posting_status || "Posted").trim() || "Posted";
     const workflowRevision = Number(header.workflow_revision || 0);
-    const isCurrent = (postingStatus === "Reserved" || postingStatus === "Failed")
-        && workflowRevision === currentWorkflowRevision
+    const isUnpostedWarehouse = (postingStatus === "Reserved" || postingStatus === "Failed")
         && linkedRows.some(isUnpostedWarehouseRow);
+    const isCurrent = isUnpostedWarehouse;
+    const displayPostingStatus = isUnpostedWarehouse ? "Awaiting QA" : postingStatus;
     const totals = receiptTotals(linkedRows);
 
     return {
@@ -175,11 +176,11 @@ function mapHeaderOption(
         receiptNumber,
         receiptDate,
         receiptType: header.receipt_type == null ? null : String(header.receipt_type),
-        postingStatus,
+        postingStatus: displayPostingStatus,
         workflowRevision: Number.isSafeInteger(workflowRevision) ? workflowRevision : 0,
         receivingHeaderId: id,
         isCurrent,
-        readOnly: !isCurrent,
+        readOnly: !isUnpostedWarehouse,
         ...totals
     };
 }
@@ -246,7 +247,7 @@ export async function fetchQaReceiptOptions(
         const headerId = relationId(header.id);
         if (!headerId) return [];
         const linkedRows = rowsForPurchaseOrder.filter(row => relationId(row.receiving_header_id) === headerId);
-        const option = mapHeaderOption(header, linkedRows, currentWorkflowRevision);
+        const option = mapHeaderOption(header, linkedRows);
         return option ? [option] : [];
     });
     const legacyOptions = mapLegacyOptions(rowsForPurchaseOrder.filter(row => relationId(row.receiving_header_id) === null));

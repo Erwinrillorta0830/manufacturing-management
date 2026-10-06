@@ -1,4 +1,5 @@
 import { procurementDirectusFetch } from "../procurement/_directus";
+import { formatPhtDateTime } from "../services/core-api.service";
 import type { ReceivingQuantityStatus } from "./_receiving-status";
 import {
     RECEIVING_ERROR_CODES,
@@ -241,7 +242,8 @@ export async function allocateReceivingTicket(input: {
                     quantity_status: input.quantityStatus,
                     workflow_revision: input.workflowRevision,
                     idempotency_key: input.idempotencyKey,
-                    created_by: input.createdBy
+                    created_by: input.createdBy,
+                    created_at: formatPhtDateTime()
                 })
             });
             if (!create.ok) {
@@ -267,7 +269,10 @@ export async function allocateReceivingTicket(input: {
 export async function markReceivingTicketPosted(headerId: number): Promise<void> {
     const result = await directusJson(`/items/purchase_order_receiving_headers/${headerId}`, {
         method: "PATCH",
-        body: JSON.stringify({ posting_status: "Posted" })
+        body: JSON.stringify({
+            posting_status: "Posted",
+            updated_at: formatPhtDateTime()
+        })
     });
     if (!result.ok) throw new ReceivingTicketError("Unable to mark the receiving ticket as posted.");
 }
@@ -275,7 +280,10 @@ export async function markReceivingTicketPosted(headerId: number): Promise<void>
 export async function markReceivingTicketFailed(headerId: number): Promise<boolean> {
     const result = await directusJson(`/items/purchase_order_receiving_headers/${headerId}`, {
         method: "PATCH",
-        body: JSON.stringify({ posting_status: "Failed" })
+        body: JSON.stringify({
+            posting_status: "Failed",
+            updated_at: formatPhtDateTime()
+        })
     });
     return result.ok;
 }

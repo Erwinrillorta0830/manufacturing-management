@@ -64,6 +64,7 @@ interface FinanceDecisionControlsProps {
     requestRevision: (id: number, remarks: string) => Promise<void>;
     cancel: (id: number, remarks: string) => Promise<void>;
     onReload: () => Promise<void>;
+    onClose?: () => void;
 }
 
 function FinanceDecisionControls({
@@ -75,7 +76,8 @@ function FinanceDecisionControls({
     approve,
     requestRevision,
     cancel,
-    onReload
+    onReload,
+    onClose
 }: FinanceDecisionControlsProps) {
     const [remarks, setRemarks] = React.useState("");
     const [submitting, setSubmitting] = React.useState<"approve" | "revision" | "cancel" | null>(null);
@@ -106,6 +108,7 @@ function FinanceDecisionControls({
             setSubmitting("approve");
             await approve(shipment.shipment_id);
             toast.success("Finance approval completed. The purchase order is now available in Warehouse Receiving.");
+            onClose?.();
         } catch (error) {
             await handleActionError(error);
         } finally {
@@ -122,6 +125,7 @@ function FinanceDecisionControls({
             setSubmitting("revision");
             await requestRevision(shipment.shipment_id, remarks.trim());
             toast.success("Purchase order sent for revision.");
+            onClose?.();
         } catch (error) {
             const message = (error as Error).message || "";
             if (/remark|reason/i.test(message)) flagRemarksError(message);
@@ -144,6 +148,8 @@ function FinanceDecisionControls({
             setSubmitting("cancel");
             await cancel(shipment.shipment_id, reason);
             toast.success("Purchase order cancelled by Finance.");
+            setIsCancelDialogOpen(false);
+            onClose?.();
             return true;
         } catch (error) {
             await handleActionError(error);
@@ -451,6 +457,7 @@ export default function FinanceApprovalDetailModal({
                                 onReload={async () => {
                                     await onRetry();
                                 }}
+                                onClose={onClose}
                             />
 
                             <div>
