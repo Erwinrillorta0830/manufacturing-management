@@ -1153,12 +1153,12 @@ export async function fetchShipmentLineItems(
                 && resolvePurchaseOrderLineId(row, popData) === lineId
             );
             const warehouseReceiptIdentities = new Set(activeWarehouseRowsForLine.map(warehouseReceiptIdentity));
-            const hasAmbiguousWarehouseReceipt = warehouseReceiptIdentities.size > 1;
             const selectedWarehouseRowsForLine = options.receiptSelection
                 ? activeWarehouseRowsForLine.filter(row => matchesReceiptSelection(row, lineId, options.receiptSelection!))
                 : activeWarehouseRowsForLine;
-            const currentWarehouseRows = hasAmbiguousWarehouseReceipt ? [] : activeWarehouseRowsForLine;
-            const warehouseRowsForLine = hasAmbiguousWarehouseReceipt ? [] : selectedWarehouseRowsForLine;
+            const hasAmbiguousWarehouseReceipt = !options.receiptSelection && warehouseReceiptIdentities.size > 1;
+            const currentWarehouseRows = options.receiptSelection ? selectedWarehouseRowsForLine : (hasAmbiguousWarehouseReceipt ? [] : activeWarehouseRowsForLine);
+            const warehouseRowsForLine = selectedWarehouseRowsForLine;
             const currentWarehouseRow = currentWarehouseRows[0];
             const currentWarehouseHeader = currentWarehouseRow && typeof currentWarehouseRow.receiving_header_id === "object"
                 ? currentWarehouseRow.receiving_header_id

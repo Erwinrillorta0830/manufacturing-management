@@ -133,6 +133,7 @@ function FinanceDecisionControls({
             setSubmitting("approve");
             await approve(shipment.shipment_id);
             toast.success("Finance approval completed. The purchase order is now available in Warehouse Receiving.");
+            router.push("/mm/finance-approval");
         } catch (error) {
             await handleActionError(error);
         } finally {
@@ -149,6 +150,7 @@ function FinanceDecisionControls({
             setSubmitting("revision");
             await requestRevision(shipment.shipment_id, remarks.trim());
             toast.success("Purchase order sent for revision.");
+            router.push("/mm/finance-approval");
         } catch (error) {
             const message = (error as Error).message || "";
             if (/remark|reason/i.test(message)) flagRemarksError(message);
@@ -171,6 +173,8 @@ function FinanceDecisionControls({
             setSubmitting("cancel");
             await cancel(shipment.shipment_id, reason);
             toast.success("Purchase order cancelled by Finance.");
+            setIsCancelDialogOpen(false);
+            router.push("/mm/finance-approval");
             return true;
         } catch (error) {
             await handleActionError(error);
