@@ -129,7 +129,7 @@ export function ShipmentDetailView({
                             </button>
                         ) : (
                             <Link
-                                href={backHref || "/mm/incoming-shipments"}
+                                href={backHref || "/mm/procurement-and-inbound/incoming-purchase-shipments"}
                                 className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold text-foreground hover:bg-muted"
                             >
                                 <ArrowLeft className="h-3.5 w-3.5" /> Back to Incoming Shipments
@@ -149,7 +149,7 @@ export function ShipmentDetailView({
                         </button>
                     ) : backHref !== undefined ? (
                         <Link
-                            href={backHref || "/mm/incoming-shipments"}
+                            href={backHref || "/mm/procurement-and-inbound/incoming-purchase-shipments"}
                             className="inline-flex min-h-9 w-fit items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs font-bold text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                         >
                             <ArrowLeft className="h-3.5 w-3.5" /> Back to Incoming Shipments

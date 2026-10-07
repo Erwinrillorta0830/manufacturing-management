@@ -18,11 +18,11 @@ export default function PurchaseOrderModule({
     const router = useRouter();
     const handleCreated = useCallback((result: PurchaseOrderDraftResponse) => {
         if (mode === "create") {
-            router.replace(`/mm/incoming-shipments/${encodeURIComponent(String(result.purchaseOrderId))}`);
+            router.replace(`/mm/procurement-and-inbound/incoming-purchase-shipments?shipmentId=${encodeURIComponent(String(result.purchaseOrderId))}`);
         }
     }, [mode, router]);
     const handleExitCreate = useCallback(() => {
-        router.push("/mm/incoming-shipments");
+        router.push("/mm/procurement-and-inbound/incoming-purchase-shipments");
     }, [router]);
     const purchaseOrder = usePurchaseOrder({
         mode,
