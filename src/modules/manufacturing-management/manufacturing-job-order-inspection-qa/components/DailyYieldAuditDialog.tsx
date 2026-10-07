@@ -71,7 +71,15 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
     const yieldRecord = controller.selectedYield;
     const details = controller.selectedDetails;
     const requiresOutputTraceability = Number(yieldRecord?.goodQuantity || 0) > 0;
+    const requiresRejectedOutputTraceability = Number(yieldRecord?.rejectedQuantity || 0) > 0;
     const isVerified = yieldRecord?.qaStatus === "Passed";
+    const rejectedOutputRegistered = Boolean(yieldRecord?.rejectedMmLotId);
+    const canRegisterRejectedOutput = Boolean(
+        requiresRejectedOutputTraceability
+        && yieldRecord?.outcome.isComplete
+        && !rejectedOutputRegistered
+    );
+    const rejectedOutputLocked = controller.actionLoading || rejectedOutputRegistered;
     const [evidenceExpanded, setEvidenceExpanded] = React.useState(false);
     const [showAllAuditTrail, setShowAllAuditTrail] = React.useState(false);
     const [showAllOperators, setShowAllOperators] = React.useState(false);
@@ -617,6 +625,116 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                     </div>
                                 </div>
                             </div>
+
+                            {requiresRejectedOutputTraceability && (
+                                <div className="bg-rose-500/[0.025] border border-rose-500/25 rounded-xl p-3.5 space-y-3.5 shadow-sm">
+                                    <div className="flex items-center gap-2 pb-2 border-b border-rose-500/15">
+                                        <div className="p-1.5 bg-rose-500/10 rounded-lg text-rose-600">
+                                            <MapPin className="h-4 w-4" />
+                                        </div>
+                                        <div>
+                                            <h4 className="font-bold text-rose-800 dark:text-rose-300 uppercase tracking-wider text-[10px]">
+                                                Rejected Output Traceability
+                                            </h4>
+                                            <p className="text-[9px] text-muted-foreground mt-0.5">
+                                                {numericText(yieldRecord?.rejectedQuantity)} rejected units will be registered in the configured bad-stock branch after this audit is complete.
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    {controller.dailyRejectedOutputLotsError && (
+                                        <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive flex items-start gap-2 text-xs" role="alert">
+                                            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                                            <div className="space-y-2">
+                                                <p className="font-semibold">Bad-stock storage lots are unavailable.</p>
+                                                <p>{controller.dailyRejectedOutputLotsError}</p>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        <div className="space-y-1">
+                                            <Label htmlFor="daily-yield-rejected-output-batch" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
+                                                <Tag className="h-3.5 w-3.5 text-rose-500" /> Rejected Batch / Lot No <span className="text-destructive">*</span>
+                                            </Label>
+                                            <Input
+                                                id="daily-yield-rejected-output-batch"
+                                                type="text"
+                                                maxLength={100}
+                                                value={controller.dailyRejectedOutputBatchNo}
+                                                onChange={(event) => controller.setDailyRejectedOutputBatchNo(event.target.value)}
+                                                className="h-9 rounded-lg bg-background border-rose-500/30 text-foreground text-xs font-bold font-mono"
+                                                placeholder="Enter rejected batch or lot number"
+                                                disabled={rejectedOutputLocked}
+                                                required
+                                            />
+                                        </div>
+
+                                        <div className="space-y-1">
+                                            <Label htmlFor="daily-yield-rejected-storage-lot" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
+                                                <MapPin className="h-3.5 w-3.5 text-rose-500" /> Bad-stock Storage Lot <span className="text-destructive">*</span>
+                                            </Label>
+                                            <FinishedGoodsLotSelect
+                                                lots={controller.dailyRejectedOutputEligibleLots}
+                                                value={controller.dailyRejectedOutputMmLotId}
+                                                onValueChange={controller.setDailyRejectedOutputMmLotId}
+                                                loading={controller.dailyRejectedOutputLotsLoading}
+                                                disabled={rejectedOutputLocked}
+                                                placeholder="Select bad-stock storage lot..."
+                                                className="h-9 w-full justify-between rounded-lg border-rose-500/30 text-xs font-semibold"
+                                                showBatchSummary
+                                            />
+                                        </div>
+
+                                        <div className="space-y-1">
+                                            <Label htmlFor="daily-yield-rejected-manufacturing-date" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
+                                                <Calendar className="h-3.5 w-3.5 text-rose-500" /> Manufacturing Date <span className="text-destructive">*</span>
+                                            </Label>
+                                            <Input
+                                                id="daily-yield-rejected-manufacturing-date"
+                                                type="date"
+                                                value={controller.dailyRejectedOutputManufacturingDate}
+                                                onChange={(event) => controller.setDailyRejectedOutputManufacturingDate(event.target.value)}
+                                                className="h-9 rounded-lg bg-background border-rose-500/30 text-foreground text-xs"
+                                                disabled={rejectedOutputLocked}
+                                                required
+                                            />
+                                        </div>
+
+                                        <div className="space-y-1">
+                                            <Label htmlFor="daily-yield-rejected-expiry-date" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
+                                                <Calendar className="h-3.5 w-3.5 text-rose-500" /> Expiry Date <span className="text-destructive">*</span>
+                                            </Label>
+                                            <Input
+                                                id="daily-yield-rejected-expiry-date"
+                                                type="date"
+                                                value={controller.dailyRejectedOutputExpiryDate}
+                                                onChange={(event) => controller.setDailyRejectedOutputExpiryDate(event.target.value)}
+                                                className="h-9 rounded-lg bg-background border-rose-500/30 text-foreground text-xs"
+                                                disabled={rejectedOutputLocked}
+                                                required
+                                            />
+                                        </div>
+                                    </div>
+
+                                    {canRegisterRejectedOutput && (
+                                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-t border-rose-500/15 pt-3">
+                                            <p className="text-[10px] text-muted-foreground">
+                                                The QA audit is complete. Register this rejected quantity in the configured bad-stock branch.
+                                            </p>
+                                            <Button
+                                                type="button"
+                                                variant="destructive"
+                                                className="h-9 shrink-0 text-xs font-bold"
+                                                disabled={controller.actionLoading}
+                                                onClick={() => void controller.registerRejectedOutput()}
+                                            >
+                                                {controller.actionLoading ? "Registering..." : "Register Rejected Stock"}
+                                            </Button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
 
                             {/* Sensory & QA Dispositions */}
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">

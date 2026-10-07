@@ -48,6 +48,7 @@ const TRANSACTION_TYPES = [
     { value: "PHYSICAL_INVENTORY_DEFICIT", label: "Physical Inventory Deficit" },
     { value: "JOB_ORDER_CONSUMPTION", label: "Job Order Consumption" },
     { value: "JOB_ORDER_FINISHED_YIELD", label: "Job Order Finished Yield" },
+    { value: "JOB_ORDER_REJECTED_YIELD", label: "Job Order Rejected Yield" },
     { value: "JOB_ORDER_WASTAGE_SCRAP", label: "Job Order Wastage / Scrap" },
     { value: "PURCHASE_RECEIVING_QA", label: "Purchase Receiving QA" },
     { value: "SALES_ISSUE", label: "Sales Issue" },
