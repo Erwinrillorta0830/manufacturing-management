@@ -21,6 +21,7 @@ const PRODUCT_TYPE_OPTIONS: ProductTypeOption[] = [
     { value: "RM", label: "Raw Material (RM)", dotColor: "bg-blue-500" },
     { value: "PKG", label: "Packaging (PKG)", dotColor: "bg-amber-500" },
     { value: "FG", label: "Finished Good (FG)", dotColor: "bg-emerald-500" },
+    { value: "EMPTY", label: "Empty Lot", dotColor: "bg-slate-400" },
 ];
 
 interface SearchableProductTypeSelectProps {

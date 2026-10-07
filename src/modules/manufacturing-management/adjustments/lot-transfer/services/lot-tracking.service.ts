@@ -59,6 +59,12 @@ export interface MMInventoryLot {
   product_code?: string;
   lot_name?: string;
   unit_name?: string;
+  created_at?: string | null;
+  product_type_id?: number | null;
+  product_type_name?: string;
+  product_category_name?: string;
+  product_description?: string;
+  classification_code?: string;
 }
 
 async function handleApiError(res: Response, fallback: string) {
@@ -555,7 +561,7 @@ export async function fetchLotProductsWithStock(
 
     const [batchesRes, allProducts, lookups] = await Promise.all([
       fetch(
-        `/api/manufacturing/inventory-warehousing/adjustments/adjustment-shared/lots/batches?lotId=${lotId}&source=lot-transfer`,
+        `/api/manufacturing/inventory-warehousing/adjustments/lot-transfer/batches?lotId=${lotId}`,
         { cache: "no-store" }
       ),
       fetchProducts(),
@@ -567,13 +573,19 @@ export async function fetchLotProductsWithStock(
       return [];
     }
 
-    const batchesData: Record<string, unknown>[] = await batchesRes.json();
+    const json = await batchesRes.json();
+    const batchesData: Record<string, unknown>[] = Array.isArray(json)
+      ? json
+      : Array.isArray(json?.batches)
+      ? json.batches
+      : [];
+
     const productMap = new Map<number, MMProduct>();
     allProducts.forEach((p) => productMap.set(p.productId, p));
 
     const grouped = new Map<number, MMInventoryLot[]>();
 
-    (batchesData || []).forEach((b) => {
+    batchesData.forEach((b) => {
       const pId = Number(b.productId || b.product_id || 0);
       if (pId <= 0) return;
 
@@ -583,10 +595,10 @@ export async function fetchLotProductsWithStock(
       const status = String(b.status || "ACTIVE").toUpperCase();
       if (status === "INACTIVE" || status === "CLOSED") return; // Strictly ignore inactive/closed
 
-      const uId = Number(b.unitId || b.unit_id || 0);
+      const uId = Number(b.unitId || b.unit_id || b.uomId || 0);
       const inventoryLot: MMInventoryLot = {
-        inventory_lot_id: Number(b.batchId || b.id || b.inventory_lot_id || 0),
-        lot_id: Number(b.lotId || lotId),
+        inventory_lot_id: Number(b.inventoryLotId || b.batchId || b.id || b.inventory_lot_id || 0),
+        lot_id: Number(b.lotId || b.lot_id || lotId),
         branch_id: Number(b.branchId || b.branch_id || 0),
         product_id: pId,
         batch_no: String(b.batchNumber || b.batch_no || ""),
@@ -597,9 +609,15 @@ export async function fetchLotProductsWithStock(
         status,
         available_quantity: qty,
         product_name: (b.productName || b.product_name || lookups.maps.productNames[String(pId)] || "-") as string,
-        product_code: (b.itemCode || b.product_code || b.productCode || "-") as string,
+        product_code: (b.productCode || b.itemCode || b.product_code || "-") as string,
         lot_name: (b.lotName || b.lot_name || lookups.maps.lotNames[String(lotId)] || "-") as string,
         unit_name: (b.uomName || b.unit_name || (uId > 0 ? lookups.maps.unitNames[String(uId)] : "-") || "-") as string,
+        created_at: (b.createdAt || b.created_at || b.dateReceived || b.date_received || null) as string | null,
+        product_type_id: b.productTypeId ? Number(b.productTypeId) : null,
+        product_type_name: (b.productTypeName as string) || undefined,
+        product_category_name: (b.productCategoryName as string) || undefined,
+        product_description: (b.productDescription as string) || undefined,
+        classification_code: (b.classificationCode as string) || undefined,
       };
 
       const existing = grouped.get(pId) || [];
@@ -627,7 +645,11 @@ export async function fetchLotProductsWithStock(
       const rawUom = master?.uomName || firstBatch.unit_name;
       const resolvedUom = rawUom ? String(rawUom).trim() : undefined;
 
-      const resolvedDesc = master?.description || lookups.maps.productDescriptions?.[String(pId)];
+      const resolvedDesc = master?.description || firstBatch.product_description || lookups.maps.productDescriptions?.[String(pId)];
+
+      const resolvedTypeId = master?.productTypeId ?? firstBatch.product_type_id ?? null;
+      const resolvedTypeName = master?.productTypeName || firstBatch.product_type_name;
+      const resolvedCatName = master?.productCategoryName || firstBatch.product_category_name;
 
       result.push({
         productId: pId,
@@ -635,9 +657,9 @@ export async function fetchLotProductsWithStock(
         productCode: resolvedCode,
         productDescription: resolvedDesc,
         uomName: resolvedUom,
-        productTypeId: master?.productTypeId ?? null,
-        productTypeName: master?.productTypeName,
-        productCategoryName: master?.productCategoryName,
+        productTypeId: resolvedTypeId,
+        productTypeName: resolvedTypeName,
+        productCategoryName: resolvedCatName,
         batches,
       });
     });
@@ -662,6 +684,8 @@ export interface LotTransferLotStats {
   matchingBatchesToMove: number;
   matchingQtyToMove: number;
   capacityLeft: number;
+  hasNegativeStock?: boolean;
+  negativeStockQty?: number;
 }
 
 export async function fetchLotTransferBatchStats(

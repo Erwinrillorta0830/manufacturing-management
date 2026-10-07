@@ -196,7 +196,7 @@ export function MachineDowntimeTable({
                                 )}
                             </div>
                             <p className="mt-1 text-xs text-muted-foreground">
-                                Production asset #{asset.assetId} · {asset.trackedEpisodeCount} tracked episode{asset.trackedEpisodeCount === 1 ? "" : "s"} · Pre-rollout history unavailable
+                                Classification: {asset.classificationName} · Assigned To: {asset.assignedToName} · {asset.trackedEpisodeCount} tracked episode{asset.trackedEpisodeCount === 1 ? "" : "s"}
                             </p>
                         </div>
                         <div className="flex flex-wrap gap-2">
@@ -281,7 +281,7 @@ export function MachineDowntimeTable({
                         <DialogTitle>Job Orders</DialogTitle>
                         <DialogDescription>
                             {jobOrdersAsset
-                                ? jobOrdersAsset.assetName + " - Production asset #" + jobOrdersAsset.assetId
+                                ? `${jobOrdersAsset.assetName} · Classification: ${jobOrdersAsset.classificationName} · Assigned To: ${jobOrdersAsset.assignedToName}`
                                 : "Related job orders"}
                         </DialogDescription>
                     </DialogHeader>

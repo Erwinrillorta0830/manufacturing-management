@@ -682,6 +682,31 @@ export async function postLotTransferServer(id: number, userId?: number | null):
   const outTypeId = await resolveTransactionTypeId("LOT_TRANSFER_OUT", "OUT");
   const inTypeId = await resolveTransactionTypeId("LOT_TRANSFER_IN", "IN");
 
+  if (!current.details || current.details.length === 0) {
+    throw new LotTransferServerError("Cannot post: Transfer has no movement lines", 400);
+  }
+
+  for (const detail of current.details) {
+    const lineNum = detail.lineNo || 1;
+    if (!detail.productId) {
+      throw new LotTransferServerError(`Cannot post: Product ID is missing for line #${lineNum}`, 400);
+    }
+    if (!detail.sourceInventoryLotId) {
+      throw new LotTransferServerError(`Cannot post: Source inventory lot ID is missing for line #${lineNum}`, 400);
+    }
+    if (!detail.targetBatchNo || !detail.targetBatchNo.trim()) {
+      throw new LotTransferServerError(`Cannot post: Target batch number is missing for line #${lineNum}`, 400);
+    }
+    if (
+      detail.quantity === null ||
+      detail.quantity === undefined ||
+      Number(detail.quantity) <= 0 ||
+      isNaN(Number(detail.quantity))
+    ) {
+      throw new LotTransferServerError(`Cannot post: Quantity must be greater than zero for line #${lineNum}`, 400);
+    }
+  }
+
   // Validate target lot capacity before posting
   await validateTargetLotCapacity(
     current.targetLotId,

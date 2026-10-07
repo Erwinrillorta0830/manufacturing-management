@@ -13,8 +13,10 @@ type DirectusRecord = Record<string, unknown>;
 
 const HISTORY_COLLECTION = "manufacturing_asset_maintenance_history";
 const PRODUCTION_ASSET_FIELDS = [
-    "id", "asset_type", "condition", "serial", "barcode", "rfid_code", "item_id.id", "item_id.item_name"
+    "id", "asset_type", "condition", "serial", "barcode", "rfid_code", "employee",
+    "item_id.id", "item_id.item_name", "item_id.item_classification.classification_name"
 ].join(",");
+const ASSIGNED_PERSONNEL_FIELDS = "user_id,user_fname,user_lname";
 const JOB_ORDER_FIELDS = [
     "job_order_id", "job_order_no", "status", "cancelled_at", "cancellation_reason",
     "cancellation_image_id", "termination_image_id"
@@ -77,13 +79,13 @@ function dateValue(value: unknown): string | null {
     return typeof value === "string" && value.trim() ? value : null;
 }
 
-function assetLabel(asset: DirectusRecord, assetId: number): string {
+function assetLabel(asset: DirectusRecord): string {
     const item = isRecord(asset.item_id) ? asset.item_id : null;
     return text(item?.item_name)
         || text(asset.serial)
         || text(asset.barcode)
         || text(asset.rfid_code)
-        || "Production asset #" + assetId;
+        || "Production asset";
 }
 
 function urlForItems(collection: string, params: URLSearchParams): string {
@@ -300,6 +302,24 @@ export async function loadMachineDowntimeReport(): Promise<MachineDowntimeReport
             readRows(HISTORY_COLLECTION, HISTORY_FIELDS, "Load maintenance history")
         ]);
 
+        const assignedEmployeeIds = [...new Set(assetRows
+            .map((asset) => relationId(asset.employee, ["user_id", "id"]))
+            .filter((id): id is number => id !== null))];
+        const assignedPersonnelRows = assignedEmployeeIds.length > 0
+            ? await readRows(
+                "user",
+                ASSIGNED_PERSONNEL_FIELDS,
+                "Load assigned Production asset personnel",
+                { "filter[user_id][_in]": assignedEmployeeIds.join(",") }
+            )
+            : [];
+        const assignedPersonnelById = new Map<number, string>();
+        assignedPersonnelRows.forEach((person) => {
+            const userId = relationId(person.user_id, ["user_id", "id"]);
+            const name = [text(person.user_fname), text(person.user_lname)].filter(Boolean).join(" ");
+            if (userId && name) assignedPersonnelById.set(userId, name);
+        });
+
         const jobOrders = jobOrderRows.filter((row) => isCancelledJobOrderStatus(row.status));
         const jobOrderIds = jobOrders
             .map((row) => relationId(row.job_order_id, ["job_order_id", "id"]))
@@ -388,14 +408,23 @@ export async function loadMachineDowntimeReport(): Promise<MachineDowntimeReport
 
         const assets: MachineAssetReport[] = [...assetsById.entries()]
             .map(([assetId, asset]) => {
+                const item = isRecord(asset.item_id) ? asset.item_id : null;
+                const classification = isRecord(item?.item_classification) ? item.item_classification : null;
+                const classificationName = text(classification?.classification_name) || "N/A";
+                const assignedEmployeeId = relationId(asset.employee, ["user_id", "id"]);
+                const assignedToName = assignedEmployeeId
+                    ? assignedPersonnelById.get(assignedEmployeeId) || "Personnel unavailable"
+                    : "Unassigned";
                 const assetEpisodes = (episodesByAsset.get(assetId) ?? [])
                     .sort((left, right) => Date.parse(right.recordedAt || right.startedAt || "") - Date.parse(left.recordedAt || left.startedAt || ""));
                 const openEpisode = assetEpisodes.find((episode) => episode.isOpen) ?? null;
                 const condition = text(asset.condition) || "Unknown";
                 return {
                     assetId,
-                    assetName: assetLabel(asset, assetId),
+                    assetName: assetLabel(asset),
                     assetType: text(asset.asset_type) || "Production",
+                    classificationName,
+                    assignedToName,
                     condition,
                     trackedEpisodeCount: assetEpisodes.length,
                     history: assetEpisodes,

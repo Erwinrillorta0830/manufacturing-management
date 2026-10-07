@@ -128,6 +128,7 @@ export default function FinishedGoodsModule() {
         editedOverheads,
         hasUnsavedChanges,
         setHasUnsavedChanges,
+        hasProductDetailsChanged,
         operationTypes,
         setOperationTypes,
         overheadTypes,
@@ -972,6 +973,7 @@ export default function FinishedGoodsModule() {
                 selectedProduct={selectedProduct}
                 onRequestSwitchProduct={handleRequestSwitchProduct}
                 isVersionLocked={isNoBomProduct ? false : (selectedVersion?.status !== "Draft" && selectedVersion?.status !== "Revision Required")}
+                hasProductDetailsChanged={hasProductDetailsChanged}
                 selectedVersion={selectedVersion}
                 onCreateRevision={handleReviseSpecification}
                 onSubmitForApproval={handlePromptSubmitForApproval}

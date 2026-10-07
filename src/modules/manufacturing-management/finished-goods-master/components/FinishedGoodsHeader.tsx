@@ -29,6 +29,7 @@ export interface FinishedGoodsHeaderProps {
     selectedProduct: Product | null;
     onRequestSwitchProduct?: (id: string) => void;
     isVersionLocked?: boolean;
+    hasProductDetailsChanged?: boolean;
     selectedVersion?: ProductVersion | null;
     onCreateRevision?: (version: ProductVersion) => void;
     onSubmitForApproval?: (versionId?: number) => void;
@@ -51,7 +52,8 @@ export function FinishedGoodsHeader({
     setSelectedProductId,
     selectedProduct,
     onRequestSwitchProduct,
-    isVersionLocked = false
+    isVersionLocked = false,
+    hasProductDetailsChanged = false
 }: FinishedGoodsHeaderProps) {
 
     // Build hierarchical product options (Parent & Child variants)
@@ -153,6 +155,8 @@ export function FinishedGoodsHeader({
         return opts;
     }, [products]);
 
+    const isSaveLocked = !hasNoBom && isVersionLocked && !hasProductDetailsChanged;
+
     return (
         <>
             {/* Topbar */}
@@ -214,9 +218,9 @@ export function FinishedGoodsHeader({
                     <button
                         type="button"
                         onClick={handleSave}
-                        disabled={savingBOM || !selectedProduct || (!hasNoBom && isVersionLocked)}
+                        disabled={savingBOM || !selectedProduct || isSaveLocked}
                         className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                        title={!hasNoBom && isVersionLocked ? "Version is locked. Create a revision to make changes." : "Save Changes"}
+                        title={isSaveLocked ? "Version is locked. Create a revision to make changes." : "Save Changes"}
                     >
                         {savingBOM ? (
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />

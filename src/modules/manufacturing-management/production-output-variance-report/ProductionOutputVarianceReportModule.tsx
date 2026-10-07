@@ -59,12 +59,22 @@ function exportRows(rows: ProductionOutputVarianceRow[]) {
     }));
 }
 
+interface SummaryQuantityLine {
+    uom: string;
+    value: string;
+}
+
+type SummaryCardValue = string | SummaryQuantityLine[];
+
 export default function ProductionOutputVarianceReportModule() {
     const report = useProductionOutputVarianceReport();
     const isLoading = report.loading || report.refreshing;
     const formatWithUom = (quantity: number, uom: string) => `${formatQuantity(quantity)} ${uom || "units"}`;
-    const formatSummaryByUom = (key: "plannedQuantity" | "actualGoodQuantity" | "rejectedQuantity" | "quantityVariance") =>
-        report.summary.quantitiesByUom.map((totals) => `${key === "quantityVariance" && totals[key] > 0 ? "+" : ""}${formatQuantity(totals[key])} ${totals.uom}`).join(" · ") || "—";
+    const formatSummaryByUom = (key: "plannedQuantity" | "actualGoodQuantity" | "rejectedQuantity" | "quantityVariance"): SummaryQuantityLine[] =>
+        report.summary.quantitiesByUom.map((totals) => ({
+            uom: totals.uom || "units",
+            value: `${key === "quantityVariance" && totals[key] > 0 ? "+" : ""}${formatQuantity(totals[key])}`
+        }));
     const varianceValues = report.summary.quantitiesByUom.map((totals) => totals.quantityVariance);
     const varianceTone = varianceValues.some((value) => value < 0) && varianceValues.some((value) => value > 0)
         ? undefined
@@ -299,11 +309,30 @@ export default function ProductionOutputVarianceReportModule() {
     );
 }
 
-function SummaryCard({ label, value, tone, loading = false }: { label: string; value: string; tone?: "positive" | "negative"; loading?: boolean }) {
+function SummaryCard({ label, value, tone, loading = false }: { label: string; value: SummaryCardValue; tone?: "positive" | "negative"; loading?: boolean }) {
+    const valueClassName = tone === "negative"
+        ? "text-destructive"
+        : tone === "positive"
+            ? "text-emerald-700 dark:text-emerald-400"
+            : "";
+
     return (
-        <div className="rounded-xl border bg-card p-4 shadow-sm">
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
-            {loading ? <Skeleton className="mt-2 h-7 w-4/5" /> : <p className={`mt-1 break-words text-xl font-bold leading-tight tabular-nums ${tone === "negative" ? "text-destructive" : tone === "positive" ? "text-emerald-700 dark:text-emerald-400" : ""}`}>{value}</p>}
+        <div className="min-w-0 rounded-xl border bg-card p-4 shadow-sm">
+            <p className={`text-xs font-semibold uppercase tracking-wide text-muted-foreground ${Array.isArray(value) ? "sm:text-sm" : ""}`}>{label}</p>
+            {loading ? <Skeleton className="mt-2 h-7 w-4/5" /> : typeof value === "string" ? (
+                <p className={`mt-1 break-words text-xl font-bold leading-tight tabular-nums ${valueClassName}`}>{value}</p>
+            ) : value.length > 0 ? (
+                <dl className="mt-2 space-y-1.5">
+                    {value.map((line) => (
+                        <div key={line.uom} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-baseline gap-2 border-b border-border/60 pb-1 last:border-0 last:pb-0">
+                            <dt className="min-w-0 break-words text-xs font-medium text-muted-foreground">{line.uom}</dt>
+                            <dd className={`min-w-0 break-words text-right text-lg font-bold leading-tight tabular-nums sm:text-xl ${valueClassName}`}>{line.value}</dd>
+                        </div>
+                    ))}
+                </dl>
+            ) : (
+                <p className="mt-1 text-xl font-bold leading-tight text-muted-foreground">—</p>
+            )}
         </div>
     );
 }

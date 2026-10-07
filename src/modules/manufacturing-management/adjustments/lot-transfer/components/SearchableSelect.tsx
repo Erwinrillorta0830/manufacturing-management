@@ -63,6 +63,13 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
             role="combobox"
             aria-expanded={open}
             disabled={disabled}
+            title={
+              selectedOption
+                ? selectedOption.subLabel
+                  ? `${selectedOption.label}\n${selectedOption.subLabel}`
+                  : selectedOption.label
+                : placeholder
+            }
             className={cn(
               "w-full justify-between font-normal text-left h-9",
               !selectedOption && "text-muted-foreground",
@@ -96,18 +103,25 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
                         onChange(option.value);
                         setOpen(false);
                       }}
-                      className="cursor-pointer"
+                      title={
+                        option.subLabel
+                          ? `${option.label}\n${option.subLabel}`
+                          : option.label
+                      }
+                      className="cursor-pointer py-2 px-3 items-start"
                     >
                       <Check
                         className={cn(
-                          "mr-2 h-4 w-4",
+                          "mr-2 h-4 w-4 shrink-0 mt-0.5",
                           isSelected ? "opacity-100" : "opacity-0"
                         )}
                       />
-                      <div className="flex flex-col flex-1 min-w-0">
-                        <span className="truncate text-sm font-medium">{option.label}</span>
+                      <div className="flex flex-col flex-1 min-w-0 gap-0.5">
+                        <span className="text-sm font-medium leading-snug whitespace-normal break-words">
+                          {option.label}
+                        </span>
                         {option.subLabel && (
-                          <span className="truncate text-xs text-muted-foreground">
+                          <span className="text-xs text-muted-foreground leading-snug whitespace-normal break-words">
                             {option.subLabel}
                           </span>
                         )}

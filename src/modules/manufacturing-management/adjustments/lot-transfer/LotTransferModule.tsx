@@ -22,7 +22,7 @@ export const LotTransferModule: React.FC<LotTransferModuleProps> = ({
   backHref,
   initialCreating,
 }) => {
-  const branchId = userBranchId || 1;
+  const branchId = userBranchId || null;
   const numTransferId = transferId ? Number(transferId) : undefined;
 
   switch (mode) {
