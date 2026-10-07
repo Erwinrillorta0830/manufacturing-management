@@ -576,6 +576,7 @@ export interface DailyQAInspectionRequest {
     jobOrderId: number;
     ledgerId: number;
     outputMetadata: DailyQAOutputMetadata | null;
+    rejectedOutputMetadata: DailyQAOutputMetadata | null;
     inspections: DailyQAInspectionEntry[];
 }
 
@@ -587,6 +588,21 @@ export async function postDailyQAInspection(payload: DailyQAInspectionRequest): 
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Failed to log daily QA inspection");
+    return data;
+}
+
+export async function registerRejectedOutputAllocation(payload: {
+    jobOrderId: number;
+    ledgerId: number;
+    rejectedOutputMetadata: DailyQAOutputMetadata;
+}): Promise<any> {
+    const res = await fetch("/api/manufacturing/production/daily-qa", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "registerRejectedOutput", ...payload })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to register rejected output.");
     return data;
 }
 

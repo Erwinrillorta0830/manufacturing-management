@@ -340,6 +340,7 @@ async function loadJobOrderDetails(id: number) {
             const rejectedQuantity = Math.max(0, numberValue(yieldRow.rejected_quantity));
             const scrapQuantity = Math.max(0, numberValue(yieldRow.scrap_quantity));
             const mmLotId = relationId(yieldRow.mm_lot_id, ["mm_lot_id", "lot_id", "id"]);
+            const rejectedMmLotId = relationId(yieldRow.rejected_mm_lot_id, ["mm_lot_id", "lot_id", "id"]);
             const evidenceImageFileId = directusFileId(yieldRow.daily_qa_image_id);
             const evidenceImageMetadata = directusFileMetadata(yieldRow.daily_qa_image_id)
                 || (evidenceImageFileId ? evidenceFilesById.get(evidenceImageFileId) : null);
@@ -359,6 +360,10 @@ async function loadJobOrderDetails(id: number) {
                 batchNo: textValue(yieldRow.lot_number || yieldRow.batch_no) || null,
                 manufacturingDate: dateValue(yieldRow.manufacturing_date),
                 expiryDate: dateValue(yieldRow.expiry_date),
+                rejectedMmLotId: rejectedMmLotId || null,
+                rejectedBatchNo: textValue(yieldRow.rejected_lot_number) || null,
+                rejectedManufacturingDate: dateValue(yieldRow.rejected_manufacturing_date),
+                rejectedExpiryDate: dateValue(yieldRow.rejected_expiry_date),
                 evidenceImage: evidenceImageFileId
                     ? {
                         fileId: evidenceImageFileId,

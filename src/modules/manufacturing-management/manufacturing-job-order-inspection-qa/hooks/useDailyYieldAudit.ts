@@ -3,9 +3,10 @@ import { toast } from "sonner";
 import {
     fetchQALogs,
     postDailyQAInspection,
+    registerRejectedOutputAllocation,
     type DailyQAInspectionRequest,
 } from "../../manufacturing-qa/services/qa-api";
-import { fetchEligibleFinishedGoodsLots } from "../../shared/finished-goods-lots-api";
+import { fetchEligibleBadStockLots, fetchEligibleFinishedGoodsLots } from "../../shared/finished-goods-lots-api";
 import type { EligibleFinishedGoodsLot } from "../../shared/finished-goods-lots-api";
 import { fetchRouteOperators, fetchUsersList } from "../../production-workflow/services/production-api";
 import type {
@@ -54,9 +55,17 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
     const [dailyOutputEligibleLots, setDailyOutputEligibleLots] = useState<EligibleFinishedGoodsLot[]>([]);
     const [dailyOutputLotsLoading, setDailyOutputLotsLoading] = useState(false);
     const [dailyOutputLotsError, setDailyOutputLotsError] = useState<string | null>(null);
+    const [dailyRejectedOutputBatchNo, setDailyRejectedOutputBatchNo] = useState("");
+    const [dailyRejectedOutputMmLotId, setDailyRejectedOutputMmLotId] = useState("");
+    const [dailyRejectedOutputManufacturingDate, setDailyRejectedOutputManufacturingDate] = useState("");
+    const [dailyRejectedOutputExpiryDate, setDailyRejectedOutputExpiryDate] = useState("");
+    const [dailyRejectedOutputEligibleLots, setDailyRejectedOutputEligibleLots] = useState<EligibleFinishedGoodsLot[]>([]);
+    const [dailyRejectedOutputLotsLoading, setDailyRejectedOutputLotsLoading] = useState(false);
+    const [dailyRejectedOutputLotsError, setDailyRejectedOutputLotsError] = useState<string | null>(null);
     const [selectedRouteId, setSelectedRouteId] = useState<number | null>(null);
     const [qaParamValues, setQaParamValues] = useState<Record<number, string>>({});
     const lotRequestId = useRef(0);
+    const rejectedLotRequestId = useRef(0);
 
     useEffect(() => {
         let disposed = false;
@@ -181,6 +190,44 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         }
     }, []);
 
+    const loadRejectedOutputLots = useCallback(async (details: JobOrderDailyYieldDetails, yieldRecord: JobOrderDailyYieldRecord) => {
+        const requestId = rejectedLotRequestId.current + 1;
+        rejectedLotRequestId.current = requestId;
+        setDailyRejectedOutputLotsLoading(true);
+        setDailyRejectedOutputLotsError(null);
+        setDailyRejectedOutputEligibleLots([]);
+
+        if (!details.branchId || !details.productId) {
+            setDailyRejectedOutputLotsLoading(false);
+            setDailyRejectedOutputLotsError("The Job Order branch or finished-good product is unavailable.");
+            return;
+        }
+        if (yieldRecord.rejectedQuantity <= 0) {
+            setDailyRejectedOutputLotsLoading(false);
+            return;
+        }
+
+        try {
+            const response = await fetchEligibleBadStockLots(details.branchId, details.productId);
+            if (rejectedLotRequestId.current !== requestId) return;
+            setDailyRejectedOutputEligibleLots(response.lots);
+            if (yieldRecord.rejectedMmLotId && response.lots.some((lot) => lot.lotId === yieldRecord.rejectedMmLotId)) {
+                setDailyRejectedOutputMmLotId(String(yieldRecord.rejectedMmLotId));
+            } else if (yieldRecord.rejectedMmLotId) {
+                setDailyRejectedOutputMmLotId("");
+                setDailyRejectedOutputLotsError("The previously assigned bad-stock storage lot is no longer active or eligible.");
+            } else if (response.lots.length === 0) {
+                setDailyRejectedOutputLotsError("No active bad-stock storage lots are configured for this Job Order branch and product.");
+            }
+        } catch (error) {
+            if (rejectedLotRequestId.current === requestId) {
+                setDailyRejectedOutputLotsError(error instanceof Error ? error.message : "Failed to load eligible bad-stock storage lots.");
+            }
+        } finally {
+            if (rejectedLotRequestId.current === requestId) setDailyRejectedOutputLotsLoading(false);
+        }
+    }, []);
+
     const loadRouteOperators = useCallback(async (routeIds: number[]) => {
         const entries = await Promise.all(routeIds.map(async (routeIdValue) => {
             try {
@@ -247,18 +294,94 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         setDailyOutputExpiryDate(yieldRecord.expiryDate || "");
         setDailyOutputEligibleLots([]);
         setDailyOutputLotsError(null);
+        setDailyRejectedOutputBatchNo(yieldRecord.rejectedBatchNo || "");
+        setDailyRejectedOutputMmLotId("");
+        setDailyRejectedOutputManufacturingDate(yieldRecord.rejectedManufacturingDate || yieldRecord.manufacturingDate || "");
+        setDailyRejectedOutputExpiryDate(yieldRecord.rejectedExpiryDate || yieldRecord.expiryDate || "");
+        setDailyRejectedOutputEligibleLots([]);
+        setDailyRejectedOutputLotsError(null);
         setQaParamValues({});
         setSelectedRouteId(preferredRoute?.id || pendingRoutes[0]?.id || sortedRoutes[0]?.id || null);
         setIsOpen(true);
         void loadOutputLots(details, yieldRecord);
+        void loadRejectedOutputLots(details, yieldRecord);
         void loadRouteOperators(sortedRoutes.map((route) => route.id));
         void loadInspectorNames();
-    }, [loadOutputLots, loadRouteOperators, loadInspectorNames]);
+    }, [loadOutputLots, loadRejectedOutputLots, loadRouteOperators, loadInspectorNames]);
 
     const closeAudit = useCallback(() => {
         if (actionLoading) return;
         setIsOpen(false);
     }, [actionLoading]);
+
+    const buildRejectedOutputMetadata = useCallback((): DailyQAInspectionRequest["rejectedOutputMetadata"] | false => {
+        if (!selectedYield) return false;
+        if (selectedYield.rejectedQuantity <= 0) return null;
+        if (dailyRejectedOutputLotsLoading) {
+            toast.error("Wait for the eligible bad-stock storage lots to finish loading.");
+            return false;
+        }
+        if (dailyRejectedOutputLotsError) {
+            toast.error("Resolve the bad-stock storage-lot lookup before registering rejected output.");
+            return false;
+        }
+        if (!dailyRejectedOutputMmLotId) {
+            toast.error("Select the bad-stock storage lot for rejected output.");
+            return false;
+        }
+        if (!dailyRejectedOutputEligibleLots.some((lot) => String(lot.lotId) === dailyRejectedOutputMmLotId)) {
+            toast.error("The selected bad-stock storage lot is no longer eligible. Refresh the lot list and try again.");
+            return false;
+        }
+        if (!dailyRejectedOutputBatchNo.trim()) {
+            toast.error("Enter the rejected output batch or lot number.");
+            return false;
+        }
+        if (dailyRejectedOutputBatchNo.trim().length > 100) {
+            toast.error("The rejected output batch or lot number cannot exceed 100 characters.");
+            return false;
+        }
+        if (!dailyRejectedOutputManufacturingDate || !dailyRejectedOutputExpiryDate) {
+            toast.error("Enter both the manufacturing date and expiry date for rejected output.");
+            return false;
+        }
+        if (dailyRejectedOutputExpiryDate < dailyRejectedOutputManufacturingDate) {
+            toast.error("The rejected output expiry date cannot be earlier than its manufacturing date.");
+            return false;
+        }
+        return {
+            mmLotId: Number(dailyRejectedOutputMmLotId),
+            batchNo: dailyRejectedOutputBatchNo.trim(),
+            manufacturingDate: dailyRejectedOutputManufacturingDate,
+            expiryDate: dailyRejectedOutputExpiryDate
+        };
+    }, [dailyRejectedOutputBatchNo, dailyRejectedOutputEligibleLots, dailyRejectedOutputExpiryDate, dailyRejectedOutputLotsError, dailyRejectedOutputLotsLoading, dailyRejectedOutputManufacturingDate, dailyRejectedOutputMmLotId, selectedYield]);
+
+    const registerRejectedOutput = useCallback(async () => {
+        if (!selectedYield || !selectedDetails) return;
+        if (!selectedYield.outcome.isComplete) {
+            toast.error("Complete all required QA audit steps before registering rejected output.");
+            return;
+        }
+        if (selectedYield.rejectedQuantity <= 0 || selectedYield.rejectedMmLotId) return;
+
+        const jobOrderId = selectedDetails.jobOrderId;
+        const ledgerId = selectedYield.ledgerId;
+        const rejectedOutputMetadata = buildRejectedOutputMetadata();
+        if (!rejectedOutputMetadata) return;
+
+        setActionLoading(true);
+        try {
+            await registerRejectedOutputAllocation({ jobOrderId, ledgerId, rejectedOutputMetadata });
+            toast.success("Rejected output was registered in the configured bad-stock branch.");
+            setIsOpen(false);
+            await onSaved?.();
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Failed to register rejected output.");
+        } finally {
+            setActionLoading(false);
+        }
+    }, [buildRejectedOutputMetadata, onSaved, selectedDetails, selectedYield]);
 
     const submitAudit = useCallback(async () => {
         if (!selectedYield || !selectedDetails) return;
@@ -312,6 +435,9 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
                 expiryDate: dailyOutputExpiryDate
             };
         }
+
+        const rejectedOutputMetadata = buildRejectedOutputMetadata();
+        if (rejectedOutputMetadata === false) return;
 
         const auditRoutes: Array<JobOrderDailyYieldRoute | null> = routes.length > 0 ? routes : [null];
         const inspections = auditRoutes.map((route) => {
@@ -368,7 +494,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
 
         setActionLoading(true);
         try {
-            await postDailyQAInspection({ jobOrderId, ledgerId, outputMetadata, inspections });
+            await postDailyQAInspection({ jobOrderId, ledgerId, outputMetadata, rejectedOutputMetadata, inspections });
             toast.success("Daily yield QA audit saved.");
             setIsOpen(false);
             await onSaved?.();
@@ -377,7 +503,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         } finally {
             setActionLoading(false);
         }
-    }, [acidityPh, dailyActionTaken, dailyLabStatus, dailyOutputBatchNo, dailyOutputEligibleLots, dailyOutputExpiryDate, dailyOutputLotsError, dailyOutputLotsLoading, dailyOutputManufacturingDate, dailyOutputMmLotId, dailyRemarks, moisturePct, onSaved, qaParamValues, qaTemplates, routes, selectedDetails, selectedYield, sensoryStatus, weightCheckPassed]);
+    }, [acidityPh, buildRejectedOutputMetadata, dailyActionTaken, dailyLabStatus, dailyOutputBatchNo, dailyOutputEligibleLots, dailyOutputExpiryDate, dailyOutputLotsError, dailyOutputLotsLoading, dailyOutputManufacturingDate, dailyOutputMmLotId, dailyRemarks, moisturePct, onSaved, qaParamValues, qaTemplates, routes, selectedDetails, selectedYield, sensoryStatus, weightCheckPassed]);
 
     return {
         isOpen,
@@ -417,6 +543,17 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         dailyOutputEligibleLots,
         dailyOutputLotsLoading,
         dailyOutputLotsError,
+        dailyRejectedOutputBatchNo,
+        setDailyRejectedOutputBatchNo,
+        dailyRejectedOutputMmLotId,
+        setDailyRejectedOutputMmLotId,
+        dailyRejectedOutputManufacturingDate,
+        setDailyRejectedOutputManufacturingDate,
+        dailyRejectedOutputExpiryDate,
+        setDailyRejectedOutputExpiryDate,
+        dailyRejectedOutputEligibleLots,
+        dailyRejectedOutputLotsLoading,
+        dailyRejectedOutputLotsError,
         qaTemplates,
         qaParamValues,
         setQaParamValues,
@@ -427,6 +564,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         openAudit,
         closeAudit,
         submitAudit,
+        registerRejectedOutput,
     };
 }
 

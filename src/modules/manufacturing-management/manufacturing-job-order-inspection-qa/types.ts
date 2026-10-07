@@ -42,6 +42,10 @@ export interface JobOrderDailyYieldRecord {
     batchNo: string | null;
     manufacturingDate: string | null;
     expiryDate: string | null;
+    rejectedMmLotId: number | null;
+    rejectedBatchNo: string | null;
+    rejectedManufacturingDate: string | null;
+    rejectedExpiryDate: string | null;
     evidenceImage: {
         fileId: string;
         fileName: string | null;
