@@ -303,10 +303,7 @@ export const LotTransferPostingModule: React.FC<LotTransferPostingModuleProps> =
                         Please select an active branch from the dropdown above to view approved lot transfer requests ready for inventory posting.
                       </p>
                     </div>
-                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-muted/60 text-[11px] font-medium text-muted-foreground border">
-                      <Boxes className="w-3.5 h-3.5 text-primary" />
-                      <span>Inventory Movement Queue</span>
-                    </div>
+ 
                   </motion.div>
                 </TableCell>
               </TableRow>

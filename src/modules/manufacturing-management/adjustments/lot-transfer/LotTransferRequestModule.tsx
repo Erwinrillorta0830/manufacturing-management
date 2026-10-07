@@ -31,11 +31,29 @@ import {
   Boxes,
   Sparkles,
   Loader2,
+  Printer,
 } from "lucide-react";
 import { toast } from "sonner";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationPrevious,
+  PaginationNext,
+  PaginationLink,
+  PaginationEllipsis,
+} from "@/components/ui/pagination";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { TransferStatusBadge } from "./components/TransferStatusBadge";
 import { SearchableSelect, type Option } from "./components/SearchableSelect";
 import { LotBatchSelectionModal } from "./components/LotBatchSelectionModal";
+import { LotTransferPrintModal } from "./components/LotTransferPrintModal";
 import { lotTransferService } from "./services/lot-transfer.service";
 import {
   fetchBranches,
@@ -45,6 +63,18 @@ import {
   type LotTransferLotStats,
 } from "./services/lot-tracking.service";
 import type { BranchOption, LotTransfer, LotTransferFormLine, LotTransferFormValues, LotTransferStatus, ProductTypeOption } from "./types";
+
+function buildPageList(current: number, total: number): (number | "ellipsis")[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const pages: (number | "ellipsis")[] = [1];
+  if (current > 3) pages.push("ellipsis");
+  const rangeStart = Math.max(2, current - 1);
+  const rangeEnd = Math.min(total - 1, current + 1);
+  for (let p = rangeStart; p <= rangeEnd; p++) pages.push(p);
+  if (current < total - 2) pages.push("ellipsis");
+  pages.push(total);
+  return pages;
+}
 
 interface LotTransferRequestModuleProps {
   userBranchId?: number | null;
@@ -88,6 +118,24 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
   // Used to re-trigger row animations when data changes
   const [listAnimKey, setListAnimKey] = useState(0);
 
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [itemsPerPage, setItemsPerPage] = useState<number>(10);
+
+  // Auto-reset to page 1 on filter/search change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filterBranchId, search, statusFilter]);
+
+  const totalItems = transfers.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+
+  const paginatedTransfers = useMemo(() => {
+    const startIndex = (safeCurrentPage - 1) * itemsPerPage;
+    return transfers.slice(startIndex, startIndex + itemsPerPage);
+  }, [transfers, safeCurrentPage, itemsPerPage]);
+
   // Lots available for the selected branch in form
   const [lots, setLots] = useState<MMLot[]>([]);
   const [lotBatchStats, setLotBatchStats] = useState<
@@ -112,6 +160,30 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
 
   // Selected transfer for view details
   const [activeTransfer, setActiveTransfer] = useState<LotTransfer | null>(null);
+
+  // Print slip modal state
+  const [printModalOpen, setPrintModalOpen] = useState(false);
+  const [printTransfer, setPrintTransfer] = useState<LotTransfer | null>(null);
+  const [printLoadingId, setPrintLoadingId] = useState<number | null>(null);
+
+  const handleOpenPrint = useCallback(async (item: LotTransfer) => {
+    if (item.details && item.details.length > 0) {
+      setPrintTransfer(item);
+      setPrintModalOpen(true);
+      return;
+    }
+    setPrintLoadingId(item.id);
+    try {
+      const full = await lotTransferService.getTransferById(item.id);
+      setPrintTransfer(full || item);
+      setPrintModalOpen(true);
+    } catch {
+      setPrintTransfer(item);
+      setPrintModalOpen(true);
+    } finally {
+      setPrintLoadingId(null);
+    }
+  }, []);
 
   // 1. Load active branches (strictly isActive === true)
   const loadBranches = useCallback(async () => {
@@ -563,7 +635,7 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
   };
 
   return (
-    <div className="flex-1 flex flex-col p-4 space-y-4 max-w-7xl mx-auto w-full">
+    <div className="flex-1 flex flex-col p-4 space-y-4 max-w-7xl mx-auto w-full min-h-0">
       <AnimatePresence mode="wait">
       {/* View: CREATE TRANSFER */}
       {viewState === "create" && (
@@ -1189,7 +1261,7 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
                   </TableRow>
                 ) : (
                   <AnimatePresence mode="popLayout" initial={false}>
-                    {transfers.map((item, idx) => {
+                    {paginatedTransfers.map((item, idx) => {
                       const branchDisplay = item.branchName && item.branchName !== "-" ? item.branchName : item.branchId ? `Branch #${item.branchId}` : "-";
                       const sourceLotDisplay = item.sourceLotName || `Lot #${item.sourceLotId}`;
                       const targetLotDisplay = item.targetLotName || `Lot #${item.targetLotId}`;
@@ -1245,6 +1317,21 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
                             <Button
                               variant="ghost"
                               size="sm"
+                              onClick={() => handleOpenPrint(item)}
+                              disabled={printLoadingId === item.id}
+                              className="h-8 text-xs gap-1 text-muted-foreground hover:text-foreground"
+                              title="Print lot transfer slip"
+                            >
+                              {printLoadingId === item.id ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Printer className="w-3.5 h-3.5" />
+                              )}
+                              <span className="hidden sm:inline">Print</span>
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
                               onClick={async () => {
                                 try {
                                   setLoading(true);
@@ -1292,6 +1379,97 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
                 )}
               </TableBody>
             </Table>
+
+            {/* Pagination Controls */}
+            {transfers.length > 0 && (
+              <div className="p-3 sm:p-4 border-t border-border bg-muted/5 flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="text-xs text-muted-foreground font-medium whitespace-nowrap">
+                    Showing{" "}
+                    <span className="font-bold text-foreground">
+                      {Math.min(itemsPerPage * (safeCurrentPage - 1) + 1, totalItems)}
+                    </span>{" "}
+                    to{" "}
+                    <span className="font-bold text-foreground">
+                      {Math.min(itemsPerPage * safeCurrentPage, totalItems)}
+                    </span>{" "}
+                    of <span className="font-bold text-foreground">{totalItems}</span> requests
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-muted-foreground">Show</span>
+                    <Select
+                      value={String(itemsPerPage)}
+                      onValueChange={(v) => {
+                        setItemsPerPage(Number(v));
+                        setCurrentPage(1);
+                      }}
+                    >
+                      <SelectTrigger className="h-8 min-w-[72px] w-auto px-2.5 text-xs font-semibold border-border bg-background">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {[10, 20, 50, 100].map((s) => (
+                          <SelectItem key={s} value={String(s)} className="text-xs font-medium">
+                            {s}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {totalPages > 1 && (
+                  <Pagination className="w-auto mx-0 justify-end">
+                    <PaginationContent>
+                      <PaginationItem>
+                        <PaginationPrevious
+                          href="#"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            setCurrentPage((p) => Math.max(1, p - 1));
+                          }}
+                          className={safeCurrentPage === 1 ? "pointer-events-none opacity-40" : "cursor-pointer"}
+                        />
+                      </PaginationItem>
+
+                      {buildPageList(safeCurrentPage, totalPages).map((p, i) =>
+                        p === "ellipsis" ? (
+                          <PaginationItem key={`ellipsis-${i}`}>
+                            <PaginationEllipsis />
+                          </PaginationItem>
+                        ) : (
+                          <PaginationItem key={p}>
+                            <PaginationLink
+                              href="#"
+                              isActive={p === safeCurrentPage}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                setCurrentPage(p);
+                              }}
+                              className="cursor-pointer"
+                            >
+                              {p}
+                            </PaginationLink>
+                          </PaginationItem>
+                        )
+                      )}
+
+                      <PaginationItem>
+                        <PaginationNext
+                          href="#"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            setCurrentPage((p) => Math.min(totalPages, p + 1));
+                          }}
+                          className={safeCurrentPage === totalPages ? "pointer-events-none opacity-40" : "cursor-pointer"}
+                        />
+                      </PaginationItem>
+                    </PaginationContent>
+                  </Pagination>
+                )}
+              </div>
+            )}
           </div>
         </motion.div>
       )}
@@ -1327,28 +1505,44 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
               <TransferStatusBadge status={activeTransfer.status} />
             </div>
 
-            {activeTransfer.status === "Draft" && (
+            <div className="flex items-center gap-2 flex-wrap">
               <Button
+                variant="outline"
+                size="sm"
                 onClick={() => {
-                  handleSubmitDraft(activeTransfer.id);
-                  setViewState("list");
+                  setPrintTransfer(activeTransfer);
+                  setPrintModalOpen(true);
                 }}
-                disabled={submittingDraftId === activeTransfer.id}
-                className="gap-1.5 min-w-[170px]"
+                className="gap-1.5 h-9 px-3 text-xs"
+                title="Print lot transfer slip"
               >
-                {submittingDraftId === activeTransfer.id ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Submitting for Approval...
-                  </>
-                ) : (
-                  <>
-                    <Send className="w-4 h-4" />
-                    Submit for Approval
-                  </>
-                )}
+                <Printer className="w-3.5 h-3.5" />
+                Print Slip
               </Button>
-            )}
+
+              {activeTransfer.status === "Draft" && (
+                <Button
+                  onClick={() => {
+                    handleSubmitDraft(activeTransfer.id);
+                    setViewState("list");
+                  }}
+                  disabled={submittingDraftId === activeTransfer.id}
+                  className="gap-1.5 min-w-[170px]"
+                >
+                  {submittingDraftId === activeTransfer.id ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Submitting for Approval...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-4 h-4" />
+                      Submit for Approval
+                    </>
+                  )}
+                </Button>
+              )}
+            </div>
           </div>
 
           {/* Workflow Stepper */}
@@ -1576,6 +1770,13 @@ export const LotTransferRequestModule: React.FC<LotTransferRequestModuleProps> =
         </motion.div>
       )}
       </AnimatePresence>
+
+      {/* Lot Transfer Print Slip Modal */}
+      <LotTransferPrintModal
+        open={printModalOpen}
+        onClose={() => setPrintModalOpen(false)}
+        transfer={printTransfer || activeTransfer}
+      />
     </div>
   );
 };

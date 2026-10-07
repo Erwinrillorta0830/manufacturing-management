@@ -116,7 +116,6 @@ export function generateManufacturingCountSheetPDF(
     doc.setTextColor(0, 0, 0); // Pure Black
     doc.setFont("helvetica", "bold");
     doc.setFontSize(12);
-    doc.text("MAMA PINAS MANUFACTURING", margin, 9);
 
     doc.setFontSize(8.5);
     doc.setFont("helvetica", "bold");

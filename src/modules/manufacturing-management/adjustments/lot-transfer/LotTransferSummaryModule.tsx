@@ -22,6 +22,22 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   FileText,
   RefreshCw,
   Search,
@@ -31,10 +47,12 @@ import {
   ArrowRight,
   Building2,
   RotateCcw,
+  Printer,
 } from "lucide-react";
 import { toast } from "sonner";
 import { TransferStatusBadge } from "./components/TransferStatusBadge";
 import { SearchableSelect, type Option } from "./components/SearchableSelect";
+import { LotTransferPrintModal } from "./components/LotTransferPrintModal";
 import { lotTransferService } from "./services/lot-transfer.service";
 import { fetchBranches } from "./services/lot-tracking.service";
 import type {
@@ -44,6 +62,26 @@ import type {
   LotTransferStatusHistory,
   LotTransferMovementHistory,
 } from "./types";
+
+function buildPageList(current: number, total: number): (number | "ellipsis")[] {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+  const pages: (number | "ellipsis")[] = [1];
+  if (current > 3) {
+    pages.push("ellipsis");
+  }
+  const start = Math.max(2, current - 1);
+  const end = Math.min(total - 1, current + 1);
+  for (let i = start; i <= end; i++) {
+    pages.push(i);
+  }
+  if (current < total - 2) {
+    pages.push("ellipsis");
+  }
+  pages.push(total);
+  return pages;
+}
 
 const formatAuditTimestamp = (val?: string | null): string => {
   if (!val) return "-";
@@ -117,6 +155,30 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
   const [reversalReason, setReversalReason] = useState("");
   const [reversalLoading, setReversalLoading] = useState(false);
 
+  // Printable slip modal state
+  const [printTransfer, setPrintTransfer] = useState<LotTransfer | null>(null);
+  const [printModalOpen, setPrintModalOpen] = useState(false);
+  const [printLoadingId, setPrintLoadingId] = useState<number | null>(null);
+
+  const handleOpenPrint = useCallback(async (item: LotTransfer) => {
+    if (item.details && item.details.length > 0) {
+      setPrintTransfer(item);
+      setPrintModalOpen(true);
+      return;
+    }
+    setPrintLoadingId(item.id);
+    try {
+      const full = await lotTransferService.getTransferById(item.id);
+      setPrintTransfer(full || item);
+      setPrintModalOpen(true);
+    } catch {
+      setPrintTransfer(item);
+      setPrintModalOpen(true);
+    } finally {
+      setPrintLoadingId(null);
+    }
+  }, []);
+
   const loadTransfers = useCallback(async () => {
     if (filterBranchId === null) {
       setTransfers([]);
@@ -147,9 +209,27 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
     loadTransfers();
   }, [loadTransfers]);
 
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [itemsPerPage, setItemsPerPage] = useState<number>(10);
+
+  // Auto-reset to page 1 on filter/search change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filterBranchId, search, statusFilter, dateFrom, dateTo]);
+
+  const totalItems = transfers.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+
+  const paginatedTransfers = useMemo(() => {
+    const startIndex = (safeCurrentPage - 1) * itemsPerPage;
+    return transfers.slice(startIndex, startIndex + itemsPerPage);
+  }, [transfers, safeCurrentPage, itemsPerPage]);
+
   const listAnimKey = useMemo(() => {
-    return `${filterBranchId ?? "none"}-${statusFilter}-${search}-${dateFrom}-${dateTo}`;
-  }, [filterBranchId, statusFilter, search, dateFrom, dateTo]);
+    return `${filterBranchId ?? "none"}-${statusFilter}-${search}-${dateFrom}-${dateTo}-${safeCurrentPage}`;
+  }, [filterBranchId, statusFilter, search, dateFrom, dateTo, safeCurrentPage]);
 
   const handleOpenDetail = useCallback(async (item: LotTransfer) => {
     setAuditLoadingId(item.id);
@@ -207,7 +287,7 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
   };
 
   return (
-    <div className="flex-1 flex flex-col p-4 space-y-4 max-w-7xl mx-auto w-full">
+    <div className="flex-1 min-h-0 flex flex-col p-4 space-y-4 max-w-7xl mx-auto w-full">
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b pb-4">
         <div>
@@ -334,10 +414,7 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
                         Please select an active branch from the dropdown above to view the audit register of manufacturing lot transfers.
                       </p>
                     </div>
-                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-muted/60 text-[11px] font-medium text-muted-foreground border">
-                      <History className="w-3.5 h-3.5 text-primary" />
-                      <span>Audit & Lifecycle Register</span>
-                    </div>
+
                   </motion.div>
                 </TableCell>
               </TableRow>
@@ -377,7 +454,7 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
               </TableRow>
             ) : (
               <AnimatePresence mode="popLayout" initial={false}>
-                {(transfers || []).map((item, idx) => {
+                {(paginatedTransfers || []).map((item, idx) => {
                   const branchDisplay = item.branchName && item.branchName !== "-" ? item.branchName : item.branchId ? `Branch #${item.branchId}` : "-";
                   const sourceLotDisplay = item.sourceLotName || `Lot #${item.sourceLotId}`;
                   const targetLotDisplay = item.targetLotName || `Lot #${item.targetLotId}`;
@@ -430,22 +507,41 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
                         </div>
                       </TableCell>
                       <TableCell className="text-right">
-                        <motion.div whileTap={{ scale: 0.95 }} className="inline-block">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleOpenDetail(item)}
-                            disabled={auditLoadingId === item.id}
-                            className="h-8 text-xs gap-1.5"
-                          >
-                            {auditLoadingId === item.id ? (
-                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <Eye className="w-3.5 h-3.5" />
-                            )}
-                            View Audit
-                          </Button>
-                        </motion.div>
+                        <div className="flex items-center justify-end gap-1">
+                          <motion.div whileTap={{ scale: 0.95 }} className="inline-block">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleOpenPrint(item)}
+                              disabled={printLoadingId === item.id}
+                              className="h-8 text-xs gap-1.5 px-2 text-muted-foreground hover:text-foreground"
+                              title="Print lot transfer slip"
+                            >
+                              {printLoadingId === item.id ? (
+                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Printer className="w-3.5 h-3.5" />
+                              )}
+                              <span className="hidden sm:inline">Print</span>
+                            </Button>
+                          </motion.div>
+                          <motion.div whileTap={{ scale: 0.95 }} className="inline-block">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleOpenDetail(item)}
+                              disabled={auditLoadingId === item.id}
+                              className="h-8 text-xs gap-1.5"
+                            >
+                              {auditLoadingId === item.id ? (
+                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Eye className="w-3.5 h-3.5" />
+                              )}
+                              View Audit
+                            </Button>
+                          </motion.div>
+                        </div>
                       </TableCell>
                     </motion.tr>
                   );
@@ -454,6 +550,97 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
             )}
           </TableBody>
         </Table>
+
+        {/* Pagination Controls */}
+        {transfers.length > 0 && (
+          <div className="p-3 sm:p-4 border-t border-border bg-muted/5 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="text-xs text-muted-foreground font-medium whitespace-nowrap">
+                Showing{" "}
+                <span className="font-bold text-foreground">
+                  {Math.min(itemsPerPage * (safeCurrentPage - 1) + 1, totalItems)}
+                </span>{" "}
+                to{" "}
+                <span className="font-bold text-foreground">
+                  {Math.min(itemsPerPage * safeCurrentPage, totalItems)}
+                </span>{" "}
+                of <span className="font-bold text-foreground">{totalItems}</span> transfers
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-muted-foreground">Show</span>
+                <Select
+                  value={String(itemsPerPage)}
+                  onValueChange={(v) => {
+                    setItemsPerPage(Number(v));
+                    setCurrentPage(1);
+                  }}
+                >
+                  <SelectTrigger className="h-8 min-w-[72px] w-auto px-2.5 text-xs font-semibold border-border bg-background">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {[10, 20, 50, 100].map((s) => (
+                      <SelectItem key={s} value={String(s)} className="text-xs font-medium">
+                        {s}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {totalPages > 1 && (
+              <Pagination className="w-auto mx-0 justify-end">
+                <PaginationContent>
+                  <PaginationItem>
+                    <PaginationPrevious
+                      href="#"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setCurrentPage((p) => Math.max(1, p - 1));
+                      }}
+                      className={safeCurrentPage === 1 ? "pointer-events-none opacity-40" : "cursor-pointer"}
+                    />
+                  </PaginationItem>
+
+                  {buildPageList(safeCurrentPage, totalPages).map((p, i) =>
+                    p === "ellipsis" ? (
+                      <PaginationItem key={`ellipsis-${i}`}>
+                        <PaginationEllipsis />
+                      </PaginationItem>
+                    ) : (
+                      <PaginationItem key={p}>
+                        <PaginationLink
+                          href="#"
+                          isActive={p === safeCurrentPage}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            setCurrentPage(p);
+                          }}
+                          className="cursor-pointer"
+                        >
+                          {p}
+                        </PaginationLink>
+                      </PaginationItem>
+                    )
+                  )}
+
+                  <PaginationItem>
+                    <PaginationNext
+                      href="#"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setCurrentPage((p) => Math.min(totalPages, p + 1));
+                      }}
+                      className={safeCurrentPage === totalPages ? "pointer-events-none opacity-40" : "cursor-pointer"}
+                    />
+                  </PaginationItem>
+                </PaginationContent>
+              </Pagination>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Comprehensive Detail & Audit Dialog */}
@@ -466,7 +653,7 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
                   <FileText className="w-5 h-5 text-primary" />
                   Lot Transfer {selectedTransfer.requestNo}
                 </DialogTitle>
-                <TransferStatusBadge status={selectedTransfer.status} />
+
               </div>
               <DialogDescription>
                 Transfer Date: {selectedTransfer.transferDate} • From {selectedTransfer.sourceLotName || `Lot #${selectedTransfer.sourceLotId}`} to {selectedTransfer.targetLotName || `Lot #${selectedTransfer.targetLotId}`}.
@@ -679,9 +866,24 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
                 )}
               </div>
               <motion.div whileTap={{ scale: 0.96 }}>
-                <Button variant="outline" onClick={() => setDetailModalOpen(false)}>
-                  Close
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setPrintTransfer(selectedTransfer);
+                      setPrintModalOpen(true);
+                    }}
+                    className="h-9 gap-1.5 "
+                    title="Print transfer document"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    Print Slip
+                  </Button>
+                  <Button variant="outline" onClick={() => setDetailModalOpen(false)}>
+                    Close
+                  </Button>
+                </div>
               </motion.div>
             </DialogFooter>
           </DialogContent>
@@ -739,7 +941,12 @@ export const LotTransferSummaryModule: React.FC<LotTransferSummaryModuleProps> =
         </DialogContent>
       </Dialog>
 
-
+      {/* Lot Transfer Print Slip Modal */}
+      <LotTransferPrintModal
+        open={printModalOpen}
+        onClose={() => setPrintModalOpen(false)}
+        transfer={printTransfer}
+      />
     </div>
   );
 };
