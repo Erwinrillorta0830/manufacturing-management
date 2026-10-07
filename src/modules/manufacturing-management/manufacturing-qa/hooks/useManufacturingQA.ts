@@ -1695,6 +1695,7 @@ export function useManufacturingQA() {
                 jobOrderId,
                 ledgerId,
                 outputMetadata,
+                rejectedOutputMetadata: null,
                 inspections: inspectionsPayload
             });
             toast.success("Daily yield QA checklist signed off successfully.");
