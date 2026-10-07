@@ -62,7 +62,9 @@ export default async function LotTransferPageShell({ mode, title, transferId, ba
                 </div>
                 <div className="flex h-full max-w-[48vw] shrink-0 items-center overflow-hidden px-2 sm:max-w-none sm:px-4"><NavUser user={headerUser} /></div>
             </header>
-            <LotTransferModule mode={mode} userBranchId={userBranchId || null} transferId={transferId} backHref={backHref} />
+            <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-2 sm:p-4">
+                <LotTransferModule mode={mode} userBranchId={userBranchId || null} transferId={transferId} backHref={backHref} />
+            </main>
         </div>
     );
 }
