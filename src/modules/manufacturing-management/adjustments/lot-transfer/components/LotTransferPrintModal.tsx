@@ -184,25 +184,14 @@ export const LotTransferPrintModal: React.FC<LotTransferPrintModalProps> = ({
             </div>
  
             <h2 className="text-sm font-bold text-neutral-800 tracking-tight mt-0.5 uppercase">
-              LOT TRANSFER DISPATCH &amp; AUDIT SLIP
+              LOT TRANSFER SLIP
             </h2>
-            <p className="text-[10px] text-neutral-500 mt-0.5">
-              Authoritative Floor Stock Transfer, Batch Traceability &amp; Verification Note
-            </p>
+ 
           </div>
 
           <div className="text-right font-mono">
             <div className="text-base font-black text-black">
-              #{transfer.requestNo || "-"}
-            </div>
-            <div className="text-[11px] text-neutral-700 mt-1 font-sans font-semibold">
-              Status:{" "}
-              <span className="uppercase font-bold px-1.5 py-0.5 rounded border border-black/40 text-[10px]">
-                {transfer.status || "DRAFT"}
-              </span>
-            </div>
-            <div className="text-[9px] text-neutral-400 font-sans mt-1">
-              Printed: {printedAtStr}
+              {transfer.requestNo || "-"}
             </div>
           </div>
         </div>
@@ -272,7 +261,7 @@ export const LotTransferPrintModal: React.FC<LotTransferPrintModalProps> = ({
         {/* Line Items Table */}
         <div className="mb-5 border border-neutral-300 rounded-lg overflow-hidden page-break-avoid">
           <div className="bg-neutral-900 text-white px-3 py-1.5 flex items-center justify-between border-b border-neutral-800 text-[11px] font-bold uppercase tracking-wider">
-            <span>Transferred Products &amp; Batch Allocations</span>
+            <span>Products &amp; Batch Allocations</span>
             <span className="font-mono text-[9px] text-neutral-300">
               {lineItems.length} SKU Allocation(s)
             </span>
@@ -439,7 +428,9 @@ export const LotTransferPrintModal: React.FC<LotTransferPrintModalProps> = ({
           <span>
            Manufacturing Management System  
           </span>
- 
+          <span>
+            {printedAtStr}
+          </span>
         </div>
       </div>
     </div>
