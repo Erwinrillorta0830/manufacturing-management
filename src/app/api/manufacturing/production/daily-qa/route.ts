@@ -10,7 +10,12 @@ import {
 import { deriveDailyQAOutcome } from "@/modules/manufacturing-management/manufacturing-qa/daily-qa-outcome";
 import { hasPagination, paginate } from "../../_pagination";
 import { JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
-import { loadEligibleFinishedGoodsLot, MmLotError } from "../../services/mm-lots.service";
+import { AuthenticatedActorError, requireManufacturingActorId } from "../_authenticated-actor";
+import {
+    loadEligibleFinishedGoodsLot,
+    MmLotError,
+    resolveOrCreateMmInventoryLot
+} from "../../services/mm-lots.service";
 import { formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
@@ -383,7 +388,7 @@ export async function POST(request: Request) {
         }
 
         const jobOrder = await readDirectusRecord(
-            `/items/manufacturing_job_orders/${encodeURIComponent(String(jobOrderId))}?fields=job_order_id,product_id,branch_id`,
+            `/items/manufacturing_job_orders/${encodeURIComponent(String(jobOrderId))}?fields=job_order_id,job_order_no,product_id,branch_id`,
             `Load Job Order ${jobOrderId}`
         );
         const productId = relationId(jobOrder.product_id, ["product_id", "id"]);
@@ -409,6 +414,21 @@ export async function POST(request: Request) {
                 }
                 throw error;
             }
+        }
+
+        let inventoryLotCreatedBy: number | null = null;
+        if (goodOutputQuantity > 0) {
+            try {
+                inventoryLotCreatedBy = await requireManufacturingActorId();
+            } catch (error) {
+                if (error instanceof AuthenticatedActorError) {
+                    throw new DailyQAValidationError(error.status, error.code, error.message);
+                }
+                throw error;
+            }
+        }
+
+        if (outputMetadata) {
             await persistOutputTraceability(ledgerId, jobOrderId, ledger, outputMetadata);
         }
 
@@ -609,6 +629,36 @@ export async function POST(request: Request) {
             }
         }
 
+        if (finalLedgerStatus === "Passed" && goodOutputQuantity > 0 && outputMetadata) {
+            if (!inventoryLotCreatedBy) {
+                throw new DailyQAValidationError(401, "AUTHENTICATION_REQUIRED", "An authenticated user is required to register the audited finished-goods lot.");
+            }
+
+            try {
+                const inventoryLot = await resolveOrCreateMmInventoryLot({
+                    mmLotId: outputMetadata.mmLotId,
+                    branchId,
+                    productId,
+                    batchNo: outputMetadata.batchNo,
+                    manufacturingDate: outputMetadata.manufacturingDate,
+                    expiryDate: outputMetadata.expiryDate,
+                    qaStatus: "GOOD",
+                    sourceType: "JOB_ORDER_YIELD",
+                    sourceReference: textValue(jobOrder.job_order_no) || `JO-${jobOrderId}`,
+                    remarks: `QA-released finished yield from Job Order ${textValue(jobOrder.job_order_no) || jobOrderId}`,
+                    createdBy: inventoryLotCreatedBy
+                });
+                if (!Number(inventoryLot.inventory_lot_id)) {
+                    throw new MmLotError("The finished-goods inventory lot could not be verified after creation.", 503, "MM_INVENTORY_LOT_WRITE_FAILED");
+                }
+            } catch (error) {
+                if (error instanceof MmLotError) {
+                    throw new DailyQAValidationError(error.status, error.code, error.message);
+                }
+                throw error;
+            }
+        }
+
         // Sync QA disposition back to yield ledger (only "Passed" if all steps have been QA'd)
         const ledgerPatchResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger/${ledgerId}`, {
             method: "PATCH",
@@ -619,7 +669,8 @@ export async function POST(request: Request) {
             throw new Error(`Failed to persist Daily QA status for yield ledger ${ledgerId}.`);
         }
 
-        // Sync inventory lot status as well - removed since inventory_lots is deprecated
+        // The finished-yield inventory view resolves Passed yield rows through mm_inventory_lots.
+        // The physical receipt and Job Order completion remain owned by yield closing.
 
         return NextResponse.json({
             success: true,
