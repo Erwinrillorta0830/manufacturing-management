@@ -20,8 +20,11 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-    title: "VOS ERP",
+    title: "Mama Pinas Manufacturing",
     description: "Premium Enterprise Resource Planning System",
+    icons: {
+        icon: "/icon.png"
+    }
 }
 
 export default function RootLayout({
