@@ -97,7 +97,7 @@ export default async function IncomingShipmentsPage() {
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
                                 <BreadcrumbItem className="hidden sm:block shrink-0">
-                                    <BreadcrumbLink href="/mm/incoming-shipments">Procurement &amp; Inbound</BreadcrumbLink>
+                                    <BreadcrumbLink href="/mm/procurement-and-inbound/incoming-purchase-shipments">Procurement &amp; Inbound</BreadcrumbLink>
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden sm:block shrink-0" />
                                 <BreadcrumbItem className="min-w-0 overflow-hidden">

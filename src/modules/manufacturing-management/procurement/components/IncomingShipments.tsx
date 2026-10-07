@@ -323,7 +323,7 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                     setSelectedShipment={setSelectedShipment}
                     isSupplierForeign={isSupplierForeign}
                     getShipmentHref={undefined}
-                    createHref={isQueueMode && canonicalDrafting ? "/mm/incoming-purchase-shipments/create" : undefined}
+                    createHref={undefined}
                     onOpenCreateModal={() => { setIsOverridden(false); setIsModalOpen(true); }}
                 />
             )}
