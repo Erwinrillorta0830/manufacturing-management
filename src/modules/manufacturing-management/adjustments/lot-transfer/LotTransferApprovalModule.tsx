@@ -275,10 +275,7 @@ export const LotTransferApprovalModule: React.FC<LotTransferApprovalModuleProps>
                         Please select an active branch from the dropdown above to view submitted lot transfer requests awaiting QA inspection and approval.
                       </p>
                     </div>
-                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-muted/60 text-[11px] font-medium text-muted-foreground border">
-                      <ShieldCheck className="w-3.5 h-3.5 text-primary" />
-                      <span>QA Approval Queue</span>
-                    </div>
+  
                   </motion.div>
                 </TableCell>
               </TableRow>
