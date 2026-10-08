@@ -482,40 +482,74 @@ export default function WarehouseReceivingDetailModal({
 
                 {/* Modal Footer Actions */}
                 {!loading && !error && selectedOrder && (
-                    <div className="border-t bg-muted/20 px-6 py-4 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
-                        <Button variant="outline" onClick={onClose} disabled={actionBusy}>
-                            Close
-                        </Button>
-                        <div className="flex flex-wrap items-center gap-2">
-                            {isReceived || !hasRemainingQuantity ? (
-                                <span className="text-xs font-medium text-emerald-700">
-                                    Warehouse receiving is complete for this PO.
-                                </span>
-                            ) : !isStarted ? (
-                                <Button
-                                    onClick={() => void start()}
-                                    disabled={actionBusy || !hasRemainingQuantity}
-                                    title={!hasRemainingQuantity ? "No remaining quantity is available for another warehouse receipt." : undefined}
-                                >
-                                    {submitting === "start" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                    <PackageCheck className="mr-2 h-4 w-4" /> {selectedOrder.receiptHistory.length > 0 ? "Start Next Warehouse Receipt" : "Start Warehouse Receiving"}
-                                </Button>
-                            ) : (
-                                <>
-                                    {selectedOrder.draft && (
-                                        <Button variant="outline" onClick={() => void printSummary()} disabled={actionBusy}>
-                                            {printing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />} Print Summary
+                    <div className="border-t bg-muted/20 px-6 py-4 flex flex-col gap-3">
+                        {isStarted && !isReceived && hasRemainingQuantity && (
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                                {totalEntered <= 0 ? (
+                                    <span className="flex items-center gap-1.5 text-amber-700 dark:text-amber-400 font-medium">
+                                        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                                        Please enter a receiving quantity greater than 0 to save or complete this receipt.
+                                    </span>
+                                ) : (!supplierDocumentTypeId || !receiptNumber.trim()) ? (
+                                    <span className="flex items-center gap-1.5 text-amber-700 dark:text-amber-400 font-medium">
+                                        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                                        To send to QA, please select a Receipt Type and enter a Receipt Number.
+                                    </span>
+                                ) : null}
+                            </div>
+                        )}
+                        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <Button variant="outline" onClick={onClose} disabled={actionBusy}>
+                                Close
+                            </Button>
+                            <div className="flex flex-wrap items-center gap-2">
+                                {isReceived || !hasRemainingQuantity ? (
+                                    <span className="text-xs font-medium text-emerald-700">
+                                        Warehouse receiving is complete for this PO.
+                                    </span>
+                                ) : !isStarted ? (
+                                    <Button
+                                        onClick={() => void start()}
+                                        disabled={actionBusy || !hasRemainingQuantity}
+                                        title={!hasRemainingQuantity ? "No remaining quantity is available for another warehouse receipt." : undefined}
+                                    >
+                                        {submitting === "start" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                        <PackageCheck className="mr-2 h-4 w-4" /> {selectedOrder.receiptHistory.length > 0 ? "Start Next Warehouse Receipt" : "Start Warehouse Receiving"}
+                                    </Button>
+                                ) : (
+                                    <>
+                                        {selectedOrder.draft && (
+                                            <Button variant="outline" onClick={() => void printSummary()} disabled={actionBusy}>
+                                                {printing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />} Print Summary
+                                            </Button>
+                                        )}
+                                        <Button
+                                            variant="outline"
+                                            onClick={() => void saveDraft()}
+                                            disabled={actionBusy || totalEntered <= 0}
+                                            title={totalEntered <= 0 ? "Enter at least one received quantity before saving a draft." : undefined}
+                                        >
+                                            {submitting === "save_draft" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Save Draft
                                         </Button>
-                                    )}
-                                    <Button variant="outline" onClick={() => void saveDraft()} disabled={actionBusy}>
-                                        {submitting === "save_draft" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Save Draft
-                                    </Button>
-                                    <Button onClick={() => void submitToQa()} disabled={actionBusy}>
-                                        {submitting === "submit_to_qa" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                        <ClipboardCheck className="mr-2 h-4 w-4" /> Complete &amp; Send to QA
-                                    </Button>
-                                </>
-                            )}
+                                        <Button
+                                            onClick={() => void submitToQa()}
+                                            disabled={actionBusy || totalEntered <= 0 || !supplierDocumentTypeId || !receiptNumber.trim()}
+                                            title={
+                                                totalEntered <= 0
+                                                    ? "Enter at least one received quantity before submitting to QA."
+                                                    : !supplierDocumentTypeId
+                                                    ? "Select a Receipt Type before submitting to QA."
+                                                    : !receiptNumber.trim()
+                                                    ? "Enter a Receipt Number before submitting to QA."
+                                                    : undefined
+                                            }
+                                        >
+                                            {submitting === "submit_to_qa" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                            <ClipboardCheck className="mr-2 h-4 w-4" /> Complete &amp; Send to QA
+                                        </Button>
+                                    </>
+                                )}
+                            </div>
                         </div>
                     </div>
                 )}

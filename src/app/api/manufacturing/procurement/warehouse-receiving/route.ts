@@ -952,10 +952,20 @@ async function startWarehouseReceiving(order: DirectusOrder, command: WarehouseR
 
 async function submitWarehouseReceiving(order: DirectusOrder, command: WarehouseRequest, actorId: number) {
     const purchaseOrderId = relationId(order.purchase_order_id, ["purchase_order_id", "id"]) || 0;
-    const currentStatus = statusId(order);
-    const currentRevision = workflowRevision(order);
+    let currentStatus = statusId(order);
+    let currentRevision = workflowRevision(order);
+
+    // If the order is in Approved or Partially Received status, auto-start the warehouse receiving draft first
     if (currentStatus !== INVENTORY_STATUS.WAREHOUSE_RECEIVING) {
-        throw new WarehouseReceivingError("The purchase order must be in Warehouse Receiving before it can be sent to QA.", 409);
+        if (currentStatus === INVENTORY_STATUS.APPROVED || currentStatus === INVENTORY_STATUS.PARTIALLY_RECEIVED) {
+            await startWarehouseReceiving(order, command, actorId);
+            const reloadedOrder = await loadOrder(purchaseOrderId);
+            currentStatus = statusId(reloadedOrder);
+            currentRevision = workflowRevision(reloadedOrder);
+            order = reloadedOrder;
+        } else {
+            throw new WarehouseReceivingError("The purchase order must be in Warehouse Receiving before it can be sent to QA.", 409);
+        }
     }
     await persistWarehouseDraft(order, command, { skipBuildView: true });
     const nextRevision = currentRevision + 1;
@@ -1163,8 +1173,12 @@ export async function POST(request: Request) {
         if (command.action === "start") {
             return NextResponse.json({ data: await startWarehouseReceiving(order, command, actor.userId) });
         }
-        if (statusId(order) !== INVENTORY_STATUS.WAREHOUSE_RECEIVING) {
-            throw new WarehouseReceivingError("The purchase order must be in Warehouse Receiving before saving or submitting a draft.", 409);
+        const currentStatus = statusId(order);
+        if (command.action === "save_draft" && currentStatus !== INVENTORY_STATUS.WAREHOUSE_RECEIVING) {
+            throw new WarehouseReceivingError("The purchase order must be in Warehouse Receiving before saving a draft.", 409);
+        }
+        if (command.action === "submit_to_qa" && currentStatus !== INVENTORY_STATUS.WAREHOUSE_RECEIVING && currentStatus !== INVENTORY_STATUS.APPROVED && currentStatus !== INVENTORY_STATUS.PARTIALLY_RECEIVED) {
+            throw new WarehouseReceivingError("The purchase order cannot be submitted to QA from its current status.", 409);
         }
         if (command.action === "save_draft") {
             return NextResponse.json({ data: await persistWarehouseDraft(order, command) });
