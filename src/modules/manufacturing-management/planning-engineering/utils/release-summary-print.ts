@@ -31,6 +31,9 @@ export interface ReleaseSummaryFinancials {
     yieldFactor?: number;
     baseCogs: number;
     adjustedCogs: number;
+    targetSellingPrice?: number;
+    grossMarginAmount?: number;
+    grossMarginPercentage?: number;
 }
 
 export interface ReleaseSummaryPrintData {

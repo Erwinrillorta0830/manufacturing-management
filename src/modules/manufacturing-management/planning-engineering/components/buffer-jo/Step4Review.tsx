@@ -206,6 +206,24 @@ export function Step4Review({
                                     <span className="font-bold text-sky-700 dark:text-sky-400">Est. Unit COGS (Yield-Adjusted)</span>
                                     <span className="font-mono font-black text-sky-700 dark:text-sky-400">₱{formatManufacturingUnitCostForDisplay(displayedCogs?.yieldAdjustedUnitCost ?? financials.adjustedCogs)}</span>
                                 </div>
+                                <div className="flex justify-between border-t border-border/60 pt-1">
+                                    <span className="font-semibold text-foreground">Target Selling Price / unit</span>
+                                    <span className="font-mono font-semibold text-foreground">
+                                        {Number(financials.targetSellingPrice) > 0 ? `₱${formatProductionValue(Number(financials.targetSellingPrice))}` : "Unavailable"}
+                                    </span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="font-bold text-foreground">Gross Margin / unit</span>
+                                    <span className="font-mono font-bold text-foreground">
+                                        {financials.grossMarginAmount === undefined ? "Unavailable" : `₱${formatProductionValue(financials.grossMarginAmount)}`}
+                                    </span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="font-bold text-foreground">Gross Margin</span>
+                                    <span className="font-mono font-bold text-foreground">
+                                        {financials.grossMarginPercentage === undefined ? "Unavailable" : `${formatProductionValue(financials.grossMarginPercentage)}%`}
+                                    </span>
+                                </div>
                             </>
                         ) : (
                             <p className="text-[10px] text-muted-foreground">Costing data unavailable.</p>

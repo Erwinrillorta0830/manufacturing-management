@@ -450,6 +450,18 @@ export async function getAvailableInventoryLots(
 export interface ProductInventoryOptions {
     /** Set false when planning must use physical stock without subtracting other JO reservations. */
     includeReservations?: boolean;
+    /** Use branch-scoped SOFT/PARTIAL reservations and fail if that ledger cannot be read. */
+    reservationAware?: boolean;
+}
+
+export class InventoryReservationError extends Error {
+    readonly code = "INVENTORY_RESERVATIONS_UNAVAILABLE";
+    readonly status = 503;
+
+    constructor() {
+        super("Unable to load active Job Order reservations for inventory availability.");
+        this.name = "InventoryReservationError";
+    }
 }
 
 export async function getProductInventoryAndSafetyStock(
@@ -561,39 +573,68 @@ export async function getProductInventoryAndSafetyStock(
 
         // Batch fetch reservations for all products by product_id & batch_no
         const lotReservationsMap: Record<string, number> = {};
+        const productReservationsMap: Record<number, number> = {};
         if (options.includeReservations !== false && allProductIds.length > 0) {
             try {
+                const reservationFilters: Record<string, unknown>[] = [
+                    { product_id: { _in: allProductIds } },
+                    { jo_material_id: { job_order_id: { status: { _in: ACTIVE_JOB_ORDER_STATUSES } } } }
+                ];
+                if (options.reservationAware) {
+                    reservationFilters.push(
+                        { branch_id: { _eq: bId } },
+                        { reservation_status: { _in: ["SOFT", "PARTIAL"] } }
+                    );
+                }
                 const resFilter = encodeURIComponent(JSON.stringify({
-                    _and: [
-                        { product_id: { _in: allProductIds } },
-                        { jo_material_id: { job_order_id: { status: { _in: [
-                            JOB_ORDER_STATUS.DRAFT,
-                            JOB_ORDER_STATUS.FOR_PICKING,
-                            JOB_ORDER_STATUS.PICKED,
-                            JOB_ORDER_STATUS.IN_PRODUCTION,
-                            JOB_ORDER_STATUS.ON_HOLD,
-                            JOB_ORDER_STATUS.QA_HOLD
-                        ] } } } }
-                    ]
+                    _and: reservationFilters
                 }));
                 // Keep this field list aligned with the reservation-aware
                 // availability helper. Asking for purchase_order_receiving_id
                 // makes Directus reject the entire query for the manufacturing
                 // service token, which previously made reservations disappear
                 // from the wizard while initialization still saw them.
-                const resRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter=${resFilter}&fields=product_id,batch_no,mm_lot_id,inventory_lot_id,reserved_quantity&limit=-1`, { headers, cache: "no-store" });
+                const reservationFields = options.reservationAware
+                    ? "product_id,batch_no,mm_lot_id,inventory_lot_id,reserved_quantity,staged_quantity,issued_to_wip_quantity,reservation_status"
+                    : "product_id,batch_no,mm_lot_id,inventory_lot_id,reserved_quantity";
+                const resRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter=${resFilter}&fields=${reservationFields}&limit=-1`, { headers, cache: "no-store" });
+                if (!resRes.ok) {
+                    if (options.reservationAware) throw new InventoryReservationError();
+                    console.error(`Reservation query failed while loading inventory availability (HTTP ${resRes.status}).`);
+                }
                 if (resRes.ok) {
-                    const resData = (await resRes.json()).data || [];
+                    const payload = await resRes.json().catch(() => null);
+                    if (!Array.isArray(payload?.data)) {
+                        if (options.reservationAware) throw new InventoryReservationError();
+                        throw new Error("Reservation response did not include rows.");
+                    }
+                    const resData = payload.data;
                     resData.forEach((r: any) => {
-                        const pId = Number(r.product_id);
-                        const batchNo = r.batch_no;
-                        if (pId && batchNo) {
+                        const pId = options.reservationAware
+                            ? productIdFrom(r.product_id)
+                            : Number(r.product_id);
+                        const batchNo = options.reservationAware ? batchText(r.batch_no) : r.batch_no;
+                        const reservationStatus = String(r.reservation_status || "").trim().toUpperCase();
+                        if (options.reservationAware && reservationStatus !== "SOFT" && reservationStatus !== "PARTIAL") return;
+                        const quantity = options.reservationAware
+                            ? getUnissuedReservationQuantity(
+                                r.reserved_quantity,
+                                r.staged_quantity,
+                                r.issued_to_wip_quantity
+                            )
+                            : Number(r.reserved_quantity || 0);
+                        if (pId && batchNo && quantity > 0) {
                             const key = `${pId}:${batchNo}`;
-                            lotReservationsMap[key] = (lotReservationsMap[key] || 0) + Number(r.reserved_quantity || 0);
+                            lotReservationsMap[key] = (lotReservationsMap[key] || 0) + quantity;
+                            productReservationsMap[pId] = (productReservationsMap[pId] || 0) + quantity;
                         }
                     });
                 }
             } catch (err) {
+                if (options.reservationAware) {
+                    if (err instanceof InventoryReservationError) throw err;
+                    throw new InventoryReservationError();
+                }
                 console.error("Error fetching reservations for net-requirements:", err);
             }
         }
@@ -692,7 +733,7 @@ export async function getProductInventoryAndSafetyStock(
                 .map(([lotNo, available]) => ({ lot_no: lotNo, available }));
 
             const availableOnHand = isSubAssembly
-                ? onHand
+                ? Math.max(0, onHand - (options.reservationAware ? productReservationsMap[pId] || 0 : 0))
                 : recommendedLots.reduce((sum, lot) => sum + Number(lot.available || 0), 0);
 
             const uomId = Number(p.unit_of_measurement?.unit_id || p.unit_of_measurement || 0);
@@ -716,7 +757,7 @@ export async function getProductInventoryAndSafetyStock(
         return enrichedProducts;
     } catch (e) {
         console.error("Error in getProductInventoryAndSafetyStock:", e);
-        if (e instanceof MmInventoryMovementError) throw e;
+        if (e instanceof MmInventoryMovementError || e instanceof InventoryReservationError) throw e;
         return [];
     }
 }
