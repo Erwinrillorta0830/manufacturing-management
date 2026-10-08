@@ -637,10 +637,21 @@ export function useQAReceiving({
             }
             setLineItems(lines);
             const historicalReceiptSelection = !isReplacement && Boolean(currentActiveReceipt?.readOnly);
-            if (!isReplacement && (isReceived || historicalReceiptSelection)) {
-                const storedDocumentTypeId = lines
-                    .map(line => line.latest_receipt?.supplier_document_type_id ?? null)
-                    .find((id): id is number => id !== null && Number.isSafeInteger(id) && id > 0) ?? null;
+            if (!isReplacement) {
+                const parsedReceiptType = currentActiveReceipt?.receiptType ? Number(currentActiveReceipt.receiptType) : null;
+                const receiptOptionDocTypeId = Number.isSafeInteger(parsedReceiptType) && (parsedReceiptType as number) > 0 ? (parsedReceiptType as number) : null;
+                const storedDocumentTypeId = receiptOptionDocTypeId
+                    ?? lines
+                        .map(line => line.latest_receipt?.supplier_document_type_id ?? null)
+                        .find((id): id is number => id !== null && Number.isSafeInteger(id) && id > 0)
+                    ?? lines
+                        .map(line => {
+                            const rawType = line.warehouse_receipt?.receipt_type;
+                            const parsed = Number(rawType);
+                            return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+                        })
+                        .find((id): id is number => id !== null)
+                    ?? null;
                 setSupplierDocumentTypeId(storedDocumentTypeId);
             }
 
@@ -693,12 +704,8 @@ export function useQAReceiving({
                 const fallbackManufacturingDate = (allocationSourceReceipt ? allocationSourceReceipt?.manufacturing_date : null) || l.manufacturing_date || "";
                 const fallbackExpirationDate = (allocationSourceReceipt ? allocationSourceReceipt?.expiration_date : null) || l.expiration_date || "";
 
-                const targetAcceptedQuantity = historicalReceipt
-                    ? selectedAcceptedQuantity
-                    : (isWarehouseHandoff && currentReceiptAcceptedQuantity !== null ? currentReceiptAcceptedQuantity : 0);
-                const targetRejectedQuantity = historicalReceipt
-                    ? initialRejectedQuantity
-                    : (isWarehouseHandoff ? currentReceiptRejectedQuantity : 0);
+                const targetAcceptedQuantity = historicalReceipt ? selectedAcceptedQuantity : 0;
+                const targetRejectedQuantity = historicalReceipt ? initialRejectedQuantity : 0;
                 
                 rowsInit[l.line_id] = {
                     receivedQty: isReplacement
@@ -711,19 +718,15 @@ export function useQAReceiving({
                             ? (remainingAcceptedForLine > 0 ? remainingAcceptedForLine : 0)
                             : "",
                     acceptedQty: isReplacement
-                        ? replacementContext?.remainingQuantity || ""
+                        ? ""
                         : historicalReceipt
                         ? selectedAcceptedQuantity
-                        : isWarehouseHandoff
-                            ? (currentReceiptAcceptedQuantity !== null ? currentReceiptAcceptedQuantity : 0)
-                        : isPartiallyReceived
-                            ? (remainingAcceptedForLine > 0 ? remainingAcceptedForLine : 0)
-                            : "",
-                    rejectedQty: historicalReceipt
+                        : "",
+                    rejectedQty: isReplacement
+                        ? ""
+                        : historicalReceipt
                         ? initialRejectedQuantity
-                        : isWarehouseHandoff
-                            ? currentReceiptRejectedQuantity
-                            : 0,
+                        : "",
                     acceptedLotAllocations: hydrateStoredAllocations(
                         allocationSourceReceipt?.accepted_lot_allocations,
                         latestStorageLotId,
@@ -954,7 +957,7 @@ export function useQAReceiving({
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const handleUpdateRow = (lineId: number, field: string, value: any) => {
-        if (receivingIsReadOnly || field === "rejectedQty") return;
+        if (receivingIsReadOnly || field === "receivedQty") return;
         previewController.current?.abort();
         setValidatingInspection(false);
         setReceivingCommitContext(null);
@@ -976,31 +979,20 @@ export function useQAReceiving({
                 [field]: value
             };
 
-            if (field === "receivedQty") {
-                const previousAccepted = Number(previousRow?.acceptedQty || 0);
-                const nextReceived = Math.max(0, Number(value) || 0);
-                updatedRow.acceptedQty = Math.min(previousAccepted, nextReceived);
-            }
-
             if (field === "acceptedQty") {
-                const received = Math.max(0, Number(updatedRow.receivedQty) || 0);
-                updatedRow.acceptedQty = value === ""
-                    ? ""
-                    : Math.min(received, Math.max(0, Number(value) || 0));
+                const rawVal = value === "" ? "" : Math.max(0, Number(value));
+                updatedRow.acceptedQty = rawVal;
+                const acceptedNum = typeof rawVal === "number" ? rawVal : 0;
+                updatedRow.acceptedLotAllocations = resizeLotAllocations(updatedRow.acceptedLotAllocations, acceptedNum);
             }
 
-            const received = Number(updatedRow.receivedQty || 0);
-            const accepted = Number(updatedRow.acceptedQty || 0);
-            const rejected = Number.isFinite(received) && Number.isFinite(accepted)
-                ? Math.max(0, deriveRejectedQuantity(received, accepted))
-                : 0;
-            updatedRow.rejectedQty = rejected;
-            if (field === "acceptedQty" || field === "receivedQty") {
-                updatedRow.acceptedLotAllocations = resizeLotAllocations(updatedRow.acceptedLotAllocations, accepted);
+            if (field === "rejectedQty") {
+                const rawVal = value === "" ? "" : Math.max(0, Number(value));
+                updatedRow.rejectedQty = rawVal;
+                const rejectedNum = typeof rawVal === "number" ? rawVal : 0;
+                updatedRow.rejectedLotAllocations = resizeLotAllocations(updatedRow.rejectedLotAllocations, rejectedNum, true, "DAMAGED");
             }
-            if (field === "acceptedQty" || field === "receivedQty") {
-                updatedRow.rejectedLotAllocations = resizeLotAllocations(updatedRow.rejectedLotAllocations, rejected, true, "DAMAGED");
-            }
+
             return {
                 ...prev,
                 [lineId]: updatedRow
@@ -1189,20 +1181,35 @@ export function useQAReceiving({
             const row = inspectionRows[line.line_id];
             const productName = line.product_id?.product_name || `Item ${line.line_id}`;
             const received = Number(row?.receivedQty || 0);
-            const accepted = Number(row?.acceptedQty || 0);
-            const rejected = Number.isFinite(received) && Number.isFinite(accepted)
-                ? Math.max(0, deriveRejectedQuantity(received, accepted))
-                : 0;
+            const accepted = row?.acceptedQty === "" ? null : Number(row?.acceptedQty || 0);
+            const rejected = row?.rejectedQty === "" ? null : Number(row?.rejectedQty || 0);
 
             if (received <= 0) continue;
 
-            if (![received, accepted].every(Number.isFinite)
-                || accepted < 0
-                || accepted > received) {
-                addIssue({ lineId: line.line_id, productName, field: "quantity", message: `${productName}: Accepted Quantity cannot exceed Received Quantity.` });
+            if (accepted === null && rejected === null) {
+                addIssue({ lineId: line.line_id, productName, field: "quantity", message: `${productName}: Enter physical accepted and rejected quantities.` });
+            } else {
+                const totalInspected = (accepted || 0) + (rejected || 0);
+                if ((accepted !== null && accepted < 0) || (rejected !== null && rejected < 0)) {
+                    addIssue({ lineId: line.line_id, productName, field: "quantity", message: `${productName}: Quantities cannot be negative.` });
+                } else if (totalInspected > received) {
+                    addIssue({
+                        lineId: line.line_id,
+                        productName,
+                        field: "quantity",
+                        message: `${productName}: Total inspected (${totalInspected}) exceeds received quantity (${received}).`
+                    });
+                } else if (totalInspected < received) {
+                    addIssue({
+                        lineId: line.line_id,
+                        productName,
+                        field: "quantity",
+                        message: `${productName}: Inspected total (${totalInspected}) must account for all received units (${received}).`
+                    });
+                }
             }
 
-            if (rejected > 0 && !row?.rejectionReason?.trim()) {
+            if ((rejected || 0) > 0 && !row?.rejectionReason?.trim()) {
                 addIssue({ lineId: line.line_id, productName, field: "remarks", message: `${productName}: Remarks / rejection notes are required for rejected quantities (${rejected} rejected).` });
             }
 

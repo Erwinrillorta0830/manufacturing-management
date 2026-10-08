@@ -32,10 +32,8 @@ import {
 import {
     PurchaseOrderCommercialResolutionError,
     resolvePurchaseOrderCommercialTerms,
-    resolvePurchaseOrderDiscountType
 } from "./_commercial-resolution";
 import { validatePurchaseOrderCategoryTypes } from "@/app/api/manufacturing/procurement/_category-type";
-import { hasBomDisabled } from "@/modules/manufacturing-management/procurement/purchase-order-product-eligibility";
 import {
     ProductWeightValidationError,
     resolveProductWeightBreakdown
@@ -293,17 +291,6 @@ async function validateDraft(order: PurchaseOrderDraft) {
         productId: line.productId,
         categoryType: line.categoryType
     })));
-    const ineligibleProductIds = productIds.filter(productId =>
-        categoryTypes.get(productId) === "FINISHED_GOODS"
-        && !hasBomDisabled(productsById.get(productId))
-    );
-    if (ineligibleProductIds.length > 0) {
-        throw new PurchaseOrderDraftError(
-            `Finished goods products ${ineligibleProductIds.join(", ")} cannot be added to a purchase order because has_bom must be 0.`,
-            400,
-            { productIds: ineligibleProductIds, categoryType: "FINISHED_GOODS" }
-        );
-    }
     for (const line of order.lines) {
         const product = productsById.get(line.productId);
         if (!product) continue;

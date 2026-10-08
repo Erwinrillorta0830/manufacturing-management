@@ -24,7 +24,6 @@ import {
     cancelRejectedPurchaseOrder
 } from "../services/purchase-order-api";
 import { resolveProductParentId } from "@/modules/manufacturing-management/procurement/product-relation";
-import { hasBomDisabled } from "@/modules/manufacturing-management/procurement/purchase-order-product-eligibility";
 import { purchaseOrderMaterialTypeFromProduct } from "@/modules/manufacturing-management/procurement/components/incoming-shipments/types";
 import { calculatePercentageDiscount } from "@/modules/manufacturing-management/procurement/discount-calculation";
 import {
@@ -178,12 +177,7 @@ export function usePurchaseOrder({ mode = "queue", shipmentId, onCreated }: UseP
 
         const request = fetchPurchaseOrderProductCatalog()
             .then(materials => {
-                setRawMaterials(mode === "create"
-                    ? materials.filter(material =>
-                        purchaseOrderMaterialTypeFromProduct(material, materials) !== "finished_goods"
-                        || hasBomDisabled(material)
-                    )
-                    : materials);
+                setRawMaterials(materials);
                 rawMaterialsLoaded.current = true;
             })
             .catch(error => {
