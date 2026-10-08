@@ -71,6 +71,32 @@ export function Step2BOMReview({
     hasShortfalls,
     handlePrintProcurementRequest
 }: Step2BOMReviewProps) {
+    const renderAvailableLots = (productId: number | undefined, uom: string, kilogramsPerUnit?: number | null) => {
+        const lots = productId ? inventories[Number(productId)]?.available_lots : [];
+        if (!Array.isArray(lots) || lots.length === 0) {
+            return <div className="text-[9px] text-muted-foreground">No available lots</div>;
+        }
+
+        return (
+            <div className="space-y-1.5">
+                {lots.map((lot: any) => {
+                    const quantity = formatInventoryQuantity(Number(lot.available || 0), uom, kilogramsPerUnit);
+                    const lotName = lot.lot_name || (lot.lot_id ? `Lot #${lot.lot_id}` : "Unassigned lot");
+                    const batchNo = lot.batch_no && lot.batch_no !== "LOT-N/A" ? lot.batch_no : "Unidentified batch";
+                    const rowKey = `${lot.lot_id ?? "no-lot"}:${lot.inventory_lot_id ?? "no-inventory-lot"}:${lot.batch_no}`;
+
+                    return (
+                        <div key={rowKey} className="leading-tight">
+                            <div className="text-[8px] font-medium text-foreground">{lotName} · {batchNo}</div>
+                            <div>{quantity.quantity}</div>
+                            {quantity.kilograms && <div className="text-[8px]">{quantity.kilograms}</div>}
+                        </div>
+                    );
+                })}
+            </div>
+        );
+    };
+
     if (loadingDetails) {
         return (
             <div className="flex flex-col items-center justify-center py-10 space-y-3">
@@ -319,7 +345,6 @@ export function Step2BOMReview({
                                     const kilogramsPerUnit = comp.component_product_id?.kilograms_per_inventory_unit;
                                     const neededDisplay = formatInventoryQuantity(needed, uom, kilogramsPerUnit);
                                     const demandDisplay = formatInventoryQuantity(materialPlan.demandRequired, uom, kilogramsPerUnit);
-                                    const availableDisplay = formatInventoryQuantity(available, uom, kilogramsPerUnit);
                                     const shortfallDisplay = formatInventoryQuantity(shortfall, uom, kilogramsPerUnit);
                                     const children = subAssemblyBoms[Number(compProductId)] || [];
                                     const isSubAssembly = children.length > 0 || comp.component_product_id?.product_type === 388 || comp.component_product_id?.is_finished_good;
@@ -401,23 +426,6 @@ export function Step2BOMReview({
                                                         </div>
                                                     )}
 
-                                                    {inventories[Number(compProductId)]?.recommended_lots?.length > 0 && (
-                                                        <div className="mt-1 space-y-0.5">
-                                                            <div className="text-[7.5px] text-primary/80 font-bold uppercase tracking-wider">Recommended Lots:</div>
-                                                            <div className="flex flex-wrap gap-1">
-                                                                {inventories[Number(compProductId)].recommended_lots.slice(0, 3).map((lot: any, lIdx: number) => (
-                                                                    <span key={lIdx} className="text-[8px] bg-primary/10 text-primary border border-primary/20 px-1 py-0.5 rounded font-mono font-medium">
-                                                                        {lot.lot_no} ({Number(lot.available).toFixed(0)})
-                                                                    </span>
-                                                                ))}
-                                                                {inventories[Number(compProductId)].recommended_lots.length > 3 && (
-                                                                    <span className="text-[8px] text-muted-foreground self-center">
-                                                                        +{inventories[Number(compProductId)].recommended_lots.length - 3} more
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    )}
                                                 </td>
                                                 <td className="p-2.5 text-center font-semibold text-foreground">
                                                     <div>{neededDisplay.quantity}</div>
@@ -426,8 +434,7 @@ export function Step2BOMReview({
                                                     {demandDisplay.kilograms && <div className="text-[9px] font-normal text-muted-foreground">{demandDisplay.kilograms}</div>}
                                                 </td>
                                                 <td className="p-2.5 text-center text-muted-foreground">
-                                                    <div>{availableDisplay.quantity}</div>
-                                                    {availableDisplay.kilograms && <div className="text-[9px]">{availableDisplay.kilograms}</div>}
+                                                    {renderAvailableLots(compProductId ? Number(compProductId) : undefined, uom, kilogramsPerUnit)}
                                                 </td>
                                                 <td className={`p-2.5 text-center font-bold ${shortfall > 0 ? (isSubAssembly ? "text-sky-600 dark:text-sky-400" : "text-red-600 dark:text-red-400") : "text-muted-foreground/60"}`}>
                                                     {shortfall > 0 ? (
@@ -467,7 +474,6 @@ export function Step2BOMReview({
                                                 const ccUom = cc.unit_of_measurement || "pcs";
                                                 const ccKilogramsPerUnit = cc.component_product_id?.kilograms_per_inventory_unit;
                                                 const ccNeededDisplay = formatInventoryQuantity(ccNeeded, ccUom, ccKilogramsPerUnit);
-                                                const ccAvailableDisplay = formatInventoryQuantity(ccAvailable, ccUom, ccKilogramsPerUnit);
                                                 const ccShortfallDisplay = formatInventoryQuantity(ccShortfall, ccUom, ccKilogramsPerUnit);
                                                 const ccSufficient = ccShortfall === 0;
 
@@ -488,23 +494,13 @@ export function Step2BOMReview({
                                                         </td>
                                                         <td className="p-2.5 pl-6 text-muted-foreground">
                                                             ↳ {cc.component_product_id?.product_name || `Product #${ccId}`}
-                                                            {inventories[Number(ccId)]?.recommended_lots?.length > 0 && (
-                                                                <div className="mt-1 pl-3 flex flex-wrap gap-1">
-                                                                    {inventories[Number(ccId)].recommended_lots.slice(0, 2).map((lot: any, lIdx: number) => (
-                                                                        <span key={lIdx} className="text-[7.5px] bg-primary/10 text-primary/90 border border-primary/15 px-1 py-0 rounded font-mono">
-                                                                            {lot.lot_no} ({Number(lot.available).toFixed(0)})
-                                                                        </span>
-                                                                    ))}
-                                                                </div>
-                                                            )}
                                                         </td>
                                                         <td className="p-2.5 text-center text-muted-foreground">
                                                             <div>{ccNeededDisplay.quantity}</div>
                                                             {ccNeededDisplay.kilograms && <div className="text-[8px] text-muted-foreground/60">{ccNeededDisplay.kilograms}</div>}
                                                         </td>
                                                         <td className="p-2.5 text-center text-muted-foreground">
-                                                            <div>{ccAvailableDisplay.quantity}</div>
-                                                            {ccAvailableDisplay.kilograms && <div className="text-[8px] text-muted-foreground/60">{ccAvailableDisplay.kilograms}</div>}
+                                                            {renderAvailableLots(ccId ? Number(ccId) : undefined, ccUom, ccKilogramsPerUnit)}
                                                         </td>
                                                         <td className={`p-2.5 text-center font-bold ${ccShortfall > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground/60"}`}>
                                                             {ccShortfall > 0 ? <>

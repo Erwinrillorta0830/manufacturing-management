@@ -1,5 +1,7 @@
 export const PRODUCTION_YIELD_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 export const MANUFACTURING_EVIDENCE_VIDEO_MAX_BYTES = 100 * 1024 * 1024;
+export const MANUFACTURING_EVIDENCE_MAX_FILES = 10;
+export const MANUFACTURING_EVIDENCE_MAX_TOTAL_BYTES = 100 * 1024 * 1024;
 
 export const PRODUCTION_YIELD_IMAGE_TYPES = [
     "image/jpeg",
@@ -49,6 +51,23 @@ export function validateManufacturingEvidence(file: File, label: string): string
     }
 
     return `${label} must be a PNG, JPG, or WEBP image, or an MP4, WEBM, or MOV video.`;
+}
+
+export function validateManufacturingEvidenceBatch(files: File[], label: string): string | null {
+    if (files.length > MANUFACTURING_EVIDENCE_MAX_FILES) {
+        return `No more than ${MANUFACTURING_EVIDENCE_MAX_FILES} evidence files may be attached.`;
+    }
+
+    for (const file of files) {
+        const fileError = validateManufacturingEvidence(file, label);
+        if (fileError) return `${file.name}: ${fileError}`;
+    }
+
+    if (files.reduce((total, file) => total + file.size, 0) > MANUFACTURING_EVIDENCE_MAX_TOTAL_BYTES) {
+        return "Breakdown evidence must be no larger than 100 MB in total.";
+    }
+
+    return null;
 }
 
 /** @deprecated Use validateManufacturingEvidence for image-or-video evidence. */

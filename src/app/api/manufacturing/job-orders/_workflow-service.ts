@@ -45,6 +45,7 @@ export interface JobOrderWorkflowCommand {
     resolutionRemarks?: string;
     terminationImageId?: string | null;
     evidenceImageId?: string | null;
+    evidenceImageIds?: string[];
     joRouteId?: number | null;
     reportedYieldQuantity?: number | null;
     workCenterId?: number | null;
@@ -106,6 +107,15 @@ function text(value: unknown): string {
     return String(value ?? "").trim();
 }
 
+function workflowEvidenceFileIds(command: JobOrderWorkflowCommand): string[] {
+    const suppliedIds = Array.isArray(command.evidenceImageIds)
+        ? command.evidenceImageIds.map(text).filter(Boolean)
+        : [];
+    if (suppliedIds.length > 0) return [...new Set(suppliedIds)];
+    const legacyId = text(command.evidenceImageId);
+    return legacyId ? [legacyId] : [];
+}
+
 function batchValues<T>(values: T[], batchSize = 100): T[][] {
     const batches: T[][] = [];
     for (let index = 0; index < values.length; index += batchSize) {
@@ -124,7 +134,7 @@ function workflowRequestHash(command: JobOrderWorkflowCommand): string {
             : {}),
         ...(command.action === "place-on-hold"
             ? {
-                evidenceImageAttached: Boolean(text(command.evidenceImageId)),
+                evidenceImageCount: workflowEvidenceFileIds(command).length,
                 joRouteId: command.joRouteId ?? null,
                 reportedYieldQuantity: command.reportedYieldQuantity ?? null
             }
@@ -890,6 +900,7 @@ async function writeTransition(
             command.resolutionRemarks?.trim() ? `Resolution: ${command.resolutionRemarks.trim()}` : "",
             command.overrideReason?.trim() ? `Override reason: ${command.overrideReason.trim()}` : ""
         ].filter(Boolean).join(" | ");
+    let createdHistoryId: number | null = null;
 
     const lifecycleFields: Record<string, unknown> = {};
     if (command.action === "initialize") {
@@ -938,7 +949,7 @@ async function writeTransition(
 
     try {
         const history = await directusRequest<DirectusRecord>(
-            "/items/manufacturing_job_order_status_history",
+            "/items/manufacturing_job_order_status_history?fields=history_id",
             "Record Job Order workflow history",
             {
                 method: "POST",
@@ -963,6 +974,25 @@ async function writeTransition(
                 })
             }
         );
+        createdHistoryId = positiveInteger(history?.history_id ?? history?.id);
+        const evidenceFileIds = command.action === "place-on-hold" ? workflowEvidenceFileIds(command) : [];
+        if (evidenceFileIds.length > 0) {
+            if (!createdHistoryId) {
+                throw new JobOrderWorkflowError("Breakdown evidence history could not be identified after saving.", 502, "WORKFLOW_EVIDENCE_HISTORY_MISSING");
+            }
+            await directusRequest<unknown>(
+                "/items/manufacturing_job_order_status_history_evidence",
+                "Record Job Order workflow evidence files",
+                {
+                    method: "POST",
+                    body: JSON.stringify(evidenceFileIds.map((fileId, sortOrder) => ({
+                        status_history_id: createdHistoryId,
+                        directus_file_id: fileId,
+                        sort_order: sortOrder
+                    })))
+                }
+            );
+        }
         return {
             jobOrderId,
             jobOrderNo,
@@ -1018,6 +1048,15 @@ async function writeTransition(
         if (lifecyclePrefix) {
             rollbackFields[`${lifecyclePrefix}_at`] = jobOrder[`${lifecyclePrefix}_at`] ?? null;
             rollbackFields[`${lifecyclePrefix}_by`] = jobOrder[`${lifecyclePrefix}_by`] ?? null;
+        }
+        if (createdHistoryId) {
+            await directusRequest(
+                `/items/manufacturing_job_order_status_history/${createdHistoryId}`,
+                "Remove incomplete Job Order workflow history",
+                { method: "DELETE" }
+            ).catch((rollbackError) => {
+                console.error("Job Order workflow history rollback failed:", rollbackError);
+            });
         }
         await directusRequest(
             `/items/manufacturing_job_orders/${jobOrderId}`,
@@ -1111,7 +1150,7 @@ export async function executeJobOrderWorkflow(
     if (["place-on-hold", "cancel", "terminate-production"].includes(command.action) && !text(command.remarks)) {
         throw new JobOrderWorkflowError("A reason is required for this workflow action.", 400, "WORKFLOW_REASON_REQUIRED");
     }
-    if (command.action === "place-on-hold" && !text(command.evidenceImageId)) {
+    if (command.action === "place-on-hold" && workflowEvidenceFileIds(command).length === 0) {
         throw new JobOrderWorkflowError(
             "A breakdown or hold evidence image or video is required.",
             422,

@@ -78,6 +78,13 @@ export function toPhtDateTimeLocal(value: string | null | undefined): string {
     return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
 }
 
+export function elapsedSecondsBetween(startedAt: string | null | undefined, stoppedAt: string | null | undefined): number | null {
+    const startedTimestamp = parseProductionTimestamp(startedAt);
+    const stoppedTimestamp = parseProductionTimestamp(stoppedAt);
+    if (startedTimestamp === null || stoppedTimestamp === null || stoppedTimestamp < startedTimestamp) return null;
+    return Math.floor((stoppedTimestamp - startedTimestamp) / 1000);
+}
+
 export function elapsedHours(startedAt: string | null | undefined, stoppedAt: string | null | undefined): number | null {
     const startedTimestamp = parseProductionTimestamp(startedAt);
     const stoppedTimestamp = parseProductionTimestamp(stoppedAt);
@@ -85,7 +92,24 @@ export function elapsedHours(startedAt: string | null | undefined, stoppedAt: st
     return Math.max(0.01, Math.round(((stoppedTimestamp - startedTimestamp) / (1000 * 60 * 60)) * 100) / 100);
 }
 
-export function elapsedSecondsSince(value: string): number {
+export function hoursFromSeconds(seconds: number): number {
+    return Math.max(0, Number.isFinite(seconds) ? seconds : 0) / 3600;
+}
+
+export function accumulateHoursFromSeconds(existingHours: number, elapsedSeconds: number): number {
+    const priorHours = Number.isFinite(existingHours) ? Math.max(0, existingHours) : 0;
+    return priorHours + hoursFromSeconds(elapsedSeconds);
+}
+
+export function elapsedSecondsSince(value: string, now = Date.now()): number {
     const timestamp = parseProductionTimestamp(value);
-    return timestamp === null ? 0 : Math.max(0, (Date.now() - timestamp) / 1000);
+    return timestamp === null ? 0 : Math.max(0, Math.floor((now - timestamp) / 1000));
+}
+
+export function formatElapsedDuration(totalSeconds: number): string {
+    const safeSeconds = Math.max(0, Math.floor(Number.isFinite(totalSeconds) ? totalSeconds : 0));
+    const hours = Math.floor(safeSeconds / 3600);
+    const minutes = Math.floor((safeSeconds % 3600) / 60);
+    const seconds = safeSeconds % 60;
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }

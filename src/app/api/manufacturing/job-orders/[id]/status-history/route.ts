@@ -69,6 +69,16 @@ function historyUrl(fields: string, jobOrderId: number): string {
     return `${DIRECTUS_URL}/items/manufacturing_job_order_status_history?${params.toString()}`;
 }
 
+function evidenceUrl(historyIds: number[]): string {
+    const params = new URLSearchParams({
+        limit: "-1",
+        sort: "status_history_id,sort_order,evidence_id",
+        fields: "evidence_id,status_history_id,directus_file_id,sort_order",
+        "filter[status_history_id][_in]": historyIds.join(",")
+    });
+    return `/items/manufacturing_job_order_status_history_evidence?${params.toString()}`;
+}
+
 async function directusRows(url: string): Promise<DirectusRecord[]> {
     const response = await fetch(url, { headers, cache: "no-store" });
     const responseBody = await response.text();
@@ -113,7 +123,8 @@ function enrichHistoryRecord(
     record: DirectusRecord,
     userMap: Map<number, string>,
     workCenterMap: Map<number, string>,
-    evidenceFilesById: Map<string, { fileName: string | null; mimeType: string | null; fileSize: number | null }>
+    evidenceFilesById: Map<string, { fileName: string | null; mimeType: string | null; fileSize: number | null }>,
+    evidenceRowsByHistoryId: Map<number, DirectusRecord[]>
 ) {
     const persistedWorkCenterId = positiveId(record?.work_center_id);
     const legacyStation = persistedWorkCenterId ? null : parseLegacyWorkCenterRemark(record?.remarks);
@@ -121,15 +132,45 @@ function enrichHistoryRecord(
     const workCenterName = workCenterId
         ? workCenterMap.get(workCenterId) || legacyStation?.workCenterName || `Station #${workCenterId}`
         : "Unassigned";
-    const evidenceFileId = directusFileId(record.evidence_image_id);
-    const evidenceMetadata = directusFileMetadata(record.evidence_image_id)
-        || (evidenceFileId ? evidenceFilesById.get(evidenceFileId) : null);
+    const historyId = positiveId(record.history_id ?? record.id);
+    const storedEvidenceRows = historyId ? evidenceRowsByHistoryId.get(historyId) || [] : [];
+    const evidenceFiles = storedEvidenceRows
+        .map((evidenceRow) => {
+            const fileId = directusFileId(evidenceRow.directus_file_id);
+            if (!fileId) return null;
+            const metadata = directusFileMetadata(evidenceRow.directus_file_id)
+                || evidenceFilesById.get(fileId);
+            return {
+                evidence_id: evidenceRow.evidence_id ?? null,
+                directus_file_id: fileId,
+                file_name: metadata?.fileName || null,
+                mime_type: metadata?.mimeType || null,
+                file_size: metadata?.fileSize ?? null,
+                sort_order: Number(evidenceRow.sort_order ?? 0)
+            };
+        })
+        .filter((evidenceFile): evidenceFile is NonNullable<typeof evidenceFile> => evidenceFile !== null);
+    const legacyEvidenceFileId = directusFileId(record.evidence_image_id);
+    if (evidenceFiles.length === 0 && legacyEvidenceFileId) {
+        const metadata = directusFileMetadata(record.evidence_image_id)
+            || evidenceFilesById.get(legacyEvidenceFileId);
+        evidenceFiles.push({
+            evidence_id: null,
+            directus_file_id: legacyEvidenceFileId,
+            file_name: metadata?.fileName || null,
+            mime_type: metadata?.mimeType || null,
+            file_size: metadata?.fileSize ?? null,
+            sort_order: 0
+        });
+    }
+    const primaryEvidenceFile = evidenceFiles[0];
     return {
         ...record,
-        evidence_image_id: evidenceFileId,
-        evidence_file_name: evidenceMetadata?.fileName || null,
-        evidence_mime_type: evidenceMetadata?.mimeType || null,
-        evidence_file_size: evidenceMetadata?.fileSize ?? null,
+        evidence_image_id: primaryEvidenceFile?.directus_file_id || legacyEvidenceFileId,
+        evidence_file_name: primaryEvidenceFile?.file_name || null,
+        evidence_mime_type: primaryEvidenceFile?.mime_type || null,
+        evidence_file_size: primaryEvidenceFile?.file_size ?? null,
+        evidence_files: evidenceFiles,
         work_center_id: workCenterId,
         previous_status: record.previous_status ?? record.old_status ?? null,
         status: record.status ?? record.new_status ?? "",
@@ -169,10 +210,26 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
             workCenterMap.set(Number(workCenter.work_center_id), String(workCenter.work_center_name ?? ""));
         });
 
-        const evidenceFilesById = await fetchDirectusFileMetadata(
-            historyRows.map((row) => directusFileId(row.evidence_image_id))
-        );
-        const data = historyRows.map((row) => enrichHistoryRecord(row, userMap, workCenterMap, evidenceFilesById));
+        const historyIds = historyRows
+            .map((row) => positiveId(row.history_id ?? row.id))
+            .filter((historyId): historyId is number => historyId !== null);
+        const evidenceRows = historyIds.length > 0
+            ? await fetchOptionalRows(evidenceUrl(historyIds))
+            : [];
+        const evidenceRowsByHistoryId = new Map<number, DirectusRecord[]>();
+        evidenceRows.forEach((row) => {
+            const historyId = positiveId(row.status_history_id);
+            if (!historyId) return;
+            const existing = evidenceRowsByHistoryId.get(historyId) || [];
+            existing.push(row);
+            evidenceRowsByHistoryId.set(historyId, existing);
+        });
+        const evidenceFileIds = [
+            ...historyRows.map((row) => directusFileId(row.evidence_image_id)),
+            ...evidenceRows.map((row) => directusFileId(row.directus_file_id))
+        ];
+        const evidenceFilesById = await fetchDirectusFileMetadata(evidenceFileIds);
+        const data = historyRows.map((row) => enrichHistoryRecord(row, userMap, workCenterMap, evidenceFilesById, evidenceRowsByHistoryId));
         return NextResponse.json({ success: true, data });
     } catch (error) {
         console.error("Error loading Job Order status history:", error);

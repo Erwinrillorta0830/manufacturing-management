@@ -28,7 +28,7 @@ export function WorkstationBreakdownDialog({
 }: WorkstationBreakdownDialogProps) {
     const [yieldQty, setYieldQty] = useState("0");
     const [haltReason, setHaltReason] = useState("");
-    const [evidenceImage, setEvidenceImage] = useState<File | null>(null);
+    const [evidenceImages, setEvidenceImages] = useState<File[]>([]);
     const [evidenceImageError, setEvidenceImageError] = useState<string | null>(null);
     const [submitting, setSubmitting] = useState(false);
 
@@ -36,7 +36,7 @@ export function WorkstationBreakdownDialog({
         if (!open) return;
         setYieldQty("0");
         setHaltReason("");
-        setEvidenceImage(null);
+        setEvidenceImages([]);
         setEvidenceImageError(null);
     }, [open, task?.id]);
 
@@ -55,8 +55,8 @@ export function WorkstationBreakdownDialog({
             toast.error("A breakdown reason is required.");
             return;
         }
-        if (!evidenceImage || evidenceImageError) {
-            toast.error("A breakdown evidence image or video is required.");
+        if (evidenceImages.length === 0 || evidenceImageError) {
+            toast.error(evidenceImageError || "At least one breakdown evidence image or video is required.");
             return;
         }
 
@@ -82,7 +82,9 @@ export function WorkstationBreakdownDialog({
             };
             const formData = new FormData();
             formData.set("payload", JSON.stringify(requestPayload));
-            formData.set("image", evidenceImage, evidenceImage.name);
+            evidenceImages.forEach((evidenceImage) => {
+                formData.append("image", evidenceImage, evidenceImage.name);
+            });
             const response = await fetch("/api/manufacturing/planning-engineering", {
                 method: "PATCH",
                 body: formData
@@ -149,13 +151,14 @@ export function WorkstationBreakdownDialog({
                         <EvidenceMediaInput
                             id="breakdown-evidence"
                             label="Breakdown evidence"
-                            file={evidenceImage}
+                            multiple
+                            files={evidenceImages}
                             error={evidenceImageError}
                             required
                             disabled={submitting}
                             active={open}
-                            onChange={(file, validationError) => {
-                                setEvidenceImage(file);
+                            onFilesChange={(files, validationError) => {
+                                setEvidenceImages(files);
                                 setEvidenceImageError(validationError);
                             }}
                         />
@@ -166,7 +169,7 @@ export function WorkstationBreakdownDialog({
                     <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
                         Cancel
                     </Button>
-                    <Button type="button" variant="destructive" onClick={handleSubmit} disabled={submitting || !task || !haltReason.trim() || !evidenceImage || Boolean(evidenceImageError)}>
+                    <Button type="button" variant="destructive" onClick={handleSubmit} disabled={submitting || !task || !haltReason.trim() || evidenceImages.length === 0 || Boolean(evidenceImageError)}>
                         {submitting ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> Reporting...</> : "Report Breakdown"}
                     </Button>
                 </DialogFooter>

@@ -22,7 +22,7 @@ import {
     displayJobOrderStatus,
     normalizeJobOrderStatus
 } from "../../job-order-status";
-import { elapsedHours } from "../operator-time";
+import { elapsedSecondsBetween, hoursFromSeconds } from "../operator-time";
 import type { JobOrderWorkflowAction } from "../../job-order-workflow";
 import { areJobOrderMaterialsFullyStaged } from "../utils/material-staging-readiness";
 import {
@@ -644,13 +644,23 @@ const selectedTask = useMemo(() => {
                 : r);
         });
         try {
-            await manageRouteOperator({
+            const response = await manageRouteOperator({
                 action: "start-timer",
                 taskId: taskId,
                 userId: opUserId,
                 joId: selectedJobOrder.jo_id,
                 routingId: taskObj?.routing_id || 0
             });
+            if (response?.data) {
+                setRouteOperators((prev) => {
+                    const candidates = prev.filter((record) => record.task_id === taskId && record.user_id === opUserId);
+                    if (candidates.length === 0) return [...prev, response.data as RouteOperatorRecord];
+                    const latestId = Math.max(...candidates.map((record) => record.id));
+                    return prev.map((record) => record.task_id === taskId && record.user_id === opUserId && record.id === latestId
+                        ? { ...record, ...response.data, is_placeholder: false }
+                        : record);
+                });
+            }
             toast.success("Shift timer started.");
         } catch (err: any) {
             setRouteOperators(snapshot);
@@ -672,8 +682,8 @@ const selectedTask = useMemo(() => {
         const key = `${taskId}:${opUserId}`;
         const snapshot = routeOperators;
         const now = nowPhtWallClock();
-        const elapsed = elapsedHours(active.started_at, now) || 0;
-        const newHours = roundHours(active.actual_hours + elapsed);
+        const elapsedSeconds = elapsedSecondsBetween(active.started_at, now) ?? 0;
+        const newHours = Math.max(0, active.actual_hours) + hoursFromSeconds(elapsedSeconds);
         setPendingTimerKey(key);
         setRouteOperators((prev) => prev.map((r) => (r.id === active.id)
             ? {
@@ -687,13 +697,21 @@ const selectedTask = useMemo(() => {
             total_hours: roundHours(snapshot.reduce((sum, r) => sum + (r.id === active.id ? newHours : (r.actual_hours || 0)), 0))
         });
         try {
-            await manageRouteOperator({
+            const response = await manageRouteOperator({
                 action: "stop-timer",
                 taskId: taskId,
                 userId: opUserId,
                 joId: selectedJobOrder.jo_id,
                 routingId: taskObj?.routing_id || 0
             });
+            if (response?.data) {
+                const saved = response.data as RouteOperatorRecord;
+                setRouteOperators((prev) => prev.map((record) => record.task_id === taskId && record.user_id === opUserId
+                    && (record.id === active.id || record.id < 0)
+                    ? { ...record, ...saved, is_placeholder: false }
+                    : record));
+                setOperatorsSummary((current) => ({ total_hours: roundHours(current.total_hours + (saved.actual_hours - newHours)) }));
+            }
             toast.success("Shift clocked out successfully.");
         } catch (err: any) {
             setRouteOperators(snapshot);
@@ -807,25 +825,22 @@ const selectedTask = useMemo(() => {
             return false;
         }
 
-        const taskOps = routeOperators.filter((op) => op.task_id === taskId);
-        if (taskOps.some((op) => op.started_at !== null && op.stopped_at === null)) {
-            toast.warning("Cannot complete routing step while operators have active running shifts. Please clock them out first.");
-            return false;
-        }
-
         try {
-            const totalHours = taskOps.reduce((sum, operator) => sum + (operator.actual_hours || 0), 0);
             await patchRoutingTask({
                 taskId,
                 taskPatch: {
-                    status: "Completed",
-                    actual_run_hours: Math.round(totalHours * 100) / 100
+                    status: "Completed"
                 }
             });
             toast.success(`Routing step "${task.name}" completed.`);
             await fetchJobs(selectedJobOrder.jo_id, true);
             return true;
         } catch (err: any) {
+            try {
+                await fetchJobs(selectedJobOrder.jo_id, true);
+            } catch {
+                // Keep the original completion error visible; the poller can reconcile any partial timer saves.
+            }
             toast.error(err.message || "Failed to complete routing step.");
             return false;
         }

@@ -11,6 +11,8 @@ import {
 } from "@/modules/manufacturing-management/job-order-status";
 import { committedGoodOutputOrAggregate, goodOutputAggregateFallback, hasReachedProductionTarget } from "@/modules/manufacturing-management/production-workflow/utils/production-output";
 import { formatPhtDateTime, parsePhtDateTime } from "../../directus-api";
+import { accumulateHoursFromSeconds, elapsedSecondsBetween } from "@/modules/manufacturing-management/production-workflow/operator-time";
+import { canMutateOperatorActionOnRoute } from "@/modules/manufacturing-management/production-workflow/route-status";
 import { getSessionUserId } from "../../lot-transfers/_session";
 import {
     findOperatorRosterAudit,
@@ -258,13 +260,14 @@ interface RouteJobOrderContext {
     jobOrderId: number;
     jobOrderNo: string;
     sequenceOrder: number;
+    routeStatus: string;
     status: string;
     assignedPersonnel: ReturnType<typeof normalizeOperatorAssignments>;
 }
 
 async function getRouteJobOrderContext(taskId: number): Promise<RouteJobOrderContext> {
-    const routePayload = await directusRequest<{ data?: { job_order_id?: unknown; sequence_order?: unknown } }>(
-        `/items/manufacturing_job_order_routes/${taskId}?fields=jo_route_id,job_order_id,sequence_order`,
+    const routePayload = await directusRequest<{ data?: { job_order_id?: unknown; sequence_order?: unknown; status?: unknown } }>(
+        `/items/manufacturing_job_order_routes/${taskId}?fields=jo_route_id,job_order_id,sequence_order,status`,
     );
     const jobOrderId = relationId(routePayload?.data?.job_order_id);
     if (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0) {
@@ -286,6 +289,7 @@ async function getRouteJobOrderContext(taskId: number): Promise<RouteJobOrderCon
         jobOrderId,
         jobOrderNo: String(jobOrder.job_order_no || `JO-${jobOrderId}`),
         sequenceOrder,
+        routeStatus: String(routePayload?.data?.status || ""),
         status: String(jobOrder.status || ""),
         assignedPersonnel: normalizeOperatorAssignments(jobOrder.assigned_personnel)
     };
@@ -331,6 +335,13 @@ async function assertProductionMutationAllowed(
         throw new DirectusRouteOperatorError(409, "The Job Order has an unknown status and cannot be changed.", "JOB_ORDER_STATUS_UNKNOWN");
     }
     if (action === "stop-timer") return context;
+    if (!canMutateOperatorActionOnRoute(context.routeStatus, action)) {
+        throw new DirectusRouteOperatorError(
+            409,
+            `Route ${context.sequenceOrder} is ${context.routeStatus.toLowerCase()} and does not accept operator roster or time-entry changes.`,
+            "ROUTE_COMPLETED"
+        );
+    }
     if (isCancelledJobOrderStatus(status)) {
         throw new DirectusRouteOperatorError(409, `Job Order ${jobOrder?.job_order_no || jobOrderId} is cancelled and cannot be changed.`, "JOB_ORDER_CANCELLED");
     }
@@ -340,11 +351,14 @@ async function assertProductionMutationAllowed(
     if (isJobOrderStatus(status, JOB_ORDER_STATUS.PRODUCTION_COMPLETED, JOB_ORDER_STATUS.FOR_QA_RECONCILIATION, JOB_ORDER_STATUS.CLOSED)) {
         throw new DirectusRouteOperatorError(409, `Job Order ${jobOrder?.job_order_no || jobOrderId} has completed production and cannot be changed.`, "PRODUCTION_COMPLETED");
     }
-    await assertProductionTargetNotReached(jobOrderId, jobOrderNo);
-    if (allowPreProductionRosterChanges && canChangeJobOrderOperatorRoster(status)) return context;
+    if (allowPreProductionRosterChanges && canChangeJobOrderOperatorRoster(status)) {
+        await assertProductionTargetNotReached(jobOrderId, jobOrderNo);
+        return context;
+    }
     if (!isJobOrderStatus(status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
         throw new DirectusRouteOperatorError(409, `Job Order ${jobOrder?.job_order_no || jobOrderId} must be In Production before operator activity can be changed.`, "JOB_ORDER_NOT_IN_PRODUCTION");
     }
+    if (action !== "edit-times") await assertProductionTargetNotReached(jobOrderId, jobOrderNo);
     return context;
 }
 
@@ -675,8 +689,11 @@ export async function POST(request: Request) {
             }
 
             const stoppedAt = formatPhtDateTime();
-            const elapsedHours = Math.max(0.01, (Date.now() - startedAt) / (1000 * 60 * 60));
-            const totalHours = Math.round((Number(activeRecord.logged_hours || 0) + elapsedHours) * 100) / 100;
+            const elapsedSeconds = elapsedSecondsBetween(activeRecord.started_at, stoppedAt);
+            if (elapsedSeconds === null) {
+                return NextResponse.json({ error: "The active timer has no valid duration" }, { status: 409 });
+            }
+            const totalHours = accumulateHoursFromSeconds(Number(activeRecord.logged_hours || 0), elapsedSeconds);
             const hourlyRate = Number(activeRecord.hourly_rate || determinedRate);
             const saved = await directusRequest<{ data?: DirectusRouteOperator }>(`/items/${COLLECTION}/${activeRecord.jo_route_operator_id}`, {
                 method: "PATCH",
