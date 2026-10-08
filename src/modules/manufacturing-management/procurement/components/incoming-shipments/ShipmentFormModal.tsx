@@ -6,11 +6,13 @@ import {
     ShipmentFormState,
     SUPPLIER_PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS,
     FxRateStatus,
-    PurchaseOrderMaterialType
+    PurchaseOrderMaterialType,
+    IncomingShipment,
+    RawMaterial,
+    PurchaseOrderPaymentMode
 } from "./types";
-import { IncomingShipment, PurchaseOrderPaymentMode, RawMaterial } from "../../types";
 import { RawProductSelector } from "./RawProductSelector";
-import { formatMoney } from "./ShipmentBadges";
+import { formatMoney, MaterialTypeBadge } from "./ShipmentBadges";
 import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods-master/components/CreatableSelect";
 import { normalizeProductRelationId } from "../../product-relation";
 import { PURCHASE_ORDER_DELIVERY_TERMS } from "@/modules/manufacturing-management/procurement-and-inbound/incoming-shipments/commercial-terms";
@@ -58,7 +60,7 @@ export interface ShipmentFormModalProps {
     setLinesForm: React.Dispatch<React.SetStateAction<ManifestLineFormItem[]>>;
     handleAddLineForm: (materialType?: PurchaseOrderMaterialType | "") => void;
     handleRemoveLineForm: (idx: number) => void;
-    handleLineFormChange: (idx: number, fieldOrObject: string | Record<string, unknown>, value?: unknown) => void;
+    handleLineFormChange: (idx: number, fieldOrObject: string | Partial<ManifestLineFormItem> | Record<string, unknown>, value?: unknown) => void;
     getLineErrors: (line: ManifestLineFormItem) => string[];
     supplierRawMaterials: RawMaterial[];
     priceControlCostsMap: Record<number, string>;
@@ -732,44 +734,12 @@ export function ShipmentFormModal({
                                                             <span className="hidden xl:inline">{idx + 1}</span>
                                                         </td>
 
-                                                        {/* Material Type Selector */}
+                                                        {/* Material Type Badge / Auto-Derived */}
                                                         <td className="col-span-1 min-w-0 overflow-hidden border-r p-1.5 align-middle xl:table-cell">
                                                             <ResponsiveCellLabel>Type <span className="text-red-500">*</span></ResponsiveCellLabel>
-                                                            <select
-                                                                aria-label={`Type for purchase order line ${idx + 1}`}
-                                                                data-index={idx}
-                                                                value={materialType}
-                                                                onChange={event => {
-                                                                    const nextType = event.target.value as ManifestLineFormItem["material_type"];
-                                                                    if (canonicalDrafting && activeCategoryTab !== "all") {
-                                                                        setActiveCategoryTab(nextType || "all");
-                                                                    }
-                                                                    handleLineFormChange(idx, {
-                                                                        material_type: nextType,
-                                                                        product_id: "",
-                                                                        parent_product_id: "",
-                                                                        product_name: "",
-                                                                        product_code: "",
-                                                                        selected_uom: "",
-                                                                        base_unit_cost_php: "",
-                                                                        discount_type_id: "",
-                                                                        discount_source: "none",
-                                                                        discount_mode: "Percentage",
-                                                                        discount_amount: "0",
-                                                                        discount_percent: "0",
-                                                                        uom_options: []
-                                                                    });
-                                                                }}
-                                                                disabled={!isRowEditing}
-                                                                className="w-full min-w-0 rounded-md border bg-background px-1.5 py-1 text-[10px] font-semibold outline-none focus:ring-1 focus:ring-primary"
-                                                            >
-                                                                <option value="">Select Type...</option>
-                                                                {(canonicalDrafting ? PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS : SUPPLIER_PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS).map(option => (
-                                                                    <option key={option.value} value={option.value}>
-                                                                        {option.label}
-                                                                    </option>
-                                                                ))}
-                                                            </select>
+                                                            <div className="flex h-8 w-full items-center">
+                                                                <MaterialTypeBadge materialType={materialType} />
+                                                            </div>
                                                         </td>
 
                                                         {/* Product Name Selector */}
@@ -798,9 +768,9 @@ export function ShipmentFormModal({
                                                                 selectedProductId={line.product_id}
                                                                 parentProductId={line.parent_product_id}
                                                                 productName={line.product_name}
-                                                                materialType={materialType}
+                                                                materialType={canonicalDrafting && activeCategoryTab !== "all" ? activeCategoryTab : (materialType || undefined)}
                                                                 canonicalDrafting={canonicalDrafting}
-                                                                disabled={!isRowEditing || !materialType}
+                                                                disabled={!isRowEditing}
                                                                 onSelect={(selected) => {
                                                                     const isDuplicate = linesForm.some((l, i) => i !== idx && String(l.product_id) === String(selected.product_id));
                                                                     if (isDuplicate) return;
@@ -816,8 +786,11 @@ export function ShipmentFormModal({
                                                                         ) || ""
                                                                         : "";
 
+                                                                    const resolvedMaterialType = selected.material_type || materialType || "";
+
                                                                     const finalSelected: ManifestLineFormItem = {
                                                                         ...selected,
+                                                                        material_type: resolvedMaterialType,
                                                                         quantity_ordered: line.quantity_ordered,
                                                                         base_unit_cost_php: transactionPrice,
                                                                         price_source: transactionPrice ? "matrix" : "none"
@@ -842,10 +815,7 @@ export function ShipmentFormModal({
                                                                         }
                                                                     }
 
-                                                                    handleLineFormChange(idx, {
-                                                                        ...finalSelected,
-                                                                        material_type: materialType
-                                                                    });
+                                                                    handleLineFormChange(idx, finalSelected);
                                                                     setTimeout(() => {
                                                                         const nextInput = document.getElementById(`qty-input-${idx}`);
                                                                         if (nextInput) {

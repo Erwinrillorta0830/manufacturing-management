@@ -24,7 +24,10 @@ import {
     cancelRejectedPurchaseOrder
 } from "../services/purchase-order-api";
 import { resolveProductParentId } from "@/modules/manufacturing-management/procurement/product-relation";
-import { purchaseOrderMaterialTypeFromProduct } from "@/modules/manufacturing-management/procurement/components/incoming-shipments/types";
+import {
+    purchaseOrderMaterialTypeFromProduct,
+    purchaseOrderCategoryTypeFromMaterialType
+} from "@/modules/manufacturing-management/procurement/components/incoming-shipments/types";
 import { calculatePercentageDiscount } from "@/modules/manufacturing-management/procurement/discount-calculation";
 import {
     DecimalValue,
@@ -190,7 +193,7 @@ export function usePurchaseOrder({ mode = "queue", shipmentId, onCreated }: UseP
 
         rawMaterialsLoad.current = request;
         return request;
-    }, [mode]);
+    }, []);
 
     const loadShipments = useCallback(async (query: PurchaseOrderListQuery = lastQuery.current) => {
         lastQuery.current = query;
@@ -326,8 +329,7 @@ export function usePurchaseOrder({ mode = "queue", shipmentId, onCreated }: UseP
             const masterMaterialType = purchaseOrderMaterialTypeFromProduct(product, rawMaterials);
 
             if (!line.product_id) errors.push("select a product");
-            if (!line.material_type) errors.push("select a Category Type");
-            if (line.material_type && masterMaterialType !== line.material_type) errors.push("select a Category Type matching the product master");
+            if (!masterMaterialType && !line.material_type) errors.push("select a Category Type");
             if (!Number.isInteger(quantity) || quantity <= 0) errors.push("enter a positive whole quantity");
             if (line.base_unit_cost_php === "" || !Number.isFinite(unitPrice) || unitPrice < 0) errors.push("enter a non-negative unit price");
             if (line.discount_mode === "Fixed Amount") errors.push("convert legacy fixed discounts to Percentage before saving");
@@ -395,14 +397,12 @@ export function usePurchaseOrder({ mode = "queue", shipmentId, onCreated }: UseP
             const product = rawMaterials.find(material => Number(material.product_id) === productId);
             const canonicalParentId = resolveProductParentId(product!);
             const normalizedUnitPrice = normalizePurchaseOrderUnitPrice(line.base_unit_cost_php);
+            const resolvedMaterialType = purchaseOrderMaterialTypeFromProduct(product, rawMaterials) || line.material_type;
+            const resolvedCategoryType = purchaseOrderCategoryTypeFromMaterialType(resolvedMaterialType) || "RAW_MATERIAL";
 
             return {
                 productId,
-                categoryType: line.material_type === "raw_material"
-                    ? "RAW_MATERIAL"
-                    : line.material_type === "packaging"
-                        ? "PACKAGING"
-                        : "FINISHED_GOODS",
+                categoryType: resolvedCategoryType,
                 parentProductId: canonicalParentId,
                 purchaseIntent: line.purchase_intent || "Buffer_Stock",
                 jobOrderId: line.purchase_intent === "MRP_Demand" ? Number(line.job_order_id) || null : null,

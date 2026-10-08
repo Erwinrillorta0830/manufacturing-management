@@ -671,12 +671,6 @@ export function useQAReceiving({
                 const currentReceiptQuantity = l.current_receipt_quantity === null || l.current_receipt_quantity === undefined
                     ? null
                     : Math.max(0, Number(l.current_receipt_quantity));
-                const currentReceiptAcceptedQuantity = l.current_receipt_accepted_quantity === null || l.current_receipt_accepted_quantity === undefined
-                    ? currentReceiptQuantity
-                    : Math.max(0, Number(l.current_receipt_accepted_quantity));
-                const currentReceiptRejectedQuantity = l.current_receipt_rejected_quantity === null || l.current_receipt_rejected_quantity === undefined
-                    ? 0
-                    : Math.max(0, Number(l.current_receipt_rejected_quantity));
                 const historicalReceipt = !isReplacement && (isReceived || historicalReceiptSelection);
                 const isWarehouseHandoff = !isReplacement
                     && (!currentActiveReceipt || currentActiveReceipt.isCurrent)

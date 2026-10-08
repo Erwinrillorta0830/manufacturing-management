@@ -2,7 +2,6 @@ import React from "react";
 import Image from "next/image";
 import { ArrowLeft, MapPin, AlertTriangle, CheckCircle2, Search, ChevronDown, Plus, Minus, Loader2, ReceiptText, CalendarDays, Radio, RefreshCw } from "lucide-react";
 import { Shipment, ShipmentLineItem, Branch, InspectionRow, StorageLot, StorageLotBatch, StorageLotLookupState, QaSpecificationLoadState, QaSpecificationReadings, ReceivingQaEvaluation, ReceivingLotAllocationInput, OverDeliveryLine, SupplierDocumentType, QaReceiptOption } from "../types";
-import { deriveRejectedQuantity } from "@/app/api/manufacturing/qa/_receiving-evaluation";
 import { canForceReceivePurchaseOrder, isForceReceived } from "@/app/api/manufacturing/qa-receiving/_force-received";
 import { INVENTORY_STATUS } from "@/app/api/manufacturing/procurement/_domain";
 import type { ReceivingValidationIssue } from "../receiving-metadata";
@@ -94,7 +93,7 @@ interface ShipmentInspectionFormProps {
     loadingSupplierDocumentTypes: boolean;
     supplierDocumentTypeError: string | null;
     supplierDocumentTypeId: number | null;
-    onSupplierDocumentTypeChange: (value: string) => void;
+    onSupplierDocumentTypeChange?: (value: string) => void;
     processOverDelivery: boolean;
     setProcessOverDelivery: (value: boolean) => void;
     overDeliveryLines: OverDeliveryLine[];
@@ -145,7 +144,6 @@ export default function ShipmentInspectionForm({
     loadingSupplierDocumentTypes,
     supplierDocumentTypeError,
     supplierDocumentTypeId,
-    onSupplierDocumentTypeChange,
     selectedBranchId,
     processOverDelivery,
     setProcessOverDelivery,
@@ -381,22 +379,6 @@ export default function ShipmentInspectionForm({
             setHighlightedLineId(null);
         }, 3000);
     };
-
-    // Filter out Bihon Bad Branch and quarantine branches from main selector
-    const filteredBranches = React.useMemo(() => {
-        const eligibleBranches = branches.filter(b => {
-            if (b.isBadStock === true || Number(b.isBadStock) === 1) return false;
-            const name = (b.branch_name || "").toLowerCase();
-            return !name.includes("bad branch") &&
-                !name.includes("quarantine") &&
-                !name.includes("damaged") &&
-                !name.includes("holding") &&
-                !name.includes("bad order");
-        });
-        return selectedBranchId
-            ? eligibleBranches.filter(branch => Number(branch.id) === Number(selectedBranchId))
-            : eligibleBranches;
-    }, [branches, selectedBranchId]);
 
     const hasConfiguredBadOrderBranch = React.useMemo(() => {
         const receivingBranch = branches.find(branch => Number(branch.id) === Number(selectedBranchId || selectedShipment.branch_id));
@@ -840,9 +822,6 @@ export default function ShipmentInspectionForm({
                         const overDeliveryQuantity = Math.max(0, receivedVal - remainingVal);
                         const totalInspectedVal = acceptedVal + rejectedVal;
                         const isExceeded = totalInspectedVal > receivedVal;
-                        const isFullyReconciled = [receivedVal, acceptedVal, rejectedVal].every(Number.isFinite)
-                            && receivedVal > 0
-                            && totalInspectedVal === receivedVal;
                         const quantitiesReconcile = !isExceeded;
                         const isRemarksMandatory = rejectedVal > 0;
                         const evaluation = qaEvaluationResults[line.line_id];
