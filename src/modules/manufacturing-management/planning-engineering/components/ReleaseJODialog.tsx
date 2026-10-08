@@ -23,6 +23,7 @@ import { Branch, SalesOrderDetail, SalesOrderReleaseGroup } from "../types";
 import { OperatorSelect } from "./OperatorSelect";
 import { SearchableVersionSelect } from "./SearchableVersionSelect";
 import { SubmittingLoadingOverlay } from "./SubmittingLoadingOverlay";
+import { CONTAINER_METRIC_DEFINITIONS, ContainerMetricLabel } from "./ContainerMetricLabel";
 import { calculateContainerizationMetrics, formatHoursToHMS, formatInventoryQuantity } from "../utils/containerization-helper";
 import {
     calculateMaterialSpend,
@@ -196,24 +197,31 @@ export function ReleaseJODialog({
         const uom = product?.uom_name || product?.uom || (first as any)?.unit_of_measurement || "units";
         const normalizedTarget = normalizeProductionOutputQuantity(productionTarget, uom);
         if (!first || !version || productionTarget <= 0 || baseQuantity <= 0) return [group.key, 0];
+        const pcsPerBundleCase = Number(version.pcs_per_bundle_case) > 0
+            ? Number(version.pcs_per_bundle_case)
+            : Number(product?.pcs_per_bundle_case) > 0 ? Number(product.pcs_per_bundle_case) : undefined;
+        const bundlesCasesPerPallet = Number(version.bundles_cases_per_pallet) > 0
+            ? Number(version.bundles_cases_per_pallet)
+            : Number(product?.bundles_cases_per_pallet) > 0 ? Number(product.bundles_cases_per_pallet) : undefined;
 
         const metrics = calculateContainerizationMetrics(
             product?.product_name || product?.product_code || "Product",
             normalizedTarget,
-            product?.unit_of_measurement_count || product?.pcs_per_bundle || product?.pcs_per_case || product?.uom_count,
+            pcsPerBundleCase,
             version.expected_yield_percentage || product?.expected_yield_percentage,
             version.scrap_rate || version.scrap_percentage || version.wastage_factor_percentage,
             version.cutting_unit_weight_grams || version.unit_weight_grams || product?.net_weight_grams || product?.piece_weight_grams,
-            version.cases_per_pallet || product?.cases_per_pallet || product?.bundles_per_pallet,
+            bundlesCasesPerPallet,
             version.sacks_per_mix || version.sacks_per_batch,
             version.batch_weight_per_sack || version.base_batch_weight_grams,
             details.components || [],
             baseQuantity,
             group.totalRemainingQuantity,
-            version.containerization_profile || null
+            version.containerization_profile || null,
+            uom
         );
-        const materialTarget = metrics.hasOutputEstimate && metrics.netPieces > 0
-            ? metrics.netPieces
+        const materialTarget = metrics.hasWeightBasedOutputEstimate && metrics.massDerivedNetPieces > 0
+            ? metrics.massDerivedNetPieces
             : normalizedTarget;
         return [group.key, materialTarget];
     })), [normalizedReleaseGroups, groupDetailsByKey, groupProductionTargets, groupBaseQuantities]);
@@ -447,25 +455,32 @@ export function ReleaseJODialog({
         const prodObj = first?.product_id;
         if (!prodObj) return null;
         const verObj = bomData || first?.version_id || first?.bom_version_id || first?.version;
+        const pcsPerBundleCase = Number(verObj?.pcs_per_bundle_case) > 0
+            ? Number(verObj.pcs_per_bundle_case)
+            : Number(prodObj?.pcs_per_bundle_case) > 0 ? Number(prodObj.pcs_per_bundle_case) : undefined;
+        const bundlesCasesPerPallet = Number(verObj?.bundles_cases_per_pallet) > 0
+            ? Number(verObj.bundles_cases_per_pallet)
+            : Number(prodObj?.bundles_cases_per_pallet) > 0 ? Number(prodObj.bundles_cases_per_pallet) : undefined;
         return calculateContainerizationMetrics(
             prodObj.product_name || prodObj.product_code || "Product",
             targetQuantity,
-            prodObj.unit_of_measurement_count || prodObj.pcs_per_bundle || prodObj.pcs_per_case || prodObj.uom_count,
+            pcsPerBundleCase,
             verObj?.expected_yield_percentage || prodObj.expected_yield_percentage,
             verObj?.scrap_rate || verObj?.scrap_percentage || verObj?.wastage_factor_percentage,
             verObj?.cutting_unit_weight_grams || verObj?.unit_weight_grams || prodObj.net_weight_grams || prodObj.piece_weight_grams,
-            verObj?.cases_per_pallet || prodObj.cases_per_pallet || prodObj.bundles_per_pallet,
+            bundlesCasesPerPallet,
             verObj?.sacks_per_mix || verObj?.sacks_per_batch,
             verObj?.batch_weight_per_sack || verObj?.base_batch_weight_grams,
             components,
             activeGroupBaseQuantity,
             requestedProductionQuantity,
-            bomData?.containerization_profile || null
+            bomData?.containerization_profile || null,
+            releaseSummaryUom
         );
     }, [selectedLines, targetQuantity, requestedProductionQuantity, components, activeGroupBaseQuantity, bomData]);
 
-    const materialTargetQuantity = containerMetrics?.hasOutputEstimate && containerMetrics.netPieces > 0
-        ? containerMetrics.netPieces
+    const materialTargetQuantity = containerMetrics?.hasWeightBasedOutputEstimate && containerMetrics.massDerivedNetPieces > 0
+        ? containerMetrics.massDerivedNetPieces
         : targetQuantity > 0 ? targetQuantity : null;
     const productionTimingTargetQuantity = rawTargetQuantity;
 
@@ -1267,7 +1282,7 @@ export function ReleaseJODialog({
                                                     <div className="flex items-center gap-2">
                                                         <Package className="h-4 w-4 text-emerald-500" />
                                                         <span className="text-xs font-bold text-foreground uppercase tracking-wider text-[11px]">
-                                                            📦 Plant Production & Pallet Containerization
+                                                            📦 Finished Goods Packaging & Palletization
                                                         </span>
                                                     </div>
                                                     <Badge variant="outline" className="text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
@@ -1276,7 +1291,7 @@ export function ReleaseJODialog({
                                                 </div>
                                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-[11px]">
                                                     <div className="bg-background border border-border/60 rounded-lg p-2">
-                                                        <span className="text-[10px] font-medium text-muted-foreground block">🌾 Batch Mix & Sacks</span>
+                                                        <ContainerMetricLabel icon="🌾" label="Primary Mix Allocations" />
                                                         <span className="font-extrabold text-foreground text-xs">{containerMetrics.mixCount} Full Mixes</span>
                                                         <span className="text-[10px] text-muted-foreground block">
                                                             Demand: {containerMetrics.requestedMixCount.toFixed(2)} mixes
@@ -1290,19 +1305,31 @@ export function ReleaseJODialog({
                                                         </span>
                                                     </div>
                                                     <div className="bg-background border border-border/60 rounded-lg p-2">
-                                                        <span className="text-[10px] font-medium text-muted-foreground block">🏭 Expected Net Pcs</span>
+                                                        <ContainerMetricLabel
+                                                            icon="🏭"
+                                                            label="Net Yield Output"
+                                                            definition={CONTAINER_METRIC_DEFINITIONS.netYieldOutput}
+                                                        />
                                                         <span className="font-extrabold text-foreground text-xs">{`${Math.round(containerMetrics.netPieces).toLocaleString()} Pcs`}</span>
-                                                        {containerMetrics.hasOutputEstimate && containerMetrics.expectedYieldPercentage < 100 && <span className="text-[10px] text-muted-foreground block">({containerMetrics.expectedYieldPercentage.toFixed(1)}% Expected Yield)</span>}
+                                                        {containerMetrics.hasNetPieceEstimate && containerMetrics.expectedYieldPercentage < 100 && <span className="text-[10px] text-muted-foreground block">({containerMetrics.expectedYieldPercentage.toFixed(1)}% Expected Yield)</span>}
                                                     </div>
                                                     <div className="bg-background border border-border/60 rounded-lg p-2">
-                                                        <span className="text-[10px] font-medium text-muted-foreground block">📦 Cases / Bundles</span>
-                                                        <span className="font-extrabold text-foreground text-xs">{`${containerMetrics.totalCasesBundlesFull} Full`}</span>
-                                                        <span className="text-[10px] text-muted-foreground block">(+{containerMetrics.remainingPcs} pcs remaining)</span>
+                                                        <ContainerMetricLabel
+                                                            icon="📦"
+                                                            label="Case Count & Remainder"
+                                                            definition={CONTAINER_METRIC_DEFINITIONS.caseCountAndRemainder}
+                                                        />
+                                                        <span className="font-extrabold text-foreground text-xs">{containerMetrics.hasCaseBundleEstimate ? `${containerMetrics.totalCasesBundlesFull} Full` : "Not configured"}</span>
+                                                        {containerMetrics.hasCaseBundleEstimate && <span className="text-[10px] text-muted-foreground block">(+{containerMetrics.remainingPcs} pcs remaining)</span>}
                                                     </div>
                                                     <div className="bg-background border border-border/60 rounded-lg p-2">
-                                                        <span className="text-[10px] font-medium text-muted-foreground block">🚛 Pallet Allocation</span>
-                                                        <span className="font-extrabold text-emerald-600 dark:text-emerald-400 text-xs">{!containerMetrics.hasOutputEstimate ? "0 Pallets" : containerMetrics.hasPalletEstimate ? `${containerMetrics.totalPalletsFull} Pallets` : "Not configured"}</span>
-                                                        {(containerMetrics.hasPalletEstimate || !containerMetrics.hasOutputEstimate) && <span className="text-[10px] text-muted-foreground block">(+{containerMetrics.remainingCasesBundles} cases/bundles)</span>}
+                                                        <ContainerMetricLabel
+                                                            icon="🚛"
+                                                            label="Unit Load Count"
+                                                            definition={CONTAINER_METRIC_DEFINITIONS.unitLoadCount}
+                                                        />
+                                                        <span className="font-extrabold text-emerald-600 dark:text-emerald-400 text-xs">{containerMetrics.hasPalletEstimate ? `${containerMetrics.totalPalletsFull} Pallets` : "Not configured"}</span>
+                                                        {containerMetrics.hasPalletEstimate && <span className="text-[10px] text-muted-foreground block">(+{containerMetrics.remainingCasesBundles} cases/bundles)</span>}
                                                     </div>
                                                 </div>
                                             </div>
