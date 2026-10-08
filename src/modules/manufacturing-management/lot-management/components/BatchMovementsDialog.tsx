@@ -24,7 +24,6 @@ import {
     Package,
     Warehouse,
     Loader2,
-    Building2,
     AlertTriangle,
     AlertCircle,
     ChevronDown,
