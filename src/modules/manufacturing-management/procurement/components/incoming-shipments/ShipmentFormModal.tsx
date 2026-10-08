@@ -4,7 +4,6 @@ import {
     ManifestLineFormItem,
     PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS,
     ShipmentFormState,
-    SUPPLIER_PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS,
     FxRateStatus,
     PurchaseOrderMaterialType,
     IncomingShipment,
