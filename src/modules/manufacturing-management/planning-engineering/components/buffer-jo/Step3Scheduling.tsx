@@ -35,7 +35,7 @@ export function Step3Scheduling({
             {routings.length === 0 ? (
                 <p className="text-xs text-muted-foreground py-3 text-center">No routing sequence steps defined.</p>
             ) : (
-                <div className="space-y-4 max-h-[340px] overflow-y-auto pr-1">
+                <div className="space-y-4 pr-1">
                     {routings.map((route, index) => {
                         const seq = Number(route.sequence_order);
                         const assigned = assignments[seq] || [];

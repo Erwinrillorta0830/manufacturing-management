@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { resolveJobOrderJourney } from "../../shared/job-order-journey";
 import { JobOrderJourneyBar } from "../../shared/components/JobOrderJourneyBar";
 import { JobOrderStatusBadge } from "../../shared/components/JobOrderStatusBadge";
-import { isCancelledJobOrderStatus, isTerminatedJobOrder } from "../../job-order-status";
+import { isCancelledJobOrderStatus, isJobOrderStatus, isTerminatedJobOrder, JOB_ORDER_STATUS } from "../../job-order-status";
 import { calculateCumulativeRouteWorkloadHours, calculatePipelinedLineDurationHours, resolveProductionShiftHours } from "../utils/production-timing";
 
 export interface FamilyGroup {
@@ -21,6 +21,7 @@ export interface JOTableProps {
     familyGroups: FamilyGroup[];
     loadingJobs: boolean;
     handleOpenDetails: (jo: any) => void;
+    handleEditDraft: (jo: any) => void;
     readOnly?: boolean;
 }
 
@@ -52,6 +53,7 @@ export function JOTable({
     familyGroups,
     loadingJobs,
     handleOpenDetails,
+    handleEditDraft,
     readOnly = false
 }: JOTableProps) {
     if (unreleasedJobs.length === 0) {
@@ -154,6 +156,17 @@ export function JOTable({
                                     </td>
                                     <td className="px-2 py-3 text-center">
                                         <div className="flex flex-wrap items-center justify-center gap-1.5">
+                                            {!readOnly && isJobOrderStatus(jo.status, JOB_ORDER_STATUS.DRAFT) && (
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    onClick={() => handleEditDraft(jo)}
+                                                    title="Edit this Draft Job Order."
+                                                    className="h-auto min-h-8 max-w-full shrink whitespace-normal break-words border-amber-500/30 px-2 py-1 text-center text-[11px] font-bold leading-tight text-amber-700 transition-all duration-200 hover:border-amber-500 hover:bg-amber-500/5 dark:text-amber-400"
+                                                >
+                                                    Edit
+                                                </Button>
+                                            )}
                                             <Button
                                                 size="sm"
                                                 variant="outline"
@@ -271,14 +284,27 @@ export function JOTable({
                                         </div>
                                     </td>
                                     <td className="px-2 py-3 text-center">
-                                        <Button
-                                            size="sm"
-                                            variant="outline"
-                                            onClick={() => handleOpenDetails(fg.parentJo)}
-                                            className="h-auto min-h-8 max-w-full shrink whitespace-normal break-words border-primary/30 px-2 py-1 text-center text-[11px] font-bold leading-tight text-primary transition-all duration-200 hover:border-primary hover:bg-primary/5"
-                                        >
-                                            {readOnly ? "View Details" : "Manage Family"}
-                                        </Button>
+                                        <div className="flex flex-wrap items-center justify-center gap-1.5">
+                                            {!readOnly && isJobOrderStatus(fg.parentJo.status, JOB_ORDER_STATUS.DRAFT) && (
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    onClick={() => handleEditDraft(fg.parentJo)}
+                                                    title="Edit this Draft Job Order."
+                                                    className="h-auto min-h-8 max-w-full shrink whitespace-normal break-words border-amber-500/30 px-2 py-1 text-center text-[11px] font-bold leading-tight text-amber-700 transition-all duration-200 hover:border-amber-500 hover:bg-amber-500/5 dark:text-amber-400"
+                                                >
+                                                    Edit
+                                                </Button>
+                                            )}
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                onClick={() => handleOpenDetails(fg.parentJo)}
+                                                className="h-auto min-h-8 max-w-full shrink whitespace-normal break-words border-primary/30 px-2 py-1 text-center text-[11px] font-bold leading-tight text-primary transition-all duration-200 hover:border-primary hover:bg-primary/5"
+                                            >
+                                                {readOnly || isJobOrderStatus(fg.parentJo.status, JOB_ORDER_STATUS.DRAFT) ? "View Details" : "Manage Family"}
+                                            </Button>
+                                        </div>
                                     </td>
                                 </tr>
 
@@ -336,14 +362,27 @@ export function JOTable({
                                                 </div>
                                             </td>
                                             <td className="px-2 py-3 text-center">
-                                                <Button
-                                                    size="sm"
-                                                    variant="ghost"
-                                                    onClick={() => handleOpenDetails(cJo)}
-                                                    className="h-auto min-h-8 max-w-full shrink whitespace-normal break-words px-2 py-1 text-center text-[11px] font-bold leading-tight text-sky-600 transition-all duration-200 hover:bg-sky-500/10 hover:text-sky-700"
-                                                >
-                                                    View Details
-                                                </Button>
+                                                <div className="flex flex-wrap items-center justify-center gap-1.5">
+                                                    {!readOnly && isJobOrderStatus(cJo.status, JOB_ORDER_STATUS.DRAFT) && (
+                                                        <Button
+                                                            size="sm"
+                                                            variant="outline"
+                                                            onClick={() => handleEditDraft(cJo)}
+                                                            title="Edit this Draft Job Order."
+                                                            className="h-auto min-h-8 max-w-full shrink whitespace-normal break-words border-amber-500/30 px-2 py-1 text-center text-[11px] font-bold leading-tight text-amber-700 transition-all duration-200 hover:border-amber-500 hover:bg-amber-500/5 dark:text-amber-400"
+                                                        >
+                                                            Edit
+                                                        </Button>
+                                                    )}
+                                                    <Button
+                                                        size="sm"
+                                                        variant="ghost"
+                                                        onClick={() => handleOpenDetails(cJo)}
+                                                        className="h-auto min-h-8 max-w-full shrink whitespace-normal break-words px-2 py-1 text-center text-[11px] font-bold leading-tight text-sky-600 transition-all duration-200 hover:bg-sky-500/10 hover:text-sky-700"
+                                                    >
+                                                        View Details
+                                                    </Button>
+                                                </div>
                                             </td>
                                         </tr>
                                     );

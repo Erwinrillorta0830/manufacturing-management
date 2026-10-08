@@ -297,7 +297,7 @@ export function Step2BOMReview({
                                     <th className="p-2.5 w-8 text-center">PR</th>
                                     <th className="p-2.5">Raw Material / Component</th>
                                     <th className="p-2.5 text-center">Planned / Demand</th>
-                                    <th className="p-2.5 text-center">On Hand</th>
+                                    <th className="p-2.5 text-center">Available</th>
                                     <th className="p-2.5 text-center">Shortfall</th>
                                     <th className="p-2.5 text-right">Status</th>
                                 </tr>

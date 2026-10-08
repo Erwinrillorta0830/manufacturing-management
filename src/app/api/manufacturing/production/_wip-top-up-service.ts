@@ -654,6 +654,7 @@ export async function recordWipTopUp(request: Request): Promise<NextResponse> {
                     { method: "PATCH", body: JSON.stringify(reservationBody) }
                 );
             } else {
+                reservationBody.created_at = now;
                 const created = await directusRequest<any>(
                     `/items/manufacturing_job_order_materials_reservations`,
                     "Create WIP reservation",
