@@ -19,7 +19,8 @@ import { cn } from "@/lib/utils";
 import {
     PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS,
     SUPPLIER_PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS,
-    PurchaseOrderMaterialType
+    PurchaseOrderMaterialType,
+    purchaseOrderMaterialTypeFromProduct
 } from "./types";
 import { normalizeProductRelationId, resolveProductParentId } from "../../product-relation";
 import { normalizePurchaseOrderUnitPrice } from "../../price-precision";
@@ -37,6 +38,7 @@ export interface RawProductSelectorProps {
     onSelect: (selected: {
         parent_product_id: string;
         product_id: string;
+        material_type?: PurchaseOrderMaterialType | "";
         product_name: string;
         product_code: string;
         selected_uom: string;
@@ -136,6 +138,7 @@ function ProductSearchableSelect({
 }
 
 export function RawProductSelector({
+    id,
     rawMaterials,
     selectedProductId,
     parentProductId,
@@ -145,6 +148,9 @@ export function RawProductSelector({
     onSelect
 }: RawProductSelectorProps) {
     const filteredMaterials = useMemo(() => {
+        if (!materialType) {
+            return rawMaterials;
+        }
         const materialTypeOptions = canonicalDrafting
             ? PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS
             : SUPPLIER_PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS;
@@ -152,7 +158,7 @@ export function RawProductSelector({
             option => option.value === materialType
         )?.productTypeId;
 
-        if (!productTypeId) return [];
+        if (!productTypeId) return rawMaterials;
         return rawMaterials.filter(material => {
             if (Number(material.product_type) === productTypeId) return true;
             const parentId = normalizeProductRelationId(material.parent_id);
@@ -201,10 +207,14 @@ export function RawProductSelector({
 
         const parentMaterial = members.find(material => Number(material.product_id) === familyId) || defaultMaterial;
         const cost = Number(defaultMaterial.cost_per_unit || defaultMaterial.estimated_unit_cost || 0);
+        const derivedMaterialType = purchaseOrderMaterialTypeFromProduct(defaultMaterial, rawMaterials)
+            || purchaseOrderMaterialTypeFromProduct(parentMaterial, rawMaterials)
+            || (materialType || "");
 
         onSelect({
             parent_product_id: String(familyId),
             product_id: String(defaultMaterial.product_id),
+            material_type: derivedMaterialType,
             product_name: parentMaterial.product_name || defaultMaterial.product_name,
             product_code: defaultMaterial.product_code || "",
             selected_uom: defaultMaterial.unit_of_measurement?.unit_shortcut || "PCS",
@@ -221,11 +231,12 @@ export function RawProductSelector({
 
     return (
         <ProductSearchableSelect
+            id={id}
             options={options}
             value={selectedFamilyId}
             onValueChange={handleValueChange}
-            placeholder={materialType ? "Select product..." : "Select type first..."}
-            disabled={disabled || !materialType}
+            placeholder="Select product..."
+            disabled={disabled}
         />
     );
 }

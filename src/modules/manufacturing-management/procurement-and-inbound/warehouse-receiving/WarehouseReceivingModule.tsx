@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useWarehouseReceiving } from "./hooks/useWarehouseReceiving";
 import { isReceiptQuantityOverRemaining } from "./quantity-validation";
 import WarehouseReceivingDetailModal from "./components/WarehouseReceivingDetailModal";
@@ -79,13 +80,17 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
         selectedLines,
         quantities,
         receiptNumber,
+        supplierDocumentTypeId,
         receiptDate,
         search,
         supplierId,
+        currency,
         dateFrom,
         dateTo,
         status,
         supplierOptions,
+        currencyOptions,
+        receiptTypeOptions,
         page,
         total,
         totalPages,
@@ -97,12 +102,14 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
         printing,
         setSearch,
         setSupplierId,
+        setCurrency,
         setDateFrom,
         setDateTo,
         setStatus,
         setPage,
         updateQuantity,
         setReceiptNumber,
+        setSupplierDocumentTypeId,
         setReceiptDate,
         start,
         saveDraft,
@@ -165,41 +172,60 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
                             <CardTitle>Orders ready for warehouse receiving</CardTitle>
                             <p className="mt-1 text-sm text-muted-foreground">Start a warehouse receipt for an approved purchase order, continue a partially received order, or inspect a receipt awaiting QA.</p>
                         </div>
-                        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-                            <div className="space-y-1.5 xl:col-span-2">
-                                <Label htmlFor="warehouse-search">Search</Label>
-                                <div className="relative">
-                                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                                <Input id="warehouse-search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search PO, supplier, or remarks..." className="pl-9" aria-label="Search purchase orders" />
+                        <div className="grid w-full gap-3 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 items-end">
+                            <div className="flex w-full flex-col space-y-1.5 min-w-0">
+                                <Label htmlFor="warehouse-search" className="text-xs font-semibold">Search</Label>
+                                <div className="relative w-full">
+                                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                                    <Input id="warehouse-search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search PO, supplier, or remarks..." className="h-9 w-full pl-9" aria-label="Search purchase orders" />
                                 </div>
                             </div>
-                            <div className="space-y-1.5">
-                                <Label>Supplier</Label>
-                                <SearchableSelect options={supplierFilterOptions} value={supplierId} onValueChange={setSupplierId} placeholder="All suppliers" />
+                            <div className="flex w-full flex-col space-y-1.5 min-w-0">
+                                <Label className="text-xs font-semibold">Supplier</Label>
+                                <SearchableSelect options={supplierFilterOptions} value={supplierId} onValueChange={setSupplierId} placeholder="All suppliers" className="h-9 w-full" />
                             </div>
-                            <div className="space-y-1.5">
-                                <Label htmlFor="approved-date-from">Date approved from</Label>
-                                <Input id="approved-date-from" type="date" value={dateFrom} onChange={event => setDateFrom(event.target.value)} />
+                            <div className="flex w-full flex-col space-y-1.5 min-w-0">
+                                <Label htmlFor="warehouse-currency" className="text-xs font-semibold">Currency</Label>
+                                <Select value={currency} onValueChange={setCurrency}>
+                                    <SelectTrigger id="warehouse-currency" className="h-9 w-full">
+                                        <SelectValue placeholder="All currencies" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="ALL">All currencies</SelectItem>
+                                        {currencyOptions.map(code => (
+                                            <SelectItem key={code} value={code}>{code}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
                             </div>
-                            <div className="space-y-1.5">
-                                <Label htmlFor="approved-date-to">Date approved to</Label>
-                                <Input id="approved-date-to" type="date" value={dateTo} onChange={event => setDateTo(event.target.value)} />
+                            <div className="flex w-full flex-col space-y-1.5 min-w-0">
+                                <Label htmlFor="approved-date-from" className="text-xs font-semibold">Date approved from</Label>
+                                <Input id="approved-date-from" type="date" value={dateFrom} onChange={event => setDateFrom(event.target.value)} className="h-9 w-full" />
                             </div>
-                            <div className="space-y-1.5">
-                                <Label htmlFor="warehouse-status">Status</Label>
-                                <select id="warehouse-status" value={status} onChange={event => setStatus(event.target.value)} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
-                                    <option value="ALL">All statuses</option>
-                                    <option value="Approved">Approved</option>
-                                    <option value="Partially Received">Partially Received</option>
-                                    <option value="Warehouse Receiving">Warehouse Receiving</option>
-                                    <option value="QA Receiving">QA Receiving</option>
-                                    <option value="Received">Received</option>
-                                </select>
+                            <div className="flex w-full flex-col space-y-1.5 min-w-0">
+                                <Label htmlFor="approved-date-to" className="text-xs font-semibold">Date approved to</Label>
+                                <Input id="approved-date-to" type="date" value={dateTo} onChange={event => setDateTo(event.target.value)} className="h-9 w-full" />
+                            </div>
+                            <div className="flex w-full flex-col space-y-1.5 min-w-0">
+                                <Label htmlFor="warehouse-status" className="text-xs font-semibold">Status</Label>
+                                <Select value={status} onValueChange={setStatus}>
+                                    <SelectTrigger id="warehouse-status" className="h-9 w-full">
+                                        <SelectValue placeholder="All statuses" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="ALL">All statuses</SelectItem>
+                                        <SelectItem value="Approved">Approved</SelectItem>
+                                        <SelectItem value="Partially Received">Partially Received</SelectItem>
+                                        <SelectItem value="Warehouse Receiving">Warehouse Receiving</SelectItem>
+                                        <SelectItem value="QA Receiving">QA Receiving</SelectItem>
+                                        <SelectItem value="Received">Received</SelectItem>
+                                    </SelectContent>
+                                </Select>
                             </div>
                         </div>
-                        {(search || supplierId || dateFrom || dateTo || status !== "ALL") && (
+                        {(search || supplierId || currency !== "ALL" || dateFrom || dateTo || status !== "ALL") && (
                             <div className="flex justify-end">
-                                <Button type="button" variant="ghost" size="sm" onClick={() => { setSearch(""); setSupplierId(""); setDateFrom(""); setDateTo(""); setStatus("ALL"); }}>
+                                <Button type="button" variant="ghost" size="sm" onClick={() => { setSearch(""); setSupplierId(""); setCurrency("ALL"); setDateFrom(""); setDateTo(""); setStatus("ALL"); }}>
                                     Clear filters
                                 </Button>
                             </div>
@@ -342,9 +368,54 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
                             )}
                         </div>
 
-                        <div className="grid gap-4 sm:grid-cols-2">
-                            <div className="space-y-1.5"><Label htmlFor="receipt-number" className="text-xs font-medium">Receipt Number</Label><Input id="receipt-number" value={receiptNumber} onChange={event => setReceiptNumber(event.target.value)} disabled={!isStarted || actionBusy} placeholder="Enter receipt number" /></div>
-                            <div className="space-y-1.5"><Label htmlFor="receipt-date" className="text-xs font-medium">Date of Receipt</Label><Input id="receipt-date" type="date" value={receiptDate} onChange={event => setReceiptDate(event.target.value)} disabled={!isStarted || actionBusy} /></div>
+                        <div className="grid gap-4 sm:grid-cols-3">
+                            <div className="space-y-1.5">
+                                <Label htmlFor="receipt-type" className="text-xs font-medium">
+                                    Receipt Type <span className="text-destructive">*</span>
+                                </Label>
+                                <select
+                                    id="receipt-type"
+                                    value={supplierDocumentTypeId ?? ""}
+                                    onChange={event => {
+                                        const val = event.target.value ? Number(event.target.value) : null;
+                                        setSupplierDocumentTypeId(val);
+                                    }}
+                                    disabled={!isStarted || actionBusy}
+                                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                    <option value="">Select Receipt Type...</option>
+                                    {receiptTypeOptions.map(option => (
+                                        <option key={option.id} value={option.id}>
+                                            {option.label}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label htmlFor="receipt-number" className="text-xs font-medium">
+                                    Receipt Number <span className="text-destructive">*</span>
+                                </Label>
+                                <Input
+                                    id="receipt-number"
+                                    value={receiptNumber}
+                                    maxLength={receiptTypeOptions.find(opt => opt.id === supplierDocumentTypeId)?.maxLength || 40}
+                                    onChange={event => setReceiptNumber(event.target.value)}
+                                    disabled={!isStarted || actionBusy}
+                                    placeholder={`Enter receipt number (max ${receiptTypeOptions.find(opt => opt.id === supplierDocumentTypeId)?.maxLength || 40})`}
+                                />
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label htmlFor="receipt-date" className="text-xs font-medium">
+                                    Date of Receipt <span className="text-destructive">*</span>
+                                </Label>
+                                <Input
+                                    id="receipt-date"
+                                    type="date"
+                                    value={receiptDate}
+                                    onChange={event => setReceiptDate(event.target.value)}
+                                    disabled={!isStarted || actionBusy}
+                                />
+                            </div>
                         </div>
 
                         <Separator />
@@ -429,7 +500,14 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
                                         <div key={`${receipt.id ?? receipt.receiptNumber}-${receipt.receiptDate ?? "undated"}`} className="rounded-md border bg-muted/10 p-3">
                                             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                                                 <div>
-                                                    <p className="font-semibold text-sm">Receipt {receipt.receiptNumber}</p>
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                        <p className="font-semibold text-sm">Receipt {receipt.receiptNumber}</p>
+                                                        {(receipt.supplierDocumentTypeCode || receipt.receiptType) && (
+                                                            <Badge variant="secondary" className="text-[11px] font-medium">
+                                                                {receipt.supplierDocumentTypeCode || receipt.receiptType}
+                                                            </Badge>
+                                                        )}
+                                                    </div>
                                                     <p className="text-xs text-muted-foreground">{formatDate(receipt.receiptDate)}</p>
                                                 </div>
                                                 <div className="flex items-center gap-3 sm:text-right">
@@ -437,20 +515,22 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
                                                     <div><p className="text-xs text-muted-foreground">Amount received</p><p className="font-semibold text-sm">{formatQuantity(receipt.totalReceivedQuantity)} units</p></div>
                                                 </div>
                                             </div>
-                                            {receipt.lines.length > 0 && (
+                                            {receipt.lines.filter(line => line.receivedQuantity > 1e-9).length > 0 && (
                                                 <div className="mt-3 overflow-x-auto rounded-md border bg-background">
                                                     <table className="w-full min-w-[500px] text-xs">
                                                         <thead className="bg-muted/40 text-left uppercase tracking-wide text-muted-foreground">
                                                             <tr><th className="px-3 py-2">Product</th><th className="px-3 py-2">Code</th><th className="px-3 py-2 text-right">Received</th></tr>
                                                         </thead>
                                                         <tbody className="divide-y">
-                                                            {receipt.lines.map(line => (
-                                                                <tr key={`${receipt.id ?? receipt.receiptNumber}-${line.lineId}`}>
-                                                                    <td className="px-3 py-2 font-medium">{line.productName}</td>
-                                                                    <td className="px-3 py-2 text-muted-foreground">{line.productCode || `Line ${line.lineId}`}</td>
-                                                                    <td className="px-3 py-2 text-right font-semibold">{formatQuantity(line.receivedQuantity)}</td>
-                                                                </tr>
-                                                            ))}
+                                                            {receipt.lines
+                                                                .filter(line => line.receivedQuantity > 1e-9)
+                                                                .map(line => (
+                                                                    <tr key={`${receipt.id ?? receipt.receiptNumber}-${line.lineId}`}>
+                                                                        <td className="px-3 py-2 font-medium">{line.productName}</td>
+                                                                        <td className="px-3 py-2 text-muted-foreground">{line.productCode || `Line ${line.lineId}`}</td>
+                                                                        <td className="px-3 py-2 text-right font-semibold">{formatQuantity(line.receivedQuantity)}</td>
+                                                                    </tr>
+                                                                ))}
                                                         </tbody>
                                                     </table>
                                                 </div>
@@ -498,13 +578,16 @@ export default function WarehouseReceivingModule({ mode = "queue", purchaseOrder
                     selectedLines={selectedLines}
                     quantities={quantities}
                     receiptNumber={receiptNumber}
+                    supplierDocumentTypeId={supplierDocumentTypeId}
                     receiptDate={receiptDate}
+                    receiptTypeOptions={receiptTypeOptions}
                     loading={detailLoading}
                     error={detailError}
                     submitting={submitting}
                     printing={printing}
                     updateQuantity={updateQuantity}
                     setReceiptNumber={setReceiptNumber}
+                    setSupplierDocumentTypeId={setSupplierDocumentTypeId}
                     setReceiptDate={setReceiptDate}
                     start={start}
                     saveDraft={saveDraft}

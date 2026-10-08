@@ -10,6 +10,7 @@ import {
 } from "../services/api";
 import type {
     WarehouseReceiptType,
+    WarehouseReceiptTypeOption,
     WarehouseReceivingCommand,
     WarehouseReceivingLine,
     WarehouseReceivingOrder,
@@ -36,13 +37,17 @@ export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWa
     const [selectedOrder, setSelectedOrder] = useState<WarehouseReceivingOrder | null>(null);
     const [quantities, setQuantities] = useState<Record<number, string>>({});
     const [receiptNumber, setReceiptNumber] = useState("");
+    const [supplierDocumentTypeId, setSupplierDocumentTypeId] = useState<number | null>(null);
     const [receiptDate, setReceiptDate] = useState(today);
     const [search, setSearch] = useState("");
     const [supplierId, setSupplierId] = useState("");
+    const [currency, setCurrency] = useState("ALL");
     const [dateFrom, setDateFrom] = useState("");
     const [dateTo, setDateTo] = useState("");
     const [status, setStatus] = useState("ALL");
     const [supplierOptions, setSupplierOptions] = useState<WarehouseReceivingQueueResponse["supplierOptions"]>([]);
+    const [currencyOptions, setCurrencyOptions] = useState<string[]>([]);
+    const [receiptTypeOptions, setReceiptTypeOptions] = useState<WarehouseReceiptTypeOption[]>([]);
     const [page, setPage] = useState(1);
     const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(true);
@@ -54,7 +59,7 @@ export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWa
     const queueController = useRef<AbortController | null>(null);
     const detailController = useRef<AbortController | null>(null);
 
-    const filters = useMemo(() => ({ search, supplierId, dateFrom, dateTo, status }), [dateFrom, dateTo, search, status, supplierId]);
+    const filters = useMemo(() => ({ search, supplierId, currency, dateFrom, dateTo, status }), [currency, dateFrom, dateTo, search, status, supplierId]);
 
     const loadQueue = useCallback(async (requestedPage: number, requestedFilters: typeof filters) => {
         queueController.current?.abort();
@@ -69,6 +74,10 @@ export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWa
             setPage(result.page);
             setTotal(result.total);
             setSupplierOptions(result.supplierOptions || []);
+            setCurrencyOptions(result.currencyOptions || []);
+            if (result.receiptTypeOptions) {
+                setReceiptTypeOptions(result.receiptTypeOptions);
+            }
         } catch (caught) {
             if (controller.signal.aborted || (caught as Error).name === "AbortError") return;
             const message = caught instanceof Error ? caught.message : "Unable to load Warehouse Receiving.";
@@ -103,6 +112,7 @@ export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWa
             const receipt = detail.draft;
             setReceiptNumber(receipt?.receiptNumber || "");
             setReceiptDate(receipt?.receiptDate || today());
+            setSupplierDocumentTypeId(receipt?.supplierDocumentTypeId ?? null);
             setQuantities(Object.fromEntries(detail.lines.map(line => [line.lineId, String(line.currentReceivedQuantity || "")])));
         } catch (caught) {
             if (controller.signal.aborted || (caught as Error).name === "AbortError") return;
@@ -163,6 +173,7 @@ export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWa
                 idempotencyKey: action === "start" ? randomKey() : undefined,
                 receiptNumber: receiptNumber.trim() || undefined,
                 receiptType,
+                supplierDocumentTypeId: supplierDocumentTypeId ?? undefined,
                 receiptDate: receiptDate || undefined,
                 branchId: selectedOrder.branchId,
                 lines: action === "start" ? undefined : commandLines
@@ -172,6 +183,7 @@ export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWa
                 setSelectedOrder(result);
                 setQuantities(Object.fromEntries(result.lines.map(line => [line.lineId, ""])));
                 setReceiptNumber("");
+                setSupplierDocumentTypeId(null);
                 setReceiptDate(today());
                 if (!isDetailMode) {
                     await loadQueue(page, filters);
@@ -180,6 +192,7 @@ export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWa
                 setSelectedOrder(result);
                 setQuantities(Object.fromEntries(result.lines.map(line => [line.lineId, ""])));
                 setReceiptNumber(result.draft?.receiptNumber || "");
+                setSupplierDocumentTypeId(result.draft?.supplierDocumentTypeId ?? null);
                 setReceiptDate(result.draft?.receiptDate || today());
                 if (!isDetailMode) {
                     await loadQueue(page, filters);
@@ -191,6 +204,7 @@ export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWa
                 setSelectedOrder(result);
                 setQuantities(Object.fromEntries(result.lines.map(line => [line.lineId, String(line.currentReceivedQuantity || "")])));
                 setReceiptNumber(result.draft?.receiptNumber || receiptNumber);
+                setSupplierDocumentTypeId(result.draft?.supplierDocumentTypeId ?? supplierDocumentTypeId);
                 setReceiptDate(result.draft?.receiptDate || receiptDate);
                 if (!isDetailMode) {
                     await loadQueue(page, filters);
@@ -206,7 +220,7 @@ export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWa
         } finally {
             setSubmitting(null);
         }
-    }, [commandLines, filters, isDetailMode, loadQueue, page, quantities, receiptDate, receiptNumber, receiptType, selectedOrder]);
+    }, [commandLines, filters, isDetailMode, loadQueue, page, quantities, receiptDate, receiptNumber, receiptType, selectedOrder, supplierDocumentTypeId]);
 
     const printSummary = useCallback(async () => {
         if (!selectedOrder?.draft || submitting !== null || printing) return;
@@ -235,14 +249,18 @@ export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWa
         selectedLines,
         quantities,
         receiptNumber,
+        supplierDocumentTypeId,
         receiptDate,
         receiptType,
         search,
         supplierId,
+        currency,
         dateFrom,
         dateTo,
         status,
         supplierOptions,
+        currencyOptions,
+        receiptTypeOptions,
         page,
         total,
         totalPages,
@@ -254,6 +272,7 @@ export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWa
         printing,
         setSearch,
         setSupplierId,
+        setCurrency,
         setDateFrom,
         setDateTo,
         setStatus,
@@ -264,6 +283,7 @@ export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWa
         selectOrder,
         updateQuantity,
         setReceiptNumber,
+        setSupplierDocumentTypeId,
         setReceiptDate,
         start: () => post("start"),
         saveDraft: () => post("save_draft"),
@@ -273,6 +293,7 @@ export function useWarehouseReceiving({ mode = "queue", purchaseOrderId }: UseWa
         clearSelection: () => {
             detailController.current?.abort();
             setSelectedOrder(null);
+            setSupplierDocumentTypeId(null);
             setDetailError(null);
         }
     };

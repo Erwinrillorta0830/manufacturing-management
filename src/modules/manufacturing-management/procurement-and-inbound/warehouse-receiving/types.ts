@@ -2,6 +2,16 @@ export type WarehouseReceiptType = "full" | "partial";
 
 export type WarehouseReceivingStatus = "Approved" | "Partially Received" | "Warehouse Receiving" | "QA Receiving" | "Received";
 
+export interface WarehouseReceiptTypeOption {
+    id: number;
+    type: string;
+    shortcut: string;
+    label: string;
+    maxLength: number;
+    isOfficial?: boolean | null;
+    isThermal?: boolean;
+}
+
 export interface WarehouseReceivingSupplierOption {
     id: number;
     name: string;
@@ -26,6 +36,8 @@ export interface WarehouseReceivingDraft {
     receiptNumber: string;
     receiptDate: string;
     receiptType: WarehouseReceiptType;
+    supplierDocumentTypeId?: number | null;
+    supplierDocumentTypeCode?: string | null;
     quantityStatus: "FULL" | "PARTIAL";
     postingStatus: string;
 }
@@ -45,6 +57,8 @@ export interface WarehouseReceivingReceiptHistory {
     receiptNumber: string;
     receiptDate: string | null;
     receiptType: string | null;
+    supplierDocumentTypeId?: number | null;
+    supplierDocumentTypeCode?: string | null;
     status: WarehouseReceiptHistoryStatus;
     isCurrent: boolean;
     totalReceivedQuantity: number;
@@ -83,6 +97,8 @@ export interface WarehouseReceivingQueueResponse {
     limit: number;
     total: number;
     supplierOptions: WarehouseReceivingSupplierOption[];
+    currencyOptions?: string[];
+    receiptTypeOptions?: WarehouseReceiptTypeOption[];
 }
 
 export interface WarehouseReceivingCommand {
@@ -92,6 +108,7 @@ export interface WarehouseReceivingCommand {
     idempotencyKey?: string;
     receiptNumber?: string;
     receiptType?: WarehouseReceiptType;
+    supplierDocumentTypeId?: number | null;
     receiptDate?: string;
     branchId?: number;
     lines?: Array<{

@@ -18,15 +18,16 @@ import {
 } from "@/app/api/manufacturing/procurement-and-inbound/incoming-shipments/_auth";
 import type {
     WarehouseReceiptHistoryStatus,
+    WarehouseReceiptTypeOption,
     WarehouseReceivingReceiptHistory,
     WarehouseReceivingReceiptHistoryLine
 } from "@/modules/manufacturing-management/procurement-and-inbound/warehouse-receiving/types";
-import { isReceiptQuantityOverRemaining, WAREHOUSE_RECEIPT_QUANTITY_EPSILON } from "@/modules/manufacturing-management/procurement-and-inbound/warehouse-receiving/quantity-validation";
+import { WAREHOUSE_RECEIPT_QUANTITY_EPSILON } from "@/modules/manufacturing-management/procurement-and-inbound/warehouse-receiving/quantity-validation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const RECEIPT_NUMBER_MAX_LENGTH = 32;
+const RECEIPT_NUMBER_MAX_LENGTH = 40;
 const QUANTITY_EPSILON = WAREHOUSE_RECEIPT_QUANTITY_EPSILON;
 
 const positiveId = z.coerce.number().int().positive();
@@ -43,6 +44,7 @@ const warehouseRequestSchema = z.object({
     idempotencyKey: z.string().trim().min(1).max(100).optional(),
     receiptNumber: z.string().trim().max(RECEIPT_NUMBER_MAX_LENGTH).nullable().optional(),
     receiptType: z.enum(["full", "partial"]).nullable().optional(),
+    supplierDocumentTypeId: z.coerce.number().int().positive().nullable().optional(),
     receiptDate: z.string().trim().nullable().optional(),
     branchId: positiveId.optional(),
     lines: z.array(warehouseLineSchema).optional()
@@ -89,6 +91,15 @@ interface DirectusProduct {
     product_code?: unknown;
 }
 
+interface DirectusReceiptType {
+    id?: unknown;
+    type?: unknown;
+    shortcut?: unknown;
+    max_length?: unknown;
+    isOfficial?: unknown;
+    is_thermal?: unknown;
+}
+
 interface DirectusReceiving {
     id?: unknown;
     purchase_order_product_id?: unknown;
@@ -109,6 +120,8 @@ interface DirectusReceiving {
     receipt_type?: unknown;
     qa_status?: unknown;
     is_replacement?: unknown;
+    is_over_received?: unknown;
+    over_delivery_quantity?: unknown;
 }
 
 interface DirectusHeader {
@@ -430,6 +443,36 @@ function dateOnly(value: unknown): string | null {
     return normalized ? normalized.slice(0, 10) : null;
 }
 
+async function loadReceiptTypes(): Promise<WarehouseReceiptTypeOption[]> {
+    const params = new URLSearchParams({
+        fields: "id,type,shortcut,max_length,isOfficial,is_thermal",
+        sort: "id",
+        limit: "-1"
+    });
+    const rows = await directusRows(`/items/sales_invoice_type?${params.toString()}`, "Unable to load receipt types.") as DirectusReceiptType[];
+    const result: WarehouseReceiptTypeOption[] = [];
+    for (const row of rows) {
+        const id = relationId(row.id);
+        const type = String(row.type || "").trim();
+        const shortcut = String(row.shortcut || "").trim();
+        const maxLength = Number(row.max_length) || 40;
+        const isOfficial = row.isOfficial === null || row.isOfficial === undefined ? null : isOne(row.isOfficial);
+        const isThermal = isOne(row.is_thermal);
+        if (id && type) {
+            result.push({
+                id,
+                type,
+                shortcut: shortcut || type,
+                label: shortcut ? `${type} (${shortcut})` : type,
+                maxLength,
+                isOfficial,
+                isThermal
+            });
+        }
+    }
+    return result;
+}
+
 function buildReceiptHistory(
     receivingRows: DirectusReceiving[],
     headers: DirectusHeader[],
@@ -439,6 +482,8 @@ function buildReceiptHistory(
         productName: string;
         productCode: string;
     }>,
+    receiptTypeMap: Map<number, WarehouseReceiptTypeOption>,
+    receiptTypeByCode: Map<string, WarehouseReceiptTypeOption>,
     currentHeaderId: number,
     currentStatus: number
 ): WarehouseReceivingReceiptHistory[] {
@@ -453,6 +498,8 @@ function buildReceiptHistory(
         receiptNumber: string;
         receiptDate: string | null;
         receiptType: string | null;
+        supplierDocumentTypeId?: number | null;
+        supplierDocumentTypeCode?: string | null;
         status: WarehouseReceiptHistoryStatus;
         isCurrent: boolean;
         totalReceivedQuantity: number;
@@ -477,14 +524,22 @@ function buildReceiptHistory(
             : isAwaitingQa
                 ? "Awaiting QA"
                 : (rowHeaderId ? "Posted" : "Legacy");
+
+        const rawDocTypeId = relationId(header?.receipt_type) ?? relationId(row.receipt_type);
+        const rawDocTypeCode = typeof header?.receipt_type === "string" ? header.receipt_type.trim().toUpperCase() : null;
+        const matchedDocType = (rawDocTypeId ? receiptTypeMap.get(rawDocTypeId) : null)
+            ?? (rawDocTypeCode ? receiptTypeByCode.get(rawDocTypeCode) : null);
+
         const existing = grouped.get(key);
         const entry = existing || {
             id: rowHeaderId,
             receiptNumber,
             receiptDate: dateOnly(header?.receipt_date) || dateOnly(row.receipt_date) || dateOnly(row.received_date),
-            receiptType: header?.receipt_type == null
+            receiptType: matchedDocType?.shortcut || (header?.receipt_type == null
                 ? (row.receipt_type == null ? null : String(row.receipt_type))
-                : String(header.receipt_type),
+                : String(header.receipt_type)),
+            supplierDocumentTypeId: matchedDocType?.id ?? rawDocTypeId ?? null,
+            supplierDocumentTypeCode: matchedDocType?.shortcut ?? rawDocTypeCode ?? null,
             status,
             isCurrent,
             totalReceivedQuantity: 0,
@@ -513,8 +568,11 @@ function buildReceiptHistory(
     return [...grouped.values()]
         .map(entry => ({
             ...entry,
-            lines: [...entry.lines.values()].sort((left, right) => left.lineId - right.lineId)
+            lines: [...entry.lines.values()]
+                .filter(line => line.receivedQuantity > QUANTITY_EPSILON)
+                .sort((left, right) => left.lineId - right.lineId)
         }))
+        .filter(entry => entry.lines.length > 0 || entry.isCurrent)
         .sort((left, right) =>
             Number(right.isCurrent) - Number(left.isCurrent)
             || String(right.receiptDate || "").localeCompare(String(left.receiptDate || ""))
@@ -525,13 +583,16 @@ function buildReceiptHistory(
 async function buildOrderView(order: DirectusOrder) {
     const purchaseOrderId = relationId(order.purchase_order_id, ["purchase_order_id", "id"]);
     if (!purchaseOrderId) throw new WarehouseReceivingError("Purchase order data is invalid.", 503);
-    const [lines, receivingRows, headers, supplierName, branch] = await Promise.all([
+    const [lines, receivingRows, headers, supplierName, branch, receiptTypes] = await Promise.all([
         loadLines(purchaseOrderId),
         loadReceivingRows(purchaseOrderId),
         loadHeaders(purchaseOrderId),
         loadSupplierName(order.supplier_name),
-        loadBranch(orderBranchId(order))
+        loadBranch(orderBranchId(order)),
+        loadReceiptTypes()
     ]);
+    const receiptTypeMap = new Map(receiptTypes.map(item => [item.id, item]));
+    const receiptTypeByCode = new Map(receiptTypes.map(item => [item.shortcut.toUpperCase(), item]));
     const warehouseHeaders = headers.filter(header => String(header.posting_status || "") === "Reserved");
     const currentWarehouseHeader = statusId(order) === INVENTORY_STATUS.WAREHOUSE_RECEIVING
         ? warehouseHeaders.find(header => Number(header.workflow_revision) === workflowRevision(order)) || null
@@ -574,9 +635,23 @@ async function buildOrderView(order: DirectusOrder) {
         receivingRows,
         headers,
         lines,
+        receiptTypeMap,
+        receiptTypeByCode,
         warehouseHeaderId,
         statusId(order)
     );
+
+    let draftSupplierDocumentTypeId: number | null = null;
+    let draftSupplierDocumentTypeCode: string | null = null;
+    if (currentWarehouseHeader) {
+        const parsedHeaderTypeId = relationId(currentWarehouseHeader.receipt_type);
+        const matched = parsedHeaderTypeId
+            ? receiptTypeMap.get(parsedHeaderTypeId)
+            : (typeof currentWarehouseHeader.receipt_type === "string" ? receiptTypeByCode.get(currentWarehouseHeader.receipt_type.trim().toUpperCase()) : null);
+        draftSupplierDocumentTypeId = matched?.id ?? parsedHeaderTypeId ?? null;
+        draftSupplierDocumentTypeCode = matched?.shortcut ?? null;
+    }
+
     return {
         id: purchaseOrderId,
         poNumber: String(order.purchase_order_no || order.reference || `PO-${purchaseOrderId}`),
@@ -610,8 +685,10 @@ async function buildOrderView(order: DirectusOrder) {
                 id: Number(currentWarehouseHeader.id),
                 receiptNumber: String(currentWarehouseHeader.receiving_ticket_no || ""),
                 receiptDate: currentWarehouseHeader.receipt_date ? String(currentWarehouseHeader.receipt_date).slice(0, 10) : "",
-                receiptType: String(currentWarehouseHeader.receipt_type || "full").toLowerCase(),
-                quantityStatus: String(currentWarehouseHeader.quantity_status || "PARTIAL"),
+                receiptType: (String(currentWarehouseHeader.quantity_status || "").toUpperCase() === "FULL" ? "full" : "partial") as "full" | "partial",
+                supplierDocumentTypeId: draftSupplierDocumentTypeId,
+                supplierDocumentTypeCode: draftSupplierDocumentTypeCode,
+                quantityStatus: String(currentWarehouseHeader.quantity_status || "PARTIAL") as "FULL" | "PARTIAL",
                 postingStatus: String(currentWarehouseHeader.posting_status || "Reserved")
             }
             : null,
@@ -619,18 +696,36 @@ async function buildOrderView(order: DirectusOrder) {
     };
 }
 
-function requireReceiptMetadata(command: WarehouseRequest) {
+async function requireReceiptMetadata(command: WarehouseRequest) {
     const receiptNumber = command.receiptNumber?.trim() || "";
     if (!receiptNumber) throw new WarehouseReceivingError("Receipt Number is required.", 400);
-    if (receiptNumber.length > RECEIPT_NUMBER_MAX_LENGTH) {
-        throw new WarehouseReceivingError(`Receipt Number cannot exceed ${RECEIPT_NUMBER_MAX_LENGTH} characters.`, 400);
-    }
+
     const receiptDate = command.receiptDate?.trim() || "";
     if (!receiptDate) throw new WarehouseReceivingError("Receipt Date is required.", 400);
+
+    const supplierDocumentTypeId = relationId(command.supplierDocumentTypeId);
+    let selectedDocType: WarehouseReceiptTypeOption | null = null;
+    if (supplierDocumentTypeId) {
+        const receiptTypes = await loadReceiptTypes();
+        selectedDocType = receiptTypes.find(type => type.id === supplierDocumentTypeId) || null;
+        if (!selectedDocType) {
+            throw new WarehouseReceivingError("Selected Receipt Type is invalid.", 400);
+        }
+    } else if (command.action === "submit_to_qa") {
+        throw new WarehouseReceivingError("Receipt Type is required before submitting to QA.", 400);
+    }
+
+    const maxAllowedLength = selectedDocType?.maxLength || RECEIPT_NUMBER_MAX_LENGTH;
+    if (receiptNumber.length > maxAllowedLength) {
+        throw new WarehouseReceivingError(`Receipt Number cannot exceed ${maxAllowedLength} characters for ${selectedDocType?.shortcut || "this receipt type"}.`, 400);
+    }
+
     return {
         receiptNumber,
         receiptDate: validateDateOnly(receiptDate),
-        receiptType: command.receiptType || "full"
+        receiptType: command.receiptType || "full",
+        supplierDocumentTypeId: selectedDocType?.id ?? null,
+        supplierDocumentTypeCode: selectedDocType?.shortcut ?? null
     };
 }
 
@@ -669,19 +764,10 @@ async function validateWarehouseLines(order: DirectusOrder, command: WarehouseRe
         };
     });
     if (command.action === "submit_to_qa") {
-        const metadata = requireReceiptMetadata(command);
+        const metadata = await requireReceiptMetadata(command);
         const total = validated.reduce((sum, item) => sum + item.quantity, 0);
         if (metadata.receiptType === "partial" && total <= QUANTITY_EPSILON) {
             throw new WarehouseReceivingError("A partial warehouse receipt must include at least one received quantity.", 400);
-        }
-        if (metadata.receiptType === "partial") {
-            const overRemainingLine = validated.find(item => isReceiptQuantityOverRemaining(
-                item.quantity,
-                Math.max(0, item.line.orderedQuantity - (postedByLine.get(item.line.lineId) || 0))
-            ));
-            if (overRemainingLine) {
-                throw new WarehouseReceivingError(`Partial receipt quantity for line ${overRemainingLine.line.lineId} cannot exceed its remaining quantity.`, 400);
-            }
         }
         if (metadata.receiptType === "full" && validated.some(item => item.quantity + QUANTITY_EPSILON < Math.max(0, item.line.orderedQuantity - (postedByLine.get(item.line.lineId) || 0)))) {
             throw new WarehouseReceivingError("A full warehouse receipt must cover the remaining quantity on every line.", 400);
@@ -697,7 +783,7 @@ async function persistWarehouseDraft(order: DirectusOrder, command: WarehouseReq
     if (!header) throw new WarehouseReceivingError("The warehouse receiving draft could not be found. Start Warehouse Receiving again.", 409);
     const headerIdValue = Number(header.id);
     if (!Number.isSafeInteger(headerIdValue) || headerIdValue <= 0) throw new WarehouseReceivingError("The warehouse receiving draft has an invalid header ID.", 503);
-    const metadata = requireReceiptMetadata(command);
+    const metadata = await requireReceiptMetadata(command);
     const validated = await validateWarehouseLines(order, command, headerIdValue);
     if (await duplicateReceiptNumber(metadata.receiptNumber, headerIdValue)) {
         throw new WarehouseReceivingError("Receipt Number is already in use.", 409);
@@ -716,18 +802,25 @@ async function persistWarehouseDraft(order: DirectusOrder, command: WarehouseReq
         await patchHeader(headerIdValue, {
             receiving_ticket_no: metadata.receiptNumber,
             receipt_date: metadata.receiptDate,
-            receipt_type: metadata.receiptType,
+            receipt_type: metadata.supplierDocumentTypeId ?? metadata.supplierDocumentTypeCode ?? metadata.receiptType,
             quantity_status: metadata.receiptType === "full" ? "FULL" : "PARTIAL"
         });
         await Promise.all(validated.map(async item => {
             const receiptRow = existingByLine.get(item.line.lineId);
+            if (item.quantity <= QUANTITY_EPSILON) {
+                if (receiptRow) {
+                    const id = Number(receiptRow.purchase_order_product_id);
+                    await deleteReceivingRow(id);
+                }
+                return;
+            }
             const payload = {
                 purchase_order_id: purchaseOrderId,
                 purchase_order_line_id: item.line.lineId,
                 product_id: item.line.productId,
                 branch_id: relationId(order.branch_id, ["id", "branch_id"]),
                 receiving_header_id: headerIdValue,
-                receipt_no: `${metadata.receiptNumber}-${item.line.lineId}`,
+                receipt_no: metadata.receiptNumber,
                 receipt_date: metadata.receiptDate,
                 received_date: null,
                 received_quantity: item.quantity,
@@ -735,8 +828,10 @@ async function persistWarehouseDraft(order: DirectusOrder, command: WarehouseReq
                 isPosted: 0,
                 is_reverted: 0,
                 receiving_method: "WAREHOUSE",
-                receipt_type: null,
+                receipt_type: metadata.supplierDocumentTypeId,
                 qa_status: "Pending",
+                is_over_received: item.overage > QUANTITY_EPSILON ? 1 : 0,
+                over_delivery_quantity: item.overage > QUANTITY_EPSILON ? item.overage : 0,
                 batch_no: null,
                 mm_lot_id: null,
                 expiry_date: null,
@@ -858,10 +953,20 @@ async function startWarehouseReceiving(order: DirectusOrder, command: WarehouseR
 
 async function submitWarehouseReceiving(order: DirectusOrder, command: WarehouseRequest, actorId: number) {
     const purchaseOrderId = relationId(order.purchase_order_id, ["purchase_order_id", "id"]) || 0;
-    const currentStatus = statusId(order);
-    const currentRevision = workflowRevision(order);
+    let currentStatus = statusId(order);
+    let currentRevision = workflowRevision(order);
+
+    // If the order is in Approved or Partially Received status, auto-start the warehouse receiving draft first
     if (currentStatus !== INVENTORY_STATUS.WAREHOUSE_RECEIVING) {
-        throw new WarehouseReceivingError("The purchase order must be in Warehouse Receiving before it can be sent to QA.", 409);
+        if (currentStatus === INVENTORY_STATUS.APPROVED || currentStatus === INVENTORY_STATUS.PARTIALLY_RECEIVED) {
+            await startWarehouseReceiving(order, command, actorId);
+            const reloadedOrder = await loadOrder(purchaseOrderId);
+            currentStatus = statusId(reloadedOrder);
+            currentRevision = workflowRevision(reloadedOrder);
+            order = reloadedOrder;
+        } else {
+            throw new WarehouseReceivingError("The purchase order must be in Warehouse Receiving before it can be sent to QA.", 409);
+        }
     }
     await persistWarehouseDraft(order, command, { skipBuildView: true });
     const nextRevision = currentRevision + 1;
@@ -916,6 +1021,7 @@ export async function GET(request: Request) {
 
         const search = (searchParams.get("search") || "").trim().toLowerCase();
         const supplierId = Number(searchParams.get("supplierId") || 0);
+        const currency = (searchParams.get("currency") || "").trim().toUpperCase();
         const status = (searchParams.get("status") || "").trim();
         const dateFrom = searchParams.get("dateFrom") ? validateDateOnly(searchParams.get("dateFrom") || "") : null;
         const dateTo = searchParams.get("dateTo") ? validateDateOnly(searchParams.get("dateTo") || "") : null;
@@ -1011,10 +1117,17 @@ export async function GET(request: Request) {
                 .map(item => [item.supplierId as number, { id: item.supplierId as number, name: item.supplierName }])
         ).values()].sort((left, right) => left.name.localeCompare(right.name));
 
+        const currencyOptions = [...new Set(
+            orders
+                .map(order => String(order.currency_code || "PHP").trim().toUpperCase())
+                .filter(Boolean)
+        )].sort();
+
         const filtered = queueItems.filter(item => {
             const approvedDate = item.dateApproved?.slice(0, 10) || null;
             return (!search || `${item.poNumber} ${item.purchaseOrderNumber} ${item.referenceNumber || ""} ${item.supplierName} ${item.remarks} ${item.status}`.toLowerCase().includes(search))
                 && (!supplierId || item.supplierId === supplierId)
+                && (!currency || currency === "ALL" || item.currencyCode === currency)
                 && (!status || status === "ALL" || item.status === status)
                 && (!dateFrom || (approvedDate !== null && approvedDate >= dateFrom))
                 && (!dateTo || (approvedDate !== null && approvedDate <= dateTo));
@@ -1023,7 +1136,18 @@ export async function GET(request: Request) {
         const page = Math.max(1, Number(searchParams.get("page") || 1));
         const limit = Math.min(100, Math.max(1, Number(searchParams.get("limit") || 25)));
         const start = (page - 1) * limit;
-        return NextResponse.json({ data: { items: filtered.slice(start, start + limit), page, limit, total: filtered.length, supplierOptions } });
+        const receiptTypeOptions = await loadReceiptTypes();
+        return NextResponse.json({
+            data: {
+                items: filtered.slice(start, start + limit),
+                page,
+                limit,
+                total: filtered.length,
+                supplierOptions,
+                currencyOptions,
+                receiptTypeOptions
+            }
+        });
     } catch (error) {
         const status = error instanceof PurchaseOrderAuthorizationError
             ? error.status
@@ -1050,8 +1174,12 @@ export async function POST(request: Request) {
         if (command.action === "start") {
             return NextResponse.json({ data: await startWarehouseReceiving(order, command, actor.userId) });
         }
-        if (statusId(order) !== INVENTORY_STATUS.WAREHOUSE_RECEIVING) {
-            throw new WarehouseReceivingError("The purchase order must be in Warehouse Receiving before saving or submitting a draft.", 409);
+        const currentStatus = statusId(order);
+        if (command.action === "save_draft" && currentStatus !== INVENTORY_STATUS.WAREHOUSE_RECEIVING) {
+            throw new WarehouseReceivingError("The purchase order must be in Warehouse Receiving before saving a draft.", 409);
+        }
+        if (command.action === "submit_to_qa" && currentStatus !== INVENTORY_STATUS.WAREHOUSE_RECEIVING && currentStatus !== INVENTORY_STATUS.APPROVED && currentStatus !== INVENTORY_STATUS.PARTIALLY_RECEIVED) {
+            throw new WarehouseReceivingError("The purchase order cannot be submitted to QA from its current status.", 409);
         }
         if (command.action === "save_draft") {
             return NextResponse.json({ data: await persistWarehouseDraft(order, command) });
