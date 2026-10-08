@@ -27,7 +27,8 @@ import {
 } from "./OperatorRosterChangeDialog";
 import { WorkstationBreakdownDialog } from "./WorkstationBreakdownDialog";
 import { WorkstationAssetSummary } from "./WorkstationAssetSummary";
-import { elapsedSecondsSince, formatPhtDateTime } from "../operator-time";
+import { elapsedSecondsBetween, elapsedSecondsSince, formatElapsedDuration, formatPhtDateTime } from "../operator-time";
+import { isTerminalRouteStatus } from "../route-status";
 import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 
 interface RouteExecutionTableProps {
@@ -121,39 +122,16 @@ function formatDateTime(value: string | null | undefined): string {
     return formatPhtDateTime(value);
 }
 
-function getRemainingSeconds(startedAt: string, durationHours: number): number {
-    const elapsedSeconds = elapsedSecondsSince(startedAt);
-    return Math.max(0, Math.ceil(durationHours * 60 * 60 - elapsedSeconds));
-}
-
-function formatTimerSeconds(totalSeconds: number): string {
-    const safeSeconds = Math.max(0, totalSeconds);
-    const hours = Math.floor(safeSeconds / 3600);
-    const minutes = Math.floor((safeSeconds % 3600) / 60);
-    const seconds = safeSeconds % 60;
-    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-}
-
-function RunningTimer({ startedAt, durationHours }: { startedAt: string; durationHours: number }) {
-    const [remainingSeconds, setRemainingSeconds] = useState(() => getRemainingSeconds(startedAt, durationHours));
-
-    useEffect(() => {
-        const update = () => setRemainingSeconds(getRemainingSeconds(startedAt, durationHours));
-        update();
-        const timer = setInterval(update, 1000);
-        return () => clearInterval(timer);
-    }, [startedAt, durationHours]);
-
-    const isExpired = remainingSeconds === 0;
+function ElapsedTimer({ totalSeconds, isRunning }: { totalSeconds: number; isRunning: boolean }) {
     return (
         <span
-            className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 font-mono text-[10px] font-bold ${isExpired
-                ? "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-400"
-                : "border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"}`}
-            title={isExpired ? "Shift time complete" : "Remaining shift time"}
+            className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 font-mono text-[10px] font-bold ${isRunning
+                ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                : "border-muted bg-muted/50 text-muted-foreground"}`}
+            title={isRunning ? "Elapsed production time" : "Elapsed time for the last session"}
         >
-            <span className={`h-1.5 w-1.5 rounded-full ${isExpired ? "bg-amber-500" : "animate-ping bg-emerald-500"}`} />
-            {formatTimerSeconds(remainingSeconds)}
+            <span className={`h-1.5 w-1.5 rounded-full ${isRunning ? "animate-ping bg-emerald-500" : "bg-muted-foreground"}`} />
+            {formatElapsedDuration(totalSeconds)}
         </span>
     );
 }
@@ -227,13 +205,20 @@ function RouteExecutionRow({
         }, []);
     }, [groupedOperators, users]);
 
-    const isCompleted = task.status === "Completed";
+    const isCompleted = isTerminalRouteStatus(task.status);
     const isOngoing = task.status === "Ongoing" || task.status === "In Progress";
     const isQAHold = task.status === "QA Hold";
     const canStartTimer = isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION);
     const floorMutationsLocked = readOnly || productionTargetReached;
     const hasMaterials = (task.bom_items || []).length > 0;
-    const shiftDurationHours = Math.max(0.1, Number(selectedJobOrder.shiftOption ?? selectedJobOrder.shift_option ?? 8) || 8);
+    const hasRunningOperator = groupedOperators.some((operator) => operator.activeSession !== null);
+    const [timerNow, setTimerNow] = useState(() => Date.now());
+
+    useEffect(() => {
+        if (!hasRunningOperator) return;
+        const timer = setInterval(() => setTimerNow(Date.now()), 1000);
+        return () => clearInterval(timer);
+    }, [hasRunningOperator]);
     const rowClass = isSelected
         ? "bg-primary/[0.06]"
         : isCompleted
@@ -307,7 +292,7 @@ function RouteExecutionRow({
                                 ))}
                             </div>
                         </div>
-                        {!floorMutationsLocked && (
+                        {!isCompleted && !floorMutationsLocked && (
                             <div className="border-t border-dashed border-border/70 pt-2">
                                 <div className="mb-1 text-[9px] font-bold uppercase tracking-wider text-muted-foreground">
                                     Assign Additional Personnel
@@ -390,7 +375,7 @@ function RouteExecutionRow({
                         {isCompleted
                             ? "Completion recorded"
                             : productionTargetReached
-                                ? "Output target reached. Stop active timers and complete this route; other production actions are locked."
+                                ? "Output target reached. Complete this route to stop active timers; other production actions are locked."
                                 : readOnly
                                     ? "Route actions unavailable"
                                     : "Complete this route explicitly when finished"}
@@ -407,6 +392,12 @@ function RouteExecutionRow({
                                 const isRunning = Boolean(operator.activeSession);
                                 const isTimerPending = pendingTimerKey === `${task.id}:${operator.userId}`;
                                 const displayedSession = operator.activeSession || operator.latestCompletedSession || operator.latestSession;
+                                const frozenSessionSeconds = operator.latestCompletedSession
+                                    ? elapsedSecondsBetween(operator.latestCompletedSession.started_at, operator.latestCompletedSession.stopped_at) ?? 0
+                                    : 0;
+                                const elapsedSeconds = operator.activeSession
+                                    ? elapsedSecondsSince(operator.activeSession.started_at || "", timerNow)
+                                    : frozenSessionSeconds;
                                 const hasRecordedSession = operator.totalHours > 0
                                     || Boolean(operator.latestSession.started_at || operator.latestSession.stopped_at);
                                 const hasEditableSession = Boolean(operator.activeSession || operator.latestCompletedSession);
@@ -419,8 +410,8 @@ function RouteExecutionRow({
                                     <div key={operator.userId} className="rounded-lg border border-border/60 bg-background/60 p-2">
                                         <div className="flex items-center justify-between gap-2">
                                             <span className="truncate text-[10px] font-bold text-foreground">{getOperatorLabel(users, operator)}</span>
-                                            {isRunning ? (
-                                                <RunningTimer startedAt={operator.activeSession!.started_at!} durationHours={shiftDurationHours} />
+                                            {isRunning || operator.latestCompletedSession ? (
+                                                <ElapsedTimer totalSeconds={elapsedSeconds} isRunning={isRunning} />
                                             ) : (
                                                 <span className="rounded bg-muted/50 px-1.5 py-0.5 text-[9px] font-semibold text-muted-foreground">
                                                     {hasRecordedSession ? "Stopped" : "Not started"}
@@ -430,7 +421,7 @@ function RouteExecutionRow({
                                         <div className="mt-1 grid grid-cols-3 gap-1 text-[9px] text-muted-foreground">
                                             <span>In (PHT): <strong className="block truncate text-foreground">{formatDateTime(displayedSession.started_at)}</strong></span>
                                             <span>Out (PHT): <strong className="block truncate text-foreground">{formatDateTime(displayedSession.stopped_at)}</strong></span>
-                                            <span>Consumed: <strong className="block font-mono text-foreground">{operator.totalHours.toFixed(2)}h</strong></span>
+                                            <span>Consumed: <strong className="block font-mono text-foreground">{(operator.totalHours + (operator.activeSession ? elapsedSeconds / 3600 : 0)).toFixed(2)}h</strong></span>
                                         </div>
                                         <div className="mt-1.5 flex flex-wrap items-center gap-1">
                                             {isTimerPending ? (
@@ -448,12 +439,12 @@ function RouteExecutionRow({
                                             )}
                                             <Tooltip>
                                                 <TooltipTrigger asChild>
-                                                    <span tabIndex={!floorMutationsLocked && !hasEditableSession ? 0 : -1}>
+                                                            <span tabIndex={!readOnly && !hasEditableSession ? 0 : -1}>
                                                         <Button
                                                             type="button"
                                                             size="xs"
                                                             variant="ghost"
-                                                            disabled={floorMutationsLocked || !hasEditableSession}
+                                                            disabled={readOnly || !hasEditableSession}
                                                             className="h-6 px-1.5 text-[9px]"
                                                             onClick={() => onRequestEditOperator(task, operator)}
                                                             title={editTimeMessage}
@@ -462,16 +453,16 @@ function RouteExecutionRow({
                                                         </Button>
                                                     </span>
                                                 </TooltipTrigger>
-                                                {!floorMutationsLocked && !hasEditableSession && <TooltipContent>{editTimeMessage}</TooltipContent>}
+                                                {!readOnly && !hasEditableSession && <TooltipContent>{editTimeMessage}</TooltipContent>}
                                             </Tooltip>
                                             <Tooltip>
                                                 <TooltipTrigger asChild>
-                                                    <span tabIndex={hasProtectedLabor && !floorMutationsLocked ? 0 : -1}>
+                                                            <span tabIndex={hasProtectedLabor && !floorMutationsLocked && !isCompleted ? 0 : -1}>
                                                         <Button
                                                             type="button"
                                                             size="xs"
                                                             variant="ghost"
-                                                            disabled={floorMutationsLocked || hasProtectedLabor}
+                                                            disabled={floorMutationsLocked || isCompleted || hasProtectedLabor}
                                                             aria-label="Swap operator assignment"
                                                             className="h-6 px-1.5 text-[9px] text-amber-700 hover:text-amber-800 dark:text-amber-400"
                                                             onClick={() => onRequestSwapOperator(task, operator, operatorOptions)}
@@ -481,16 +472,16 @@ function RouteExecutionRow({
                                                         </Button>
                                                     </span>
                                                 </TooltipTrigger>
-                                                {hasProtectedLabor && !floorMutationsLocked && <TooltipContent>{guardrailMessage}</TooltipContent>}
+                                                        {hasProtectedLabor && !floorMutationsLocked && !isCompleted && <TooltipContent>{guardrailMessage}</TooltipContent>}
                                             </Tooltip>
                                             <Tooltip>
                                                 <TooltipTrigger asChild>
-                                                    <span tabIndex={hasProtectedLabor && !floorMutationsLocked ? 0 : -1}>
+                                                            <span tabIndex={hasProtectedLabor && !floorMutationsLocked && !isCompleted ? 0 : -1}>
                                                         <Button
                                                             type="button"
                                                             size="xs"
                                                             variant="ghost"
-                                                            disabled={floorMutationsLocked || hasProtectedLabor}
+                                                            disabled={floorMutationsLocked || isCompleted || hasProtectedLabor}
                                                             aria-label="Remove personnel from route"
                                                             className="h-6 px-1.5 text-[9px] text-destructive hover:text-destructive"
                                                             onClick={() => onRequestRemoveOperator(task, operator)}
@@ -500,7 +491,7 @@ function RouteExecutionRow({
                                                         </Button>
                                                     </span>
                                                 </TooltipTrigger>
-                                                {hasProtectedLabor && !floorMutationsLocked && <TooltipContent>{guardrailMessage}</TooltipContent>}
+                                                {hasProtectedLabor && !floorMutationsLocked && !isCompleted && <TooltipContent>{guardrailMessage}</TooltipContent>}
                                             </Tooltip>
                                         </div>
                                     </div>

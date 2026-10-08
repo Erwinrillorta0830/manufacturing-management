@@ -8,7 +8,6 @@ import {
     CheckCircle2,
     ArrowRight,
     Loader2,
-    Image as ImageIcon
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -23,6 +22,19 @@ function formatWorkflowAction(action: string): string {
     return action
         .replace(/[-_]+/g, " ")
         .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function evidenceFilesForRecord(record: JobOrderStatusHistoryRecord) {
+    if (record.evidence_files?.length) return record.evidence_files;
+    return record.evidence_image_id
+        ? [{
+            directus_file_id: record.evidence_image_id,
+            file_name: record.evidence_file_name,
+            mime_type: record.evidence_mime_type,
+            file_size: record.evidence_file_size,
+            sort_order: 0
+        }]
+        : [];
 }
 
 interface StatusHistoryModalProps {
@@ -131,27 +143,34 @@ export function StatusHistoryModal({
                                             </div>
                                         )}
 
-                                        {rec.evidence_image_id && (
-                                            isManufacturingEvidenceVideo(rec.evidence_mime_type, rec.evidence_file_name) ? (
-                                                <video
-                                                    src={manufacturingFileUrl(String(rec.evidence_image_id))}
-                                                    controls
-                                                    playsInline
-                                                    preload="metadata"
-                                                    aria-label={rec.evidence_file_name || "Workflow evidence video"}
-                                                    className="max-h-64 w-full rounded-lg border border-amber-500/30 bg-black"
-                                                />
-                                            ) : (
-                                                <a
-                                                    href={manufacturingFileUrl(String(rec.evidence_image_id))}
-                                                    target="_blank"
-                                                    rel="noreferrer"
-                                                    className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2 text-xs font-semibold text-amber-700 hover:bg-amber-500/10 dark:text-amber-400"
-                                                >
-                                                    <ImageIcon className="h-4 w-4" />
-                                                    View workflow evidence image
-                                                </a>
-                                            )
+                                        {evidenceFilesForRecord(rec).length > 0 && (
+                                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                                {evidenceFilesForRecord(rec).map((evidenceFile, evidenceIndex) => {
+                                                    const fileUrl = manufacturingFileUrl(evidenceFile.directus_file_id);
+                                                    const isVideo = isManufacturingEvidenceVideo(evidenceFile.mime_type, evidenceFile.file_name);
+                                                    return (
+                                                        <div key={`${evidenceFile.directus_file_id}-${evidenceIndex}`} className="overflow-hidden rounded-lg border border-amber-500/30 bg-amber-500/5">
+                                                            {isVideo ? (
+                                                                <video
+                                                                    src={fileUrl}
+                                                                    controls
+                                                                    playsInline
+                                                                    preload="metadata"
+                                                                    aria-label={evidenceFile.file_name || `Workflow evidence video ${evidenceIndex + 1}`}
+                                                                    className="max-h-64 w-full bg-black"
+                                                                />
+                                                            ) : (
+                                                                <a href={fileUrl} target="_blank" rel="noreferrer" className="block">
+                                                                    <img src={fileUrl} alt={evidenceFile.file_name || `Workflow evidence image ${evidenceIndex + 1}`} className="h-40 w-full bg-muted object-contain" />
+                                                                </a>
+                                                            )}
+                                                            <p className="truncate px-2 py-1.5 text-[11px] font-semibold text-amber-800 dark:text-amber-300" title={evidenceFile.file_name || undefined}>
+                                                                {evidenceFile.file_name || `Evidence ${evidenceIndex + 1}`}
+                                                            </p>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
                                         )}
 
                                         <div className="flex flex-wrap items-center gap-4 text-[11px] text-muted-foreground pt-1 border-t border-border/30 font-medium">

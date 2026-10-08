@@ -274,6 +274,14 @@ export interface JobOrderStatusHistoryRecord {
     evidence_file_name?: string | null;
     evidence_mime_type?: string | null;
     evidence_file_size?: number | null;
+    evidence_files?: Array<{
+        evidence_id?: number | null;
+        directus_file_id: string;
+        file_name?: string | null;
+        mime_type?: string | null;
+        file_size?: number | null;
+        sort_order?: number;
+    }>;
     job_order_no?: string;
     work_center_id?: number | null;
     work_center_name?: string | null;

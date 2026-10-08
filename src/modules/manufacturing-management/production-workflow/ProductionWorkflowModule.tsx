@@ -726,7 +726,7 @@ export default function ProductionWorkflowModule() {
                             Complete route step?
                         </DialogTitle>
                         <DialogDescription>
-                            Confirm that this route is finished. QA-required routes use the same completion confirmation and do not open a separate QA Gate.
+                            Confirm that this route is finished. Active operator timers on this step will be stopped automatically. QA-required routes use the same completion confirmation and do not open a separate QA Gate.
                         </DialogDescription>
                     </DialogHeader>
                     {completionTask && (

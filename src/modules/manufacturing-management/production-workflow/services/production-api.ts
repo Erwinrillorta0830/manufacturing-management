@@ -180,7 +180,10 @@ export async function patchRoutingTask(payload: PatchTaskPayload): Promise<void>
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
     });
-    if (!res.ok) throw new Error("Failed to update task.");
+    if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        throw new Error(error.error || error.message || "Failed to update task.");
+    }
 }
 
 export async function fetchQATemplate(taskName: string, productId: number, templateId?: number | null): Promise<any> {

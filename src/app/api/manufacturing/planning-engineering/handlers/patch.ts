@@ -7,11 +7,12 @@ import { executeJobOrderWorkflow } from "../../job-orders/_workflow-service";
 import {
     deleteJobOrderWorkflowEvidence,
     JobOrderWorkflowEvidenceError,
-    uploadJobOrderWorkflowEvidence,
-    validateJobOrderWorkflowEvidence
+    uploadJobOrderWorkflowEvidence
 } from "../../job-orders/_workflow-evidence";
 import { resolveApplicableRouteWorkCenters } from "../../production/_applicable-work-centers";
 import { committedGoodOutputOrAggregate, goodOutputAggregateFallback, hasReachedProductionTarget } from "@/modules/manufacturing-management/production-workflow/utils/production-output";
+import { accumulateHoursFromSeconds, elapsedSecondsBetween } from "@/modules/manufacturing-management/production-workflow/operator-time";
+import { MANUFACTURING_EVIDENCE_MAX_FILES, validateManufacturingEvidenceBatch } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
 import {
     JOB_ORDER_MODULE_PATHS,
     JobOrderModuleAccessError,
@@ -89,6 +90,59 @@ async function productionTargetResponse(jobOrderId: number | string): Promise<Ne
         }, { status: 409 });
     }
     return null;
+}
+
+async function stopRouteOperatorTimers(routeId: number): Promise<number | NextResponse> {
+    const params = new URLSearchParams({
+        "filter[jo_route_id][_eq]": String(routeId),
+        fields: "jo_route_operator_id,logged_hours,started_at,stopped_at",
+        limit: "-1"
+    });
+    const timersResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_route_operators?${params.toString()}`, {
+        headers,
+        cache: "no-store"
+    });
+    if (!timersResponse.ok) {
+        return NextResponse.json({ error: "Could not load operator timers for this route. Refresh and try again." }, { status: 502 });
+    }
+
+    const timersPayload = await timersResponse.json().catch(() => ({}));
+    if (!Array.isArray(timersPayload?.data)) {
+        return NextResponse.json({ error: "Could not verify operator timers for this route. Refresh and try again." }, { status: 502 });
+    }
+
+    let totalHours = 0;
+    for (const timer of timersPayload.data) {
+        let loggedHours = Number(timer.logged_hours || 0);
+        if (!Number.isFinite(loggedHours) || loggedHours < 0) loggedHours = 0;
+
+        if (timer.started_at && !timer.stopped_at) {
+            const stoppedAt = formatPhtDateTime();
+            const elapsedSeconds = elapsedSecondsBetween(timer.started_at, stoppedAt);
+            if (elapsedSeconds === null) {
+                return NextResponse.json({
+                    error: `Operator timer ${timer.jo_route_operator_id} has an invalid start time and could not be stopped.`
+                }, { status: 409 });
+            }
+
+            loggedHours = accumulateHoursFromSeconds(loggedHours, elapsedSeconds);
+            const stopResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_route_operators/${encodeURIComponent(String(timer.jo_route_operator_id))}`, {
+                method: "PATCH",
+                headers,
+                cache: "no-store",
+                body: JSON.stringify({ logged_hours: loggedHours, stopped_at: stoppedAt, logged_at: stoppedAt })
+            });
+            if (!stopResponse.ok) {
+                return NextResponse.json({
+                    error: `Could not save the stopped timer for operator session ${timer.jo_route_operator_id}. The route remains open.`
+                }, { status: 502 });
+            }
+        }
+
+        totalHours += loggedHours;
+    }
+
+    return totalHours;
 }
 
 async function cancelledJobOrderResponseForTask(taskId: number): Promise<NextResponse | null> {
@@ -393,11 +447,11 @@ async function handleRouteWorkCenterAssignment(body: any): Promise<NextResponse>
 }
 
 export async function handlePATCH(request: Request) {
-    let uploadedBreakdownEvidenceImageId: string | null = null;
+    let uploadedBreakdownEvidenceImageIds: string[] = [];
     try {
         const contentType = request.headers.get("content-type")?.toLowerCase() || "";
         let body: any;
-        let breakdownEvidenceImage: File | null = null;
+        let breakdownEvidenceImages: File[] = [];
         if (contentType.includes("multipart/form-data")) {
             const formData = await request.formData();
             const payloadValue = formData.get("payload");
@@ -409,11 +463,11 @@ export async function handlePATCH(request: Request) {
             } catch {
                 return NextResponse.json({ error: "The planning-engineering payload is not valid JSON." }, { status: 400 });
             }
-            const imageValue = formData.get("image");
-            if (imageValue !== null && (typeof File === "undefined" || !(imageValue instanceof File))) {
+            const imageValues = formData.getAll("image");
+            if (imageValues.some((imageValue) => typeof File === "undefined" || !(imageValue instanceof File))) {
                 return NextResponse.json({ error: "The breakdown evidence file is invalid." }, { status: 422 });
             }
-            breakdownEvidenceImage = typeof File !== "undefined" && imageValue instanceof File ? imageValue : null;
+            breakdownEvidenceImages = imageValues.filter((imageValue): imageValue is File => typeof File !== "undefined" && imageValue instanceof File);
         } else {
             body = await request.json();
         }
@@ -453,36 +507,44 @@ export async function handlePATCH(request: Request) {
             if (!Number.isFinite(parsedReportedYield) || parsedReportedYield < 0) {
                 return NextResponse.json({ error: "Reported yield must be a non-negative number." }, { status: 400 });
             }
-            if (!breakdownEvidenceImage) {
-                return NextResponse.json({ error: "A breakdown evidence image or video is required.", code: "WORKFLOW_EVIDENCE_REQUIRED" }, { status: 422 });
+            if (breakdownEvidenceImages.length === 0) {
+                return NextResponse.json({ error: "At least one breakdown evidence image or video is required.", code: "WORKFLOW_EVIDENCE_REQUIRED" }, { status: 422 });
             }
-            const evidenceError = validateJobOrderWorkflowEvidence(breakdownEvidenceImage);
-            if (evidenceError) {
-                return NextResponse.json({ error: evidenceError, code: "WORKFLOW_EVIDENCE_INVALID" }, { status: 422 });
+            const evidenceBatchError = validateManufacturingEvidenceBatch(breakdownEvidenceImages, "Breakdown evidence");
+            if (evidenceBatchError) {
+                return NextResponse.json({
+                    error: evidenceBatchError,
+                    code: breakdownEvidenceImages.length > MANUFACTURING_EVIDENCE_MAX_FILES
+                        ? "WORKFLOW_EVIDENCE_LIMIT_EXCEEDED"
+                        : "WORKFLOW_EVIDENCE_INVALID"
+                }, { status: 422 });
             }
 
             const productionResponse = await productionMutationResponse(parsedJobOrderId);
             if (productionResponse) return productionResponse;
 
-            uploadedBreakdownEvidenceImageId = await uploadJobOrderWorkflowEvidence(
-                breakdownEvidenceImage,
-                String(parsedJobOrderId),
-                "breakdown"
-            );
+            for (const evidenceImage of breakdownEvidenceImages) {
+                uploadedBreakdownEvidenceImageIds.push(await uploadJobOrderWorkflowEvidence(
+                    evidenceImage,
+                    String(parsedJobOrderId),
+                    "breakdown"
+                ));
+            }
 
             const result = await executeJobOrderWorkflow(parsedJobOrderId, {
                 action: "place-on-hold",
                 actorUserId: moduleUser.userId,
                 idempotencyKey: String(body.idempotencyKey || `breakdown:${parsedJobOrderId}:${haltedStepId}:${Number(yieldQty || 0)}`).trim(),
                 remarks: `Halted at step ${haltedStepId}. Reported yield: ${parsedReportedYield}. Reason: ${trimmedHaltReason}`,
-                evidenceImageId: uploadedBreakdownEvidenceImageId,
+                evidenceImageId: uploadedBreakdownEvidenceImageIds[0],
+                evidenceImageIds: uploadedBreakdownEvidenceImageIds,
                 joRouteId: parsedRouteId,
                 reportedYieldQuantity: parsedReportedYield
             });
 
-            if (result.idempotent && uploadedBreakdownEvidenceImageId) {
-                await deleteJobOrderWorkflowEvidence(uploadedBreakdownEvidenceImageId);
-                uploadedBreakdownEvidenceImageId = null;
+            if (result.idempotent && uploadedBreakdownEvidenceImageIds.length > 0) {
+                await Promise.all(uploadedBreakdownEvidenceImageIds.map(deleteJobOrderWorkflowEvidence));
+                uploadedBreakdownEvidenceImageIds = [];
             }
 
             return NextResponse.json({ success: true, message: "Workstation breakdown reported successfully." });
@@ -507,10 +569,20 @@ export async function handlePATCH(request: Request) {
             const allowedTargetRouteCompletion = normalizedTaskPatch?.status === "Completed"
                 && Object.keys(normalizedTaskPatch || {}).every((key) => ["status", "completed_at", "actual_run_hours"].includes(key));
             if (targetResponse && !allowedTargetRouteCompletion) return targetResponse;
+            let effectiveTaskPatch = normalizedTaskPatch;
+            if (taskPatch?.status === "Completed") {
+                const actualRunHours = await stopRouteOperatorTimers(Number(taskId));
+                if (actualRunHours instanceof NextResponse) return actualRunHours;
+                effectiveTaskPatch = {
+                    ...normalizedTaskPatch,
+                    actual_run_hours: Math.round(actualRunHours * 1_000_000) / 1_000_000
+                };
+            }
+
             const res = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes/${taskId}?fields=jo_route_id,job_order_id,sequence_order,work_center_id,operation_id,planned_setup_hours,planned_run_hours,actual_setup_hours,actual_run_hours,step_batch_size,run_time_hours_factor`, {
                 method: "PATCH",
                 headers,
-                body: JSON.stringify(normalizedTaskPatch)
+                body: JSON.stringify(effectiveTaskPatch)
             });
             if (!res.ok) throw new Error(`Failed to patch routing task: ${res.status}`);
             const result = await res.json();
@@ -836,8 +908,8 @@ export async function handlePATCH(request: Request) {
         const result = await updateJobOrder(joId, dbPatch);
         return NextResponse.json({ success: true, data: result });
     } catch (e) {
-        if (uploadedBreakdownEvidenceImageId) {
-            await deleteJobOrderWorkflowEvidence(uploadedBreakdownEvidenceImageId);
+        if (uploadedBreakdownEvidenceImageIds.length > 0) {
+            await Promise.all(uploadedBreakdownEvidenceImageIds.map(deleteJobOrderWorkflowEvidence));
         }
         console.error("API Error in planning-engineering PATCH:", e);
         if (e instanceof JobOrderModuleAccessError) {

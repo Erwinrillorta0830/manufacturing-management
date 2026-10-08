@@ -8,19 +8,24 @@ import { Label } from "@/components/ui/label";
 import {
     isManufacturingEvidenceVideo,
     MANUFACTURING_EVIDENCE_VIDEO_MAX_BYTES,
+    MANUFACTURING_EVIDENCE_MAX_FILES,
     normalizedMediaMimeType,
-    validateManufacturingEvidence
+    validateManufacturingEvidence,
+    validateManufacturingEvidenceBatch
 } from "../services/production-yield-image";
 
 interface EvidenceMediaInputProps {
     id: string;
     label: string;
-    file: File | null;
+    file?: File | null;
+    files?: File[];
+    multiple?: boolean;
     error: string | null;
     required?: boolean;
     disabled?: boolean;
     active?: boolean;
-    onChange: (file: File | null, error: string | null) => void;
+    onChange?: (file: File | null, error: string | null) => void;
+    onFilesChange?: (files: File[], error: string | null) => void;
 }
 
 const IMAGE_ACCEPT = "image/jpeg,image/jpg,image/png,image/webp";
@@ -50,14 +55,17 @@ function cameraErrorMessage(error: unknown): string {
 export function EvidenceMediaInput({
     id,
     label,
-    file,
+    file = null,
+    files,
+    multiple = false,
     error,
     required = false,
     disabled = false,
     active = true,
-    onChange
+    onChange,
+    onFilesChange
 }: EvidenceMediaInputProps) {
-    const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+    const [previewUrls, setPreviewUrls] = useState<string[]>([]);
     const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
     const [cameraStarting, setCameraStarting] = useState(false);
     const [cameraReady, setCameraReady] = useState(false);
@@ -73,16 +81,14 @@ export function EvidenceMediaInput({
     const recordingLimitReachedRef = useRef(false);
     const cameraRequestIdRef = useRef(0);
 
-    useEffect(() => {
-        if (!file) {
-            setPreviewUrl(null);
-            return;
-        }
+    const selectedFiles = multiple ? files ?? [] : file ? [file] : [];
 
-        const objectUrl = URL.createObjectURL(file);
-        setPreviewUrl(objectUrl);
-        return () => URL.revokeObjectURL(objectUrl);
-    }, [file]);
+    useEffect(() => {
+        const previewFiles = multiple ? files ?? [] : file ? [file] : [];
+        const objectUrls = previewFiles.map((selectedFile) => URL.createObjectURL(selectedFile));
+        setPreviewUrls(objectUrls);
+        return () => objectUrls.forEach((objectUrl) => URL.revokeObjectURL(objectUrl));
+    }, [multiple, file, files]);
 
     const stopCamera = useCallback(() => {
         cameraRequestIdRef.current += 1;
@@ -144,16 +150,26 @@ export function EvidenceMediaInput({
         };
     }, [cameraStream]);
 
-    const acceptFile = useCallback((nextFile: File | null) => {
+    const acceptFiles = useCallback((incomingFiles: File[]) => {
         setCameraError(null);
         setCameraNotice(null);
-        if (!nextFile) {
-            onChange(null, null);
+        if (incomingFiles.length === 0) {
+            if (multiple) onFilesChange?.([], null);
+            else onChange?.(null, null);
             return;
         }
-        const validationError = validateManufacturingEvidence(nextFile, label);
-        onChange(validationError ? null : nextFile, validationError);
-    }, [label, onChange]);
+        if (!multiple) {
+            const nextFile = incomingFiles[0];
+            const validationError = validateManufacturingEvidence(nextFile, label);
+            onChange?.(validationError ? null : nextFile, validationError);
+            return;
+        }
+
+        const currentFiles = files ?? [];
+        const nextFiles = [...currentFiles, ...incomingFiles];
+        const validationError = validateManufacturingEvidenceBatch(nextFiles, label);
+        onFilesChange?.(validationError ? currentFiles : nextFiles, validationError);
+    }, [files, label, multiple, onChange, onFilesChange]);
 
     const startCamera = async () => {
         if (!active || disabled) return;
@@ -209,11 +225,11 @@ export function EvidenceMediaInput({
                 setCameraError("Could not capture the camera image. Please try again.");
                 return;
             }
-            acceptFile(new File([blob], `evidence-${Date.now()}.jpg`, {
+            acceptFiles([new File([blob], `evidence-${Date.now()}.jpg`, {
                 type: "image/jpeg",
                 lastModified: Date.now()
-            }));
-            stopCamera();
+            })]);
+            if (!multiple) stopCamera();
         }, "image/jpeg", 0.82);
     };
 
@@ -238,7 +254,7 @@ export function EvidenceMediaInput({
             recordingLimitReachedRef.current = false;
             setCameraError(null);
             setCameraNotice(null);
-            acceptFile(null);
+            if (!multiple) onChange?.(null, null);
 
             recorder.ondataavailable = (event) => {
                 if (!event.data.size) return;
@@ -268,7 +284,7 @@ export function EvidenceMediaInput({
                         `evidence-${Date.now()}.${mediaExtension(recordedMimeType)}`,
                         { type: recordedMimeType, lastModified: Date.now() }
                     );
-                    acceptFile(recordedFile);
+                    acceptFiles([recordedFile]);
                     if (recordingLimitReachedRef.current) {
                         setCameraNotice("Recording stopped at the 100 MB limit. The captured clip is ready to review.");
                     }
@@ -289,12 +305,11 @@ export function EvidenceMediaInput({
         if (recorder && recorder.state === "recording") recorder.stop();
     };
 
-    const removeFile = () => {
-        acceptFile(null);
+    const removeFile = (index: number) => {
+        if (multiple) onFilesChange?.((files ?? []).filter((_, fileIndex) => fileIndex !== index), null);
+        else onChange?.(null, null);
         if (fileInputRef.current) fileInputRef.current.value = "";
     };
-
-    const isVideo = file ? isManufacturingEvidenceVideo(file.type) : false;
 
     return (
         <div className="space-y-2">
@@ -306,10 +321,11 @@ export function EvidenceMediaInput({
                 id={`${id}-file`}
                 type="file"
                 accept={ACCEPT}
+                multiple={multiple}
                 onChange={(event) => {
-                    const selectedFile = event.target.files?.[0] || null;
-                    if (selectedFile) stopCamera();
-                    acceptFile(selectedFile);
+                    const selectedFilesFromInput = Array.from(event.target.files || []);
+                    if (selectedFilesFromInput.length > 0) stopCamera();
+                    acceptFiles(multiple ? selectedFilesFromInput : selectedFilesFromInput.slice(0, 1));
                     event.target.value = "";
                 }}
                 disabled={disabled}
@@ -319,7 +335,8 @@ export function EvidenceMediaInput({
                 tabIndex={-1}
             />
             <p id={`${id}-help`} className="text-[11px] text-muted-foreground">
-                Images: PNG, JPG, or WEBP up to 5 MB. Videos: MP4, WEBM, or MOV up to 100 MB.
+                Images: PNG, JPG, or WEBP up to 5 MB each. Videos: MP4, WEBM, or MOV up to 100 MB each.
+                {multiple && ` Up to ${MANUFACTURING_EVIDENCE_MAX_FILES} files and 100 MB total.`}
             </p>
             <div className="flex flex-wrap gap-2">
                 <Button type="button" variant="outline" size="sm" onClick={() => void startCamera()} disabled={disabled || cameraStarting || Boolean(cameraStream)}>
@@ -335,7 +352,7 @@ export function EvidenceMediaInput({
                     }}
                     disabled={disabled || recording}
                 >
-                    <FolderOpen className="mr-1.5 h-4 w-4" /> Choose file
+                    <FolderOpen className="mr-1.5 h-4 w-4" /> {multiple ? "Choose files" : "Choose file"}
                 </Button>
             </div>
             {cameraStream && (
@@ -371,26 +388,30 @@ export function EvidenceMediaInput({
             {cameraError && <p className="text-[11px] font-semibold text-destructive" role="alert">{cameraError}</p>}
             {cameraNotice && <p className="text-[11px] text-muted-foreground" role="status">{cameraNotice}</p>}
             {error && <p id={`${id}-error`} className="text-[11px] font-semibold text-destructive" role="alert">{error}</p>}
-            {!file && !error && <p className="text-[11px] text-muted-foreground" role="status">{required ? "One image or video is required." : "An image or video may be attached."}</p>}
-            {file && previewUrl && (
-                <div className="flex flex-col gap-3 rounded-lg border bg-background p-2 sm:flex-row sm:items-center">
-                    {isVideo ? (
-                        <video src={previewUrl} controls playsInline preload="metadata" className="max-h-40 w-full max-w-xs rounded-md border bg-black object-contain" aria-label={`${label} video preview`} />
-                    ) : (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={previewUrl} alt={`${label} preview`} className="h-20 w-20 rounded-md border object-cover" />
-                    )}
-                    <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-semibold" title={file.name}>{file.name}</p>
-                        <p className="text-[11px] text-muted-foreground">
-                            {file.type || "Unknown media type"} · {(file.size / 1024 / 1024).toFixed(2)} MB
-                        </p>
+            {selectedFiles.length === 0 && !error && <p className="text-[11px] text-muted-foreground" role="status">{required ? (multiple ? "At least one image or video is required." : "One image or video is required.") : "An image or video may be attached."}</p>}
+            {selectedFiles.map((selectedFile, index) => {
+                const previewUrl = previewUrls[index];
+                const isVideo = isManufacturingEvidenceVideo(selectedFile.type);
+                return (
+                    <div key={`${selectedFile.name}-${selectedFile.lastModified}-${index}`} className="flex flex-col gap-3 rounded-lg border bg-background p-2 sm:flex-row sm:items-center">
+                        {previewUrl && (isVideo ? (
+                            <video src={previewUrl} controls playsInline preload="metadata" className="max-h-40 w-full max-w-xs rounded-md border bg-black object-contain" aria-label={`${label} video preview`} />
+                        ) : (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={previewUrl} alt={`${label} preview ${index + 1}`} className="h-20 w-20 rounded-md border object-cover" />
+                        ))}
+                        <div className="min-w-0 flex-1">
+                            <p className="truncate text-xs font-semibold" title={selectedFile.name}>{selectedFile.name}</p>
+                            <p className="text-[11px] text-muted-foreground">
+                                {selectedFile.type || "Unknown media type"} · {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
+                            </p>
+                        </div>
+                        <Button type="button" variant="ghost" size="icon-xs" onClick={() => removeFile(index)} disabled={disabled} aria-label={`Remove ${label.toLowerCase()} ${index + 1}`}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
                     </div>
-                    <Button type="button" variant="ghost" size="icon-xs" onClick={removeFile} disabled={disabled} aria-label={`Remove ${label.toLowerCase()}`}>
-                        <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                </div>
-            )}
+                );
+            })}
         </div>
     );
 }
