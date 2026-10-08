@@ -285,7 +285,7 @@ export default function InventoryMovementTable({
                                 <TableHead className="text-right w-[110px]" title="Financial Cost Variance / Difference (₱)">Diff Cost</TableHead>
                                 <TableHead className="w-[110px]" title="Inventory Condition & Source Status">Condition</TableHead>
                                 <TableHead className="w-[160px]" title="Recorded Transaction Date & Timestamp">Date & Time</TableHead>
-                                <TableHead className="min-w-[160px]" title="Operational Transaction Remarks & Notes">Remarks</TableHead>
+                                <TableHead className="min-w-[220px] max-w-[380px]" title="Operational Transaction Remarks & Notes">Remarks</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -300,7 +300,13 @@ export default function InventoryMovementTable({
                                 const qty = isDirectionIn ? Number(m.quantityIn || 0) : Number(m.quantityOut || 0);
                                 const branchName = matchedLot?.branchName || (m.branchName as string) || (m.branch_name as string) || null;
                                 const branchCode = matchedLot?.branchCode;
-                                const matchedProduct = m.productId ? productMap.get(Number(m.productId)) : undefined;
+                                const mPId = m.productId ?? (m as Record<string, unknown>).product_id;
+                                const matchedProduct = mPId ? productMap.get(Number(mPId)) : undefined;
+                                const rawCostVal = m.unitCost ?? (m as Record<string, unknown>).unit_cost;
+                                const rawMovementCost = rawCostVal !== null && rawCostVal !== undefined && Number(rawCostVal) > 0 ? (rawCostVal as number) : undefined;
+                                const resolvedProductCost = matchedProduct?.cost_per_unit ?? matchedProduct?.unitCost ?? rawMovementCost;
+                                const hasResolvedUnitCost = resolvedProductCost !== null && resolvedProductCost !== undefined && !isNaN(Number(resolvedProductCost)) && Number(resolvedProductCost) > 0;
+                                const resolvedUnitCost = hasResolvedUnitCost ? Number(resolvedProductCost) : null;
                                 const displayDescription =
                                     m.productDescription ||
                                     m.description ||
@@ -415,8 +421,8 @@ export default function InventoryMovementTable({
                                                 </span>
                                             )}
                                         </TableCell>
-                                        <TableCell className="text-right text-xs" title={Number(m.unitCost || 0) > 0 ? `Unit Cost: ₱${Number(m.unitCost).toFixed(2)}` : "No unit cost recorded"}>
-                                            {Number(m.unitCost || 0) > 0 ? `₱${Number(m.unitCost).toFixed(2)}` : "-"}
+                                        <TableCell className="text-right text-xs" title={resolvedUnitCost !== null ? `Unit Cost: ₱${resolvedUnitCost.toFixed(2)}` : "No unit cost recorded"}>
+                                            {resolvedUnitCost !== null ? `₱${resolvedUnitCost.toFixed(2)}` : "-"}
                                         </TableCell>
                                         <TableCell className="text-right text-xs font-semibold" title={Number(m.differenceCost || 0) > 0 ? `Difference Cost: ₱${Number(m.differenceCost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "No cost difference"}>
                                             {Number(m.differenceCost || 0) > 0
@@ -438,8 +444,14 @@ export default function InventoryMovementTable({
                                         <TableCell className="text-xs text-muted-foreground whitespace-nowrap" title={`Timestamp: ${formattedDate}`}>
                                             {m.transactionDate ? m.transactionDate.replace("T", " ").slice(0, 19) : (m.postedAt ? m.postedAt.replace("T", " ").slice(0, 19) : "-")}
                                         </TableCell>
-                                        <TableCell className="text-xs text-muted-foreground max-w-[150px] truncate" title={m.remarks ? `Remarks: ${m.remarks}` : "No remarks provided"}>
-                                            {m.remarks || "-"}
+                                        <TableCell className="min-w-[220px] max-w-[380px] py-2.5" title={m.remarks ? `Remarks: ${m.remarks}` : "No remarks provided"}>
+                                            {m.remarks ? (
+                                                <div className="max-h-[85px] overflow-y-auto whitespace-normal break-words leading-relaxed text-xs text-muted-foreground pr-1">
+                                                    {m.remarks}
+                                                </div>
+                                            ) : (
+                                                <span className="text-xs text-muted-foreground">-</span>
+                                            )}
                                         </TableCell>
                                     </motion.tr>
                                 );

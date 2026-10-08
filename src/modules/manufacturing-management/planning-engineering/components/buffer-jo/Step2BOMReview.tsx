@@ -4,6 +4,7 @@ import { Loader2, Package, Layers, Clock, CheckCircle, ShieldAlert } from "lucid
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SearchableVersionSelect } from "../SearchableVersionSelect";
+import { CONTAINER_METRIC_DEFINITIONS, ContainerMetricLabel } from "../ContainerMetricLabel";
 import { formatHoursToHMS, formatInventoryQuantity } from "../../utils/containerization-helper";
 import {
     getFactoryOverheadBasisLabel
@@ -163,7 +164,7 @@ export function Step2BOMReview({
                         <div className="flex items-center gap-2">
                             <Package className="h-4 w-4 text-emerald-500" />
                             <span className="text-xs font-bold text-foreground uppercase tracking-wider text-[11px]">
-                                📦 Plant Production & Pallet Containerization
+                                📦 Finished Goods Packaging & Palletization
                             </span>
                         </div>
                         <Badge variant="outline" className="text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
@@ -172,7 +173,7 @@ export function Step2BOMReview({
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-[11px]">
                         <div className="bg-background border border-border/60 rounded-lg p-2">
-                            <span className="text-[10px] font-medium text-muted-foreground block">🌾 Batch Mix & Sacks</span>
+                            <ContainerMetricLabel icon="🌾" label="Primary Mix Allocations" />
                             <span className="font-extrabold text-foreground text-xs">{containerMetrics.mixCount} Full Mixes</span>
                             <span className="text-[10px] text-muted-foreground block">
                                 Demand: {containerMetrics.requestedMixCount.toFixed(2)} mixes
@@ -186,19 +187,31 @@ export function Step2BOMReview({
                             </span>
                         </div>
                         <div className="bg-background border border-border/60 rounded-lg p-2">
-                            <span className="text-[10px] font-medium text-muted-foreground block">🏭 Expected Net Pcs</span>
+                            <ContainerMetricLabel
+                                icon="🏭"
+                                label="Net Yield Output"
+                                definition={CONTAINER_METRIC_DEFINITIONS.netYieldOutput}
+                            />
                             <span className="font-extrabold text-foreground text-xs">{`${Math.round(containerMetrics.netPieces).toLocaleString()} Pcs`}</span>
-                            {containerMetrics.hasOutputEstimate && containerMetrics.expectedYieldPercentage < 100 && <span className="text-[10px] text-muted-foreground block">({containerMetrics.expectedYieldPercentage.toFixed(1)}% Expected Yield)</span>}
+                            {containerMetrics.hasNetPieceEstimate && containerMetrics.expectedYieldPercentage < 100 && <span className="text-[10px] text-muted-foreground block">({containerMetrics.expectedYieldPercentage.toFixed(1)}% Expected Yield)</span>}
                         </div>
                         <div className="bg-background border border-border/60 rounded-lg p-2">
-                            <span className="text-[10px] font-medium text-muted-foreground block">📦 Cases / Bundles</span>
-                            <span className="font-extrabold text-foreground text-xs">{`${containerMetrics.totalCasesBundlesFull} Full`}</span>
-                            <span className="text-[10px] text-muted-foreground block">(+{containerMetrics.remainingPcs} pcs remaining)</span>
+                            <ContainerMetricLabel
+                                icon="📦"
+                                label="Case Count & Remainder"
+                                definition={CONTAINER_METRIC_DEFINITIONS.caseCountAndRemainder}
+                            />
+                            <span className="font-extrabold text-foreground text-xs">{containerMetrics.hasCaseBundleEstimate ? `${containerMetrics.totalCasesBundlesFull} Full` : "Not configured"}</span>
+                            {containerMetrics.hasCaseBundleEstimate && <span className="text-[10px] text-muted-foreground block">(+{containerMetrics.remainingPcs} pcs remaining)</span>}
                         </div>
                         <div className="bg-background border border-border/60 rounded-lg p-2">
-                            <span className="text-[10px] font-medium text-muted-foreground block">🚛 Pallet Allocation</span>
-                            <span className="font-extrabold text-emerald-600 dark:text-emerald-400 text-xs">{!containerMetrics.hasOutputEstimate ? "0 Pallets" : containerMetrics.hasPalletEstimate ? `${containerMetrics.totalPalletsFull} Pallets` : "Not configured"}</span>
-                            {(containerMetrics.hasPalletEstimate || !containerMetrics.hasOutputEstimate) && <span className="text-[10px] text-muted-foreground block">(+{containerMetrics.remainingCasesBundles} cases/bundles)</span>}
+                            <ContainerMetricLabel
+                                icon="🚛"
+                                label="Unit Load Count"
+                                definition={CONTAINER_METRIC_DEFINITIONS.unitLoadCount}
+                            />
+                            <span className="font-extrabold text-emerald-600 dark:text-emerald-400 text-xs">{containerMetrics.hasPalletEstimate ? `${containerMetrics.totalPalletsFull} Pallets` : "Not configured"}</span>
+                            {containerMetrics.hasPalletEstimate && <span className="text-[10px] text-muted-foreground block">(+{containerMetrics.remainingCasesBundles} cases/bundles)</span>}
                         </div>
                     </div>
                 </div>

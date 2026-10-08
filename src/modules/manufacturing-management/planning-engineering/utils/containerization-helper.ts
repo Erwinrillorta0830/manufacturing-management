@@ -1,6 +1,8 @@
 import {
     calculateMaterialRequirementPlan,
-    calculateProductionQuantityPlan
+    calculateProductionQuantityPlan,
+    isPieceProductionUom,
+    normalizeProductionOutputQuantity
 } from "./production-timing";
 
 export interface ContainerizationMetrics {
@@ -15,7 +17,9 @@ export interface ContainerizationMetrics {
     containerUnitLabel: string;
     hasSackEstimate: boolean;
     hasFlourWeightEstimate: boolean;
-    hasOutputEstimate: boolean;
+    hasNetPieceEstimate: boolean;
+    hasWeightBasedOutputEstimate: boolean;
+    hasCaseBundleEstimate: boolean;
     hasPalletEstimate: boolean;
     requestedFlourGrams: number;
     mixCount: number;
@@ -30,6 +34,7 @@ export interface ContainerizationMetrics {
     scrapRate: number;
     wastePieces: number;
     netPieces: number;
+    massDerivedNetPieces: number;
     pcsPerCaseBundle: number;
     totalCasesBundlesFull: number;
     totalCasesBundlesExact: number;
@@ -159,17 +164,18 @@ export function parseContainerizationProfile(remarks: unknown): Containerization
 export function calculateContainerizationMetrics(
     productName: string,
     targetQuantity: number,
-    uomCount?: number,
+    pcsPerBundleCaseParam?: number,
     versionExpectedYieldPercent?: number,
     versionScrapRate?: number,
     versionCuttingWeightGrams?: number,
-    versionCasesPerPallet?: number,
+    bundlesCasesPerPalletParam?: number,
     sacksPerMixParam?: number,
     baseBatchWeightPerSackParam?: number,
     components?: ContainerizationBOMComponent[],
     bomBaseQty?: number,
     requestedTargetQuantity?: number,
-    containerizationProfile?: ContainerizationProfile | null
+    containerizationProfile?: ContainerizationProfile | null,
+    outputUom?: unknown
 ): ContainerizationMetrics {
     const sacksPerMix = Number(sacksPerMixParam) > 0 ? Number(sacksPerMixParam) : 0;
     const baseBatchWeightPerSack = Number(baseBatchWeightPerSackParam) > 0 ? Number(baseBatchWeightPerSackParam) : 0;
@@ -194,8 +200,8 @@ export function calculateContainerizationMetrics(
         }
     }
 
-    const pcsPerCaseBundle = Math.max(1, Number(uomCount) || 1); // Uses product uom count
-    const casesBundlesPerPallet = Number(versionCasesPerPallet) > 0 ? Number(versionCasesPerPallet) : 0;
+    const pcsPerCaseBundle = Number(pcsPerBundleCaseParam) > 0 ? Number(pcsPerBundleCaseParam) : 0;
+    const casesBundlesPerPallet = Number(bundlesCasesPerPalletParam) > 0 ? Number(bundlesCasesPerPalletParam) : 0;
 
     const targetNetPcs = Math.max(1, Number(targetQuantity) || 0);
     const baseQty = Math.max(1, Number(bomBaseQty) || 1);
@@ -289,20 +295,31 @@ export function calculateContainerizationMetrics(
     }
 
     const totalBaseWeightGrams = hasFlourWeightEstimate ? flourGramsTotal : 0;
-    const hasOutputEstimate = totalBaseWeightGrams > 0 && cuttingUnitWeightGrams > 0;
-    const grossPieces = hasOutputEstimate ? totalBaseWeightGrams / cuttingUnitWeightGrams : 0;
+    const hasWeightBasedOutputEstimate = totalBaseWeightGrams > 0 && cuttingUnitWeightGrams > 0;
+    const massDerivedGrossPieces = hasWeightBasedOutputEstimate ? totalBaseWeightGrams / cuttingUnitWeightGrams : 0;
     // Expected yield already accounts for output loss; do not deduct the
     // separately configured scrap rate again from the same physical estimate.
-    const netPieces = Math.max(0, grossPieces * yieldFactor);
+    const massDerivedNetPieces = Math.max(0, massDerivedGrossPieces * yieldFactor);
+    const hasTargetBasedNetPieceEstimate = isPieceProductionUom(outputUom) && effectiveTargetQuantity > 0;
+    const grossPieces = hasTargetBasedNetPieceEstimate
+        ? normalizeProductionOutputQuantity(effectiveTargetQuantity, outputUom)
+        : massDerivedGrossPieces;
+    const netPieces = hasTargetBasedNetPieceEstimate
+        ? Math.max(0, grossPieces * yieldFactor)
+        : massDerivedNetPieces;
     const wastePieces = Math.max(0, grossPieces - netPieces);
+    const hasNetPieceEstimate = hasTargetBasedNetPieceEstimate || hasWeightBasedOutputEstimate;
 
     // Case / Bundle Conversions
-    const totalCasesBundlesExact = hasOutputEstimate ? netPieces / pcsPerCaseBundle : 0;
+    const hasCaseBundleEstimate = hasNetPieceEstimate && pcsPerCaseBundle > 0;
+    const totalCasesBundlesExact = hasCaseBundleEstimate ? netPieces / pcsPerCaseBundle : 0;
     const totalCasesBundlesFull = Math.floor(totalCasesBundlesExact);
-    const remainingPcs = Math.round((totalCasesBundlesExact - totalCasesBundlesFull) * pcsPerCaseBundle);
+    const remainingPcs = hasCaseBundleEstimate
+        ? Math.round((totalCasesBundlesExact - totalCasesBundlesFull) * pcsPerCaseBundle)
+        : 0;
 
     // Pallet Conversions
-    const hasPalletEstimate = hasOutputEstimate && casesBundlesPerPallet > 0;
+    const hasPalletEstimate = hasCaseBundleEstimate && casesBundlesPerPallet > 0;
     const totalPalletsExact = hasPalletEstimate ? totalCasesBundlesFull / casesBundlesPerPallet : 0;
     const totalPalletsFull = Math.floor(totalPalletsExact);
     const remainingCasesBundles = Math.round((totalPalletsExact - totalPalletsFull) * casesBundlesPerPallet);
@@ -319,7 +336,9 @@ export function calculateContainerizationMetrics(
         containerUnitLabel,
         hasSackEstimate,
         hasFlourWeightEstimate,
-        hasOutputEstimate,
+        hasNetPieceEstimate,
+        hasWeightBasedOutputEstimate,
+        hasCaseBundleEstimate,
         hasPalletEstimate,
         requestedFlourGrams,
         mixCount,
@@ -334,6 +353,7 @@ export function calculateContainerizationMetrics(
         scrapRate,
         wastePieces,
         netPieces,
+        massDerivedNetPieces,
         pcsPerCaseBundle,
         totalCasesBundlesFull,
         totalCasesBundlesExact,

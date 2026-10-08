@@ -1,5 +1,6 @@
 /* eslint-disable */
 import React from "react";
+import { calculateDisplayUnitCOGS } from "../../../finished-goods-master/costing";
 import { formatProductionValue } from "../../utils/production-timing";
 import {
     formatManufacturingUnitCostForDisplay,
@@ -50,6 +51,13 @@ export function Step4Review({
     routingSteps,
     financials
 }: Step4ReviewProps) {
+    const displayedCogs = financials ? calculateDisplayUnitCOGS([
+        financials.materials,
+        financials.directLabor,
+        financials.machineOverhead,
+        financials.configuredOverhead
+    ], financials.yieldFactor ?? 1) : null;
+
     return (
         <div className="space-y-3">
             <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
@@ -192,11 +200,11 @@ export function Step4Review({
                                 </div>
                                 <div className="flex justify-between border-t border-border/60 pt-1">
                                     <span className="font-bold text-foreground">Est. Unit COGS (Base)</span>
-                                    <span className="font-mono font-bold text-foreground">₱{formatManufacturingUnitCostForDisplay(financials.baseCogs)}</span>
+                                    <span className="font-mono font-bold text-foreground">₱{formatManufacturingUnitCostForDisplay(displayedCogs?.baseUnitCost ?? financials.baseCogs)}</span>
                                 </div>
                                 <div className="flex justify-between">
                                     <span className="font-bold text-sky-700 dark:text-sky-400">Est. Unit COGS (Yield-Adjusted)</span>
-                                    <span className="font-mono font-black text-sky-700 dark:text-sky-400">₱{formatManufacturingUnitCostForDisplay(financials.adjustedCogs)}</span>
+                                    <span className="font-mono font-black text-sky-700 dark:text-sky-400">₱{formatManufacturingUnitCostForDisplay(displayedCogs?.yieldAdjustedUnitCost ?? financials.adjustedCogs)}</span>
                                 </div>
                             </>
                         ) : (

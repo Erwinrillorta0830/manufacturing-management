@@ -32,10 +32,12 @@ export async function GET() {
             const productName = desc || pName || `Product #${productId}`;
             const skuCode = String(p.product_code || p.barcode || "").trim();
             
-            const rawCost = p.cost_per_unit ?? p.price_per_unit ?? p.estimated_unit_cost;
-            const unitCost = rawCost !== null && rawCost !== undefined && !isNaN(Number(rawCost))
+            const rawCost = p.cost_per_unit !== null && p.cost_per_unit !== undefined
+                ? p.cost_per_unit
+                : (p.estimated_unit_cost !== null && p.estimated_unit_cost !== undefined ? p.estimated_unit_cost : null);
+            const unitCost = rawCost !== null && !isNaN(Number(rawCost)) && Number(rawCost) > 0
                 ? Number(rawCost)
-                : 0;
+                : undefined;
 
             const categoryName = typeof p.product_category === "object" && p.product_category !== null
                 ? (p.product_category as { category_name?: string }).category_name
@@ -48,8 +50,8 @@ export async function GET() {
                 skuCode,
                 unitCost,
                 cost_per_unit: unitCost,
-                price_per_unit: p.price_per_unit != null ? Number(p.price_per_unit) : unitCost,
-                estimated_unit_cost: p.estimated_unit_cost != null ? Number(p.estimated_unit_cost) : undefined,
+                price_per_unit: p.price_per_unit != null && !isNaN(Number(p.price_per_unit)) ? Number(p.price_per_unit) : undefined,
+                estimated_unit_cost: p.estimated_unit_cost != null && !isNaN(Number(p.estimated_unit_cost)) ? Number(p.estimated_unit_cost) : undefined,
                 product_type: p.product_type,
                 productType: p.product_type,
                 category_name: categoryName,
