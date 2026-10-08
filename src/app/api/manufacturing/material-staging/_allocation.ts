@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import { DIRECTUS_URL, headers, formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 import {
     fetchMmInventoryMovements,
     type NormalizedMmInventoryMovement
@@ -1040,7 +1040,8 @@ export async function commitAllocation(
                 reservation_status: nextStagedQuantity + QUANTITY_EPSILON >= nextReservedQuantity ? "HARD" : "PARTIAL",
                 uom_id: material.productUnitId,
                 source_event_key: `staging:${operationId}:${line.allocation_line_id}`,
-                created_by: actorUserId
+                created_by: actorUserId,
+                ...(existingReservation ? {} : { created_at: formatPhtDateTime() })
             };
             let reservationId: number;
             if (existingReservation) {

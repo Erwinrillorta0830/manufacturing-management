@@ -1,14 +1,6 @@
 /* eslint-disable */
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Loader2, ArrowRight, ArrowLeft, Printer } from "lucide-react";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle
-} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Branch } from "../types";
 import { toast } from "sonner";
@@ -33,6 +25,9 @@ interface CreateBufferJODialogProps {
     branches: Branch[];
     initialBranchId: number | null;
     onSuccess: (jobOrderNo: string) => void | Promise<void>;
+    initialJobOrder?: any;
+    onEditDraft?: (draft: Record<string, unknown>) => Promise<boolean>;
+    onInitializeDraft?: () => Promise<boolean>;
 }
 
 export function CreateBufferJODialog({
@@ -40,7 +35,10 @@ export function CreateBufferJODialog({
     onOpenChange,
     branches,
     initialBranchId,
-    onSuccess
+    onSuccess,
+    initialJobOrder,
+    onEditDraft,
+    onInitializeDraft
 }: CreateBufferJODialogProps) {
     const [currentStep, setCurrentStep] = useState(1);
     const [loadingProducts, setLoadingProducts] = useState(false);
@@ -83,6 +81,33 @@ export function CreateBufferJODialog({
     const [loadingSubVersion, setLoadingSubVersion] = useState<Record<number, boolean>>({});
     const [printSelection, setPrintSelection] = useState<Record<string, boolean>>({});
     const [assignments, setAssignments] = useState<Record<number, number[]>>({});
+    const [initialSubAssemblyVersions, setInitialSubAssemblyVersions] = useState<Record<number, number>>({});
+
+    const initialJobOrderRef = useRef(initialJobOrder);
+    const draftJobOrder = initialJobOrderRef.current;
+    const isEditingDraft = Boolean(draftJobOrder);
+
+    const parseVersionMap = (value: unknown): Record<number, number> => {
+        let parsed = value;
+        if (typeof parsed === "string") {
+            try { parsed = JSON.parse(parsed); } catch { parsed = {}; }
+        }
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+        return Object.fromEntries(Object.entries(parsed as Record<string, unknown>).map(([key, version]) => [
+            Number(key), Number(version)
+        ]).filter(([key, version]) => Number.isSafeInteger(Number(key)) && Number(key) > 0 && Number.isSafeInteger(version) && Number(version) > 0));
+    };
+
+    const parseAssignments = (value: unknown): Record<number, number[]> => {
+        let parsed = value;
+        if (typeof parsed === "string") {
+            try { parsed = JSON.parse(parsed); } catch { parsed = {}; }
+        }
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+        return Object.fromEntries(Object.entries(parsed as Record<string, unknown>).map(([key, ids]) => [
+            Number(key), Array.isArray(ids) ? [...new Set(ids.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0))] : []
+        ]).filter(([key]) => Number.isSafeInteger(Number(key)) && Number(key) > 0));
+    };
 
     const parseValidBranchId = (value: unknown): number | null => {
         const branchId = Number(value);
@@ -165,31 +190,36 @@ export function CreateBufferJODialog({
             setRoutings([]);
             setComponents([]);
             setInventories({});
-            setAssignments({});
+            setAssignments(isEditingDraft ? parseAssignments(draftJobOrder?.assignedPersonnel ?? draftJobOrder?.assigned_personnel) : {});
             setSubAssemblyBoms({});
             setPrintSelection({});
             setSelectedParentProductId("");
             setSelectedProductId("");
             setSelectedVersionId("");
             setVersions([]);
-            setRemarks("");
+            setRemarks(String(draftJobOrder?.remarks || ""));
             setHasLoadedDetails(false);
             setDetailsError(null);
             setDetailsRetryNonce(0);
 
-            // Setup default JO Code
+            // Keep a saved JO reference stable when opening an existing Draft.
             const code = `JO-BUF-${Math.floor(100000 + Math.random() * 900000)}`;
-            setJoNumber(code);
+            setJoNumber(String(draftJobOrder?.jo_id || draftJobOrder?.job_order_no || code));
 
             // Default due date to +7 days
             const phtToday = getPhtDateInputValue();
-            setPlannedDate(phtToday);
-            setDueDate(addCalendarDaysToDateInput(phtToday, 7));
-            setPriority(0);
+            setPlannedDate(String(draftJobOrder?.start_date || draftJobOrder?.plannedDate || phtToday).slice(0, 10));
+            setDueDate(String(draftJobOrder?.due_date || draftJobOrder?.end_date || addCalendarDaysToDateInput(phtToday, 7)).slice(0, 10));
+            setPriority(Number(draftJobOrder?.priority ?? 0));
+            setTargetQuantity(Number(draftJobOrder?.target_quantity ?? draftJobOrder?.quantity ?? 100));
+            setShiftOption(resolveProductionShiftHours(draftJobOrder?.shiftOption, draftJobOrder?.shift_option).toFixed(1));
+            const savedSubAssemblyVersions = parseVersionMap(draftJobOrder?.subAssemblyVersionMap ?? draftJobOrder?.sub_assembly_version_map);
+            setInitialSubAssemblyVersions(savedSubAssemblyVersions);
+            setSelectedSubAssemblyVersions(savedSubAssemblyVersions);
 
-            // A new Buffer JO must always choose its target branch explicitly.
-            setSelectedBranchId("");
-            const initialBranch = parseValidBranchId(initialBranchId);
+            // New Buffer JOs choose a branch; existing Drafts retain their saved branch.
+            setSelectedBranchId(isEditingDraft ? String(draftJobOrder?.branch_id || "") : "");
+            const initialBranch = parseValidBranchId(isEditingDraft ? draftJobOrder?.branch_id : initialBranchId);
             if (initialBranch !== null && branches.some((branch) => Number(branch.id) === initialBranch)) {
                 setSelectedBranchId(String(initialBranch));
             }
@@ -223,11 +253,23 @@ export function CreateBufferJODialog({
                         throw new Error("Product lookup returned an invalid catalog.");
                     }
 
+                    const draftProductId = Number(draftJobOrder?.product_id || 0);
+                    const draftProduct = data.find((product: any) => Number(product.product_id) === draftProductId);
+                    const draftParentProductId = draftProduct ? Number(getProductParentId(draftProduct) || draftProductId) : 0;
                     const active = data.filter((p: any) =>
-                        (p.isActive === true || p.isActive === 1 || p.isActive === undefined) &&
-                        Number(p.product_type) === 388
+                        ((p.isActive === true || p.isActive === 1 || p.isActive === undefined) && Number(p.product_type) === 388)
+                        || Number(p.product_id) === draftProductId
+                        || Number(p.product_id) === draftParentProductId
                     );
                     setProducts(active);
+                    if (isEditingDraft) {
+                        const savedProduct = active.find((product: any) => Number(product.product_id) === draftProductId);
+                        if (savedProduct) {
+                            setSelectedParentProductId(String(draftParentProductId || draftProductId));
+                            setSelectedProductId(String(draftProductId));
+                            setSelectedVersionId(String(draftJobOrder?.version_id || ""));
+                        }
+                    }
                 } catch (err) {
                     console.warn("Error loading products:", err);
                     toast.error("Unable to load finished goods. Please try again.");
@@ -244,11 +286,17 @@ export function CreateBufferJODialog({
                 .then((data) => setOperators(Array.isArray(data) ? data : []))
                 .catch((err) => console.error("Failed to fetch operators:", err));
         }
-    }, [isOpen, initialBranchId, branches]);
+    }, [isOpen, initialBranchId, branches, isEditingDraft, draftJobOrder?.job_order_id]);
 
     // Auto-select UOM when parent product changes
     useEffect(() => {
         if (selectedParentProductId) {
+            const currentSelectionIsInFamily = products.some((product) =>
+                String(product.product_id) === selectedProductId
+                && (String(product.product_id) === selectedParentProductId
+                    || String(getProductParentId(product) || "") === selectedParentProductId)
+            );
+            if (currentSelectionIsInFamily) return;
             const parentProd = products.find(p => String(p.product_id) === selectedParentProductId);
             if (parentProd) {
                 setSelectedProductId(String(parentProd.product_id));
@@ -263,7 +311,7 @@ export function CreateBufferJODialog({
         } else {
             setSelectedProductId("");
         }
-    }, [selectedParentProductId, products]);
+    }, [selectedParentProductId, products, selectedProductId]);
 
     // Load versions when product is selected
     useEffect(() => {
@@ -280,9 +328,11 @@ export function CreateBufferJODialog({
                 .then((data) => {
                     if (Array.isArray(data) && data.length > 0) {
                         setVersions(data);
+                        const draftVersionId = Number(draftJobOrder?.product_id) === Number(selectedProductId) ? Number(draftJobOrder?.version_id) : 0;
+                        const pinned = data.find((v: any) => Number(v.version_id) === draftVersionId);
                         const active = data.find((v: any) => v.status === "Active" || v.status === "Approved" || v.is_active);
-                        if (active) {
-                            setSelectedVersionId(String(active.version_id));
+                        if (pinned || active) {
+                            setSelectedVersionId(String((pinned || active).version_id));
                         } else {
                             setSelectedVersionId("");
                         }
@@ -293,9 +343,11 @@ export function CreateBufferJODialog({
                             .then((parentData) => {
                                 if (Array.isArray(parentData)) {
                                     setVersions(parentData);
+                                    const draftVersionId = Number(draftJobOrder?.product_id) === Number(selectedProductId) ? Number(draftJobOrder?.version_id) : 0;
+                                    const pinned = parentData.find((v: any) => Number(v.version_id) === draftVersionId);
                                     const active = parentData.find((v: any) => v.status === "Active" || v.status === "Approved" || v.is_active);
-                                    if (active) {
-                                        setSelectedVersionId(String(active.version_id));
+                                    if (pinned || active) {
+                                        setSelectedVersionId(String((pinned || active).version_id));
                                     } else {
                                         setSelectedVersionId("");
                                     }
@@ -317,7 +369,7 @@ export function CreateBufferJODialog({
             setVersions([]);
             setSelectedVersionId("");
         }
-    }, [selectedProductId, products]);
+    }, [selectedProductId, products, draftJobOrder?.version_id]);
 
     // Prefill targetProductionQuantity from selected Recipe Version's base_quantity
     useEffect(() => {
@@ -327,23 +379,25 @@ export function CreateBufferJODialog({
                 const baseQty = Number(verObj.base_quantity ?? verObj.baseQuantity ?? 0);
                 if (baseQty > 0) {
                     setBomBaseQty(baseQty);
-                    setTargetQuantity(baseQty);
+                    if (!isEditingDraft) setTargetQuantity(baseQty);
                 } else {
                     setBomBaseQty(1);
                 }
                 // Shift option is the available production capacity per day.
                 // Recipe net runtime is calculated separately and must not be
                 // used here because it represents only one recipe batch.
-                setShiftOption(resolveProductionShiftHours(
-                    verObj.shift_option,
-                    verObj.shift_hours,
-                    verObj.target_shift_hours
-                ).toFixed(1));
+                if (!isEditingDraft) {
+                    setShiftOption(resolveProductionShiftHours(
+                        verObj.shift_option,
+                        verObj.shift_hours,
+                        verObj.target_shift_hours
+                    ).toFixed(1));
+                }
             }
         } else {
             setBomBaseQty(1);
         }
-    }, [selectedVersionId, versions]);
+    }, [selectedVersionId, versions, isEditingDraft]);
 
     // Reset loaded details when selection changes or returning to Step 1
     useEffect(() => {
@@ -375,7 +429,7 @@ export function CreateBufferJODialog({
             controller = new AbortController();
             const timeoutId = window.setTimeout(() => controller?.abort(), 25000);
             try {
-                const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${selectedProductId}&bomId=${selectedVersionId}&branchId=${branchId}&isBuffer=true&requestedQuantity=${encodeURIComponent(targetQuantity)}&plannedQuantity=${encodeURIComponent(productionTargetQuantity)}`;
+                const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${selectedProductId}&bomId=${selectedVersionId}&branchId=${branchId}&isBuffer=true&reservationAware=true&requestedQuantity=${encodeURIComponent(targetQuantity)}&plannedQuantity=${encodeURIComponent(productionTargetQuantity)}`;
                 const res = await fetch(url, { signal: controller.signal });
                 const data = await res.json().catch(() => null);
                 if (!res.ok) {
@@ -394,7 +448,14 @@ export function CreateBufferJODialog({
                 setSubAssemblyBoms(data.subAssemblyBoms || {});
                 setSubAssemblyRoutings(data.subAssemblyRoutings || {});
                 setSubAssemblyVersions(data.subAssemblyVersions || {});
-                setSelectedSubAssemblyVersions(data.selectedSubAssemblyVersions || {});
+                const savedVersionsForBom = Object.fromEntries(Object.entries(initialSubAssemblyVersions).filter(([productId, versionId]) =>
+                    (data.subAssemblyVersions?.[Number(productId)] || data.subAssemblyVersions?.[productId] || [])
+                        .some((version: any) => Number(version.version_id) === Number(versionId))
+                ));
+                setSelectedSubAssemblyVersions({
+                    ...(data.selectedSubAssemblyVersions || {}),
+                    ...savedVersionsForBom
+                });
                 setInventories(normalizeInventoryMap(data.inventories));
                 setBomBaseQty(Number(data.bom.base_quantity));
                 setHasLoadedDetails(true);
@@ -546,7 +607,7 @@ export function CreateBufferJODialog({
                 overheadItems: Array.isArray(bomData?.overhead_items) ? bomData.overhead_items : [],
                 customOverhead: bomData?.custom_overhead ?? selectedVersion?.custom_overhead,
                 expectedYieldPercentage: bomData?.expected_yield_percentage ?? selectedVersion?.expected_yield_percentage,
-                targetSellingPrice: Number(selectedProdObj?.targetSellingPrice || selectedProdObj?.target_selling_price || 0),
+                targetSellingPrice: Number(selectedProdObj?.targetSellingPrice || selectedProdObj?.target_selling_price || selectedProdObj?.price_per_unit || 0),
                 materialCostPerUnit: bomData?.material_cost_per_unit
             });
             return { metrics, error: null };
@@ -686,7 +747,10 @@ export function CreateBufferJODialog({
         configuredOverheadBasis: getFactoryOverheadBasisLabel(cogsBreakdown.factoryOverheadBasis),
         yieldFactor: Number(cogsBreakdown.yieldFactor || 1),
         baseCogs: Number(cogsBreakdown.baseUnitCOGS || 0),
-        adjustedCogs: Number(cogsBreakdown.adjustedUnitCOGS || 0)
+        adjustedCogs: Number(cogsBreakdown.adjustedUnitCOGS || 0),
+        targetSellingPrice: Number(cogsBreakdown.targetSellingPrice || 0),
+        grossMarginAmount: cogsBreakdown.grossMarginAmount,
+        grossMarginPercentage: cogsBreakdown.grossMarginPercentage
     } : null, [cogsBreakdown]);
 
     const bufferShortfallCount = bufferSummaryComponents.filter((component) => !component.sufficient).length;
@@ -1137,6 +1201,34 @@ export function CreateBufferJODialog({
                 isBuffer: true
             };
 
+            if (isEditingDraft) {
+                if (!onEditDraft) throw new Error("Draft editing is unavailable. Refresh the Job Order and try again.");
+                const saved = await onEditDraft({
+                    targetQuantity: Number(productionTargetQuantity),
+                    requestedTargetQuantity: Number(targetQuantity),
+                    productId: Number(selectedProductId),
+                    branchId,
+                    versionId: Number(selectedVersionId),
+                    uomId: Number(selectedProduct?.unit_of_measurement?.unit_id || selectedProduct?.unit_of_measurement || 0) || null,
+                    plannedDate,
+                    dueDate,
+                    priority,
+                    shiftOption,
+                    remarks,
+                    assignedPersonnel: assignments,
+                    subAssemblyVersionMap: selectedSubAssemblyVersions
+                });
+                if (!saved) return;
+                if (initialize) {
+                    if (!onInitializeDraft || !await onInitializeDraft()) return;
+                    toast.success(`Buffer Job Order ${joNumber} initialized and ready for material picking.`);
+                    onOpenChange(false);
+                } else {
+                    toast.success(`Buffer Job Order ${joNumber} saved as Draft.`);
+                }
+                return;
+            }
+
             const res = await fetch("/api/manufacturing/planning-engineering", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -1181,24 +1273,26 @@ export function CreateBufferJODialog({
 
     const selectedVersion = versions.find((v) => String(v.version_id) === String(selectedVersionId));
 
+    if (!isOpen) return null;
+
     return (
-        <Dialog modal={false} open={isOpen} onOpenChange={onOpenChange}>
-            <DialogContent
-                className="max-w-6xl w-[94vw] max-h-[92vh] flex flex-col p-6 overflow-hidden bg-card text-foreground border-border sm:max-w-6xl"
-                onPointerDownOutside={(event) => event.preventDefault()}
-                onFocusOutside={(event) => event.preventDefault()}
-            >
-                <DialogHeader className="border-b border-border pb-3">
-                    <DialogTitle className="text-lg font-bold flex items-center justify-between text-foreground">
-                        <span>Create Buffer Job Order</span>
+        <section className="mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-7xl flex-col overflow-hidden rounded-2xl border border-border bg-background p-4 text-foreground shadow-sm sm:p-6">
+                <header className="border-b border-border pb-3">
+                    <div className="flex items-center justify-between gap-4">
+                        <h1 className="text-lg font-bold text-foreground">{isEditingDraft ? "Edit Buffer Job Order" : "Create Buffer Job Order"}</h1>
                         <span className="text-xs bg-primary/20 text-primary border border-primary/30 px-2.5 py-0.5 rounded-full font-semibold">
                             Step {currentStep} of 4
                         </span>
-                    </DialogTitle>
-                    <DialogDescription className="text-muted-foreground text-xs">
-                        Create a forecasting/buffer production run directly without linked Sales Orders.
-                    </DialogDescription>
-                </DialogHeader>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                        {isEditingDraft
+                            ? "Update this unreleased Buffer Job Order using the same planning and review steps as creation."
+                            : "Create a forecasting/buffer production run directly without linked Sales Orders."}
+                    </p>
+                    <div className="mt-2 inline-flex rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                        Draft
+                    </div>
+                </header>
 
                 {/* Progress Indicators */}
                 <div className="flex items-center gap-1.5 px-1 py-1">
@@ -1212,7 +1306,7 @@ export function CreateBufferJODialog({
                     ))}
                 </div>
 
-                <div className="py-2 space-y-4 flex-1 overflow-y-auto max-h-[68vh] px-1">
+                <div className="min-h-0 flex-1 overflow-y-auto px-1 py-4">
                     {currentStep === 1 && (
                         <Step1BasicDetails
                             branches={branches}
@@ -1220,6 +1314,7 @@ export function CreateBufferJODialog({
                             setSelectedBranchId={setSelectedBranchId}
                             joNumber={joNumber}
                             setJoNumber={setJoNumber}
+                            readOnlyJobOrderNumber={isEditingDraft}
                             loadingProducts={loadingProducts}
                             parentProductOptions={parentProductOptions}
                             selectedParentProductId={selectedParentProductId}
@@ -1316,8 +1411,9 @@ export function CreateBufferJODialog({
                     )}
                 </div>
 
-                <DialogFooter className="border-t border-border pt-3 gap-2 flex items-center justify-between sm:justify-between w-full">
-                    <div>
+                <footer className="sticky bottom-0 z-10 mt-3 border-t border-border bg-background/95 pt-3 backdrop-blur">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex flex-wrap items-center gap-2">
                         {currentStep > 1 && (
                             <Button
                                 variant="outline"
@@ -1328,18 +1424,7 @@ export function CreateBufferJODialog({
                                 <ArrowLeft className="h-3.5 w-3.5 mr-1.5" /> Back
                             </Button>
                         )}
-                    </div>
-                    <div className="flex gap-2">
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => onOpenChange(false)}
-                            disabled={submitting}
-                            className="text-muted-foreground hover:text-foreground h-8 hover:bg-accent"
-                        >
-                            Cancel
-                        </Button>
-                        {currentStep < 4 ? (
+                        {currentStep < 4 && (
                             <Button
                                 size="sm"
                                 onClick={handleNextStep}
@@ -1348,8 +1433,19 @@ export function CreateBufferJODialog({
                             >
                                 Next <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
                             </Button>
-                        ) : (
-                            <>
+                        )}
+                    </div>
+                    <div className="flex flex-wrap justify-end gap-2">
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => onOpenChange(false)}
+                            disabled={submitting}
+                            className="text-muted-foreground hover:text-foreground h-8 hover:bg-accent"
+                        >
+                            Back to Planning
+                        </Button>
+                        {currentStep === 4 && (
                             <Button
                                 size="sm"
                                 variant="outline"
@@ -1359,20 +1455,21 @@ export function CreateBufferJODialog({
                             >
                                 <Printer className="mr-1.5 h-3.5 w-3.5" /> Print Summary
                             </Button>
-                            <Button
+                        )}
+                        <Button
                                 variant="outline"
                                 size="sm"
                                 onClick={() => handleConfirmRelease(false)}
-                                disabled={submitting || !!productionMetricsError}
+                                disabled={submitting || loadingDetails || !hasLoadedDetails || !!detailsError || !!productionMetricsError}
                                 className="border-primary/30 text-primary hover:bg-primary/5 h-8 font-semibold"
                             >
                                 {submitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                                Save Draft
-                            </Button>
-                            <Button
+                                Save as Draft
+                        </Button>
+                        <Button
                                 size="sm"
                                 onClick={() => handleConfirmRelease(true)}
-                                disabled={submitting || !!productionMetricsError || !plannedDate || priority < 0}
+                                disabled={submitting || loadingDetails || !hasLoadedDetails || !!detailsError || !!productionMetricsError || !plannedDate || priority < 0}
                                 className="bg-emerald-600 hover:bg-emerald-500 text-white h-8 font-semibold shadow-lg shadow-emerald-500/20"
                             >
                                 {submitting ? (
@@ -1381,15 +1478,13 @@ export function CreateBufferJODialog({
                                         Initializing...
                                     </>
                                 ) : (
-                                    "Initialize JO"
+                                    "Initialize / Release JO"
                                 )}
-                            </Button>
-                            </>
-                        )}
+                        </Button>
                     </div>
-                </DialogFooter>
-            </DialogContent>
-            <SubmittingLoadingOverlay isOpen={submitting} title="Creating Buffer Job Order..." />
-        </Dialog>
+                    </div>
+                </footer>
+                <SubmittingLoadingOverlay isOpen={submitting} title="Creating Buffer Job Order..." />
+        </section>
     );
 }

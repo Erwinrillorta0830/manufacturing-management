@@ -371,6 +371,7 @@ async function persistMrpAllocations(
                 purchase_order_receiving_id: receivingLineId,
                 reserved_quantity: draft.quantity,
                 actual_used_quantity: 0,
+                created_at: formatPhtDateTime(),
                 created_by: actorUserId
             })
         });

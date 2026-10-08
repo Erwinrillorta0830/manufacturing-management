@@ -1096,6 +1096,7 @@ export async function createJobOrder(
                     reservation_status: "SOFT",
                     uom_id: uomId || null,
                     source_event_key: `jo:${joIdInt}:reserve:${joMaterialId}:${materialReservationSequence}:${allocation.purchase_order_product_id || 0}:${allocation.mm_lot_id || 0}:${allocation.batch_no || ""}`,
+                    created_at: formatPhtDateTime(),
                     created_by: joData.created_by ? Number(joData.created_by) : null
                 };
                 if (allocation.purchase_order_product_id > 0) {

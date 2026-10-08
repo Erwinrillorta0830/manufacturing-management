@@ -811,6 +811,7 @@ export async function handlePOST(request: Request) {
                             jo_material_id: mat.jo_material_id || mat.id,
                             reserved_quantity: alloc.allocated,
                             actual_used_quantity: 0,
+                            created_at: formatPhtDateTime(),
                             created_by: joData.created_by ? Number(joData.created_by) : null,
                             reservation_status: "SOFT",
                             uom_id: Number(mat.uom_id || 0) || null,
@@ -1085,7 +1086,8 @@ export async function handlePOST(request: Request) {
                 reservation_status: "SOFT",
                 uom_id: productUomId,
                 expiry_date: selectedLot.expiryDate || null,
-                source_event_key: reservationEventKey
+                source_event_key: reservationEventKey,
+                created_at: formatPhtDateTime()
             };
             const res = await fetch(reservationUrl, {
                 method: "POST",

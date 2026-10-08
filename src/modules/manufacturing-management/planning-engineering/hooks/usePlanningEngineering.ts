@@ -134,7 +134,7 @@ export function usePlanningEngineering() {
         }
     };
 
-    const handleReleaseDraftFromPlanning = async (joId: string | number) => {
+    const handleReleaseDraftFromPlanning = async (joId: string | number): Promise<boolean> => {
         setReleasingDraftId(String(joId));
         try {
             const res = await fetch("/api/manufacturing/planning-engineering", {
@@ -155,7 +155,7 @@ export function usePlanningEngineering() {
                 const isShortfall = data.code === "MATERIAL_SHORTAGE" || /Still insufficient raw materials|material reservations are short/i.test(errorMsg);
                 if (!isShortfall) {
                     toast.error(errorMsg);
-                    return;
+                    return false;
                 }
                 if (window.confirm(`${errorMsg}\n\nDo you want to forcibly release this Job Order anyway?`)) {
                     const forceRes = await fetch("/api/manufacturing/planning-engineering", {
@@ -175,15 +175,17 @@ export function usePlanningEngineering() {
                     }
                     toast.success("Job Order forcibly released. It stays in the queue — next step: stage materials.");
                     await loadInitialData(true);
-                    return;
+                    return true;
                 }
-                return;
+                return false;
             }
             toast.success("Job Order initialized. Next step: stage its materials on the shop floor.");
             await loadInitialData(true);
+            return true;
         } catch (err: any) {
             console.error("Failed to release Draft JO:", err);
             toast.error(err.message || "Failed to release job order.");
+            return false;
         } finally {
             setReleasingDraftId(null);
         }
@@ -984,6 +986,11 @@ export function usePlanningEngineering() {
         openCreatedJobOrder,
         deepLinkJo,
         clearDeepLinkJo: () => setDeepLinkJo(null),
+        closeJobOrderEditor: () => {
+            setPendingDeepLinkJo(null);
+            setDeepLinkJo(null);
+            router.replace("/mm/planning-engineering", { scroll: false });
+        },
         deepLinkNotice,
         setDeepLinkNotice,
         salesOrderLines,
