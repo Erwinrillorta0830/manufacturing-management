@@ -2,7 +2,7 @@ import React from "react";
 import { Sliders, RefreshCw, Download, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { BOMItem, Product, VersionOverheadItem } from "../types";
-import { CostingBreakdown, OverheadSummary } from "../costing";
+import { calculateDisplayUnitCOGS, CostingBreakdown, OverheadSummary } from "../costing";
 import { generateFinishedGoodCostRollupPDF } from "../utils/exportFinishedGoodCostRollupPDF";
 
 interface ProductOverhead {
@@ -67,7 +67,6 @@ export const CostRollupTab: React.FC<CostRollupTabProps> = ({
     simulatedGrossProfit,
     simulatedGrossMarginPercent,
     simulatedNetProfit,
-    simulatedCogs,
     simulatedBreakdown,
     simulatedOverheads,
     simulatedNetMarginPercent,
@@ -78,6 +77,19 @@ export const CostRollupTab: React.FC<CostRollupTabProps> = ({
         const num = Number(val || 0);
         return num.toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
     };
+
+    const standardDisplayCogs = calculateDisplayUnitCOGS([
+        standardBreakdown.materialsCost,
+        standardBreakdown.directLaborCost,
+        standardBreakdown.machineOverheadCost,
+        standardBreakdown.customOverheadCost
+    ], standardBreakdown.yieldFactor);
+    const simulatedDisplayCogs = calculateDisplayUnitCOGS([
+        simulatedBreakdown.materialsCost,
+        simulatedBreakdown.directLaborCost,
+        simulatedBreakdown.machineOverheadCost,
+        simulatedBreakdown.customOverheadCost
+    ], simulatedBreakdown.yieldFactor);
 
     const handleExportCSV = () => {
         const rows = [
@@ -189,7 +201,7 @@ export const CostRollupTab: React.FC<CostRollupTabProps> = ({
                         </div>
                         <div className="flex justify-between items-center text-xs font-semibold text-muted-foreground border-b pb-2">
                             <span>Cost of Goods Sold (COGS / unit)</span>
-                            <span className="text-foreground text-sm font-bold">₱{formatCurrency(standardCogs)}</span>
+                            <span className="text-foreground text-sm font-bold">₱{formatCurrency(standardDisplayCogs.yieldAdjustedUnitCost)}</span>
                         </div>
                         <div className="flex justify-between items-center text-xs border-b pb-2">
                             <span>Batch COGS</span>
@@ -259,11 +271,11 @@ export const CostRollupTab: React.FC<CostRollupTabProps> = ({
                         </div>
                         <div className="flex justify-between gap-2 border-t pt-2 col-span-2">
                             <span className="font-semibold">Pre-yield direct unit cost</span>
-                            <span className="font-semibold">₱{formatCurrency(standardBreakdown.preYieldDirectCost)}</span>
+                            <span className="font-semibold">₱{formatCurrency(standardDisplayCogs.baseUnitCost)}</span>
                         </div>
                         <div className="flex justify-between gap-2 col-span-2">
                             <span className="text-muted-foreground">Yield-adjusted unit cost</span>
-                            <span className="font-medium">₱{formatCurrency(standardBreakdown.unitCost)}</span>
+                            <span className="font-medium">₱{formatCurrency(standardDisplayCogs.yieldAdjustedUnitCost)}</span>
                         </div>
                         <div className="flex justify-between gap-2 col-span-2">
                             <span className="text-muted-foreground">Expected yield</span>
@@ -475,7 +487,7 @@ export const CostRollupTab: React.FC<CostRollupTabProps> = ({
                         <div className="rounded-xl border bg-muted/30 p-4 space-y-2">
                             <div className="flex justify-between items-center text-xs">
                                 <span>Simulated COGS / unit:</span>
-                                <span className="font-semibold text-foreground">₱{formatCurrency(simulatedCogs)}</span>
+                                <span className="font-semibold text-foreground">₱{formatCurrency(simulatedDisplayCogs.yieldAdjustedUnitCost)}</span>
                             </div>
                             <div className="flex justify-between items-center text-xs font-bold text-primary">
                                 <span>Simulated Gross Margin (on sales):</span>

@@ -596,20 +596,36 @@ export function CreateBufferJODialog({
     const containerMetrics = useMemo(() => {
         if (!selectedProdObj) return null;
         const verObj = bomData || versions.find((v) => String(v.version_id) === String(selectedVersionId));
+        const pcsPerBundleCase = Number((verObj as any)?.pcs_per_bundle_case) > 0
+            ? Number((verObj as any).pcs_per_bundle_case)
+            : Number((selectedProdObj as any)?.pcs_per_bundle_case) > 0
+                ? Number((selectedProdObj as any).pcs_per_bundle_case)
+                : undefined;
+        const bundlesCasesPerPallet = Number((verObj as any)?.bundles_cases_per_pallet) > 0
+            ? Number((verObj as any).bundles_cases_per_pallet)
+            : Number((selectedProdObj as any)?.bundles_cases_per_pallet) > 0
+                ? Number((selectedProdObj as any).bundles_cases_per_pallet)
+                : undefined;
+        const outputUom = (selectedProdObj as any)?.unit_of_measurement?.unit_shortcut
+            || (selectedProdObj as any)?.unit_of_measurement?.unit_name
+            || (selectedProdObj as any)?.uom_shortcut
+            || (selectedProdObj as any)?.uom_name
+            || (selectedProdObj as any)?.uom;
         return calculateContainerizationMetrics(
             (selectedProdObj as any).product_name || selectedProdObj.title || selectedProdObj.sku || "Product",
             productionTargetQuantity,
-            selectedProdObj.unit_of_measurement_count || (selectedProdObj as any).pcs_per_bundle || (selectedProdObj as any).pcs_per_case || (selectedProdObj as any).uom_count,
+            pcsPerBundleCase,
             verObj?.expected_yield_percentage || (verObj as any)?.yield_percentage,
             (verObj as any)?.scrap_rate || (verObj as any)?.scrap_percentage || (verObj as any)?.wastage_factor_percentage,
             (verObj as any)?.cutting_unit_weight_grams || (verObj as any)?.unit_weight_grams || (selectedProdObj as any)?.net_weight_grams || (selectedProdObj as any)?.piece_weight_grams,
-            (verObj as any)?.cases_per_pallet || (selectedProdObj as any)?.cases_per_pallet || (selectedProdObj as any)?.bundles_per_pallet,
+            bundlesCasesPerPallet,
             (verObj as any)?.sacks_per_mix || (verObj as any)?.sacks_per_batch,
             (verObj as any)?.batch_weight_per_sack || (verObj as any)?.base_batch_weight_grams,
             components,
             bomBaseQty,
             targetQuantity,
-            bomData?.containerization_profile || null
+            bomData?.containerization_profile || null,
+            outputUom
         );
     }, [selectedProdObj, versions, selectedVersionId, bomData, productionTargetQuantity, targetQuantity, components, bomBaseQty]);
 
@@ -668,6 +684,7 @@ export function CreateBufferJODialog({
         machineOverhead: Number(cogsBreakdown.machineOverheadCostPerUnit || 0),
         configuredOverhead: Number(cogsBreakdown.fixedOverheadCostPerUnit || 0),
         configuredOverheadBasis: getFactoryOverheadBasisLabel(cogsBreakdown.factoryOverheadBasis),
+        yieldFactor: Number(cogsBreakdown.yieldFactor || 1),
         baseCogs: Number(cogsBreakdown.baseUnitCOGS || 0),
         adjustedCogs: Number(cogsBreakdown.adjustedUnitCOGS || 0)
     } : null, [cogsBreakdown]);

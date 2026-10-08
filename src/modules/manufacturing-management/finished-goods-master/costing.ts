@@ -1,4 +1,7 @@
 import { VersionPosition } from "./types";
+import { DecimalValue } from "../decimal";
+
+const DISPLAY_UNIT_COST_DECIMAL_SCALE = 4;
 
 export interface CostingMaterialInput {
     quantity: number;
@@ -44,6 +47,35 @@ export interface CostingBreakdown {
     yieldPercentage: number;
     yieldFactor: number;
     totalBaseCost: number;
+}
+
+export interface DisplayUnitCOGS {
+    baseUnitCost: number;
+    yieldAdjustedUnitCost: number;
+}
+
+export function calculateDisplayUnitCOGS(
+    componentCosts: readonly (number | string | null | undefined)[],
+    yieldFactor: number
+): DisplayUnitCOGS {
+    const baseCost = componentCosts.reduce((total, value) => {
+        const parsed = Number(value);
+        const component = DecimalValue.from(Number.isFinite(parsed) ? parsed : 0)
+            .round(DISPLAY_UNIT_COST_DECIMAL_SCALE);
+        return total.add(component);
+    }, DecimalValue.from(0)).round(DISPLAY_UNIT_COST_DECIMAL_SCALE);
+    const parsedYieldFactor = Number(yieldFactor);
+    const safeYieldFactor = Number.isFinite(parsedYieldFactor) && parsedYieldFactor > 0
+        ? DecimalValue.from(parsedYieldFactor)
+        : DecimalValue.from(1);
+    const yieldAdjustedCost = baseCost
+        .divideRounded(safeYieldFactor, DISPLAY_UNIT_COST_DECIMAL_SCALE + 8)
+        .round(DISPLAY_UNIT_COST_DECIMAL_SCALE);
+
+    return {
+        baseUnitCost: Number(baseCost.toFixed(DISPLAY_UNIT_COST_DECIMAL_SCALE)),
+        yieldAdjustedUnitCost: Number(yieldAdjustedCost.toFixed(DISPLAY_UNIT_COST_DECIMAL_SCALE))
+    };
 }
 
 export interface OverheadSummary {
