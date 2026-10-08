@@ -178,8 +178,10 @@ export async function GET(request: Request) {
                 const prodJson = await pRes.json();
                 const rawProds = prodJson.data || [];
                 productsList = rawProds.map((p: Record<string, unknown>) => {
-                    const rawCost = p.cost_per_unit ?? p.price_per_unit ?? p.estimated_unit_cost;
-                    const unitCost = rawCost !== null && rawCost !== undefined && !isNaN(Number(rawCost))
+                    const rawCost = p.cost_per_unit !== null && p.cost_per_unit !== undefined
+                        ? p.cost_per_unit
+                        : (p.estimated_unit_cost !== null && p.estimated_unit_cost !== undefined ? p.estimated_unit_cost : null);
+                    const unitCost = rawCost !== null && !isNaN(Number(rawCost)) && Number(rawCost) > 0
                         ? Number(rawCost)
                         : 0;
                     const desc = String(p.description || "").trim();
@@ -570,11 +572,9 @@ export async function GET(request: Request) {
                 ? Number(movementInfo.onhand || 0)
                 : 0;
 
-            const unitCost = movementInfo && movementInfo.unitCost > 0
-                ? movementInfo.unitCost
-                : (row.unit_cost != null && Number(row.unit_cost) > 0
-                    ? Number(row.unit_cost)
-                    : (matchedP?.unit_cost || Number(row.unit_cost ?? 0)));
+            const unitCost = matchedP && matchedP.unit_cost !== undefined && !isNaN(Number(matchedP.unit_cost))
+                ? Number(matchedP.unit_cost)
+                : (row.unit_cost != null ? Number(row.unit_cost) : (movementInfo ? Number(movementInfo.unitCost || 0) : 0));
 
             const manufacturingDate = String(row.manufacturing_date || movementInfo?.mfgDate || "");
             const expirationDate = String(row.expiry_date || movementInfo?.expDate || "");
@@ -790,7 +790,7 @@ export async function GET(request: Request) {
                     productName: prodName,
                     itemCode,
                     quantity: mv.onhand,
-                    unitCost: mv.unitCost || (matchedP?.unit_cost || 0),
+                    unitCost: matchedP && matchedP.unit_cost !== undefined && !isNaN(Number(matchedP.unit_cost)) ? Number(matchedP.unit_cost) : Number(mv.unitCost || 0),
                     uomId: mv.unitId || null,
                     uomName,
                     uomShortcut,
@@ -856,7 +856,7 @@ export async function GET(request: Request) {
                     productName: prodName,
                     itemCode,
                     quantity: mv.onhand,
-                    unitCost: mv.unitCost || (matchedP?.unit_cost || 0),
+                    unitCost: matchedP && matchedP.unit_cost !== undefined && !isNaN(Number(matchedP.unit_cost)) ? Number(matchedP.unit_cost) : Number(mv.unitCost || 0),
                     uomId: mv.unitId || null,
                     uomName,
                     uomShortcut,

@@ -177,7 +177,11 @@ export default function BatchMovementsDialog({
     const unitLabel = batch?.uomShortcut || batch?.uomName || "";
     // When movement audit records exist, live on-hand is strictly computed from totalIn - totalOut
     const liveQuantity = batchMovements.length > 0 ? netOnhand : Number(batch?.quantity || 0);
-    const totalValue = liveQuantity * (batch?.unitCost || 0);
+    const targetPId = Number(batch?.productId || 0);
+    const currentProductObj = products.find((p) => Number(p.productId) === targetPId);
+    const resolvedProductCost = currentProductObj?.cost_per_unit ?? currentProductObj?.unitCost ?? (Number(batch?.unitCost || 0) > 0 ? batch?.unitCost : undefined);
+    const hasBatchUnitCost = resolvedProductCost !== null && resolvedProductCost !== undefined && !isNaN(Number(resolvedProductCost)) && Number(resolvedProductCost) > 0;
+    const totalValue = hasBatchUnitCost ? liveQuantity * Number(resolvedProductCost) : null;
 
     // ─── Dynamic Discrepancy & Mismatch Analyzer ─────────────────────────────────
     const discrepancies = React.useMemo(() => {
@@ -516,7 +520,7 @@ export default function BatchMovementsDialog({
 
                     {/* Metadata chips */}
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2 mt-3 pt-3 border-t border-border/40">
-                        <div className="flex items-center gap-2 min-w-0" title={`Product / SKU: ${batch.productName || "-"}`}>
+                        <div className="flex items-center gap-2 min-w-0 sm:col-span-2 lg:col-span-2 col-span-2" title={`Product / SKU: ${batch.productName || "-"}`}>
                             <Package className="h-4 w-4 text-muted-foreground shrink-0" />
                             <div className="truncate min-w-0" title={batch.productName || "-"}>
                                 <p className="text-[10px] text-muted-foreground uppercase font-semibold" title="Product / SKU">Product / SKU</p>
@@ -535,7 +539,7 @@ export default function BatchMovementsDialog({
                                 </p>
                             </div>
                         </div>
-
+{/* 
                         <div className="flex items-center gap-2 min-w-0" title={`Branch: ${branchDisplay || "-"}`}>
                             <Building2 className="h-4 w-4 text-muted-foreground shrink-0" />
                             <div className="truncate min-w-0" title={branchDisplay || "-"}>
@@ -544,7 +548,7 @@ export default function BatchMovementsDialog({
                                     {branchDisplay || "-"}
                                 </p>
                             </div>
-                        </div>
+                        </div> */}
 
                         <div className="flex items-center gap-2 min-w-0" title={`Manufacturing Date: ${batch.manufacturingDate ? String(batch.manufacturingDate).substring(0, 10) : "N/A"}`}>
                             <Layers className="h-4 w-4 text-muted-foreground shrink-0" />
@@ -575,11 +579,11 @@ export default function BatchMovementsDialog({
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-2 min-w-0" title={`Total Valuation: ₱${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}>
-                            <div className="truncate min-w-0" title={`₱${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}>
+                        <div className="flex items-center gap-2 min-w-0" title={`Total Valuation: ${totalValue !== null ? `₱${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "-"}`}>
+                            <div className="truncate min-w-0" title={totalValue !== null ? `₱${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "-"}>
                                 <p className="text-[10px] text-muted-foreground uppercase font-semibold" title="Total Valuation">Total Valuation</p>
-                                <p className="text-xs font-bold text-foreground truncate" title={`₱${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}>
-                                    ₱${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                <p className="text-xs font-bold text-foreground truncate" title={totalValue !== null ? `₱${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "-"}>
+                                    {totalValue !== null ? `₱ ${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "-"}
                                 </p>
                             </div>
                         </div>
@@ -899,7 +903,7 @@ export default function BatchMovementsDialog({
                                                     <TableHead className="text-right w-[100px]" title="Unit Cost Valuation (₱)">Unit Cost</TableHead>
                                                     <TableHead className="w-[110px]" title="Inventory Quality Condition">Condition</TableHead>
                                                     <TableHead className="w-[160px]" title="Recorded Date & Time">Date & Time</TableHead>
-                                                    <TableHead className="min-w-[180px] pr-4" title="Operational Remarks & Notes">Remarks</TableHead>
+                                                    <TableHead className="min-w-[220px] max-w-[380px] pr-4" title="Operational Remarks & Notes">Remarks</TableHead>
                                                 </TableRow>
                                             </TableHeader>
                                             <TableBody>
@@ -910,7 +914,13 @@ export default function BatchMovementsDialog({
                                                     const transType = (m.transactionType ?? m.transaction_type ?? m.sourceModule ?? m.source_module ?? "MOVEMENT") as string;
                                                     const qIn = Number(m.quantityIn ?? m.quantity_in ?? 0);
                                                     const qOut = Number(m.quantityOut ?? m.quantity_out ?? 0);
-                                                    const cost = Number(m.unitCost ?? m.unit_cost ?? 0);
+                                                    const mPId = Number(m.productId ?? m.product_id ?? targetPId);
+                                                    const mProdObj = products.find((p) => Number(p.productId) === mPId);
+                                                    const rawCostVal = m.unitCost ?? m.unit_cost;
+                                                    const rawMovementCost = rawCostVal !== null && rawCostVal !== undefined && Number(rawCostVal) > 0 ? rawCostVal : undefined;
+                                                    const productCost = mProdObj?.cost_per_unit ?? mProdObj?.unitCost ?? rawMovementCost;
+                                                    const hasCost = productCost !== null && productCost !== undefined && !isNaN(Number(productCost)) && Number(productCost) > 0;
+                                                    const cost = hasCost ? Number(productCost) : null;
                                                     const cond = (m.inventoryCondition ?? m.inventory_condition ?? "GOOD") as string;
                                                     const dateStr = (m.transactionDate ?? m.transaction_date ?? m.postedAt ?? m.posted_at ?? "") as string;
                                                     const formattedDate = dateStr ? String(dateStr).replace("T", " ").slice(0, 19) : "-";
@@ -960,8 +970,8 @@ export default function BatchMovementsDialog({
                                                             <TableCell className="text-right font-bold text-rose-600 dark:text-rose-400 text-xs py-3" title={qOut > 0 ? `Outbound: -${qOut.toLocaleString()}` : "0"}>
                                                                 {qOut > 0 ? `-${qOut.toLocaleString()}` : "-"}
                                                             </TableCell>
-                                                            <TableCell className="text-right text-xs py-3" title={`Unit Cost: ₱${cost.toFixed(2)}`}>
-                                                                ₱{cost.toFixed(2)}
+                                                            <TableCell className="text-right text-xs py-3" title={cost !== null ? `Unit Cost: ₱${cost.toFixed(2)}` : "No unit cost recorded"}>
+                                                                {cost !== null ? `₱${cost.toFixed(2)}` : "-"}
                                                             </TableCell>
                                                             <TableCell className="py-3" title={`Condition: ${cond}`}>
                                                                 <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border">
@@ -971,8 +981,14 @@ export default function BatchMovementsDialog({
                                                             <TableCell className="text-xs text-muted-foreground whitespace-nowrap py-3" title={`Timestamp: ${formattedDate}`}>
                                                                 {formattedDate}
                                                             </TableCell>
-                                                            <TableCell className="text-xs text-muted-foreground max-w-[150px] truncate pr-4 py-3" title={m.remarks ? `Remarks: ${m.remarks}` : "No remarks provided"}>
-                                                                {m.remarks || "-"}
+                                                            <TableCell className="min-w-[220px] max-w-[380px] py-3 pr-4" title={m.remarks ? `Remarks: ${m.remarks}` : "No remarks provided"}>
+                                                                {m.remarks ? (
+                                                                    <div className="max-h-[85px] overflow-y-auto whitespace-normal break-words leading-relaxed text-xs text-muted-foreground pr-1">
+                                                                        {m.remarks}
+                                                                    </div>
+                                                                ) : (
+                                                                    <span className="text-xs text-muted-foreground">-</span>
+                                                                )}
                                                             </TableCell>
                                                         </motion.tr>
                                                     );
