@@ -242,10 +242,73 @@ export async function submitShiftRunLog(payload: ShiftRunLogPayload): Promise<an
         body: formData
     });
     if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || "Failed to submit shift run log.");
+        const errData = await res.json().catch(() => ({}));
+        throw new ShiftRunLogRequestError(
+            errData.error || "Failed to submit shift run log.",
+            errData.code,
+            errData.details
+        );
     }
     return res.json();
+}
+
+export interface RecoverableShiftRunSession {
+    ledgerId: number;
+    jobOrderId: number;
+    sessionKey: string;
+    shiftName: string;
+    productionDate: string;
+    goodQuantity: number;
+    rejectedQuantity: number;
+    scrapQuantity: number;
+    loggedAt: string | null;
+    canResume: boolean;
+    recoveryError: {
+        code?: string;
+        message?: string;
+        details?: Record<string, unknown> | null;
+    } | null;
+}
+
+export class ShiftRunLogRequestError extends Error {
+    constructor(
+        message: string,
+        readonly code?: string,
+        readonly details?: Record<string, unknown>
+    ) {
+        super(message);
+        this.name = "ShiftRunLogRequestError";
+    }
+}
+
+export async function fetchRecoverableShiftRunSessions(
+    jobOrderId: string | number
+): Promise<RecoverableShiftRunSession[]> {
+    const response = await fetch(
+        `/api/manufacturing/production/shift-run-log/recovery?jobOrderId=${encodeURIComponent(String(jobOrderId))}`,
+        { cache: "no-store" }
+    );
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new ShiftRunLogRequestError(data.error || "Unable to load pending shift sessions.", data.code, data.details);
+    }
+    return Array.isArray(data.sessions) ? data.sessions : [];
+}
+
+export async function resumeShiftRunLogSession(
+    jobOrderId: string | number,
+    sessionKey: string
+): Promise<any> {
+    const response = await fetch("/api/manufacturing/production/shift-run-log/recovery", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobOrderId, sessionKey })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new ShiftRunLogRequestError(data.error || "Unable to resume the pending shift session.", data.code, data.details);
+    }
+    return data;
 }
 
 export async function addReservedMaterial(payload: WipTopUpPayload): Promise<WipTopUpResponse> {

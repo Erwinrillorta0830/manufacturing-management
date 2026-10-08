@@ -11,7 +11,12 @@ import {
 } from "@/modules/manufacturing-management/job-order-status";
 import { committedGoodOutputOrAggregate, goodOutputAggregateFallback, hasReachedProductionTarget } from "@/modules/manufacturing-management/production-workflow/utils/production-output";
 import { formatPhtDateTime, parsePhtDateTime } from "../../directus-api";
-import { accumulateHoursFromSeconds, elapsedSecondsBetween } from "@/modules/manufacturing-management/production-workflow/operator-time";
+import {
+    accumulateHoursFromSeconds,
+    elapsedSecondsBetween,
+    isRunningRouteOperatorTimer,
+    latestRunningRouteOperatorTimer
+} from "@/modules/manufacturing-management/production-workflow/operator-time";
 import { canMutateOperatorActionOnRoute } from "@/modules/manufacturing-management/production-workflow/route-status";
 import { getSessionUserId } from "../../lot-transfers/_session";
 import {
@@ -199,7 +204,7 @@ async function fetchDirectusRecords(taskId?: number, userId?: number, activeOnly
 
 async function findDirectusRecord(taskId: number, userId: number, activeOnly = false): Promise<DirectusRouteOperator | null> {
     const records = await fetchDirectusRecords(taskId, userId, activeOnly);
-    if (activeOnly) return records.find((record) => isActiveValue(record.is_active)) || null;
+    if (activeOnly) return latestRunningRouteOperatorTimer(records);
     return records.find((record) => isActiveValue(record.is_active)) || records[0] || null;
 }
 
@@ -479,7 +484,7 @@ export async function GET(request: Request) {
         const directusRecords = await fetchDirectusRecords(taskId, undefined, activeOnly);
         const responseJoId = joId || context?.jobOrderNo || (context ? String(context.jobOrderId) : "");
         const records = directusRecords
-            .filter((record) => !activeOnly || isActiveValue(record.is_active))
+            .filter((record) => !activeOnly || isRunningRouteOperatorTimer(record))
             .map(record => mapDirectusRecord(record, responseJoId));
         const enrichedRecords = await enrichRecords(records);
         const totalHours = enrichedRecords.reduce((sum, record) => sum + record.actual_hours, 0);
@@ -645,7 +650,8 @@ export async function POST(request: Request) {
                 started_at: now,
                 stopped_at: null,
                 hourly_rate: determinedRate,
-                logged_at: now
+                logged_at: now,
+                is_active: true
             };
             const saved = existingRecord
                 ? await directusRequest<{ data?: DirectusRouteOperator }>(`/items/${COLLECTION}/${existingRecord.jo_route_operator_id}`, {
@@ -658,7 +664,6 @@ export async function POST(request: Request) {
                         jo_route_id: taskId,
                         operator_id: userId,
                         logged_hours: 0,
-                        is_active: true,
                         ...payload
                     })
                 });
@@ -680,7 +685,10 @@ export async function POST(request: Request) {
         if (action === "stop-timer") {
             const activeRecord = await findDirectusRecord(taskId, userId, true);
             if (!activeRecord) {
-                return NextResponse.json({ error: "No running timer found for this operator and task" }, { status: 400 });
+                return NextResponse.json({
+                    error: "This operator has no running timer on this route. Refresh the Job Order and try again.",
+                    code: "ROUTE_OPERATOR_TIMER_NOT_RUNNING"
+                }, { status: 409 });
             }
 
             const startedAt = activeRecord.started_at ? parseDirectusDateTime(activeRecord.started_at) : Number.NaN;
@@ -701,7 +709,8 @@ export async function POST(request: Request) {
                     logged_hours: totalHours,
                     hourly_rate: hourlyRate,
                     stopped_at: stoppedAt,
-                    logged_at: stoppedAt
+                    logged_at: stoppedAt,
+                    is_active: true
                 })
             });
             const mapped = responseRecord(saved, joId);

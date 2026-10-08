@@ -4,6 +4,7 @@ import { authorizeJobOrderModuleAccess, JOB_ORDER_MODULE_PATHS } from "@/app/api
 import {
     acceptedQuantityByJobOrder,
     buildQAYieldAssessments,
+    isCommittedYieldLedger,
 } from "../_qa-accepted-output";
 import {
     isCancelledJobOrderStatus,
@@ -196,6 +197,8 @@ async function loadJobOrderSummaries() {
         )
     ]);
 
+    const committedYields = yields.filter(isCommittedYieldLedger);
+
     const productsById = new Map<number, DirectusRow>(
         products.map((product) => [
             relationId(product.product_id, ["product_id", "id"]),
@@ -203,14 +206,14 @@ async function loadJobOrderSummaries() {
         ])
     );
     const yieldsByJobOrder = new Map<number, DirectusRow[]>();
-    yields.forEach((yieldRow) => {
+    committedYields.forEach((yieldRow) => {
         const id = relationId(yieldRow.job_order_id, ["job_order_id", "id"]);
         if (!id) return;
         const current = yieldsByJobOrder.get(id) || [];
         current.push(yieldRow);
         yieldsByJobOrder.set(id, current);
     });
-    const assessments = buildQAYieldAssessments(yields, inspections, routes);
+    const assessments = buildQAYieldAssessments(committedYields, inspections, routes);
     const acceptedByJobOrder = acceptedQuantityByJobOrder(assessments);
     const unresolvedByJobOrder = new Map<number, number>();
     assessments.forEach((assessment) => {
@@ -320,13 +323,14 @@ async function loadJobOrderDetails(id: number) {
         .filter((route) => route.id > 0)
         .sort((left, right) => left.sequenceOrder - right.sequenceOrder || left.id - right.id);
 
+    const committedYields = yields.filter(isCommittedYieldLedger);
     const assessmentsByLedger = new Map(
-        buildQAYieldAssessments(yields, inspections, routes)
+        buildQAYieldAssessments(committedYields, inspections, routes)
             .map((assessment) => [assessment.ledgerId, assessment] as const)
     );
-    const evidenceFilesById = await fetchDirectusFileMetadata(yields.map((yieldRow) => directusFileId(yieldRow.daily_qa_image_id)));
+    const evidenceFilesById = await fetchDirectusFileMetadata(committedYields.map((yieldRow) => directusFileId(yieldRow.daily_qa_image_id)));
 
-    const yieldRows = yields
+    const yieldRows = committedYields
         .map((yieldRow) => {
             const currentLedgerId = ledgerId(yieldRow);
             const assessment = assessmentsByLedger.get(currentLedgerId);

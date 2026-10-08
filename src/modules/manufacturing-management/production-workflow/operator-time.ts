@@ -85,6 +85,22 @@ export function elapsedSecondsBetween(startedAt: string | null | undefined, stop
     return Math.floor((stoppedTimestamp - startedTimestamp) / 1000);
 }
 
+export interface RouteOperatorTimerRecord {
+    jo_route_operator_id: number | string;
+    started_at?: string | null;
+    stopped_at?: string | null;
+}
+
+export function isRunningRouteOperatorTimer(record: RouteOperatorTimerRecord): boolean {
+    return Boolean(record.started_at?.trim()) && !record.stopped_at?.trim();
+}
+
+export function latestRunningRouteOperatorTimer<T extends RouteOperatorTimerRecord>(records: T[]): T | null {
+    return records
+        .filter(isRunningRouteOperatorTimer)
+        .sort((left, right) => Number(right.jo_route_operator_id) - Number(left.jo_route_operator_id))[0] || null;
+}
+
 export function elapsedHours(startedAt: string | null | undefined, stoppedAt: string | null | undefined): number | null {
     const startedTimestamp = parseProductionTimestamp(startedAt);
     const stoppedTimestamp = parseProductionTimestamp(stoppedAt);
