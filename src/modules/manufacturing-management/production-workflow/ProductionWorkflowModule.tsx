@@ -55,6 +55,11 @@ export default function ProductionWorkflowModule() {
         users,
         selectedJobOrderId,
         setSelectedJobOrderId,
+        loadingSelectedJobOrder,
+        selectedJobOrderError,
+        retrySelectedJobOrderDetails,
+        clockedInCount,
+        refreshOperatorData,
         selectedTaskId,
         setSelectedTaskId,
         routeOperators,
@@ -145,7 +150,6 @@ export default function ProductionWorkflowModule() {
     }, []);
 
     // UI state
-    const [clockedInCount, setClockedInCount] = React.useState(0);
     const [isShiftLogOpen, setIsShiftLogOpen] = useState(false);
     const [isRouteAssignmentOpen, setIsRouteAssignmentOpen] = useState(false);
     const [isGenealogyOpen, setIsGenealogyOpen] = useState(false);
@@ -181,32 +185,6 @@ export default function ProductionWorkflowModule() {
     }, [fetchJobs, selectedJobOrderId]);
 
     const dailyYieldAuditState = useDailyYieldAudit({ onSaved: handleAuditSaved });
-
-    const isMountedRef = React.useRef(true);
-
-    const fetchClockedIn = React.useCallback(async () => {
-        try {
-            const res = await fetch("/api/manufacturing/production/route-operators?activeOnly=true");
-            if (res.ok && isMountedRef.current) {
-                const json = await res.json();
-                const active = (json.data || []).filter((r: any) => r.started_at !== null && r.stopped_at === null);
-                const uniqueUsers = new Set(active.map((r: any) => r.user_id));
-                setClockedInCount(uniqueUsers.size);
-            }
-        } catch (err) {
-            console.error("Error loading active operators count:", err);
-        }
-    }, []);
-
-    React.useEffect(() => {
-        isMountedRef.current = true;
-        fetchClockedIn();
-        const interval = setInterval(fetchClockedIn, 10000);
-        return () => {
-            isMountedRef.current = false;
-            clearInterval(interval);
-        };
-    }, [fetchClockedIn]);
 
     const activeRuns = React.useMemo(() => {
         return inProductionJobOrders.length;
@@ -320,7 +298,7 @@ export default function ProductionWorkflowModule() {
                             size="default" 
                             onClick={() => {
                                 fetchJobs(selectedJobOrderId);
-                                fetchClockedIn();
+                                void refreshOperatorData();
                             }}
                             className="h-10 text-xs font-bold shadow-sm bg-background border-input hover:bg-accent"
                         >
@@ -413,7 +391,7 @@ export default function ProductionWorkflowModule() {
 
             {/* Focused Full-Featured Job Order Details Modal */}
             <Dialog 
-                open={selectedJobOrderId !== "" && selectedJobOrder !== null} 
+                open={selectedJobOrderId !== ""}
                 onOpenChange={(open) => {
                     if (!open && !jobOrderActionLocked) {
                         setSelectedJobOrderId("");
@@ -422,6 +400,29 @@ export default function ProductionWorkflowModule() {
                 }}
             >
                 <DialogContent className="w-[calc(100vw-1rem)] !max-w-[calc(100vw-1rem)] max-h-[96vh] h-[95vh] flex flex-col bg-background border border-border/80 shadow-2xl rounded-2xl p-0 overflow-hidden">
+                    {!selectedJobOrder ? (
+                        <div className="flex min-h-[320px] flex-1 flex-col items-center justify-center gap-3 p-8 text-center" role={selectedJobOrderError ? "alert" : "status"}>
+                            {loadingSelectedJobOrder ? (
+                                <>
+                                    <RefreshCw className="h-8 w-8 animate-spin text-primary" />
+                                    <DialogTitle className="text-sm font-semibold">Loading Job Order details…</DialogTitle>
+                                    <DialogDescription>Loading the selected Job Order’s production details.</DialogDescription>
+                                </>
+                            ) : (
+                                <>
+                                    <AlertTriangle className="h-8 w-8 text-amber-600" />
+                                    <div className="space-y-1">
+                                        <DialogTitle className="text-sm font-semibold">Unable to load Job Order details</DialogTitle>
+                                        <DialogDescription className="max-w-md">{selectedJobOrderError || "The selected Job Order is unavailable. Retry the detail request."}</DialogDescription>
+                                    </div>
+                                    <Button variant="outline" onClick={retrySelectedJobOrderDetails}>
+                                        <RefreshCw className="mr-2 h-4 w-4" /> Retry
+                                    </Button>
+                                </>
+                            )}
+                        </div>
+                    ) : (
+                    <>
                     {/* Header */}
                     <div className="bg-gradient-to-r from-primary/10 via-primary/5 to-background p-4 sm:p-5 border-b border-border/50 shrink-0">
                         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -710,6 +711,8 @@ export default function ProductionWorkflowModule() {
                             />
                         )}
                     </div>
+                    </>
+                    )}
                 </DialogContent>
             </Dialog>
 

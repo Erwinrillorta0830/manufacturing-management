@@ -1,10 +1,12 @@
 /* eslint-disable */
+import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { AlertCircle, Building2, CornerDownRight, ExternalLink, Play, RefreshCw, Search } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { JobOrder } from "../types";
+import type { TerminalQueueJobOrder } from "../types";
 import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 import { resolveJobOrderJourney } from "../../shared/job-order-journey";
 import { JobOrderJourneyBar } from "../../shared/components/JobOrderJourneyBar";
@@ -14,8 +16,8 @@ import { calculatePipelinedLineDurationHours } from "../../planning-engineering/
 import { formatPhtDate } from "../../shared/pht-date";
 
 interface ReleasedJobQueueProps {
-    filteredJobOrders: JobOrder[];
-    jobOrders: JobOrder[];
+    filteredJobOrders: TerminalQueueJobOrder[];
+    jobOrders: TerminalQueueJobOrder[];
     selectedJobOrderId: string;
     setSelectedJobOrderId: (id: string) => void;
     searchQuery: string;
@@ -69,7 +71,172 @@ function StepProgressBar({ completedSteps, totalSteps }: { completedSteps: numbe
     );
 }
 
-export function ReleasedJobQueue({
+type WorkstationEntry = { key: string; stepNumber: number | null; name: string };
+
+interface ReleasedJobQueueRowSummary {
+    producedQty: number;
+    workstationEntries: WorkstationEntry[];
+    journey: ReturnType<typeof resolveJobOrderJourney>;
+    totalSteps: number;
+    completedSteps: number;
+    totalHours: number;
+    isForPicking: boolean;
+    isPicked: boolean;
+    isInProduction: boolean;
+    isOnHold: boolean;
+    canOpenTerminal: boolean;
+}
+
+function createReleasedJobQueueRowSummary(jo: TerminalQueueJobOrder): ReleasedJobQueueRowSummary {
+    const isForPicking = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.FOR_PICKING);
+    const isPicked = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.PICKED);
+    const isInProduction = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.IN_PRODUCTION);
+    const isOnHold = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD);
+    const routeTasks = jo.routing_tasks?.length ? jo.routing_tasks : jo.routingTasks || [];
+    const workstationEntries: WorkstationEntry[] = [...routeTasks]
+        .sort((left, right) => left.sequence_order - right.sequence_order)
+        .map((task, index) => ({
+            key: `${task.id || task.jo_route_id || index}-${task.sequence_order}`,
+            stepNumber: task.sequence_order || index + 1,
+            name: task.work_center?.work_center_name
+                || task.work_center_name
+                || (task.work_center_id ? `Work Center #${task.work_center_id}` : "Unassigned")
+        }));
+    if (workstationEntries.length === 0) {
+        workstationEntries.push({
+            key: `${jo.jo_id}-primary-workstation`,
+            stepNumber: null,
+            name: jo.primary_work_center_name
+                || (jo.primary_work_center_id ? `WC #${jo.primary_work_center_id}` : "Unassigned")
+        });
+    }
+
+    const routingTasks = jo.routing_tasks || jo.routingTasks || [];
+    const totalSteps = routingTasks.length;
+    const completedSteps = routingTasks.filter(
+        (task) => String(task.status || "").trim().toLowerCase() === "completed"
+    ).length;
+
+    return {
+        producedQty: jo.producedQty ?? jo.completed_quantity ?? jo.productionOutputQuantity ?? 0,
+        workstationEntries,
+        journey: resolveJobOrderJourney({
+            status: jo.status,
+            allMaterialsStaged: isPicked ? undefined : false
+        }),
+        totalSteps,
+        completedSteps,
+        totalHours: calculatePipelinedLineDurationHours(routingTasks),
+        isForPicking,
+        isPicked,
+        isInProduction,
+        isOnHold,
+        canOpenTerminal: isForPicking || isPicked || isInProduction || isOnHold
+    };
+}
+
+const ReleasedJobQueueRow = memo(function ReleasedJobQueueRow({
+    jobOrder: jo,
+    parent,
+    isSelected,
+    setSelectedJobOrderId,
+    virtualIndex,
+    measureElement
+}: {
+    jobOrder: TerminalQueueJobOrder;
+    parent?: TerminalQueueJobOrder;
+    isSelected: boolean;
+    setSelectedJobOrderId: (id: string) => void;
+    virtualIndex?: number;
+    measureElement?: (element: HTMLTableRowElement | null) => void;
+}) {
+    const summary = useMemo(() => createReleasedJobQueueRowSummary(jo), [jo]);
+
+    return (
+        <tr
+            ref={measureElement}
+            data-index={virtualIndex}
+            className={isSelected ? "bg-primary/[0.06]" : "bg-card hover:bg-muted/20"}
+        >
+            <td className="px-3 py-3 align-top">
+                <div className="flex items-start gap-2">
+                    {parent && <CornerDownRight className="mt-0.5 h-4 w-4 shrink-0 text-primary" />}
+                    <div className="min-w-0">
+                        <div className="font-sans text-sm font-bold tracking-tight">{jo.jo_id}</div>
+                        {parent && (
+                            <div className="mt-1 text-xs font-semibold text-primary/80">
+                                Sub-assembly of {parent.jo_id}
+                            </div>
+                        )}
+                        <div className="mt-2">
+                            <JobOrderStatusBadge status={jo.status} className="font-sans text-xs" />
+                        </div>
+                    </div>
+                </div>
+            </td>
+            <td className="max-w-[300px] px-3 py-3 align-top">
+                <div className="font-semibold text-sm text-foreground truncate" title={jo.product_name}>
+                    {jo.product_name}
+                </div>
+                {jo.version_name && (
+                    <div className="mt-1 font-sans text-xs font-bold text-primary">Recipe: {jo.version_name}</div>
+                )}
+                <StepProgressBar completedSteps={summary.completedSteps} totalSteps={summary.totalSteps} />
+                <JobOrderJourneyBar journey={summary.journey} compact className="mt-2" />
+            </td>
+            <td className="whitespace-nowrap px-3 py-3 text-right align-top">
+                <div className="font-sans text-sm font-bold text-foreground">
+                    {Number(jo.quantity || 0).toLocaleString()}
+                    <span className="mx-1 font-normal text-muted-foreground">/</span>
+                    <span className="text-emerald-600 dark:text-emerald-400">{Number(summary.producedQty || 0).toLocaleString()}</span>
+                </div>
+                <div className="mt-2 text-xs text-muted-foreground">
+                    {summary.totalHours.toFixed(1)} line hrs
+                </div>
+            </td>
+            <td className="px-3 py-3 align-top">
+                <div className="flex items-start gap-1.5 text-sm font-semibold">
+                    <Building2 className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${summary.workstationEntries.every((entry) => entry.name === "Unassigned") ? "text-amber-600 dark:text-amber-400" : "text-primary"}`} />
+                    <div className="min-w-0 space-y-1">
+                        {summary.workstationEntries.map((entry) => (
+                            <div key={entry.key} title={entry.stepNumber ? `Step ${entry.stepNumber}: ${entry.name}` : entry.name}>
+                                {entry.stepNumber && (
+                                    <span className="mr-1 text-[10px] font-medium text-muted-foreground">
+                                        Step {entry.stepNumber}:
+                                    </span>
+                                )}
+                                <span>{entry.name}</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </td>
+            <td className="px-3 py-3 align-top text-sm font-semibold text-muted-foreground">
+                {jo.due_date ? formatPhtDate(jo.due_date) : "—"}
+            </td>
+            <td className="px-3 py-3 text-right align-top">
+                <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => setSelectedJobOrderId(jo.jo_id)}
+                    disabled={!summary.canOpenTerminal}
+                    className={summary.isPicked
+                        ? "h-9 bg-primary px-3 text-xs font-bold text-primary-foreground hover:bg-primary/90"
+                        : "h-9 px-3 text-xs font-bold"}
+                >
+                    {summary.isPicked ? <Play className="mr-1.5 h-3.5 w-3.5" /> : <ExternalLink className="mr-1.5 h-3.5 w-3.5" />}
+                    {summary.isForPicking ? "Review Materials" : summary.isPicked ? "Start Production" : summary.isInProduction ? "Open Terminal" : summary.isOnHold ? "Review Hold" : "Unavailable"}
+                </Button>
+            </td>
+        </tr>
+    );
+});
+
+const VIRTUALIZE_THRESHOLD = 100;
+const ESTIMATED_QUEUE_ROW_HEIGHT = 160;
+const QUEUE_ROW_OVERSCAN = 8;
+
+export const ReleasedJobQueue = memo(function ReleasedJobQueue({
     filteredJobOrders,
     jobOrders,
     selectedJobOrderId,
@@ -92,13 +259,64 @@ export function ReleasedJobQueue({
     hasActiveFilters,
     onClearFilters
 }: ReleasedJobQueueProps) {
-    const parentByChildId = new Map(
-        filteredJobOrders
-            .filter((jo) => jo.parentJobOrderId)
-            .map((jo) => [jo.jo_id, jobOrders.find((parent) => Number(parent.order_id) === Number(jo.parentJobOrderId))])
-    );
+    const parentByChildId = useMemo(() => {
+        const parentByOrderId = new Map<number, TerminalQueueJobOrder>();
+        jobOrders.forEach((jobOrder) => parentByOrderId.set(Number(jobOrder.order_id), jobOrder));
 
-    const openTerminal = (jo: JobOrder) => setSelectedJobOrderId(jo.jo_id);
+        const parents = new Map<string, TerminalQueueJobOrder>();
+        filteredJobOrders.forEach((jobOrder) => {
+            if (!jobOrder.parentJobOrderId) return;
+            const parent = parentByOrderId.get(Number(jobOrder.parentJobOrderId));
+            if (parent) parents.set(jobOrder.jo_id, parent);
+        });
+        return parents;
+    }, [filteredJobOrders, jobOrders]);
+    const shouldVirtualize = filteredJobOrders.length > VIRTUALIZE_THRESHOLD;
+    const [scrollMargin, setScrollMargin] = useState(0);
+    const rowListRef = useRef<HTMLTableSectionElement>(null);
+    const virtualizer = useWindowVirtualizer<HTMLTableRowElement>({
+        count: shouldVirtualize ? filteredJobOrders.length : 0,
+        estimateSize: () => ESTIMATED_QUEUE_ROW_HEIGHT,
+        overscan: QUEUE_ROW_OVERSCAN,
+        getItemKey: (index) => filteredJobOrders[index]?.jo_id ?? index,
+        scrollMargin,
+        enabled: shouldVirtualize
+    });
+    const filterKey = JSON.stringify([
+        searchQuery,
+        selectedBranchFilter,
+        productFilter,
+        customerFilter,
+        statusFilter
+    ]);
+    const previousFilterKeyRef = useRef(filterKey);
+
+    useLayoutEffect(() => {
+        if (previousFilterKeyRef.current === filterKey) return;
+        previousFilterKeyRef.current = filterKey;
+        if (shouldVirtualize) virtualizer.scrollToIndex(0, { align: "start" });
+    }, [filterKey, shouldVirtualize, virtualizer]);
+
+    useLayoutEffect(() => {
+        const updateScrollMargin = () => {
+            const rowList = rowListRef.current;
+            if (!rowList) return;
+            const nextMargin = window.scrollY + rowList.getBoundingClientRect().top;
+            setScrollMargin((current) => current === nextMargin ? current : nextMargin);
+        };
+
+        updateScrollMargin();
+        window.addEventListener("resize", updateScrollMargin);
+        return () => window.removeEventListener("resize", updateScrollMargin);
+    }, [filteredJobOrders.length, loadingJobs]);
+
+    const virtualItems = shouldVirtualize ? virtualizer.getVirtualItems() : [];
+    const firstVirtualItem = virtualItems[0];
+    const lastVirtualItem = virtualItems[virtualItems.length - 1];
+    const topPadding = firstVirtualItem ? Math.max(0, firstVirtualItem.start - scrollMargin) : 0;
+    const bottomPadding = lastVirtualItem
+        ? Math.max(0, virtualizer.getTotalSize() - (lastVirtualItem.end - scrollMargin))
+        : 0;
 
     return (
         <Card className="h-full overflow-hidden font-sans">
@@ -211,125 +429,42 @@ export function ReleasedJobQueue({
                                     <th className="px-3 py-3 text-right font-bold">Action</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-border/50">
-                                {filteredJobOrders.map((jo) => {
-                                    const isSelected = jo.jo_id === selectedJobOrderId;
-                                    const isForPicking = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.FOR_PICKING);
-                                    const isPicked = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.PICKED);
-                                    const isInProduction = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.IN_PRODUCTION);
-                                    const isOnHold = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD);
-                                    const canOpenTerminal = isForPicking || isPicked || isInProduction || isOnHold;
-                                    const parent = parentByChildId.get(jo.jo_id);
-                                    const producedQty = jo.producedQty ?? jo.completed_quantity ?? jo.productionOutputQuantity ?? 0;
-                                    const routeTasks = jo.routing_tasks?.length
-                                        ? jo.routing_tasks
-                                        : jo.routingTasks || [];
-                                    const workstationEntries: Array<{ key: string; stepNumber: number | null; name: string }> = [...routeTasks]
-                                        .sort((left, right) => left.sequence_order - right.sequence_order)
-                                        .map((task, index) => ({
-                                            key: `${task.id || task.jo_route_id || index}-${task.sequence_order}`,
-                                            stepNumber: task.sequence_order || index + 1,
-                                            name: task.work_center?.work_center_name
-                                                || task.work_center_name
-                                                || (task.work_center_id ? `Work Center #${task.work_center_id}` : "Unassigned")
-                                        }));
-                                    if (workstationEntries.length === 0) {
-                                        workstationEntries.push({
-                                            key: `${jo.jo_id}-primary-workstation`,
-                                            stepNumber: null,
-                                            name: jo.primary_work_center_name
-                                                || (jo.primary_work_center_id ? `WC #${jo.primary_work_center_id}` : "Unassigned")
-                                        });
-                                    }
-                                    const journey = resolveJobOrderJourney({
-                                        status: jo.status,
-                                        allMaterialsStaged: isPicked ? undefined : false
-                                    });
-                                    const routingTasks = jo.routing_tasks || jo.routingTasks || [];
-                                    const totalSteps = routingTasks.length;
-                                    const completedSteps = routingTasks.filter(
-                                        (task) => String(task.status || "").trim().toLowerCase() === "completed"
-                                    ).length;
-                                    const totalHours = calculatePipelinedLineDurationHours(routingTasks);
-
-                                    return (
-                                        <tr
+                            <tbody ref={rowListRef} className="divide-y divide-border/50">
+                                {shouldVirtualize && topPadding > 0 && (
+                                    <tr key="top-spacer" aria-hidden="true">
+                                        <td colSpan={6} className="h-0 border-0 p-0" style={{ height: topPadding }} />
+                                    </tr>
+                                )}
+                                {shouldVirtualize
+                                    ? virtualItems.map((virtualItem) => {
+                                        const jo = filteredJobOrders[virtualItem.index];
+                                        if (!jo) return null;
+                                        return (
+                                            <ReleasedJobQueueRow
+                                                key={virtualItem.key}
+                                                jobOrder={jo}
+                                                parent={parentByChildId.get(jo.jo_id)}
+                                                isSelected={jo.jo_id === selectedJobOrderId}
+                                                setSelectedJobOrderId={setSelectedJobOrderId}
+                                                virtualIndex={virtualItem.index}
+                                                measureElement={virtualizer.measureElement}
+                                            />
+                                        );
+                                    })
+                                    : filteredJobOrders.map((jo) => (
+                                        <ReleasedJobQueueRow
                                             key={jo.jo_id}
-                                            className={isSelected ? "bg-primary/[0.06]" : "bg-card hover:bg-muted/20"}
-                                        >
-                                            <td className="px-3 py-3 align-top">
-                                                <div className="flex items-start gap-2">
-                                                    {parent && <CornerDownRight className="mt-0.5 h-4 w-4 shrink-0 text-primary" />}
-                                                    <div className="min-w-0">
-                                                        <div className="font-sans text-sm font-bold tracking-tight">{jo.jo_id}</div>
-                                                        {parent && (
-                                                            <div className="mt-1 text-xs font-semibold text-primary/80">
-                                                                Sub-assembly of {parent.jo_id}
-                                                            </div>
-                                                        )}
-                                                        <div className="mt-2">
-                                                            <JobOrderStatusBadge status={jo.status} className="font-sans text-xs" />
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </td>
-                                            <td className="max-w-[300px] px-3 py-3 align-top">
-                                                <div className="font-semibold text-sm text-foreground truncate" title={jo.product_name}>
-                                                    {jo.product_name}
-                                                </div>
-                                                {jo.version_name && (
-                                                    <div className="mt-1 font-sans text-xs font-bold text-primary">Recipe: {jo.version_name}</div>
-                                                )}
-                                                <StepProgressBar completedSteps={completedSteps} totalSteps={totalSteps} />
-                                                <JobOrderJourneyBar journey={journey} compact className="mt-2" />
-                                            </td>
-                                            <td className="whitespace-nowrap px-3 py-3 text-right align-top">
-                                                <div className="font-sans text-sm font-bold text-foreground">
-                                                    {Number(jo.quantity || 0).toLocaleString()}
-                                                    <span className="mx-1 font-normal text-muted-foreground">/</span>
-                                                    <span className="text-emerald-600 dark:text-emerald-400">{Number(producedQty || 0).toLocaleString()}</span>
-                                                </div>
-                                                <div className="mt-2 text-xs text-muted-foreground">
-                                                    {totalHours.toFixed(1)} line hrs
-                                                </div>
-                                            </td>
-                                            <td className="px-3 py-3 align-top">
-                                                <div className="flex items-start gap-1.5 text-sm font-semibold">
-                                                    <Building2 className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${workstationEntries.every((entry) => entry.name === "Unassigned") ? "text-amber-600 dark:text-amber-400" : "text-primary"}`} />
-                                                    <div className="min-w-0 space-y-1">
-                                                        {workstationEntries.map((entry) => (
-                                                            <div key={entry.key} title={entry.stepNumber ? `Step ${entry.stepNumber}: ${entry.name}` : entry.name}>
-                                                                {entry.stepNumber && (
-                                                                    <span className="mr-1 text-[10px] font-medium text-muted-foreground">
-                                                                        Step {entry.stepNumber}:
-                                                                    </span>
-                                                                )}
-                                                                <span>{entry.name}</span>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            </td>
-                                            <td className="px-3 py-3 align-top text-sm font-semibold text-muted-foreground">
-                                                {jo.due_date ? formatPhtDate(jo.due_date) : "—"}
-                                            </td>
-                                            <td className="px-3 py-3 text-right align-top">
-                                                <Button
-                                                    type="button"
-                                                    size="sm"
-                                                    onClick={() => openTerminal(jo)}
-                                                    disabled={!canOpenTerminal}
-                                                    className={isPicked
-                                                        ? "h-9 bg-primary px-3 text-xs font-bold text-primary-foreground hover:bg-primary/90"
-                                                        : "h-9 px-3 text-xs font-bold"}
-                                                >
-                                                    {isPicked ? <Play className="mr-1.5 h-3.5 w-3.5" /> : <ExternalLink className="mr-1.5 h-3.5 w-3.5" />}
-                                                    {isForPicking ? "Review Materials" : isPicked ? "Start Production" : isInProduction ? "Open Terminal" : isOnHold ? "Review Hold" : "Unavailable"}
-                                                </Button>
-                                            </td>
-                                        </tr>
-                                    );
-                                })}
+                                            jobOrder={jo}
+                                            parent={parentByChildId.get(jo.jo_id)}
+                                            isSelected={jo.jo_id === selectedJobOrderId}
+                                            setSelectedJobOrderId={setSelectedJobOrderId}
+                                        />
+                                    ))}
+                                {shouldVirtualize && bottomPadding > 0 && (
+                                    <tr key="bottom-spacer" aria-hidden="true">
+                                        <td colSpan={6} className="h-0 border-0 p-0" style={{ height: bottomPadding }} />
+                                    </tr>
+                                )}
                             </tbody>
                         </table>
                     </div>
@@ -337,4 +472,4 @@ export function ReleasedJobQueue({
             </CardContent>
         </Card>
     );
-}
+});

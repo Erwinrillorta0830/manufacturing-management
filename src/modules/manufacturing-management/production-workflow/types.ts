@@ -123,6 +123,46 @@ export interface JobOrder {
     assignedPersonnel?: Record<string, number[]> | null;
 }
 
+export interface TerminalQueueJobOrder {
+    jo_id: string;
+    order_id: number;
+    job_order_id: number;
+    order_no: string;
+    job_order_no: string;
+    product_id: number;
+    product_name: string;
+    quantity: number;
+    target_quantity: number;
+    due_date?: string | null;
+    status: CanonicalJobOrderStatus | string;
+    branch_id: number | null;
+    uom_id: number | null;
+    uom_name: string;
+    uom_shortcut: string;
+    unit_of_measurement: string;
+    version_id: number | null;
+    version_name: string;
+    producedQty: number;
+    produced_quantity: number;
+    completed_quantity: number;
+    production_output_quantity: number;
+    productionOutputQuantity: number;
+    primary_work_center_id: number | null;
+    primary_work_center_name: string | null;
+    parentJobOrderId: number | null;
+    parent_job_order_id: number | null;
+    shift_option: string;
+    shiftOption: string;
+    routing_tasks: Array<Pick<RoutingTask,
+        "id" | "jo_id" | "routing_id" | "name" | "sequence_order" | "status"
+        | "planned_setup_hours" | "planned_run_hours" | "duration_hours" | "actual_setup_hours"
+        | "actual_run_hours" | "step_batch_size" | "work_center_id" | "work_center_name" | "work_center"
+    > & { jo_route_id?: number }>;
+    routingTasks: TerminalQueueJobOrder["routing_tasks"];
+    sales_orders: SalesOrderLink[];
+    salesOrders: SalesOrderLink[];
+}
+
 export interface JobOrderMaterialReturnLine {
     joMaterialId: number;
     productId: number;

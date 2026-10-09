@@ -300,6 +300,67 @@ async function getRouteJobOrderContext(taskId: number): Promise<RouteJobOrderCon
     };
 }
 
+async function getJobOrderRouteOperatorBatch(jobOrderId: number) {
+    const [routesPayload, jobOrderPayload] = await Promise.all([
+        directusRequest<{ data?: Array<{ jo_route_id?: unknown }> }>(
+            `/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${jobOrderId}&fields=jo_route_id&limit=-1`
+        ),
+        directusRequest<{ data?: { job_order_id?: unknown; job_order_no?: unknown; assigned_personnel?: unknown } }>(
+            `/items/manufacturing_job_orders/${jobOrderId}?fields=job_order_id,job_order_no,assigned_personnel`
+        )
+    ]);
+    const jobOrder = jobOrderPayload?.data;
+    if (!jobOrder) {
+        throw new DirectusRouteOperatorError(404, "Job Order was not found.", "JOB_ORDER_NOT_FOUND");
+    }
+
+    const routeIds = [...new Set((routesPayload?.data || [])
+        .map((route) => positiveInteger(route.jo_route_id))
+        .filter((routeId) => routeId > 0))];
+    const params = new URLSearchParams({ limit: "-1", fields: ROUTE_OPERATOR_FIELDS });
+    if (routeIds.length > 0) {
+        params.set("filter[_or][0][jo_route_id][_in]", routeIds.join(","));
+        params.set("filter[_or][1][started_at][_nnull]", "true");
+        params.set("filter[_or][1][stopped_at][_null]", "true");
+    } else {
+        params.set("filter[started_at][_nnull]", "true");
+        params.set("filter[stopped_at][_null]", "true");
+    }
+
+    const recordsPayload = await directusRequest<{ data?: DirectusRouteOperator[] }>(
+        `/items/${COLLECTION}?${params.toString()}`
+    );
+    const records = Array.isArray(recordsPayload?.data) ? recordsPayload.data : [];
+    const routeIdSet = new Set(routeIds);
+    const jobOrderNo = String(jobOrder.job_order_no || `JO-${jobOrderId}`);
+    const selectedRecords = records
+        .filter((record) => routeIdSet.has(positiveInteger(record.jo_route_id)))
+        .map((record) => mapDirectusRecord(record, jobOrderNo));
+    const enrichedRecords = selectedRecords.length > 0 ? await enrichRecords(selectedRecords) : [];
+    const dataByTaskId: Record<string, RouteOperatorRecord[]> = Object.fromEntries(
+        routeIds.map((routeId) => [String(routeId), []])
+    );
+    enrichedRecords.forEach((record) => {
+        dataByTaskId[String(record.task_id)]?.push(record);
+    });
+
+    const activeOperatorIds = records
+        .filter(isRunningRouteOperatorTimer)
+        .map((record) => positiveInteger(record.operator_id))
+        .filter((operatorId) => operatorId > 0);
+
+    const assignedPersonnel = normalizeOperatorAssignments(jobOrder.assigned_personnel);
+    return {
+        dataByTaskId,
+        assignmentState: {
+            jobOrderId,
+            jobOrderNo,
+            assignedPersonnel
+        },
+        activeOperatorCount: new Set(activeOperatorIds).size
+    };
+}
+
 async function assertProductionTargetNotReached(jobOrderId: number, jobOrderNo: string): Promise<void> {
     const [jobOrderPayload, yieldPayload] = await Promise.all([
         directusRequest<{ data?: { target_quantity?: unknown; actual_quantity_produced?: unknown; completed_quantity?: unknown; rejected_quantity?: unknown } }>(
@@ -473,8 +534,21 @@ export async function GET(request: Request) {
         const { searchParams } = new URL(request.url);
         const taskIdParam = searchParams.get("taskId");
         const taskId = taskIdParam === null ? undefined : Number(taskIdParam);
+        const jobOrderIdParam = searchParams.get("jobOrderId");
         const joId = searchParams.get("joId") || "";
         const activeOnly = searchParams.get("activeOnly") === "true";
+
+        if (jobOrderIdParam !== null && taskIdParam !== null) {
+            return NextResponse.json({ error: "Specify either jobOrderId or taskId, not both." }, { status: 400 });
+        }
+
+        if (jobOrderIdParam !== null) {
+            const jobOrderId = positiveInteger(jobOrderIdParam);
+            if (!jobOrderId) {
+                return NextResponse.json({ error: "jobOrderId must be a positive integer" }, { status: 400 });
+            }
+            return NextResponse.json(await getJobOrderRouteOperatorBatch(jobOrderId));
+        }
 
         if (taskId !== undefined && (!Number.isInteger(taskId) || taskId <= 0)) {
             return NextResponse.json({ error: "taskId must be a positive integer" }, { status: 400 });
