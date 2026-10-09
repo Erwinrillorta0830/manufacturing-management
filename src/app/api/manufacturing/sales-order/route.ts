@@ -683,7 +683,7 @@ export async function GET(request: Request) {
         const filters = {
             search,
             status: planningQueue
-                ? "For Production,In Production"
+                ? "For Production"
                 : forProductionQueue
                 ? "For Production"
                 : inProductionQueue
@@ -751,9 +751,7 @@ export async function GET(request: Request) {
                         const remaining = detailRemainingQuantity(detail, plannedQuantity, replacementCreditQuantity);
                         const isScheduled = remaining <= 0;
                         if (planningQueue) {
-                            const isSchedulableStatus = candidate.order_status === "For Production"
-                                || candidate.order_status === "In Production";
-                            return isSchedulableStatus
+                            return candidate.order_status === "For Production"
                                 && remaining > 0
                                 && !activeJobOrderDetailIds.has(detailId);
                         }
@@ -838,7 +836,7 @@ export async function GET(request: Request) {
                     const replacementCreditQuantity = replacementCreditData.byDetail.get(detailId) || 0;
                     const remaining = detailRemainingQuantity(detail, plannedQuantity, replacementCreditQuantity);
                     if (planningQueue) {
-                        return (order?.order_status === "For Production" || order?.order_status === "In Production")
+                        return order?.order_status === "For Production"
                             && remaining > 0
                             && !activeJobOrderDetailIds.has(detailId);
                     }
