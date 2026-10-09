@@ -24,7 +24,6 @@ import {
     ChevronRight,
     X
 } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { StagingJobOrder, MaterialStagingItem, AllocatedLot, BatchStageResult } from "../types";
 import { canStageJobOrderMaterials, isCancelledJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 import { resolveJobOrderJourney, stagingStateInfo } from "../../shared/job-order-journey";
@@ -57,7 +56,6 @@ export function StagingPickList({
     onDismissBatchStageResult,
     isProcessing = false
 }: StagingPickListProps) {
-    const router = useRouter();
     const [expandedMaterials, setExpandedMaterials] = useState<Record<number, boolean>>({});
 
     if (!jobOrder) {
@@ -87,6 +85,7 @@ export function StagingPickList({
 
     const isAllStaged = jobOrder.all_staged;
     const isCancelled = isCancelledJobOrderStatus(jobOrder.status);
+    const isPicked = isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.PICKED);
     const canStageMaterials = canStageJobOrderMaterials(jobOrder.status);
     const stagingState = stagingStateInfo(jobOrder.reservation_status);
     const journey = resolveJobOrderJourney({
@@ -167,16 +166,10 @@ export function StagingPickList({
 
             <div className="space-y-3">
                 <JobOrderJourneyBar journey={journey} />
-                {(() => {
-                    const isPicked = isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.PICKED);
+                {!isPicked && (() => {
                     const calloutAction = isCancelled
                         ? null
-                        : isPicked
-                            ? {
-                                label: "Open Production Workflow",
-                                description: "Materials are picked and staged on the floor. Start the shift run from the shop-floor terminal when production begins."
-                            }
-                            : isAllStaged
+                        : isAllStaged
                                 ? {
                                     label: isMarkingPicked ? "Marking as Picked..." : "Mark as Picked",
                                     description: "All materials are staged on the floor. Confirm picking to release this Job Order for shop-floor production."
@@ -193,17 +186,13 @@ export function StagingPickList({
                             title="What's next"
                             onAction={
                                 !isCancelled
-                                    ? isPicked
-                                        ? () => {
-                                            router.push(`/mm/shop-floor-execution-terminal?jo=${encodeURIComponent(jobOrder.job_order_no || jobOrder.job_order_id)}`);
-                                        }
-                                        : isAllStaged
-                                            ? onMarkAsPicked && !isMarkingPicked && !isProcessing
-                                                ? () => { void onMarkAsPicked(jobOrder); }
-                                                : undefined
-                                            : !isProcessing
-                                                ? () => { void onStageAllAvailable(jobOrder); }
-                                                : undefined
+                                    ? isAllStaged
+                                        ? onMarkAsPicked && !isMarkingPicked && !isProcessing
+                                            ? () => { void onMarkAsPicked(jobOrder); }
+                                            : undefined
+                                        : !isProcessing
+                                            ? () => { void onStageAllAvailable(jobOrder); }
+                                            : undefined
                                     : undefined
                             }
                         />

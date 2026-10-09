@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "../../job-order-status";
 import { Branch, SalesOrder, SalesOrderDetail, NetRequirementItem } from "../types";
 import { cancelPendingSalesOrderRequests, fetchBranches, fetchSalesOrders, fetchNetRequirementsRaw, releaseJobOrder, releaseMultipleJobOrders, directAllocate } from "../services/planning-api";
-import { buildSalesOrderDemandGroups, buildSalesOrderReleaseGroups, canCreateReplacementJobOrder, isSchedulableSalesOrderLine, remainingQuantity } from "../utils/demand-groups";
+import { buildSalesOrderDemandGroups, buildSalesOrderReleaseGroups, canCreateReplacementJobOrder, isPlanningDemandSalesOrder, isSchedulableSalesOrderLine, remainingQuantity } from "../utils/demand-groups";
 import { DEFAULT_PRODUCTION_SHIFT_HOURS, normalizeProductionOutputQuantity } from "../utils/production-timing";
 import { addCalendarDaysToDateInput, getPhtDateInputValue } from "../../shared/pht-date";
 
@@ -399,7 +399,7 @@ export function usePlanningEngineering() {
         if (selectedBranchId === null) return [];
         const lines: SalesOrderDetail[] = [];
         [...salesOrders].sort(compareNewestSalesOrders).forEach((so) => {
-            if (so.order_status !== "For Production" && so.order_status !== "In Production") return;
+            if (!isPlanningDemandSalesOrder(so)) return;
             if (so.branch_id === undefined || so.branch_id === null || Number(so.branch_id) !== Number(selectedBranchId)) {
                 return;
             }

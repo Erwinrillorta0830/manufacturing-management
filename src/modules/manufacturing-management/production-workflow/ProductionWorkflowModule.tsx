@@ -444,7 +444,7 @@ export default function ProductionWorkflowModule() {
                                     {selectedJobOrder?.order_no || `JO #${selectedJobOrder?.jo_id}`}
                                 </DialogTitle>
                                 <DialogDescription className="text-muted-foreground text-xs sm:text-sm font-medium truncate sm:whitespace-normal">
-                                    Product: <strong className="text-foreground">{selectedJobOrder?.product_name}</strong> • Target: {formatProductionQuantity(selectedJobOrderTarget)} {selectedJobOrder?.uom_shortcut || "pcs"} • Produced: <span className="font-mono font-bold text-emerald-600">{formatProductionQuantity(selectedProductionOutput)} {selectedJobOrder?.uom_shortcut || "pcs"}</span> • Workstation: <strong className={selectedJobOrder?.primary_work_center_id ? "text-foreground" : "text-amber-600 dark:text-amber-400"}>{selectedJobOrder?.primary_work_center_name || (selectedJobOrder?.primary_work_center_id ? `WC #${selectedJobOrder.primary_work_center_id}` : "Unassigned")}</strong>
+                                    Product: <strong className="text-foreground">{selectedJobOrder?.product_name}</strong> • Target: {formatProductionQuantity(selectedJobOrderTarget)} {selectedJobOrder?.uom_shortcut || "pcs"} • Produced: <span className="font-mono font-bold text-emerald-600">{formatProductionQuantity(selectedProductionOutput)} {selectedJobOrder?.uom_shortcut || "pcs"}</span>
                                 </DialogDescription>
                                 {selectedJobOrderJourney && (
                                     <JobOrderJourneyBar journey={selectedJobOrderJourney} compact className="pt-2" />
