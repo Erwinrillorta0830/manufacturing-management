@@ -16,6 +16,7 @@ import {
 } from "../../job-orders/_workflow-service";
 import { productionYieldImageUrl } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
 import { directusFileMetadata, fetchDirectusFileMetadata } from "@/app/api/manufacturing/_directus-file-metadata";
+import { getYieldOutputTotals } from "@/modules/manufacturing-management/manufacturing-job-order-inspection-qa/utils/yield-output-quantities";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -59,6 +60,11 @@ function relationId(value: unknown, keys: string[] = ["id"]): number {
 function numberValue(value: unknown): number {
     const candidate = Number(value ?? 0);
     return Number.isFinite(candidate) ? candidate : 0;
+}
+
+function shelfLifeDaysValue(value: unknown): number | null {
+    const candidate = Number(value);
+    return Number.isSafeInteger(candidate) && candidate > 0 ? candidate : null;
 }
 
 function textValue(value: unknown): string {
@@ -281,7 +287,7 @@ async function loadJobOrderDetails(id: number) {
             `Routing lookup for Job Order ${id}`
         ),
         readRows(
-            "/items/products?limit=-1&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name",
+            "/items/products?limit=-1&fields=product_id,product_name,product_code,product_shelf_life,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name",
             "Product lookup"
         ),
         readRows(
@@ -342,7 +348,10 @@ async function loadJobOrderDetails(id: number) {
             };
             const goodQuantity = Math.max(0, numberValue(yieldRow.yield_quantity));
             const rejectedQuantity = Math.max(0, numberValue(yieldRow.rejected_quantity));
+            const qaAcceptedQuantity = Math.max(0, numberValue(yieldRow.qa_accepted_quantity ?? goodQuantity));
+            const qaRejectedQuantity = Math.max(0, numberValue(yieldRow.qa_rejected_quantity ?? rejectedQuantity));
             const scrapQuantity = Math.max(0, numberValue(yieldRow.scrap_quantity));
+            const outputTotals = getYieldOutputTotals(goodQuantity, rejectedQuantity, scrapQuantity);
             const mmLotId = relationId(yieldRow.mm_lot_id, ["mm_lot_id", "lot_id", "id"]);
             const rejectedMmLotId = relationId(yieldRow.rejected_mm_lot_id, ["mm_lot_id", "lot_id", "id"]);
             const evidenceImageFileId = directusFileId(yieldRow.daily_qa_image_id);
@@ -358,8 +367,10 @@ async function loadJobOrderDetails(id: number) {
                 loggedAt: timestampValue(yieldRow.logged_at),
                 goodQuantity,
                 rejectedQuantity,
+                qaAcceptedQuantity,
+                qaRejectedQuantity,
                 scrapQuantity,
-                totalQuantity: goodQuantity + rejectedQuantity + scrapQuantity,
+                totalQuantity: outputTotals.totalQuantity,
                 mmLotId: mmLotId || null,
                 batchNo: textValue(yieldRow.lot_number || yieldRow.batch_no) || null,
                 manufacturingDate: dateValue(yieldRow.manufacturing_date),
@@ -423,11 +434,12 @@ async function loadJobOrderDetails(id: number) {
         productName: textValue(product?.product_name) || (productId ? `Product #${productId}` : "—"),
         productCode: textValue(product?.product_code) || null,
         productUom: productUomValue(product),
+        productShelfLifeDays: shelfLifeDaysValue(product?.product_shelf_life),
         branchId: relationId(jobOrder.branch_id, ["branch_id", "id"]) || null,
         targetQuantity: numberValue(jobOrder.target_quantity ?? jobOrder.quantity),
         completedQuantity: numberValue(jobOrder.completed_quantity),
         producedQuantity: dailyYields.reduce((sum, row) => (
-            sum + (row.qaStatus === "Passed" ? row.goodQuantity + row.rejectedQuantity : 0)
+            sum + (row.qaStatus === "Passed" ? row.totalQuantity : 0)
         ), 0),
         unresolvedYieldCount: dailyYields.filter((row) => row.qaStatus !== "Passed").length,
         latestYieldAt: timestampValue(dailyYields[0]?.loggedAt || dailyYields[0]?.productionDate),
