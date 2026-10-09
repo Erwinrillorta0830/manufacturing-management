@@ -47,6 +47,7 @@ import { useDailyYieldAudit } from "./hooks/useDailyYieldAudit";
 import { useJobOrderInspectionQA } from "./hooks/useJobOrderInspectionQA";
 import { DailyYieldAuditDialog } from "./components/DailyYieldAuditDialog";
 import type { JobOrderDailyYieldRecord } from "./types";
+import { getYieldOutputTotals } from "./utils/yield-output-quantities";
 
 type AuditActionMode = "edit" | "view";
 
@@ -112,6 +113,11 @@ function DailyYieldRow({
     const actionMode: AuditActionMode = isVerified ? "view" : "edit";
     const actionLabel = isVerified ? "View Audit" : isDiscrepancy ? "Resolve" : "Perform Audit";
     const note = discrepancyNote(record);
+    const { rejectedQuantity: displayedRejectedQuantity } = getYieldOutputTotals(
+        record.goodQuantity,
+        record.rejectedQuantity,
+        record.scrapQuantity
+    );
 
     return (
         <TableRow className={isDiscrepancy ? "bg-red-500/10 hover:bg-red-500/15" : undefined}>
@@ -125,8 +131,7 @@ function DailyYieldRow({
                 {record.loggedAt && <div className="mt-1 text-[11px] text-muted-foreground">Logged {formatPhtTimestamp(record.loggedAt)}</div>}
             </TableCell>
             <TableCell className="font-mono text-right align-top font-semibold text-emerald-700 dark:text-emerald-300">{quantity(record.goodQuantity)}</TableCell>
-            <TableCell className="font-mono text-right align-top font-semibold text-red-600 dark:text-red-300">{quantity(record.rejectedQuantity)}</TableCell>
-            <TableCell className="font-mono text-right align-top text-muted-foreground">{quantity(record.scrapQuantity)}</TableCell>
+            <TableCell className="font-mono text-right align-top font-semibold text-red-600 dark:text-red-300">{quantity(displayedRejectedQuantity)}</TableCell>
             <TableCell className="min-w-[130px] align-top">
                 <div className="font-semibold">{record.lotName || "—"}</div>
                 {record.mmLotId && <div className="text-[10px] text-muted-foreground font-mono">#{record.mmLotId}</div>}
@@ -134,7 +139,6 @@ function DailyYieldRow({
             <TableCell className="min-w-[130px] align-top font-mono">{record.batchNo || "—"}</TableCell>
             <TableCell className="min-w-[130px] align-top text-right">
                 <div className="font-mono font-semibold">{quantity(record.totalQuantity)}</div>
-                <div className="mt-1 text-[10px] text-muted-foreground">Good {quantity(record.goodQuantity)} · Scrap {quantity(record.scrapQuantity)}</div>
             </TableCell>
             <TableCell className="min-w-[165px] align-top">
                 <div className="flex items-center gap-1.5">
@@ -487,7 +491,7 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                         <div>
                                             <h3 className="font-bold">JO Daily Yield Table</h3>
-                                            <p className="mt-1 max-w-3xl text-xs text-muted-foreground">Each production session is listed once with its QA state and output traceability. A verified yield contributes its Accepted Qty and Rejected Qty to Produced Qty; Scrap Qty is always excluded, and pending or flagged records are not counted yet.</p>
+                                            <p className="mt-1 max-w-3xl text-xs text-muted-foreground">Each production session is listed once with its QA state and output traceability. A verified yield contributes its Accepted Qty and Rejected Qty to Produced Qty; pending or flagged records are not counted yet.</p>
                                         </div>
                                         <div className="flex shrink-0 flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
                                             <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-600" /> Pending</span>
@@ -504,7 +508,6 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                                 <TableHead>Created for that day</TableHead>
                                                 <TableHead className="text-right">Accepted</TableHead>
                                                 <TableHead className="text-right">Rejected Qty</TableHead>
-                                                <TableHead className="text-right">Scrap</TableHead>
                                                 <TableHead>Lot</TableHead>
                                                 <TableHead>Batch</TableHead>
                                                 <TableHead className="text-right">Total Qty</TableHead>
@@ -514,7 +517,7 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                         </TableHeader>
                                         <TableBody>
                                             {details.dailyYields.length === 0 ? (
-                                                <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">No daily yields recorded for this Job Order.</TableCell></TableRow>
+                                                <TableRow><TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">No daily yields recorded for this Job Order.</TableCell></TableRow>
                                             ) : details.dailyYields.map((record) => (
                                                 <DailyYieldRow key={record.ledgerId} record={record} onAction={(yieldRecord) => auditState.openAudit(yieldRecord, details)} />
                                             ))}
@@ -522,8 +525,7 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                                 <TableRow className="font-semibold">
                                                     <TableCell colSpan={2}>Totals (all records)</TableCell>
                                                     <TableCell className="text-right font-mono text-emerald-700 dark:text-emerald-300">{quantity(details.dailyYields.reduce((sum, record) => sum + record.goodQuantity, 0))}</TableCell>
-                                                    <TableCell className="text-right font-mono text-red-600 dark:text-red-300">{quantity(details.dailyYields.reduce((sum, record) => sum + record.rejectedQuantity, 0))}</TableCell>
-                                                    <TableCell className="text-right font-mono text-muted-foreground">{quantity(details.dailyYields.reduce((sum, record) => sum + record.scrapQuantity, 0))}</TableCell>
+                                                    <TableCell className="text-right font-mono text-red-600 dark:text-red-300">{quantity(details.dailyYields.reduce((sum, record) => sum + getYieldOutputTotals(record.goodQuantity, record.rejectedQuantity, record.scrapQuantity).rejectedQuantity, 0))}</TableCell>
                                                     <TableCell colSpan={2} />
                                                     <TableCell className="text-right font-mono">{quantity(details.dailyYields.reduce((sum, record) => sum + record.totalQuantity, 0))}</TableCell>
                                                     <TableCell colSpan={2} />

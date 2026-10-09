@@ -35,6 +35,8 @@ export interface JobOrderDailyYieldRecord {
     loggedAt: string | null;
     goodQuantity: number;
     rejectedQuantity: number;
+    qaAcceptedQuantity: number;
+    qaRejectedQuantity: number;
     scrapQuantity: number;
     totalQuantity: number;
     mmLotId: number | null;
@@ -75,6 +77,7 @@ export interface JobOrderClosureReadiness {
 }
 
 export interface JobOrderDailyYieldDetails extends JobOrderDailyYieldSummary {
+    productShelfLifeDays: number | null;
     completedQuantity: number;
     routes: JobOrderDailyYieldRoute[];
     dailyYields: JobOrderDailyYieldRecord[];

@@ -1677,7 +1677,6 @@ export function useManufacturingQA() {
                 jobOrderId,
                 joRouteId: task?.id ?? null,
                 ledgerId,
-                inspectorId: 1,
                 moisturePercentage: resolvedMoisture,
                 acidityPh: resolvedAcidity,
                 sensoryStatus: stepSensoryStatus,

@@ -10,6 +10,7 @@ import {
     Expand,
     History,
     ImageIcon,
+    Loader2,
     MapPin,
     Package,
     Tag,
@@ -38,6 +39,7 @@ import {
 import { FinishedGoodsLotSelect } from "../../shared/FinishedGoodsLotSelect";
 import { formatPhtTimestamp, phtTimestampToEpoch } from "../../shared/pht-date";
 import { isManufacturingEvidenceVideo } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
+import { parseQAOutputQuantity } from "@/modules/manufacturing-management/manufacturing-qa/qa-output-allocation";
 import type { DailyYieldAuditController } from "../hooks/useDailyYieldAudit";
 import type { DailyYieldQALog, DailyYieldQAParameter } from "../types";
 
@@ -70,8 +72,14 @@ function isParameterFailed(parameter: DailyYieldQAParameter, value: string): boo
 export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps) {
     const yieldRecord = controller.selectedYield;
     const details = controller.selectedDetails;
-    const requiresOutputTraceability = Number(yieldRecord?.goodQuantity || 0) > 0;
-    const requiresRejectedOutputTraceability = Number(yieldRecord?.rejectedQuantity || 0) > 0;
+    const acceptedOutputQuantity = parseQAOutputQuantity(controller.dailyAcceptedOutputQuantity) ?? 0;
+    const rejectedOutputQuantity = parseQAOutputQuantity(controller.dailyRejectedOutputQuantity) ?? 0;
+    const loggedOutputQuantity = Number(yieldRecord?.goodQuantity || 0) + Number(yieldRecord?.rejectedQuantity || 0);
+    const hasOutput = loggedOutputQuantity > 0;
+    const requiresOutputTraceability = acceptedOutputQuantity > 0;
+    const requiresRejectedOutputTraceability = rejectedOutputQuantity > 0;
+    const shelfLifeDays = Number(details?.productShelfLifeDays);
+    const hasValidShelfLifeDays = Number.isSafeInteger(shelfLifeDays) && shelfLifeDays > 0;
     const isVerified = yieldRecord?.qaStatus === "Passed";
     const rejectedOutputRegistered = Boolean(yieldRecord?.rejectedMmLotId);
     const canRegisterRejectedOutput = Boolean(
@@ -165,7 +173,7 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
 
     return (
         <Dialog open={controller.isOpen} onOpenChange={(open) => open ? controller.setIsOpen(true) : controller.closeAudit()}>
-            <DialogContent className="w-[calc(100vw-1rem)] sm:w-[75vw] sm:max-w-[75vw] max-h-[calc(100dvh-1rem)] sm:max-h-[calc(100dvh-2rem)] overflow-hidden bg-background border border-border text-foreground flex flex-col p-4 sm:p-5 gap-3">
+            <DialogContent showCloseButton={!controller.actionLoading} className="w-[calc(100vw-1rem)] sm:w-[75vw] sm:max-w-[75vw] max-h-[calc(100dvh-1rem)] sm:max-h-[calc(100dvh-2rem)] overflow-hidden bg-background border border-border text-foreground flex flex-col p-4 sm:p-5 gap-3">
                 <DialogHeader className="shrink-0 pb-1 border-b border-border/40">
                     <DialogTitle className="flex items-center gap-2 text-primary font-bold text-base">
                         <ClipboardCheck className="h-5 w-5" /> Record In-Process QA Audit
@@ -181,7 +189,13 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                     </div>
                 )}
 
-                <form onSubmit={(event) => { event.preventDefault(); void controller.submitAudit(); }} className="min-h-0 flex-1 flex flex-col overflow-hidden text-sm">
+                <form onSubmit={(event) => { event.preventDefault(); void controller.submitAudit(); }} className="min-h-0 flex-1 flex flex-col overflow-hidden text-sm" aria-busy={controller.actionLoading}>
+                    <fieldset disabled={controller.actionLoading} className="contents">
+                    {controller.saveError && (
+                        <div role="alert" className="mb-2 shrink-0 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                            {controller.saveError}
+                        </div>
+                    )}
                     <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 flex-1 min-h-0 overflow-hidden py-1">
                         {/* LEFT COLUMN: Header, Shift Yield Stats, Logs, Evidence & Audit Trail */}
                         <div className="lg:col-span-5 flex flex-col space-y-4 overflow-y-auto pr-1 scrollbar-thin">
@@ -544,6 +558,12 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                     </div>
                                 </div>
 
+                                {hasOutput && !hasValidShelfLifeDays && (
+                                    <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-amber-700 dark:text-amber-300 text-xs" role="alert">
+                                        Expiry autofill is unavailable because this product has no valid Shelf Life (Days) value in Finished Goods Master. Enter the expiry date manually.
+                                    </div>
+                                )}
+
                                 {requiresOutputTraceability && controller.dailyOutputLotsError && (
                                     <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive flex items-start gap-2 text-xs" role="alert">
                                         <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
@@ -561,6 +581,26 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                 )}
 
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div className="space-y-1">
+                                        <Label htmlFor="daily-yield-accepted-quantity" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
+                                            Accepted / Good Quantity <span className="text-destructive">*</span>
+                                        </Label>
+                                        <Input
+                                            id="daily-yield-accepted-quantity"
+                                            type="number"
+                                            min="0"
+                                            step="0.000001"
+                                            value={controller.dailyAcceptedOutputQuantity}
+                                            onChange={(event) => controller.setDailyAcceptedOutputQuantity(event.target.value)}
+                                            className="h-9 rounded-lg bg-background border-border/80 text-foreground text-xs font-mono"
+                                            disabled={controller.actionLoading || isVerified || !hasOutput}
+                                            required={hasOutput}
+                                        />
+                                        <p className="text-[10px] text-muted-foreground">
+                                            Good + Bad must equal the logged output total of {numericText(loggedOutputQuantity)}.
+                                        </p>
+                                    </div>
+
                                     <div className="space-y-1">
                                         <Label htmlFor="daily-yield-output-batch" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
                                             <Tag className="h-3.5 w-3.5 text-emerald-500" /> Output Batch / Lot No <span className="text-destructive">*</span>
@@ -626,7 +666,7 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                 </div>
                             </div>
 
-                            {requiresRejectedOutputTraceability && (
+                            {hasOutput && (
                                 <div className="bg-rose-500/[0.025] border border-rose-500/25 rounded-xl p-3.5 space-y-3.5 shadow-sm">
                                     <div className="flex items-center gap-2 pb-2 border-b border-rose-500/15">
                                         <div className="p-1.5 bg-rose-500/10 rounded-lg text-rose-600">
@@ -637,12 +677,12 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                                 Rejected Output Traceability
                                             </h4>
                                             <p className="text-[9px] text-muted-foreground mt-0.5">
-                                                {numericText(yieldRecord?.rejectedQuantity)} rejected units will be registered in the configured bad-stock branch after this audit is complete.
+                                                {numericText(controller.dailyRejectedOutputQuantity)} rejected units will be registered in the configured bad-stock branch after this audit is complete.
                                             </p>
                                         </div>
                                     </div>
 
-                                    {controller.dailyRejectedOutputLotsError && (
+                                    {requiresRejectedOutputTraceability && controller.dailyRejectedOutputLotsError && (
                                         <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive flex items-start gap-2 text-xs" role="alert">
                                             <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
                                             <div className="space-y-2">
@@ -653,6 +693,23 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                     )}
 
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        <div className="space-y-1">
+                                            <Label htmlFor="daily-yield-rejected-output-quantity" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
+                                                Rejected / Bad Quantity <span className="text-destructive">*</span>
+                                            </Label>
+                                            <Input
+                                                id="daily-yield-rejected-output-quantity"
+                                                type="number"
+                                                min="0"
+                                                step="0.000001"
+                                                value={controller.dailyRejectedOutputQuantity}
+                                                onChange={(event) => controller.setDailyRejectedOutputQuantity(event.target.value)}
+                                                className="h-9 rounded-lg bg-background border-rose-500/30 text-foreground text-xs font-mono"
+                                                disabled={controller.actionLoading || isVerified || rejectedOutputRegistered || !hasOutput}
+                                                required={hasOutput}
+                                            />
+                                        </div>
+
                                         <div className="space-y-1">
                                             <Label htmlFor="daily-yield-rejected-output-batch" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
                                                 <Tag className="h-3.5 w-3.5 text-rose-500" /> Rejected Batch / Lot No <span className="text-destructive">*</span>
@@ -665,8 +722,8 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                                 onChange={(event) => controller.setDailyRejectedOutputBatchNo(event.target.value)}
                                                 className="h-9 rounded-lg bg-background border-rose-500/30 text-foreground text-xs font-bold font-mono"
                                                 placeholder="Enter rejected batch or lot number"
-                                                disabled={rejectedOutputLocked}
-                                                required
+                                                disabled={rejectedOutputLocked || !requiresRejectedOutputTraceability}
+                                                required={requiresRejectedOutputTraceability}
                                             />
                                         </div>
 
@@ -679,7 +736,7 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                                 value={controller.dailyRejectedOutputMmLotId}
                                                 onValueChange={controller.setDailyRejectedOutputMmLotId}
                                                 loading={controller.dailyRejectedOutputLotsLoading}
-                                                disabled={rejectedOutputLocked}
+                                                disabled={rejectedOutputLocked || !requiresRejectedOutputTraceability}
                                                 placeholder="Select bad-stock storage lot..."
                                                 className="h-9 w-full justify-between rounded-lg border-rose-500/30 text-xs font-semibold"
                                                 showBatchSummary
@@ -696,8 +753,8 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                                 value={controller.dailyRejectedOutputManufacturingDate}
                                                 onChange={(event) => controller.setDailyRejectedOutputManufacturingDate(event.target.value)}
                                                 className="h-9 rounded-lg bg-background border-rose-500/30 text-foreground text-xs"
-                                                disabled={rejectedOutputLocked}
-                                                required
+                                                disabled={rejectedOutputLocked || !requiresRejectedOutputTraceability}
+                                                required={requiresRejectedOutputTraceability}
                                             />
                                         </div>
 
@@ -711,8 +768,8 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                                 value={controller.dailyRejectedOutputExpiryDate}
                                                 onChange={(event) => controller.setDailyRejectedOutputExpiryDate(event.target.value)}
                                                 className="h-9 rounded-lg bg-background border-rose-500/30 text-foreground text-xs"
-                                                disabled={rejectedOutputLocked}
-                                                required
+                                                disabled={rejectedOutputLocked || !requiresRejectedOutputTraceability}
+                                                required={requiresRejectedOutputTraceability}
                                             />
                                         </div>
                                     </div>
@@ -808,11 +865,17 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
 
                     {/* Dialog Footer */}
                     <DialogFooter className="shrink-0 pt-3 mt-1 border-t border-border gap-2 flex items-center justify-end bg-background">
-                        <Button type="button" variant="outline" onClick={controller.closeAudit} className="border-border hover:bg-muted text-foreground min-h-10 text-xs font-semibold">Cancel</Button>
-                        <Button type="submit" disabled={controller.actionLoading || isVerified} title={isVerified ? "This yield has been verified and can no longer be edited." : undefined} className="bg-primary hover:bg-primary/95 text-white font-bold min-h-10 text-xs px-4">
-                            {controller.actionLoading ? "Saving Audit..." : "Save Audit & Authorize"}
+                        <Button type="button" variant="outline" onClick={controller.closeAudit} disabled={controller.actionLoading} title={controller.actionLoading ? "Wait for the save to finish or time out." : undefined} className="border-border hover:bg-muted text-foreground min-h-10 text-xs font-semibold">Cancel</Button>
+                        <Button type="submit" disabled={controller.actionLoading || isVerified || controller.saveOutcomeUnclear} title={isVerified ? "This yield has been verified and can no longer be edited." : controller.saveOutcomeUnclear ? "Close and reopen this yield to check its latest saved status before retrying." : undefined} className="bg-primary hover:bg-primary/95 text-white font-bold min-h-10 text-xs px-4">
+                            {controller.actionLoading ? (
+                                <span role="status" className="inline-flex items-center gap-2">
+                                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                                    Saving audit...
+                                </span>
+                            ) : "Save Audit & Authorize"}
                         </Button>
                     </DialogFooter>
+                    </fieldset>
                 </form>
             </DialogContent>
             {yieldRecord?.evidenceImage && (

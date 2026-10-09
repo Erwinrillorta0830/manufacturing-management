@@ -23,9 +23,11 @@ import {
     type RejectedOutputMetadata
 } from "@/modules/manufacturing-management/manufacturing-qa/rejected-output";
 import { isCommittedYieldLedger } from "../_qa-accepted-output";
+import { parseQAOutputQuantity, qaOutputAllocationMatchesLoggedTotal, type QAOutputAllocation } from "@/modules/manufacturing-management/manufacturing-qa/qa-output-allocation";
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "test";
+const DAILY_QA_SAVE_TIMEOUT_MS = 120_000;
 
 const headers: Record<string, string> = {
     "Content-Type": "application/json"
@@ -125,8 +127,63 @@ function normalizeOutputMetadata(value: unknown, required: boolean): DailyQAOutp
     return { mmLotId, batchNo, manufacturingDate, expiryDate };
 }
 
-async function readDirectusRecord(path: string, label: string): Promise<Record<string, any>> {
-    const response = await fetch(`${DIRECTUS_URL}${path}`, { headers, cache: "no-store" });
+function normalizeQAOutputAllocation(body: Record<string, any>, ledger: Record<string, any>): QAOutputAllocation {
+    const acceptedQuantity = parseQAOutputQuantity(
+        body?.acceptedQuantity ?? ledger.qa_accepted_quantity ?? ledger.yield_quantity ?? 0
+    );
+    const rejectedQuantity = parseQAOutputQuantity(
+        body?.rejectedQuantity ?? ledger.qa_rejected_quantity ?? ledger.rejected_quantity ?? 0
+    );
+    if (acceptedQuantity === null || rejectedQuantity === null) {
+        throw new DailyQAValidationError(422, "INVALID_QA_OUTPUT_QUANTITY", "Accepted and rejected quantities must be nonnegative numbers with no more than six decimal places.");
+    }
+    if (!qaOutputAllocationMatchesLoggedTotal(
+        { acceptedQuantity, rejectedQuantity },
+        ledger.yield_quantity ?? 0,
+        ledger.rejected_quantity ?? 0
+    )) {
+        throw new DailyQAValidationError(422, "QA_OUTPUT_TOTAL_MISMATCH", "Accepted and rejected quantities must add up to the total output recorded by the operator.");
+    }
+    return { acceptedQuantity, rejectedQuantity };
+}
+
+async function persistQAOutputAllocation(
+    ledgerId: number,
+    ledger: Record<string, any>,
+    allocation: QAOutputAllocation,
+    signal?: AbortSignal
+): Promise<void> {
+    const savedAcceptedQuantity = ledger.qa_accepted_quantity === null || ledger.qa_accepted_quantity === undefined
+        ? null
+        : parseQAOutputQuantity(ledger.qa_accepted_quantity);
+    const savedRejectedQuantity = ledger.qa_rejected_quantity === null || ledger.qa_rejected_quantity === undefined
+        ? null
+        : parseQAOutputQuantity(ledger.qa_rejected_quantity);
+    const currentAcceptedQuantity = savedAcceptedQuantity ?? parseQAOutputQuantity(ledger.yield_quantity ?? 0) ?? 0;
+    const currentRejectedQuantity = savedRejectedQuantity ?? parseQAOutputQuantity(ledger.rejected_quantity ?? 0) ?? 0;
+    const isVerified = textValue(ledger.qa_status).toUpperCase() === "PASSED";
+
+    if (isVerified && (
+        currentAcceptedQuantity !== allocation.acceptedQuantity
+        || currentRejectedQuantity !== allocation.rejectedQuantity
+    )) {
+        throw new DailyQAValidationError(409, "QA_OUTPUT_ALLOCATION_LOCKED", "QA-approved output quantities cannot be changed after the audit is authorized.");
+    }
+
+    if (savedAcceptedQuantity === allocation.acceptedQuantity && savedRejectedQuantity === allocation.rejectedQuantity) return;
+    await patchDirectusRecord(
+        `/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(ledgerId))}`,
+        {
+            qa_accepted_quantity: allocation.acceptedQuantity,
+            qa_rejected_quantity: allocation.rejectedQuantity
+        },
+        `Save QA output quantities for yield ledger ${ledgerId}`,
+        signal
+    );
+}
+
+async function readDirectusRecord(path: string, label: string, signal?: AbortSignal): Promise<Record<string, any>> {
+    const response = await fetch(`${DIRECTUS_URL}${path}`, { headers, cache: "no-store", signal });
     if (!response.ok) {
         throw new DailyQAValidationError(502, "DIRECTUS_LOOKUP_FAILED", `${label} failed with HTTP ${response.status}.`);
     }
@@ -137,11 +194,12 @@ async function readDirectusRecord(path: string, label: string): Promise<Record<s
     return payload.data as Record<string, any>;
 }
 
-async function patchDirectusRecord(path: string, body: Record<string, unknown>, label: string): Promise<void> {
+async function patchDirectusRecord(path: string, body: Record<string, unknown>, label: string, signal?: AbortSignal): Promise<void> {
     const response = await fetch(`${DIRECTUS_URL}${path}`, {
         method: "PATCH",
         headers,
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal
     });
     if (!response.ok) {
         throw new DailyQAValidationError(502, "DIRECTUS_WRITE_FAILED", `${label} failed with HTTP ${response.status}.`);
@@ -167,7 +225,8 @@ async function persistOutputTraceability(
     ledgerId: number,
     jobOrderId: number,
     ledger: Record<string, any>,
-    metadata: DailyQAOutputMetadata | null
+    metadata: DailyQAOutputMetadata | null,
+    signal?: AbortSignal
 ): Promise<void> {
     if (!metadata) return;
 
@@ -190,7 +249,8 @@ async function persistOutputTraceability(
                 manufacturing_date: metadata.manufacturingDate,
                 expiry_date: metadata.expiryDate
             },
-            `Save output traceability for yield ledger ${ledgerId}`
+            `Save output traceability for yield ledger ${ledgerId}`,
+            signal
         );
     }
 
@@ -199,7 +259,7 @@ async function persistOutputTraceability(
 
     const genealogyResponse = await fetch(
         `${DIRECTUS_URL}/items/jo_material_genealogy?filter[job_order_id][_eq]=${encodeURIComponent(String(jobOrderId))}&filter[session_key][_eq]=${encodeURIComponent(sessionKey)}&fields=genealogy_id,batch_no&limit=-1`,
-        { headers, cache: "no-store" }
+        { headers, cache: "no-store", signal }
     );
     const genealogyRows = await readDirectusRows(genealogyResponse, "Production genealogy lookup");
     for (const row of genealogyRows) {
@@ -208,7 +268,8 @@ async function persistOutputTraceability(
         await patchDirectusRecord(
             `/items/jo_material_genealogy/${encodeURIComponent(String(genealogyId))}`,
             { batch_no: metadata.batchNo },
-            `Save output batch for genealogy ${genealogyId}`
+            `Save output batch for genealogy ${genealogyId}`,
+            signal
         );
     }
 }
@@ -216,7 +277,8 @@ async function persistOutputTraceability(
 async function persistRejectedOutputTraceability(
     ledgerId: number,
     ledger: Record<string, any>,
-    metadata: RejectedOutputMetadata
+    metadata: RejectedOutputMetadata,
+    signal?: AbortSignal
 ): Promise<void> {
     assertRejectedOutputTraceability(ledger, metadata);
 
@@ -224,7 +286,8 @@ async function persistRejectedOutputTraceability(
         await patchDirectusRecord(
             `/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(ledgerId))}`,
             rejectedOutputLedgerPatch(metadata),
-            `Save rejected-output traceability for yield ledger ${ledgerId}`
+            `Save rejected-output traceability for yield ledger ${ledgerId}`,
+            signal
         );
     }
 }
@@ -251,11 +314,13 @@ function enabled(value: unknown): boolean {
 async function validateRejectedOutputLot(
     productionBranchId: number,
     productId: number,
-    metadata: RejectedOutputMetadata
+    metadata: RejectedOutputMetadata,
+    signal?: AbortSignal
 ): Promise<number> {
     const productionBranch = await readDirectusRecord(
         `/items/branches/${encodeURIComponent(String(productionBranchId))}?fields=id,bad_stock_branch_id`,
-        `Load production branch ${productionBranchId}`
+        `Load production branch ${productionBranchId}`,
+        signal
     );
     const badStockBranchId = relationId(productionBranch.bad_stock_branch_id, ["id", "branch_id"]);
     if (!badStockBranchId) {
@@ -264,7 +329,8 @@ async function validateRejectedOutputLot(
 
     const badStockBranch = await readDirectusRecord(
         `/items/branches/${encodeURIComponent(String(badStockBranchId))}?fields=id,isActive,isBadStock`,
-        `Load bad-stock branch ${badStockBranchId}`
+        `Load bad-stock branch ${badStockBranchId}`,
+        signal
     );
     if (!enabled(badStockBranch.isActive) || !enabled(badStockBranch.isBadStock)) {
         throw new DailyQAValidationError(409, "BAD_STOCK_BRANCH_INVALID", "The configured bad-stock branch must be active and marked as a bad-stock branch.");
@@ -274,7 +340,8 @@ async function validateRejectedOutputLot(
         await loadEligibleFinishedGoodsLot({
             mmLotId: metadata.mmLotId,
             branchId: badStockBranchId,
-            productId
+            productId,
+            signal
         });
     } catch (error) {
         if (error instanceof MmLotError) {
@@ -293,6 +360,7 @@ async function resolveRejectedInventoryLot(input: {
     productId: number;
     metadata: RejectedOutputMetadata;
     createdBy: number;
+    signal?: AbortSignal;
 }): Promise<void> {
     try {
         const inventoryLot = await resolveOrCreateMmInventoryLot({
@@ -306,7 +374,8 @@ async function resolveRejectedInventoryLot(input: {
             sourceType: "JOB_ORDER_REJECTED_YIELD",
             sourceReference: input.jobOrderNo,
             remarks: `Rejected yield from Job Order ${input.jobOrderNo}; ledger ${input.ledgerId}`,
-            createdBy: input.createdBy
+            createdBy: input.createdBy,
+            signal: input.signal
         });
         if (!Number(inventoryLot.inventory_lot_id)) {
             throw new MmLotError("The rejected-output inventory lot could not be verified after creation.", 503, "MM_INVENTORY_LOT_WRITE_FAILED");
@@ -323,7 +392,7 @@ async function resolveRejectedInventoryLot(input: {
     }
 }
 
-async function registerRejectedOutputOnly(body: Record<string, any>) {
+async function registerRejectedOutputOnly(body: Record<string, any>, signal: AbortSignal) {
     const jobOrderId = Number(body.jobOrderId || 0);
     const ledgerId = Number(body.ledgerId || 0);
     if (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0 || !Number.isSafeInteger(ledgerId) || ledgerId <= 0) {
@@ -331,13 +400,15 @@ async function registerRejectedOutputOnly(body: Record<string, any>) {
     }
 
     const ledger = await readDirectusRecord(
-        `/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(ledgerId))}?fields=ledger_id,job_order_id,rejected_quantity,rejected_mm_lot_id,rejected_lot_number,rejected_manufacturing_date,rejected_expiry_date,rejected_inventory_condition`,
-        `Load yield ledger ${ledgerId}`
+        `/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(ledgerId))}?fields=ledger_id,job_order_id,yield_quantity,rejected_quantity,qa_accepted_quantity,qa_rejected_quantity,qa_status,rejected_mm_lot_id,rejected_lot_number,rejected_manufacturing_date,rejected_expiry_date,rejected_inventory_condition`,
+        `Load yield ledger ${ledgerId}`,
+        signal
     );
     if (relationId(ledger.job_order_id, ["job_order_id", "id"]) !== jobOrderId) {
         throw new DailyQAValidationError(409, "LEDGER_JOB_ORDER_MISMATCH", "The selected yield ledger does not belong to this Job Order.");
     }
-    const rejectedQuantity = Number(ledger.rejected_quantity || 0);
+    const allocation = normalizeQAOutputAllocation(body, ledger);
+    const rejectedQuantity = allocation.rejectedQuantity;
     if (!(rejectedQuantity > 0)) {
         throw new DailyQAValidationError(409, "REJECTED_OUTPUT_NOT_PRESENT", "This yield ledger has no rejected quantity to allocate.");
     }
@@ -345,11 +416,12 @@ async function registerRejectedOutputOnly(body: Record<string, any>) {
     const [jobOrder, routes, inspections] = await Promise.all([
         readDirectusRecord(
             `/items/manufacturing_job_orders/${encodeURIComponent(String(jobOrderId))}?fields=job_order_id,job_order_no,product_id,branch_id`,
-            `Load Job Order ${jobOrderId}`
+            `Load Job Order ${jobOrderId}`,
+            signal
         ),
-        fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${encodeURIComponent(String(jobOrderId))}&fields=jo_route_id`, { headers, cache: "no-store" })
+        fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${encodeURIComponent(String(jobOrderId))}&fields=jo_route_id`, { headers, cache: "no-store", signal })
             .then((response) => readDirectusRows(response, "Job Order routing lookup")),
-        fetch(`${DIRECTUS_URL}/items/manufacturing_daily_qa_inspections?filter[ledger_id][_eq]=${encodeURIComponent(String(ledgerId))}`, { headers, cache: "no-store" })
+        fetch(`${DIRECTUS_URL}/items/manufacturing_daily_qa_inspections?filter[ledger_id][_eq]=${encodeURIComponent(String(ledgerId))}`, { headers, cache: "no-store", signal })
             .then((response) => readDirectusRows(response, "Daily QA inspection lookup"))
     ]);
     const outcome = deriveDailyQAOutcome(inspections, routes.map((route: any) => route.jo_route_id));
@@ -362,10 +434,10 @@ async function registerRejectedOutputOnly(body: Record<string, any>) {
     if (!productId || !productionBranchId) {
         throw new DailyQAValidationError(409, "OUTPUT_TRACEABILITY_CONTEXT_MISSING", "The Job Order is missing its finished-good product or branch.");
     }
-    const badStockBranchId = await validateRejectedOutputLot(productionBranchId, productId, metadata);
+    const badStockBranchId = await validateRejectedOutputLot(productionBranchId, productId, metadata, signal);
     let actorId: number;
     try {
-        actorId = await requireManufacturingActorId();
+        actorId = await requireManufacturingActorId(signal);
     } catch (error) {
         if (error instanceof AuthenticatedActorError) {
             throw new DailyQAValidationError(error.status, error.code, error.message);
@@ -374,15 +446,17 @@ async function registerRejectedOutputOnly(body: Record<string, any>) {
     }
 
     assertRejectedOutputTraceability(ledger, metadata);
+    await persistQAOutputAllocation(ledgerId, ledger, allocation, signal);
     await resolveRejectedInventoryLot({
         ledgerId,
         jobOrderNo: textValue(jobOrder.job_order_no) || `JO-${jobOrderId}`,
         branchId: badStockBranchId,
         productId,
         metadata,
-        createdBy: actorId
+        createdBy: actorId,
+        signal
     });
-    await persistRejectedOutputTraceability(ledgerId, ledger, metadata);
+    await persistRejectedOutputTraceability(ledgerId, ledger, metadata, signal);
 
     return NextResponse.json({
         success: true,
@@ -552,12 +626,23 @@ export async function GET(request: Request) {
 
 // POST: Creates daily yield QA inspections (supports array for paper-based checklist batch entries)
 export async function POST(request: Request) {
-    const accessDenied = await authorizeJobOrderModuleAccess(JOB_ORDER_MODULE_PATHS.qualityAssurance);
-    if (accessDenied) return accessDenied;
+    const startedAt = Date.now();
+    const saveSignal = AbortSignal.timeout(DAILY_QA_SAVE_TIMEOUT_MS);
+    let jobOrderIdForLog = 0;
+    let ledgerIdForLog = 0;
+    let operationForLog = "authorize QA access";
     try {
+        const accessDenied = await authorizeJobOrderModuleAccess(JOB_ORDER_MODULE_PATHS.qualityAssurance, saveSignal);
+        if (saveSignal.aborted) throw saveSignal.reason;
+        if (accessDenied) return accessDenied;
+
+        operationForLog = "read request body";
         const body = await request.json();
         if (body?.action === "registerRejectedOutput") {
-            return await registerRejectedOutputOnly(body);
+            jobOrderIdForLog = Number(body.jobOrderId) || 0;
+            ledgerIdForLog = Number(body.ledgerId) || 0;
+            operationForLog = "register rejected output";
+            return await registerRejectedOutputOnly(body, saveSignal);
         }
 
         const isEnvelope = Boolean(body && !Array.isArray(body) && Array.isArray(body.inspections));
@@ -570,28 +655,35 @@ export async function POST(request: Request) {
         const firstEntry = inspectionsList[0] || {};
         const jobOrderId = Number(isEnvelope ? body.jobOrderId : firstEntry.jobOrderId);
         const ledgerId = Number(isEnvelope ? body.ledgerId : firstEntry.ledgerId);
+        jobOrderIdForLog = jobOrderId;
+        ledgerIdForLog = ledgerId;
 
         if (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0 || !Number.isSafeInteger(ledgerId) || ledgerId <= 0) {
             return NextResponse.json({ error: "Missing required fields: jobOrderId, ledgerId" }, { status: 400 });
         }
 
+        operationForLog = `load yield ledger ${ledgerId}`;
         const ledger = await readDirectusRecord(
-            `/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(ledgerId))}?fields=ledger_id,job_order_id,session_key,yield_quantity,rejected_quantity,lot_number,mm_lot_id,manufacturing_date,expiry_date,rejected_mm_lot_id,rejected_lot_number,rejected_manufacturing_date,rejected_expiry_date,rejected_inventory_condition`,
-            `Load yield ledger ${ledgerId}`
+            `/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(ledgerId))}?fields=ledger_id,job_order_id,session_key,yield_quantity,rejected_quantity,qa_accepted_quantity,qa_rejected_quantity,qa_status,lot_number,mm_lot_id,manufacturing_date,expiry_date,rejected_mm_lot_id,rejected_lot_number,rejected_manufacturing_date,rejected_expiry_date,rejected_inventory_condition`,
+            `Load yield ledger ${ledgerId}`,
+            saveSignal
         );
         const ledgerJobOrderId = relationId(ledger.job_order_id, ["job_order_id", "id"]);
         if (ledgerJobOrderId !== jobOrderId) {
             throw new DailyQAValidationError(409, "LEDGER_JOB_ORDER_MISMATCH", "The selected yield ledger does not belong to this Job Order.");
         }
 
+        operationForLog = `load Job Order ${jobOrderId}`;
         const jobOrder = await readDirectusRecord(
             `/items/manufacturing_job_orders/${encodeURIComponent(String(jobOrderId))}?fields=job_order_id,job_order_no,product_id,branch_id`,
-            `Load Job Order ${jobOrderId}`
+            `Load Job Order ${jobOrderId}`,
+            saveSignal
         );
         const productId = relationId(jobOrder.product_id, ["product_id", "id"]);
         const branchId = relationId(jobOrder.branch_id, ["branch_id", "id"]);
-        const goodOutputQuantity = Number(ledger.yield_quantity || 0);
-        const rejectedOutputQuantity = Number(ledger.rejected_quantity || 0);
+        const outputAllocation = normalizeQAOutputAllocation(isEnvelope ? body : {}, ledger);
+        const goodOutputQuantity = outputAllocation.acceptedQuantity;
+        const rejectedOutputQuantity = outputAllocation.rejectedQuantity;
         if ((goodOutputQuantity > 0 || rejectedOutputQuantity > 0) && (!productId || !branchId)) {
             throw new DailyQAValidationError(409, "OUTPUT_TRACEABILITY_CONTEXT_MISSING", "The Job Order is missing its finished-good product or branch, so output traceability cannot be saved.");
         }
@@ -604,16 +696,19 @@ export async function POST(request: Request) {
 
         let badStockBranchId: number | null = null;
         if (rejectedOutputMetadata) {
-            badStockBranchId = await validateRejectedOutputLot(branchId, productId, rejectedOutputMetadata);
+            operationForLog = "validate rejected-output storage lot";
+            badStockBranchId = await validateRejectedOutputLot(branchId, productId, rejectedOutputMetadata, saveSignal);
             assertRejectedOutputTraceability(ledger, rejectedOutputMetadata);
         }
 
         if (outputMetadata) {
+            operationForLog = "validate finished-goods storage lot";
             try {
                 await loadEligibleFinishedGoodsLot({
                     mmLotId: outputMetadata.mmLotId,
                     branchId,
-                    productId
+                    productId,
+                    signal: saveSignal
                 });
             } catch (error) {
                 if (error instanceof MmLotError) {
@@ -623,30 +718,87 @@ export async function POST(request: Request) {
             }
         }
 
-        let inventoryLotCreatedBy: number | null = null;
-        if (goodOutputQuantity > 0 || rejectedOutputMetadata) {
-            try {
-                inventoryLotCreatedBy = await requireManufacturingActorId();
-            } catch (error) {
-                if (error instanceof AuthenticatedActorError) {
-                    throw new DailyQAValidationError(error.status, error.code, error.message);
-                }
-                throw error;
+        let authenticatedInspectorId: number;
+        try {
+            authenticatedInspectorId = await requireManufacturingActorId(saveSignal);
+        } catch (error) {
+            if (error instanceof AuthenticatedActorError) {
+                throw new DailyQAValidationError(error.status, error.code, error.message);
+            }
+            throw error;
+        }
+        const inventoryLotCreatedBy = goodOutputQuantity > 0 || rejectedOutputMetadata
+            ? authenticatedInspectorId
+            : null;
+        if (inspectionsList.some((entry: any) =>
+            Number(entry.jobOrderId || jobOrderId) !== jobOrderId
+            || Number(entry.ledgerId || ledgerId) !== ledgerId
+        )) {
+            throw new DailyQAValidationError(422, "INSPECTION_REFERENCE_MISMATCH", "Every inspection must reference the selected Job Order and yield ledger.");
+        }
+
+        operationForLog = "load routing and saved QA rows";
+        const routesRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${jobOrderId}&fields=jo_route_id,job_order_id,sequence_order,work_center_id,operation_id,status,completed_at,planned_setup_hours,planned_run_hours,actual_setup_hours,actual_run_hours,step_batch_size,run_time_hours_factor`, { headers, cache: "no-store", signal: saveSignal });
+        if (!routesRes.ok) {
+            throw new DailyQAValidationError(502, "ROUTE_LOOKUP_FAILED", `Job Order routing lookup failed with HTTP ${routesRes.status}.`);
+        }
+        const routesPayload = await routesRes.json().catch(() => null);
+        if (!Array.isArray(routesPayload?.data)) {
+            throw new DailyQAValidationError(502, "ROUTE_LOOKUP_INVALID", "Job Order routing lookup returned an invalid response.");
+        }
+        const routes = routesPayload.data;
+        validateSubmittedQARoutes(jobOrderId, routes, inspectionsList);
+
+        const existingInspectionsResponse = await fetch(
+            `${DIRECTUS_URL}/items/manufacturing_daily_qa_inspections?filter[ledger_id][_eq]=${ledgerId}&limit=-1&fields=ledger_id,jo_route_id`,
+            { headers, cache: "no-store", signal: saveSignal }
+        );
+        const existingInspections = await readDirectusRows(existingInspectionsResponse, "Existing daily QA inspection lookup");
+        const savedRouteIds = new Set(existingInspections
+            .map((inspection: any) => relationId(inspection.jo_route_id, ["jo_route_id", "id"]))
+            .filter((id: number) => id > 0));
+        let hasSavedGeneralInspection = existingInspections.some((inspection: any) => !relationId(inspection.jo_route_id, ["jo_route_id", "id"]));
+
+        const submittedRouteIds = [...new Set(inspectionsList
+            .map((entry: any) => relationId(entry?.joRouteId, ["joRouteId", "jo_route_id", "id"]))
+            .filter((id: number) => id > 0))];
+        const savedParameterKeys = new Set<string>();
+        if (submittedRouteIds.length > 0 && inspectionsList.some((entry: any) => Array.isArray(entry?.qaParameters) && entry.qaParameters.length > 0)) {
+            const parameterQuery = new URLSearchParams({
+                "filter[job_order_id][_eq]": String(jobOrderId),
+                "filter[jo_route_id][_in]": submittedRouteIds.join(","),
+                limit: "-1",
+                fields: "jo_route_id,parameter_id,remarks"
+            });
+            const savedParametersResponse = await fetch(
+                `${DIRECTUS_URL}/items/manufacturing_job_order_qa_records?${parameterQuery.toString()}`,
+                { headers, cache: "no-store", signal: saveSignal }
+            );
+            const savedParameters = await readDirectusRows(savedParametersResponse, "Existing daily QA parameter lookup");
+            const parameterMarker = `Daily QA Audit | Yield Log ID: ${ledgerId} |`;
+            for (const parameter of savedParameters) {
+                if (!textValue(parameter.remarks).startsWith(parameterMarker)) continue;
+                const routeId = relationId(parameter.jo_route_id, ["jo_route_id", "id"]);
+                const parameterId = relationId(parameter.parameter_id, ["parameter_id", "id"]);
+                if (routeId && parameterId) savedParameterKeys.add(`${routeId}:${parameterId}`);
             }
         }
 
+        operationForLog = "save output allocation and traceability";
+        await persistQAOutputAllocation(ledgerId, ledger, outputAllocation, saveSignal);
+
         if (outputMetadata) {
-            await persistOutputTraceability(ledgerId, jobOrderId, ledger, outputMetadata);
+            await persistOutputTraceability(ledgerId, jobOrderId, ledger, outputMetadata, saveSignal);
         }
 
         const inspectionInstant = new Date();
         const timestamp = formatPhtDateTime(inspectionInstant);
         const timestampInstant = inspectionInstant.toISOString();
 
+        operationForLog = "save QA parameters and route inspections";
         for (const entry of inspectionsList) {
             const { 
                 joRouteId, 
-                inspectorId, 
                 moisturePercentage, 
                 acidityPh, 
                 sensoryStatus, 
@@ -657,19 +809,11 @@ export async function POST(request: Request) {
                 qaParameters 
             } = entry;
 
-            if (!inspectorId) {
-                return NextResponse.json({ error: "Missing required field: inspectorId" }, { status: 400 });
-            }
-
-            if (Number(entry.jobOrderId || jobOrderId) !== jobOrderId || Number(entry.ledgerId || ledgerId) !== ledgerId) {
-                throw new DailyQAValidationError(422, "INSPECTION_REFERENCE_MISMATCH", "Every inspection must reference the selected Job Order and yield ledger.");
-            }
-
             const payload = {
                 job_order_id: Number(jobOrderId),
                 jo_route_id: joRouteId ? Number(joRouteId) : null,
                 ledger_id: Number(ledgerId),
-                inspector_id: Number(inspectorId),
+                inspector_id: authenticatedInspectorId,
                 moisture_percentage: moisturePercentage !== undefined && moisturePercentage !== "" ? Number(moisturePercentage) : null,
                 acidity_ph: acidityPh !== undefined && acidityPh !== "" ? Number(acidityPh) : null,
                 sensory_status: sensoryStatus || "Passed",
@@ -680,19 +824,11 @@ export async function POST(request: Request) {
                 remarks: remarks || ""
             };
 
-            const res = await fetch(`${DIRECTUS_URL}/items/manufacturing_daily_qa_inspections`, {
-                method: "POST",
-                headers,
-                body: JSON.stringify(payload)
-            });
-
-            if (!res.ok) {
-                throw new Error("Failed to write daily QA inspection record: " + await res.text());
-            }
-
-            // If qaParameters is provided, insert them into manufacturing_job_order_qa_records
+            // Parameter rows use the yield-ledger marker to resume a partial save safely.
             if (qaParameters && qaParameters.length > 0 && joRouteId) {
                 for (const param of qaParameters) {
+                    const parameterKey = `${Number(joRouteId)}:${Number(param.parameter_id)}`;
+                    if (savedParameterKeys.has(parameterKey)) continue;
                     const valNumeric = param.value !== undefined && param.value !== "" ? Number(param.value) : null;
                     const valText = typeof param.value === "string" ? param.value : null;
                     const valBool = typeof param.value === "boolean" ? param.value : null;
@@ -705,33 +841,44 @@ export async function POST(request: Request) {
                         value_numeric: valNumeric,
                         value_boolean: valBool,
                         is_passed: !param.is_failed,
-                        inspected_by: Number(inspectorId),
+                        inspected_by: authenticatedInspectorId,
                         inspected_at: timestamp,
                         remarks: `Daily QA Audit | Yield Log ID: ${ledgerId} | ${param.remarks || "Daily QA check"}`
                     };
 
-                    await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_qa_records`, {
+                    const qaResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_qa_records`, {
                         method: "POST",
                         headers,
-                        body: JSON.stringify(qaPayload)
-                    }).catch(err => console.error("Failed to insert QA record in Daily QA:", err));
+                        body: JSON.stringify(qaPayload),
+                        signal: saveSignal
+                    });
+                    if (!qaResponse.ok) {
+                        throw new DailyQAValidationError(502, "QA_PARAMETER_WRITE_FAILED", `Failed to write QA parameter ${param.parameter_id} for route ${joRouteId}.`);
+                    }
+                    savedParameterKeys.add(parameterKey);
                 }
             }
-        }
 
-        // Fetch all routes (steps) for this Job Order
-        const routesRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${jobOrderId}&fields=jo_route_id,job_order_id,sequence_order,work_center_id,operation_id,status,completed_at,planned_setup_hours,planned_run_hours,actual_setup_hours,actual_run_hours,step_batch_size,run_time_hours_factor`, { headers, cache: "no-store" });
-        if (!routesRes.ok) {
-            throw new DailyQAValidationError(502, "ROUTE_LOOKUP_FAILED", `Job Order routing lookup failed with HTTP ${routesRes.status}.`);
+            const routeIdentifier = relationId(joRouteId, ["joRouteId", "jo_route_id", "id"]);
+            if (routeIdentifier ? savedRouteIds.has(routeIdentifier) : hasSavedGeneralInspection) continue;
+
+            const res = await fetch(`${DIRECTUS_URL}/items/manufacturing_daily_qa_inspections`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify(payload),
+                signal: saveSignal
+            });
+
+            if (!res.ok) {
+                throw new DailyQAValidationError(502, "INSPECTION_WRITE_FAILED", "Failed to write daily QA inspection record.");
+            }
+            if (routeIdentifier) savedRouteIds.add(routeIdentifier);
+            else hasSavedGeneralInspection = true;
         }
-        const routesPayload = await routesRes.json().catch(() => null);
-        if (!Array.isArray(routesPayload?.data)) {
-            throw new DailyQAValidationError(502, "ROUTE_LOOKUP_INVALID", "Job Order routing lookup returned an invalid response.");
-        }
-        const routes = routesPayload.data;
 
         // Fetch all daily QA inspections for this ledgerId
-        const inspectionsFetch = await fetch(`${DIRECTUS_URL}/items/manufacturing_daily_qa_inspections?filter[ledger_id][_eq]=${ledgerId}`, { headers, cache: "no-store" });
+        operationForLog = "recalculate QA outcome";
+        const inspectionsFetch = await fetch(`${DIRECTUS_URL}/items/manufacturing_daily_qa_inspections?filter[ledger_id][_eq]=${ledgerId}`, { headers, cache: "no-store", signal: saveSignal });
         if (!inspectionsFetch.ok) {
             throw new DailyQAValidationError(502, "INSPECTION_LOOKUP_FAILED", `Daily QA inspection lookup failed with HTTP ${inspectionsFetch.status}.`);
         }
@@ -750,19 +897,15 @@ export async function POST(request: Request) {
         const finalLedgerStatus = outcome.status;
         let rejectedOutputRegistered = false;
 
-        validateSubmittedQARoutes(
-            jobOrderId,
-            routes,
-            inspectionsList
-        );
-
         if (outcome.hasFailure) {
+            operationForLog = "save QA hold and disposition";
             // 1. Update the Job Order status to "On Hold" and fail the request if
             // the authoritative state could not be persisted.
             const holdResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${jobOrderId}`, {
                 method: "PATCH",
                 headers,
-                body: JSON.stringify({ status: JOB_ORDER_STATUS.ON_HOLD })
+                body: JSON.stringify({ status: JOB_ORDER_STATUS.ON_HOLD }),
+                signal: saveSignal
             });
             if (!holdResponse.ok) {
                 throw new Error(`Failed to place Job Order ${jobOrderId} on QA Hold.`);
@@ -776,7 +919,7 @@ export async function POST(request: Request) {
 
             for (const ins of failedInps) {
                 const routeId = Number(ins.jo_route_id || 0) || null;
-                const metadata = await resolveDispositionMetadata(Number(jobOrderId), routeId);
+                const metadata = await resolveDispositionMetadata(Number(jobOrderId), routeId, saveSignal);
                 const matchingPayloadEntry = inspectionsList.find((p: any) => Number(p.joRouteId) === Number(routeId));
                 const failedParams = (matchingPayloadEntry?.qaParameters || [])
                     .filter((p: any) => p.is_failed)
@@ -824,20 +967,22 @@ export async function POST(request: Request) {
 
                 const existingDisposition = await findPendingDisposition(
                     Number(newDisp.job_order_id),
-                    Number(newDisp.task_id || 0) || null
+                    Number(newDisp.task_id || 0) || null,
+                    saveSignal
                 );
                 if (existingDisposition?.id) {
                     const { id: _existingId, ...updatePayload } = newDisp;
                     await updateDisposition(String(existingDisposition.id), {
                         ...updatePayload
-                    });
+                    }, saveSignal);
                 } else {
-                    await createDisposition(newDisp);
+                    await createDisposition(newDisp, saveSignal);
                 }
             }
         }
 
         if (finalLedgerStatus === "Passed" && goodOutputQuantity > 0 && outputMetadata) {
+            operationForLog = "register released finished-goods lot";
             if (!inventoryLotCreatedBy) {
                 throw new DailyQAValidationError(401, "AUTHENTICATION_REQUIRED", "An authenticated user is required to register the audited finished-goods lot.");
             }
@@ -854,7 +999,8 @@ export async function POST(request: Request) {
                     sourceType: "JOB_ORDER_YIELD",
                     sourceReference: textValue(jobOrder.job_order_no) || `JO-${jobOrderId}`,
                     remarks: `QA-released finished yield from Job Order ${textValue(jobOrder.job_order_no) || jobOrderId}`,
-                    createdBy: inventoryLotCreatedBy
+                    createdBy: inventoryLotCreatedBy,
+                    signal: saveSignal
                 });
                 if (!Number(inventoryLot.inventory_lot_id)) {
                     throw new MmLotError("The finished-goods inventory lot could not be verified after creation.", 503, "MM_INVENTORY_LOT_WRITE_FAILED");
@@ -872,6 +1018,7 @@ export async function POST(request: Request) {
             && badStockBranchId
             && shouldRegisterRejectedOutput(rejectedOutputQuantity, outcome.isComplete)
         ) {
+            operationForLog = "register rejected finished-goods lot";
             if (!inventoryLotCreatedBy) {
                 throw new DailyQAValidationError(401, "AUTHENTICATION_REQUIRED", "An authenticated user is required to register rejected finished-goods output.");
             }
@@ -882,17 +1029,20 @@ export async function POST(request: Request) {
                 branchId: badStockBranchId,
                 productId,
                 metadata: rejectedOutputMetadata,
-                createdBy: inventoryLotCreatedBy
+                createdBy: inventoryLotCreatedBy,
+                signal: saveSignal
             });
-            await persistRejectedOutputTraceability(ledgerId, ledger, rejectedOutputMetadata);
+            await persistRejectedOutputTraceability(ledgerId, ledger, rejectedOutputMetadata, saveSignal);
             rejectedOutputRegistered = true;
         }
 
         // Sync QA disposition back to yield ledger (only "Passed" if all steps have been QA'd)
+        operationForLog = "save final yield ledger QA status";
         const ledgerPatchResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger/${ledgerId}`, {
             method: "PATCH",
             headers,
-            body: JSON.stringify({ qa_status: finalLedgerStatus })
+            body: JSON.stringify({ qa_status: finalLedgerStatus }),
+            signal: saveSignal
         });
         if (!ledgerPatchResponse.ok) {
             throw new Error(`Failed to persist Daily QA status for yield ledger ${ledgerId}.`);
@@ -908,7 +1058,14 @@ export async function POST(request: Request) {
             rejectedOutputRegistered
         });
     } catch (e) {
-        console.error("Error in daily-qa POST API:", e);
+        console.error(`Daily QA POST failed during ${operationForLog} after ${Date.now() - startedAt}ms:`, e);
+        if (saveSignal.aborted) {
+            console.error(`Daily QA save timed out during ${operationForLog} after ${Date.now() - startedAt}ms for Job Order ${jobOrderIdForLog || "unknown"}, yield ledger ${ledgerIdForLog || "unknown"}.`);
+            return NextResponse.json({
+                error: "Saving the audit exceeded the time limit. The system will check which audit details were saved before allowing a retry.",
+                code: "DAILY_QA_SAVE_TIMEOUT"
+            }, { status: 504 });
+        }
         if (e instanceof DailyQAValidationError) {
             return NextResponse.json({ error: e.message, code: e.code }, { status: e.status });
         }

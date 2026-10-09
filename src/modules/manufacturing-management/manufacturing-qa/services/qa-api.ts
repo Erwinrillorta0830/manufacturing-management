@@ -555,7 +555,7 @@ export interface DailyQAInspectionEntry {
     jobOrderId: number;
     joRouteId: number | null;
     ledgerId: number;
-    inspectorId: number;
+    inspectorId?: number;
     moisturePercentage?: string | number | null;
     acidityPh?: string | number | null;
     sensoryStatus: "Passed" | "Failed";
@@ -575,25 +575,76 @@ export interface DailyQAInspectionEntry {
 export interface DailyQAInspectionRequest {
     jobOrderId: number;
     ledgerId: number;
+    acceptedQuantity?: number;
+    rejectedQuantity?: number;
     outputMetadata: DailyQAOutputMetadata | null;
     rejectedOutputMetadata: DailyQAOutputMetadata | null;
     inspections: DailyQAInspectionEntry[];
 }
 
+const DAILY_QA_CLIENT_TIMEOUT_MS = 130_000;
+
+export class DailyQARequestError extends Error {
+    constructor(
+        message: string,
+        readonly code: string | null,
+        readonly outcomeUnknown: boolean,
+        readonly canResume: boolean = false
+    ) {
+        super(message);
+        this.name = "DailyQARequestError";
+    }
+}
+
 export async function postDailyQAInspection(payload: DailyQAInspectionRequest): Promise<any> {
-    const res = await fetch("/api/manufacturing/production/daily-qa", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Failed to log daily QA inspection");
-    return data;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), DAILY_QA_CLIENT_TIMEOUT_MS);
+    try {
+        const res = await fetch("/api/manufacturing/production/daily-qa", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            signal: controller.signal
+        });
+        const data = await res.json().catch(() => null) as { error?: string; code?: string } | null;
+        if (!res.ok) {
+            const code = typeof data?.code === "string" ? data.code : null;
+            throw new DailyQARequestError(
+                data?.error || `Failed to log daily QA inspection (HTTP ${res.status}).`,
+                code,
+                res.status >= 500,
+                res.status >= 500
+            );
+        }
+        if (!data) {
+            throw new DailyQARequestError("The server returned an unreadable save response.", "DAILY_QA_RESPONSE_INVALID", true, true);
+        }
+        return data;
+    } catch (error) {
+        if (error instanceof DailyQARequestError) throw error;
+        if (controller.signal.aborted) {
+            throw new DailyQARequestError(
+                "The audit save timed out before the server confirmed the result.",
+                "DAILY_QA_SAVE_TIMEOUT",
+                true,
+                true
+            );
+        }
+        throw new DailyQARequestError(
+            error instanceof Error ? error.message : "The audit save could not be confirmed.",
+            "DAILY_QA_OUTCOME_UNKNOWN",
+            true
+        );
+    } finally {
+        clearTimeout(timeoutId);
+    }
 }
 
 export async function registerRejectedOutputAllocation(payload: {
     jobOrderId: number;
     ledgerId: number;
+    acceptedQuantity: number;
+    rejectedQuantity: number;
     rejectedOutputMetadata: DailyQAOutputMetadata;
 }): Promise<any> {
     const res = await fetch("/api/manufacturing/production/daily-qa", {
