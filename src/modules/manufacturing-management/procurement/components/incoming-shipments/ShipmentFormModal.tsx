@@ -11,7 +11,7 @@ import {
     PurchaseOrderPaymentMode
 } from "./types";
 import { RawProductSelector, ProductSearchableSelect } from "./RawProductSelector";
-import { formatMoney, MaterialTypeBadge } from "./ShipmentBadges";
+import { formatMoney } from "./ShipmentBadges";
 import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods-master/components/CreatableSelect";
 import { normalizeProductRelationId } from "../../product-relation";
 import { PURCHASE_ORDER_DELIVERY_TERMS } from "@/modules/manufacturing-management/procurement-and-inbound/incoming-shipments/commercial-terms";
