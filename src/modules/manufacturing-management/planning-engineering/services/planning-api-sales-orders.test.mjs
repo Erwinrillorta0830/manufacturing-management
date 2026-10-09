@@ -106,7 +106,7 @@ try {
 
     let startedWaiting;
     const retryWaitStarted = new Promise((resolve) => { startedWaiting = resolve; });
-    globalThis.setTimeout = ((callback, delay) => {
+    globalThis.setTimeout = (() => {
         startedWaiting();
         return 1;
     });
