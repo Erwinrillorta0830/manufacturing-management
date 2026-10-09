@@ -251,6 +251,10 @@ export function SalesOrderDraftEditor({
                 const mappedItems: DirectOrderItem[] = orderDetails.map((detail, index) => {
                     const pId = typeof detail.product_id === 'object' ? detail.product_id.product_id : detail.product_id;
                     const product = data.products?.find((p: any) => Number(p.product_id) === Number(pId));
+                    const qty = Number(detail.ordered_quantity) || 1;
+                    const totalLineDiscount = Number(detail.discount_amount) || 0;
+                    const unitDiscount = totalLineDiscount / (qty || 1);
+
                     return {
                         line_id: index + 1,
                         product_type_id: Number(product?.product_type || 0),
@@ -259,7 +263,7 @@ export function SalesOrderDraftEditor({
                         quantity: detail.ordered_quantity,
                         unit_price: detail.unit_price,
                         discount_type: detail.discount_type,
-                        discount_amount: detail.discount_amount,
+                        discount_amount: unitDiscount,
                         discount_percent: 0,
                         bom_version_id: detail.bom_version_id || undefined
                     };
