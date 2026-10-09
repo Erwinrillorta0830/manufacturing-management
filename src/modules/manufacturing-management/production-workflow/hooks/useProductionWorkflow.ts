@@ -690,7 +690,8 @@ const selectedTask = useMemo(() => {
                 ...r,
                 stopped_at: now,
                 actual_hours: newHours,
-                labor_cost: roundHours(newHours * (r.hourly_rate || 0))
+                labor_cost: roundHours(newHours * (r.hourly_rate || 0)),
+                is_active: true
             }
             : r));
         setOperatorsSummary({

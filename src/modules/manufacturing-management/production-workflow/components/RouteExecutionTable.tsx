@@ -162,7 +162,8 @@ function RouteExecutionRow({
     const [materialsOpen, setMaterialsOpen] = useState(false);
 
     const taskOperators = useMemo(
-        () => routeOperators.filter((operator) => Number(operator.task_id) === Number(task.id) && operator.is_active !== false),
+        () => routeOperators.filter((operator) => Number(operator.task_id) === Number(task.id)
+            && (operator.is_active !== false || Boolean(operator.started_at && !operator.stopped_at))),
         [routeOperators, task.id]
     );
     const groupedOperators = useMemo<OperatorGroup[]>(() => {

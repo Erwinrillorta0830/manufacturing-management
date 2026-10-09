@@ -22,6 +22,7 @@ import {
     shouldRegisterRejectedOutput,
     type RejectedOutputMetadata
 } from "@/modules/manufacturing-management/manufacturing-qa/rejected-output";
+import { isCommittedYieldLedger } from "../_qa-accepted-output";
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "test";
@@ -441,6 +442,7 @@ async function fetchDailyQAQueue(searchParams: URLSearchParams): Promise<any[]> 
         readDirectusRows(routesResponse, "Daily QA routing lookup"),
         readDirectusRows(productsResponse, "Daily QA product lookup")
     ]);
+    const committedYieldRows = yieldRows.filter(isCommittedYieldLedger);
 
     const jobsById = new Map<number, any>(jobOrderRows.map((job: any) => [
         relationId(job.job_order_id, ["job_order_id", "id"]),
@@ -467,7 +469,7 @@ async function fetchDailyQAQueue(searchParams: URLSearchParams): Promise<any[]> 
         routesByJobOrder.set(jobOrderId, existing);
     });
 
-    const rows = yieldRows.map((yieldRow: any) => {
+    const rows = committedYieldRows.map((yieldRow: any) => {
         const ledgerId = relationId(yieldRow.ledger_id, ["ledger_id", "id"]);
         const jobOrderId = relationId(yieldRow.job_order_id, ["job_order_id", "id"]);
         const jobOrder = jobsById.get(jobOrderId);

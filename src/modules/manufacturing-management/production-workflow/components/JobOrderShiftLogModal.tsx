@@ -24,7 +24,15 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { RoutingTask, JobOrder, User as UserType, RouteOperatorRecord, RejectionReason, ProductionMaterialReservation } from "../types";
-import { submitShiftRunLog, ShiftRunLogPayload, fetchRejectionReasons } from "../services/production-api";
+import {
+    fetchRecoverableShiftRunSessions,
+    fetchRejectionReasons,
+    RecoverableShiftRunSession,
+    resumeShiftRunLogSession,
+    ShiftRunLogPayload,
+    ShiftRunLogRequestError,
+    submitShiftRunLog
+} from "../services/production-api";
 import { EvidenceMediaInput } from "./EvidenceMediaInput";
 import { AddReservedMaterialDialog, type TopUpTarget } from "./AddReservedMaterialDialog";
 import { toast } from "sonner";
@@ -99,6 +107,9 @@ export function JobOrderShiftLogModal({
     const [materialsLoadError, setMaterialsLoadError] = useState<string | null>(null);
     const [loadingShiftMaterials, setLoadingShiftMaterials] = useState(false);
     const [submittingShiftLog, setSubmittingShiftLog] = useState(false);
+    const [recoveryStatus, setRecoveryStatus] = useState<"checking" | "none" | "pending" | "resuming" | "error">("checking");
+    const [recoverableSessions, setRecoverableSessions] = useState<RecoverableShiftRunSession[]>([]);
+    const [recoveryError, setRecoveryError] = useState<string | null>(null);
     const [isConfirmationOpen, setIsConfirmationOpen] = useState(false);
     const [insufficiencyError, setInsufficiencyError] = useState<string | null>(null);
     const [isInsufficiencyOpen, setIsInsufficiencyOpen] = useState(false);
@@ -108,6 +119,7 @@ export function JobOrderShiftLogModal({
     const [evidenceImageError, setEvidenceImageError] = useState<string | null>(null);
     const outputQuantitiesRef = useRef<OutputQuantities>({ good: "", rejected: "0" });
     const manuallyEditedMaterialKeysRef = useRef<Set<string>>(new Set());
+    const autoResumeAttemptedRef = useRef<Set<string>>(new Set());
 
     const filteredShiftMaterials = React.useMemo(() => {
         const query = reservationSearch.trim().toLowerCase();
@@ -232,6 +244,7 @@ export function JobOrderShiftLogModal({
     useEffect(() => {
         if (!open) {
             initializedFormJobOrderKeyRef.current = null;
+            autoResumeAttemptedRef.current.clear();
             return;
         }
 
@@ -254,9 +267,10 @@ export function JobOrderShiftLogModal({
         setProductionDay("1");
         const todayStr = getPhtDateInputValue();
         setProductionDate(todayStr);
-        setSessionKey(typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-            ? crypto.randomUUID()
-            : `production-session-${Date.now()}`);
+        setSessionKey("");
+        setRecoverableSessions([]);
+        setRecoveryError(null);
+        setRecoveryStatus("checking");
 
         const available = getAvailableShifts();
         if (available.length > 0) {
@@ -267,6 +281,53 @@ export function JobOrderShiftLogModal({
         fetchRejectionReasons()
             .then((reasons) => setRejectionReasons(reasons))
             .catch((err) => console.error("Error loading rejection reasons:", err));
+
+        let cancelled = false;
+        const newSessionKey = () => typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+            ? crypto.randomUUID()
+            : `production-session-${Date.now()}`;
+
+        fetchRecoverableShiftRunSessions(jobOrderId)
+            .then(async (sessions) => {
+                if (cancelled) return;
+                setRecoverableSessions(sessions);
+                if (sessions.length === 0) {
+                    setSessionKey(newSessionKey());
+                    setRecoveryStatus("none");
+                    return;
+                }
+
+                setRecoveryStatus("pending");
+                if (sessions.length !== 1 || !sessions[0].canResume) return;
+
+                const session = sessions[0];
+                const attemptKey = `${jobOrderId}:${session.sessionKey}`;
+                if (autoResumeAttemptedRef.current.has(attemptKey)) return;
+                autoResumeAttemptedRef.current.add(attemptKey);
+                setRecoveryStatus("resuming");
+                setRecoveryError(null);
+                try {
+                    await resumeShiftRunLogSession(jobOrderId, session.sessionKey);
+                    if (cancelled) return;
+                    toast.success(`Recovered and recorded the pending shift for ${session.shiftName}.`);
+                    onOpenChange(false);
+                    onSuccess?.();
+                } catch (error) {
+                    if (cancelled) return;
+                    setRecoveryError(error instanceof Error ? error.message : "The pending shift could not be resumed.");
+                    setRecoveryStatus("pending");
+                    fetchRecoverableShiftRunSessions(jobOrderId)
+                        .then((latest) => { if (!cancelled) setRecoverableSessions(latest); })
+                        .catch(() => undefined);
+                }
+            })
+            .catch((error) => {
+                if (cancelled) return;
+                setRecoveryError(error instanceof Error ? error.message : "Unable to check for pending shifts.");
+                setRecoveryStatus("error");
+            });
+
+        return () => { cancelled = true; };
     }, [open, jobOrderId, jobOrderSessionKey, getAvailableShifts]);
 
     // Keep material refreshes independent from shift-entry initialization.
@@ -420,6 +481,48 @@ export function JobOrderShiftLogModal({
         if (validateShiftLog()) setIsConfirmationOpen(true);
     };
 
+    const handleResumePendingSession = async (session: RecoverableShiftRunSession) => {
+        if (!session.canResume || submittingShiftLog) return;
+        setRecoveryStatus("resuming");
+        setRecoveryError(null);
+        try {
+            await resumeShiftRunLogSession(jobOrderId || session.jobOrderId, session.sessionKey);
+            toast.success(`Recovered and recorded the pending shift for ${session.shiftName}.`);
+            onOpenChange(false);
+            onSuccess?.();
+        } catch (error) {
+            setRecoveryError(error instanceof Error ? error.message : "The pending shift could not be resumed.");
+            setRecoveryStatus("pending");
+            try {
+                const latest = await fetchRecoverableShiftRunSessions(jobOrderId || session.jobOrderId);
+                setRecoverableSessions(latest);
+            } catch {
+                // Keep the existing pending session visible if refresh also fails.
+            }
+        }
+    };
+
+    const handleRetryRecoveryCheck = async () => {
+        if (!jobOrderId) return;
+        setRecoveryStatus("checking");
+        setRecoveryError(null);
+        try {
+            const sessions = await fetchRecoverableShiftRunSessions(jobOrderId);
+            setRecoverableSessions(sessions);
+            if (sessions.length === 0) {
+                setSessionKey(typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+                    ? crypto.randomUUID()
+                    : `production-session-${Date.now()}`);
+                setRecoveryStatus("none");
+            } else {
+                setRecoveryStatus("pending");
+            }
+        } catch (error) {
+            setRecoveryError(error instanceof Error ? error.message : "Unable to check for pending shifts.");
+            setRecoveryStatus("error");
+        }
+    };
+
     const handleConfirmShiftLog = async (completeProductionAfterLog = false) => {
         if (!validateShiftLog()) {
             setIsConfirmationOpen(false);
@@ -502,7 +605,28 @@ export function JobOrderShiftLogModal({
                 }
             }
         } catch (err: any) {
-            toast.error(err.message || "Failed to submit shift log.");
+            if (err instanceof ShiftRunLogRequestError
+                && ["MATERIAL_AGGREGATE_CHANGED", "MATERIAL_RESERVATION_CHANGED"].includes(err.code || "")) {
+                setIsConfirmationOpen(false);
+                setRecoveryError(err.message);
+                setRecoverableSessions([{
+                    ledgerId: Number(err.details?.ledgerId || 0),
+                    jobOrderId: Number(jobOrderId || 0),
+                    sessionKey,
+                    shiftName: `Day ${productionDay} - ${shiftName}`,
+                    productionDate,
+                    goodQuantity: newYield,
+                    rejectedQuantity: newRejected,
+                    scrapQuantity: 0,
+                    loggedAt: null,
+                    canResume: true,
+                    recoveryError: { code: err.code, message: err.message, details: err.details || null }
+                }]);
+                setRecoveryStatus("pending");
+                toast.warning("This shift is saved as pending. Resume it from this screen; don’t enter the same output again.");
+            } else {
+                toast.error(err.message || "Failed to submit shift log.");
+            }
         } finally {
             setSubmittingShiftLog(false);
         }
@@ -717,6 +841,8 @@ export function JobOrderShiftLogModal({
                     </div>
 
                     <form onSubmit={handleShiftLogSubmit} className="p-4 sm:p-6 flex-1 flex flex-col overflow-hidden min-h-0 text-xs">
+                        {recoveryStatus === "none" ? (
+                            <>
                         <div className="grid grid-cols-1 items-start lg:grid-cols-12 gap-4 sm:gap-6 flex-1 overflow-y-auto pr-1 min-h-0">
                             {/* Left Column: Yield, Rejection, Batch Metadata, Operators */}
                             <div className="min-w-0 lg:col-span-6 space-y-5">
@@ -1205,6 +1331,81 @@ export function JobOrderShiftLogModal({
                                 </Button>
                             </div>
                         </DialogFooter>
+                            </>
+                        ) : (
+                            <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-2 py-8 text-center">
+                                <div className="w-full max-w-2xl space-y-5">
+                                    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                                        <AlertTriangle className="h-6 w-6" />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <h3 className="text-base font-semibold text-foreground">
+                                            {recoveryStatus === "checking" ? "Checking for a saved shift…"
+                                                : recoveryStatus === "resuming" ? "Resuming the saved shift…"
+                                                    : recoveryStatus === "error" ? "Unable to check for saved shifts"
+                                                        : "A shift is waiting to be recovered"}
+                                        </h3>
+                                        <p className="text-sm text-muted-foreground">
+                                            {recoveryStatus === "checking" || recoveryStatus === "resuming"
+                                                ? "Please wait. Keep this window open while the saved session is checked."
+                                                : recoveryError || "This Job Order has an incomplete shift session. Resume it before entering another shift so the output is not duplicated."}
+                                        </p>
+                                    </div>
+
+                                    {recoverableSessions.length > 0 && (
+                                        <div className="space-y-3 text-left">
+                                            {recoverableSessions.map((session) => {
+                                                const details = session.recoveryError?.details || {};
+                                                return (
+                                                    <div key={`${session.ledgerId}:${session.sessionKey}`} className="rounded-xl border border-amber-200 bg-amber-50/70 p-4 dark:border-amber-900 dark:bg-amber-950/20">
+                                                        <div className="flex flex-wrap items-start justify-between gap-3">
+                                                            <div>
+                                                                <p className="font-semibold text-foreground">{session.shiftName || "Saved production shift"}</p>
+                                                                <p className="mt-1 text-xs text-muted-foreground">
+                                                                    {session.productionDate || "Date unavailable"} · Good {formatProductionQuantity(session.goodQuantity)} pcs · Rejected {formatProductionQuantity(session.rejectedQuantity)} pcs
+                                                                </p>
+                                                                {session.recoveryError?.message && (
+                                                                    <p className="mt-2 text-xs text-amber-900 dark:text-amber-200">{session.recoveryError.message}</p>
+                                                                )}
+                                                                {details.joMaterialId !== undefined && (
+                                                                    <p className="mt-2 text-xs text-muted-foreground">
+                                                                        Material #{String(details.joMaterialId)}: saved balance {String(details.expectedActualBefore ?? details.expectedRemainingBefore ?? "—")}; live balance {String(details.liveActual ?? details.liveRemaining ?? "—")}.
+                                                                    </p>
+                                                                )}
+                                                            </div>
+                                                            {session.canResume ? (
+                                                                <Button
+                                                                    type="button"
+                                                                    disabled={recoveryStatus === "resuming"}
+                                                                    onClick={() => void handleResumePendingSession(session)}
+                                                                >
+                                                                    Resume saved shift
+                                                                </Button>
+                                                            ) : (
+                                                                <Badge variant="outline" className="border-amber-400 text-amber-800 dark:text-amber-200">
+                                                                    Needs supervisor reconciliation
+                                                                </Badge>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+
+                                    <div className="flex flex-wrap justify-center gap-2">
+                                        {recoveryStatus === "error" && (
+                                            <Button type="button" variant="outline" onClick={() => void handleRetryRecoveryCheck()}>
+                                                Retry check
+                                            </Button>
+                                        )}
+                                        <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+                                            Close
+                                        </Button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </form>
                 </DialogContent>
                 <AddReservedMaterialDialog

@@ -95,6 +95,11 @@ export function isCancelledAllocation(row: DirectusRow): boolean {
     return ["cancelled", "canceled", "void", "inactive"].includes(status);
 }
 
+export function isCommittedYieldLedger(row: DirectusRow): boolean {
+    const status = String(row.commit_status || "").trim().toUpperCase();
+    return !status || status === "COMMITTED";
+}
+
 export function buildQAYieldAssessments(
     yieldRows: DirectusRow[],
     inspectionRows: DirectusRow[],
@@ -120,6 +125,7 @@ export function buildQAYieldAssessments(
     }
 
     return yieldRows
+        .filter(isCommittedYieldLedger)
         .map((yieldRow) => {
             const currentLedgerId = ledgerId(yieldRow);
             const currentJobOrderId = jobOrderId(yieldRow);
