@@ -69,13 +69,15 @@ function primaryPurchaseMaterial(members: RawMaterial[], familyId: number): RawM
     return members.find(material => Number(material.product_id) === familyId) || members[0];
 }
 
-function ProductSearchableSelect({
+export function ProductSearchableSelect({
     id,
     options,
     value,
     onValueChange,
     placeholder,
     disabled,
+    className,
+    popoverWidthClass = "w-[--radix-popover-trigger-width]"
 }: {
     id?: string;
     options: Array<{ value: string; label: string }>;
@@ -83,6 +85,8 @@ function ProductSearchableSelect({
     onValueChange: (value: string) => void;
     placeholder: string;
     disabled: boolean;
+    className?: string;
+    popoverWidthClass?: string;
 }) {
     const [open, setOpen] = React.useState(false);
     const selectedLabel = useMemo(() => options.find(option => option.value === value)?.label, [options, value]);
@@ -97,15 +101,16 @@ function ProductSearchableSelect({
                     aria-expanded={open}
                     className={cn(
                         "h-8 w-full min-w-0 justify-between overflow-hidden text-xs font-semibold bg-background",
-                        !value && "text-muted-foreground"
+                        !value && "text-muted-foreground",
+                        className
                     )}
                     disabled={disabled}
                 >
                     <span className="min-w-0 flex-1 truncate text-left">{selectedLabel || placeholder}</span>
-                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    <ChevronsUpDown className="ml-1 h-3.5 w-3.5 shrink-0 opacity-50" />
                 </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+            <PopoverContent className={cn("p-0", popoverWidthClass)} align="start">
                 <Command>
                     <CommandInput placeholder={`Search ${placeholder.toLowerCase()}...`} />
                     <CommandList>
@@ -149,7 +154,7 @@ export function RawProductSelector({
 }: RawProductSelectorProps) {
     const filteredMaterials = useMemo(() => {
         if (!materialType) {
-            return rawMaterials;
+            return [];
         }
         const materialTypeOptions = canonicalDrafting
             ? PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS
@@ -158,7 +163,7 @@ export function RawProductSelector({
             option => option.value === materialType
         )?.productTypeId;
 
-        if (!productTypeId) return rawMaterials;
+        if (!productTypeId) return [];
         return rawMaterials.filter(material => {
             if (Number(material.product_type) === productTypeId) return true;
             const parentId = normalizeProductRelationId(material.parent_id);
@@ -191,11 +196,12 @@ export function RawProductSelector({
     }, [filteredMaterials]);
 
     const selectedFamilyId = useMemo(() => {
+        if (!materialType) return "";
         if (parentProductId) return String(parentProductId);
         const selected = filteredMaterials.find(material => String(material.product_id) === String(selectedProductId));
         if (!selected) return String(selectedProductId || "");
         return String(familyIdForMaterial(selected) || selected.product_id);
-    }, [filteredMaterials, parentProductId, selectedProductId]);
+    }, [filteredMaterials, materialType, parentProductId, selectedProductId]);
 
     const handleValueChange = (val: string) => {
         const familyId = Number(val);
@@ -229,14 +235,17 @@ export function RawProductSelector({
         });
     };
 
+    const isEffectivelyDisabled = disabled || !materialType;
+    const placeholderText = !materialType ? "Select type first..." : "Select product...";
+
     return (
         <ProductSearchableSelect
             id={id}
             options={options}
             value={selectedFamilyId}
             onValueChange={handleValueChange}
-            placeholder="Select product..."
-            disabled={disabled}
+            placeholder={placeholderText}
+            disabled={isEffectivelyDisabled}
         />
     );
 }

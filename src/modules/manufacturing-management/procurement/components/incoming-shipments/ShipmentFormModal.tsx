@@ -10,8 +10,8 @@ import {
     RawMaterial,
     PurchaseOrderPaymentMode
 } from "./types";
-import { RawProductSelector } from "./RawProductSelector";
-import { formatMoney, MaterialTypeBadge } from "./ShipmentBadges";
+import { RawProductSelector, ProductSearchableSelect } from "./RawProductSelector";
+import { formatMoney } from "./ShipmentBadges";
 import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods-master/components/CreatableSelect";
 import { normalizeProductRelationId } from "../../product-relation";
 import { PURCHASE_ORDER_DELIVERY_TERMS } from "@/modules/manufacturing-management/procurement-and-inbound/incoming-shipments/commercial-terms";
@@ -733,12 +733,40 @@ export function ShipmentFormModal({
                                                             <span className="hidden xl:inline">{idx + 1}</span>
                                                         </td>
 
-                                                        {/* Material Type Badge / Auto-Derived */}
+                                                        {/* Material Type Selector */}
                                                         <td className="col-span-1 min-w-0 overflow-hidden border-r p-1.5 align-middle xl:table-cell">
                                                             <ResponsiveCellLabel>Type <span className="text-red-500">*</span></ResponsiveCellLabel>
-                                                            <div className="flex h-8 w-full items-center">
-                                                                <MaterialTypeBadge materialType={materialType} />
-                                                            </div>
+                                                            <ProductSearchableSelect
+                                                                id={`type-select-${idx}`}
+                                                                options={PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS.map(opt => ({
+                                                                    value: opt.value,
+                                                                    label: opt.label
+                                                                }))}
+                                                                value={line.material_type || ""}
+                                                                disabled={!isRowEditing}
+                                                                placeholder="Select type..."
+                                                                popoverWidthClass="w-[180px]"
+                                                                className={hasSubmitted && !line.material_type ? "border-red-500" : ""}
+                                                                onValueChange={val => {
+                                                                    const nextType = val as PurchaseOrderMaterialType | "";
+                                                                    handleLineFormChange(idx, {
+                                                                        material_type: nextType,
+                                                                        parent_product_id: "",
+                                                                        product_id: "",
+                                                                        product_name: "",
+                                                                        product_code: "",
+                                                                        selected_uom: "",
+                                                                        price_source: "none",
+                                                                        uom_options: [],
+                                                                        base_unit_cost_php: "",
+                                                                        discount_type_id: "",
+                                                                        discount_source: "none",
+                                                                        discount_mode: "Percentage",
+                                                                        discount_amount: "0",
+                                                                        discount_percent: "0"
+                                                                    });
+                                                                }}
+                                                            />
                                                         </td>
 
                                                         {/* Product Name Selector */}
