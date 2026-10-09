@@ -107,7 +107,7 @@ export function InProductionSalesOrdersTable({
             <CardContent className="p-0">
                 {loadingOrders ? (
                     <ProductionTableSkeleton />
-                ) : error ? (
+                ) : error && salesOrderGroups.length === 0 ? (
                     <div role="alert" className="flex flex-col items-center gap-3 px-6 py-12 text-center">
                         <p className="text-sm font-bold text-destructive">Unable to load Sales Orders in production</p>
                         <p className="max-w-xl text-xs text-muted-foreground">{error}</p>
@@ -117,12 +117,31 @@ export function InProductionSalesOrdersTable({
                         </Button>
                     </div>
                 ) : filteredGroups.length === 0 ? (
-                    <div role="status" className="px-6 py-16 text-center text-xs font-semibold text-muted-foreground">
-                        {searchQuery ? "No In Production Sales Orders match your search." : "No Sales Orders are currently In Production."}
-                    </div>
+                    <>
+                        {error && (
+                            <div role="status" className="flex items-center justify-between gap-3 border-b px-6 py-3 text-xs text-amber-700 dark:text-amber-400">
+                                <span>{error}</span>
+                                <Button type="button" variant="outline" size="sm" onClick={onRetry} className="shrink-0 gap-2 font-bold">
+                                    <RefreshCw className="h-3.5 w-3.5" /> Retry
+                                </Button>
+                            </div>
+                        )}
+                        <div role="status" className="px-6 py-16 text-center text-xs font-semibold text-muted-foreground">
+                            {searchQuery ? "No In Production Sales Orders match your search." : "No Sales Orders are currently In Production."}
+                        </div>
+                    </>
                 ) : (
-                    <div className="max-h-[50vh] overflow-x-auto overflow-y-auto">
-                        <Table>
+                    <>
+                        {error && (
+                            <div role="status" className="flex items-center justify-between gap-3 border-b px-6 py-3 text-xs text-amber-700 dark:text-amber-400">
+                                <span>{error} Showing the last successfully loaded results.</span>
+                                <Button type="button" variant="outline" size="sm" onClick={onRetry} className="shrink-0 gap-2 font-bold">
+                                    <RefreshCw className="h-3.5 w-3.5" /> Retry
+                                </Button>
+                            </div>
+                        )}
+                        <div className="max-h-[50vh] overflow-x-auto overflow-y-auto">
+                            <Table>
                             <TableHeader className="sticky top-0 z-10 bg-muted/5">
                                 <TableRow>
                                     <TableHead className="min-w-[170px] font-bold text-xs">Sales Order</TableHead>
@@ -219,8 +238,9 @@ export function InProductionSalesOrdersTable({
                                     </TableRow>
                                 ))}
                             </TableBody>
-                        </Table>
-                    </div>
+                            </Table>
+                        </div>
+                    </>
                 )}
             </CardContent>
         </Card>
