@@ -22,6 +22,11 @@ import {
     salesOrderStatusAfterJobOrderEnd,
     shouldReturnSalesOrderToForProduction
 } from "@/modules/manufacturing-management/job-order-end";
+import {
+    linkedSalesOrderIdsFromJobOrderAllocations,
+    salesOrderDetailIdsFromAllocations,
+    salesOrderStatusAfterJobOrderInitialization
+} from "@/modules/manufacturing-management/job-order-initialization";
 
 const QUANTITY_EPSILON = 0.000001;
 
@@ -51,6 +56,7 @@ export interface JobOrderWorkflowCommand {
     workCenterId?: number | null;
     overrideReason?: string;
     force?: boolean;
+    deferSalesOrderStatusSync?: boolean;
 }
 
 export interface JobOrderWorkflowResult {
@@ -426,6 +432,57 @@ export async function reconcileSalesOrderAfterJobOrderEnd(
     } catch (error) {
         console.error(`[Job Order workflow] Sales Order recalculation failed after ${action}:`, error);
         return ["The Job Order ended, but one or more linked Sales Order statuses could not be recalculated. Retry the workflow request or update the Sales Order manually."];
+    }
+}
+
+export async function reconcileSalesOrdersAfterJobOrderInitialization(
+    jobOrderIdsValue: number | number[]
+): Promise<string[]> {
+    const jobOrderIds = [...new Set((Array.isArray(jobOrderIdsValue) ? jobOrderIdsValue : [jobOrderIdsValue])
+        .map((id) => positiveInteger(id))
+        .filter((id): id is number => id !== null))];
+    if (jobOrderIds.length === 0) return [];
+
+    try {
+        const allocations = await directusRows(
+            `/items/manufacturing_job_order_allocations?filter[job_order_id][_in]=${jobOrderIds.join(",")}&fields=sales_order_detail_id&limit=-1`,
+            `Load Sales Order allocations for initialized Job Order${jobOrderIds.length === 1 ? "" : "s"}`
+        );
+        const detailIds = salesOrderDetailIdsFromAllocations(allocations);
+        if (detailIds.length === 0) return [];
+
+        const details = await directusRows(
+            `/items/sales_order_details?filter[detail_id][_in]=${detailIds.join(",")}&fields=detail_id,order_id&limit=-1`,
+            "Load Sales Orders linked to initialized Job Orders"
+        );
+        const orderIds = linkedSalesOrderIdsFromJobOrderAllocations(allocations, details);
+        const failedOrderIds: number[] = [];
+
+        for (const orderId of orderIds) {
+            try {
+                const order = await directusRequest<DirectusRecord>(
+                    `/items/sales_order/${orderId}?fields=order_id,order_status`,
+                    `Read Sales Order ${orderId} before initialization status sync`
+                );
+                const nextStatus = salesOrderStatusAfterJobOrderInitialization(order?.order_status);
+                if (!nextStatus) continue;
+
+                await directusRequest(
+                    `/items/sales_order/${orderId}`,
+                    `Move Sales Order ${orderId} to In Production after Job Order initialization`,
+                    { method: "PATCH", body: JSON.stringify({ order_status: nextStatus }) }
+                );
+            } catch (error) {
+                failedOrderIds.push(orderId);
+                console.error(`[Job Order workflow] Sales Order ${orderId} status sync failed after initialization:`, error);
+            }
+        }
+
+        if (failedOrderIds.length === 0) return [];
+        return [`The Job Order was initialized, but Sales Order${failedOrderIds.length === 1 ? "" : "s"} ${failedOrderIds.join(", ")} could not be moved to In Production. Retry the initialization status sync or update the Sales Order manually.`];
+    } catch (error) {
+        console.error("[Job Order workflow] Sales Order status sync failed after initialization:", error);
+        return ["The Job Order was initialized, but linked Sales Order statuses could not be synchronized. Retry the initialization status sync or update the Sales Order manually."];
     }
 }
 
@@ -1117,7 +1174,9 @@ export async function executeJobOrderWorkflow(
         const existingStatus = normalizeJobOrderStatus(existing.new_status) || previousStatus;
         const warnings = command.action === "cancel" || command.action === "terminate-production"
             ? await reconcileSalesOrderAfterJobOrderEnd(jobOrderId, command.action)
-            : [];
+            : command.action === "initialize" && !command.deferSalesOrderStatusSync
+                ? await reconcileSalesOrdersAfterJobOrderInitialization(jobOrderId)
+                : [];
         return {
             jobOrderId,
             jobOrderNo: text(jobOrder.job_order_no) || `JO-${jobOrderId}`,
@@ -1228,6 +1287,10 @@ export async function executeJobOrderWorkflow(
     if (command.action === "terminate-production") {
         const warnings = await reconcileSalesOrderAfterJobOrderEnd(jobOrderId, command.action);
         if (warnings.length > 0) result.warnings = warnings;
+    }
+    if (command.action === "initialize" && !command.deferSalesOrderStatusSync) {
+        const warnings = await reconcileSalesOrdersAfterJobOrderInitialization(jobOrderId);
+        if (warnings.length > 0) result.warnings = [...(result.warnings || []), ...warnings];
     }
     return result;
 }

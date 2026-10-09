@@ -61,22 +61,112 @@ export async function fetchNetRequirementsRaw(productIds: number[], branchId: nu
     return res.json();
 }
 
-export async function fetchJobMaterials(joId: number | string, signal?: AbortSignal): Promise<JobOrderMaterial[]> {
-    const res = await fetch(
-        `/api/manufacturing/planning-engineering?action=job-materials&joId=${encodeURIComponent(String(joId))}`,
-        { cache: "no-store", signal }
-    );
-    const payload = await res.json().catch(() => null);
+const JOB_MATERIALS_RETRY_WINDOW_MS = 120_000;
+const JOB_MATERIALS_MAX_RETRY_DELAY_MS = 15_000;
 
-    if (!res.ok) {
-        throw new Error(payload?.error || "Required material data is temporarily unavailable.");
+export interface JobMaterialsRetryBudget {
+    deadlineAt: number | null;
+}
+
+export interface FetchJobMaterialsOptions {
+    signal?: AbortSignal;
+    retryBudget?: JobMaterialsRetryBudget;
+    onRateLimitRetry?: (retrying: boolean) => void;
+}
+
+function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+        if (signal?.aborted) {
+            const error = new Error("Materials lookup was cancelled.");
+            error.name = "AbortError";
+            reject(error);
+            return;
+        }
+
+        const timeoutId = setTimeout(() => {
+            signal?.removeEventListener("abort", abortWait);
+            resolve();
+        }, delayMs);
+
+        const abortWait = () => {
+            clearTimeout(timeoutId);
+            signal?.removeEventListener("abort", abortWait);
+            const error = new Error("Materials lookup was cancelled.");
+            error.name = "AbortError";
+            reject(error);
+        };
+
+        signal?.addEventListener("abort", abortWait, { once: true });
+        if (signal?.aborted) abortWait();
+    });
+}
+
+export async function fetchJobMaterials(
+    joId: number | string,
+    options: FetchJobMaterialsOptions = {}
+): Promise<JobOrderMaterial[]> {
+    const retryBudget = options.retryBudget || { deadlineAt: null };
+    let retryAttempt = 0;
+    let isRateLimitRetrying = false;
+
+    try {
+        while (true) {
+            if (options.signal?.aborted) {
+                const error = new Error("Materials lookup was cancelled.");
+                error.name = "AbortError";
+                throw error;
+            }
+
+            if (retryAttempt > 0 && retryBudget.deadlineAt !== null && Date.now() >= retryBudget.deadlineAt) {
+                throw new Error("Inventory movements are still busy. Retry materials in a moment.");
+            }
+
+            const res = await fetch(
+                `/api/manufacturing/planning-engineering?action=job-materials&joId=${encodeURIComponent(String(joId))}`,
+                { cache: "no-store", signal: options.signal }
+            );
+            const payload = await res.json().catch(() => null);
+
+            if (res.status === 429) {
+                const now = Date.now();
+                retryBudget.deadlineAt ??= now + JOB_MATERIALS_RETRY_WINDOW_MS;
+                if (now >= retryBudget.deadlineAt) {
+                    throw new Error("Inventory movements are still busy. Retry materials in a moment.");
+                }
+
+                retryAttempt += 1;
+                const retryAfterSeconds = Number(payload?.retryAfterSeconds);
+                const retryDelayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+                    ? retryAfterSeconds * 1000
+                    : Math.min(JOB_MATERIALS_MAX_RETRY_DELAY_MS, 1000 * (2 ** (retryAttempt - 1)));
+
+                if (!isRateLimitRetrying) {
+                    isRateLimitRetrying = true;
+                    options.onRateLimitRetry?.(true);
+                }
+
+                await waitForRetry(
+                    Math.min(retryDelayMs, retryBudget.deadlineAt - now),
+                    options.signal
+                );
+                continue;
+            }
+
+            if (!res.ok) {
+                throw new Error(payload?.error || "Required material data is temporarily unavailable.");
+            }
+
+            if (!Array.isArray(payload)) {
+                throw new Error("Materials lookup returned an invalid response.");
+            }
+
+            return payload;
+        }
+    } finally {
+        if (isRateLimitRetrying) {
+            options.onRateLimitRetry?.(false);
+        }
     }
-
-    if (!Array.isArray(payload)) {
-        throw new Error("Materials lookup returned an invalid response.");
-    }
-
-    return payload;
 }
 
 export interface ReleaseJOPayload {
@@ -128,6 +218,7 @@ export interface ReleaseJOResult {
     job_order_no?: string | null;
     status?: string;
     shortfalls?: Array<{ name: string; required: number; available: number; shortage: number }>;
+    warnings?: string[];
 }
 
 export interface ReleaseMultipleJob {
@@ -164,6 +255,7 @@ export interface ReleaseMultiplePayload {
 
 export interface ReleaseMultipleResult {
     jobs?: ReleaseJOResult[];
+    warnings?: string[];
 }
 
 export async function releaseJobOrder(payload: ReleaseJOPayload): Promise<ReleaseJOResult> {
