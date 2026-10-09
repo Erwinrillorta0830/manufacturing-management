@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from "react";
-import { Activity, Plus, RefreshCw, Search } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { Activity, Plus, RefreshCw } from "lucide-react";
 import {
     Card,
     CardContent,
@@ -9,7 +9,6 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
     Table,
     TableBody,
@@ -21,6 +20,8 @@ import {
 import { SalesOrderDemandGroup, SalesOrderDetail } from "../types";
 import { displayJobOrderStatus } from "../../job-order-status";
 import { canCreateReplacementJobOrder, remainingQuantity } from "../utils/demand-groups";
+import { PlanningPaginationControls, type PlanningPaginationState } from "./PlanningPaginationControls";
+import { PlanningTableSearchBar } from "./PlanningTableSearchBar";
 
 interface InProductionSalesOrdersTableProps {
     loadingOrders: boolean;
@@ -28,6 +29,7 @@ interface InProductionSalesOrdersTableProps {
     salesOrderGroups: SalesOrderDemandGroup[];
     onRetry: () => void;
     onCreateJobOrder: (detailId: number) => void;
+    pagination: PlanningPaginationState;
 }
 
 function lineSearchText(line: SalesOrderDetail): string {
@@ -64,7 +66,8 @@ export function InProductionSalesOrdersTable({
     error,
     salesOrderGroups,
     onRetry,
-    onCreateJobOrder
+    onCreateJobOrder,
+    pagination
 }: InProductionSalesOrdersTableProps) {
     const [searchQuery, setSearchQuery] = useState("");
 
@@ -82,28 +85,43 @@ export function InProductionSalesOrdersTable({
         );
     }, [salesOrderGroups, searchQuery]);
 
+    const requestedPage = pagination.page;
+    const pageSize = pagination.pageSize;
+    const onPageChange = pagination.onPageChange;
+    const totalPages = Math.max(1, Math.ceil(filteredGroups.length / pageSize));
+    const page = Math.min(requestedPage, totalPages);
+    const visibleGroups = filteredGroups.slice((page - 1) * pageSize, page * pageSize);
+
+    useEffect(() => {
+        if (requestedPage !== page) onPageChange(page);
+    }, [requestedPage, onPageChange, page]);
+
     return (
         <Card className="shadow-sm">
-            <CardHeader className="flex flex-col gap-4 border-b bg-muted/10 pb-3 md:flex-row md:items-center md:justify-between">
+            <CardHeader className="pb-3">
                 <div>
-                    <CardTitle className="flex items-center gap-2 text-base font-bold">
+                    <CardTitle className="flex items-center gap-2 text-xl font-bold tracking-tight">
                         <Activity className="h-5 w-5 text-sky-600" />
                         Sales Orders in Production
                     </CardTitle>
-                    <CardDescription className="text-xs">
+                    <CardDescription className="text-sm text-muted-foreground">
                         Monitor Sales Orders in production and create replacement Job Orders for eligible terminated runs.
                     </CardDescription>
                 </div>
-                <div className="relative w-full md:w-72">
-                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input
-                        placeholder="Search SO, customer, product, JO..."
-                        value={searchQuery}
-                        onChange={(event) => setSearchQuery(event.target.value)}
-                        className="h-9 pl-9 text-xs"
-                    />
-                </div>
             </CardHeader>
+            <div className="px-6 pb-4">
+                <PlanningTableSearchBar
+                    searchQuery={searchQuery}
+                    onSearchQueryChange={(query) => {
+                        setSearchQuery(query);
+                        onPageChange(1);
+                    }}
+                    placeholder="Search SO, customer, product, JO..."
+                    filteredCount={filteredGroups.length}
+                    totalCount={salesOrderGroups.length}
+                    itemLabel="Sales Orders"
+                />
+            </div>
             <CardContent className="p-0">
                 {loadingOrders ? (
                     <ProductionTableSkeleton />
@@ -155,7 +173,7 @@ export function InProductionSalesOrdersTable({
                                 </TableRow>
                             </TableHeader>
                             <TableBody className="divide-y divide-border">
-                                {filteredGroups.map((group) => (
+                                {visibleGroups.map((group) => (
                                     <TableRow key={group.order.order_id} className="align-top hover:bg-muted/5">
                                         <TableCell className="min-w-[170px] py-3 text-xs">
                                             <div className="font-bold text-foreground">{group.order.order_no}</div>
@@ -240,6 +258,12 @@ export function InProductionSalesOrdersTable({
                             </TableBody>
                             </Table>
                         </div>
+                        <PlanningPaginationControls
+                            {...pagination}
+                            page={page}
+                            totalItems={filteredGroups.length}
+                            itemLabel="Sales Orders"
+                        />
                     </>
                 )}
             </CardContent>

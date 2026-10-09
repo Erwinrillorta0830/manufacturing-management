@@ -7,6 +7,7 @@ import { Branch, SalesOrder, SalesOrderDetail, NetRequirementItem } from "../typ
 import { cancelPendingSalesOrderRequests, fetchBranches, fetchSalesOrders, fetchNetRequirementsRaw, releaseJobOrder, releaseMultipleJobOrders, directAllocate } from "../services/planning-api";
 import { buildSalesOrderDemandGroups, buildSalesOrderReleaseGroups, canCreateReplacementJobOrder, isPlanningDemandSalesOrder, isSchedulableSalesOrderLine, remainingQuantity } from "../utils/demand-groups";
 import { DEFAULT_PRODUCTION_SHIFT_HOURS, normalizeProductionOutputQuantity } from "../utils/production-timing";
+import { createInventoryRefreshScheduler, isRelevantInventoryMovement } from "../utils/inventory-movement-refresh";
 import { addCalendarDaysToDateInput, getPhtDateInputValue } from "../../shared/pht-date";
 
 function salesOrderDateValue(value: string | undefined): number {
@@ -28,6 +29,8 @@ function parseValidBranchId(value: unknown): number | null {
     const branchId = Number(value);
     return Number.isSafeInteger(branchId) && branchId > 0 ? branchId : null;
 }
+
+const EMPTY_SUBASSEMBLY_MAPPING: Record<number, any[]> = {};
 
 function splitJobOrderQueues(data: any[]) {
     return {
@@ -70,6 +73,12 @@ export function usePlanningEngineering() {
     const [productionOrdersError, setProductionOrdersError] = useState<string | null>(null);
     const [netRequirements, setNetRequirements] = useState<NetRequirementItem[]>([]);
     const [subAssemblyMapping, setSubAssemblyMapping] = useState<Record<number, any[]>>({});
+    const [subAssemblyLookupState, setSubAssemblyLookupState] = useState<{
+        productIdsKey: string;
+        status: "loading" | "ready" | "error";
+        error: string | null;
+    }>({ productIdsKey: "", status: "ready", error: null });
+    const [subAssemblyLookupRetryCount, setSubAssemblyLookupRetryCount] = useState(0);
 
     // Selected Targets
     const [selectedBranchId, setSelectedBranchId] = useState<number | null>(null);
@@ -100,6 +109,10 @@ export function usePlanningEngineering() {
     const [deepLinkNotice, setDeepLinkNotice] = useState<string | null>(null);
     const productionRequestIdRef = useRef(0);
     const isMountedRef = useRef(false);
+    const netRequirementsRequestIdRef = useRef(0);
+    const netRequirementsAbortControllerRef = useRef<AbortController | null>(null);
+    const inventoryRefreshContextRef = useRef({ branchId: null as number | null, productIds: new Set<number>() });
+    const refreshNetRequirementsRef = useRef<() => Promise<void>>(async () => undefined);
 
     useEffect(() => {
         isMountedRef.current = true;
@@ -326,9 +339,12 @@ export function usePlanningEngineering() {
     useEffect(() => {
         let eventSource: EventSource | null = null;
         let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
-        let movementReloadTimeout: ReturnType<typeof setTimeout> | null = null;
         let isDisposed = false;
         let reconnectAttempts = 0;
+        const movementRefreshScheduler = createInventoryRefreshScheduler(
+            () => isDisposed ? Promise.resolve() : refreshNetRequirementsRef.current(),
+            { debounceMs: 500, maxWaitMs: 3000 }
+        );
 
         const connectSSE = () => {
             if (isDisposed) return;
@@ -343,14 +359,11 @@ export function usePlanningEngineering() {
                 eventSource.addEventListener("movement", (event) => {
                     try {
                         const movement = JSON.parse(event.data);
-                        console.log(`[Planning Realtime SSE] Inventory movement detected (ID: ${movement.movement_id}). Refreshing planning data...`);
-                        
-                        // Coalesce bursts of inventory events into one silent reload.
-                        if (movementReloadTimeout) clearTimeout(movementReloadTimeout);
-                        movementReloadTimeout = setTimeout(() => {
-                            movementReloadTimeout = null;
-                            if (!isDisposed) void loadInitialData(true);
-                        }, 500);
+                        const { branchId, productIds } = inventoryRefreshContextRef.current;
+                        if (!isRelevantInventoryMovement(movement, branchId, productIds)) return;
+
+                        console.log(`[Planning Realtime SSE] Relevant inventory movement detected (ID: ${movement.movement_id}). Refreshing net requirements...`);
+                        movementRefreshScheduler.schedule();
                     } catch (e) {
                         console.error("[Planning Realtime SSE] Error parsing movement event data:", e);
                     }
@@ -388,9 +401,7 @@ export function usePlanningEngineering() {
             if (reconnectTimeout) {
                 clearTimeout(reconnectTimeout);
             }
-            if (movementReloadTimeout) {
-                clearTimeout(movementReloadTimeout);
-            }
+            movementRefreshScheduler.dispose();
         };
     }, []);
 
@@ -460,33 +471,95 @@ export function usePlanningEngineering() {
     );
 
     // Fetch BOM components for all unique product IDs in sales orders to find sub-assemblies
+    const subAssemblyProductIds = useMemo(() => {
+        return Array.from(new Set(
+            planningLines
+                .map((line) => line.product_id?.product_id)
+                .filter((productId): productId is number => typeof productId === "number" && Number.isSafeInteger(productId) && productId > 0)
+        )).sort((left, right) => left - right);
+    }, [planningLines]);
+    const subAssemblyProductIdsKey = subAssemblyProductIds.join(",");
+    const subAssemblyLookupStatus: "loading" | "ready" | "error" = subAssemblyProductIds.length === 0
+        ? "ready"
+        : subAssemblyLookupState.productIdsKey === subAssemblyProductIdsKey
+            ? subAssemblyLookupState.status
+            : "loading";
+    const subAssemblyLookupError = subAssemblyLookupState.productIdsKey === subAssemblyProductIdsKey
+        ? subAssemblyLookupState.error
+        : null;
+    const currentSubAssemblyMapping = subAssemblyLookupStatus === "ready" && subAssemblyProductIds.length > 0
+        ? subAssemblyMapping
+        : EMPTY_SUBASSEMBLY_MAPPING;
+
     useEffect(() => {
-        if (planningLines.length === 0) {
+        const uniqueProductIds = subAssemblyProductIdsKey
+            ? subAssemblyProductIdsKey.split(",").map(Number)
+            : [];
+        if (uniqueProductIds.length === 0) {
             setSubAssemblyMapping({});
+            setSubAssemblyLookupState({ productIdsKey: subAssemblyProductIdsKey, status: "ready", error: null });
             return;
         }
+
+        const controller = new AbortController();
+        let isDisposed = false;
+        setSubAssemblyLookupState({ productIdsKey: subAssemblyProductIdsKey, status: "loading", error: null });
+        setSubAssemblyMapping({});
+        setNetRequirements([]);
+        setLoadingRequirements(true);
         const loadSubAssemblyBoms = async () => {
-            const uniqueProductIds = Array.from(new Set(planningLines.map((l) => l.product_id?.product_id).filter(Boolean)));
-            const mappings: Record<number, any[]> = {};
-            await Promise.all(uniqueProductIds.map(async (pId) => {
-                try {
-                    const res = await fetch(`/api/manufacturing/planning-engineering?productId=${pId}`);
-                    if (res.ok) {
-                        const data = await res.json();
-                        const comps = data.components || [];
-                        const subComps = comps.filter((c: any) => c.component_product_id?.product_type === 388 || c.component_product_id?.is_finished_good);
-                        if (subComps.length > 0) {
-                            mappings[pId] = subComps;
-                        }
-                    }
-                } catch (e) {
-                    console.error("Failed to load sub-assemblies for product", pId, e);
+            try {
+                const productIds = encodeURIComponent(uniqueProductIds.join(","));
+                const response = await fetch(
+                    `/api/manufacturing/planning-engineering?action=sub-assembly-bom-components&productIds=${productIds}`,
+                    { signal: controller.signal }
+                );
+                if (!response.ok) {
+                    throw new Error(`Sub-assembly BOM lookup failed (${response.status})`);
                 }
-            }));
-            setSubAssemblyMapping(mappings);
+                const data = await response.json();
+                if (isDisposed) return;
+                const componentsByProductId = data?.componentsByProductId;
+                if (!componentsByProductId || typeof componentsByProductId !== "object" || Array.isArray(componentsByProductId)
+                    || uniqueProductIds.some((productId) => !Array.isArray(componentsByProductId[String(productId)]))) {
+                    throw new Error("Sub-assembly BOM lookup returned incomplete product data.");
+                }
+
+                const mappings: Record<number, any[]> = {};
+                uniqueProductIds.forEach((productId) => {
+                    const components = componentsByProductId[String(productId)];
+                    const subComponents = components.filter((component: any) =>
+                        component.component_product_id?.product_type === 388 || component.component_product_id?.is_finished_good
+                    );
+                    if (subComponents.length > 0) mappings[productId] = subComponents;
+                });
+                setSubAssemblyMapping(mappings);
+                setSubAssemblyLookupState({ productIdsKey: subAssemblyProductIdsKey, status: "ready", error: null });
+            } catch (error) {
+                if (isDisposed || controller.signal.aborted) return;
+                console.error("Failed to load sub-assembly BOM components", error);
+                setSubAssemblyMapping({});
+                setNetRequirements([]);
+                setLoadingRequirements(false);
+                setSubAssemblyLookupState({
+                    productIdsKey: subAssemblyProductIdsKey,
+                    status: "error",
+                    error: error instanceof Error ? error.message : "Unable to load sub-assembly BOM components."
+                });
+            }
         };
-        loadSubAssemblyBoms();
-    }, [planningLines]);
+
+        void loadSubAssemblyBoms();
+        return () => {
+            isDisposed = true;
+            controller.abort();
+        };
+    }, [subAssemblyProductIdsKey, subAssemblyLookupRetryCount]);
+
+    const retrySubAssemblyLookup = () => {
+        setSubAssemblyLookupState({ productIdsKey: subAssemblyProductIdsKey, status: "loading", error: null });
+        setSubAssemblyLookupRetryCount((count) => count + 1);
+    };
 
     // Gather unique product IDs across loaded demand lines (mapping directly to SKU product IDs)
     const demandProductIds = useMemo(() => {
@@ -499,7 +572,7 @@ export function usePlanningEngineering() {
         });
         
         // Also add sub-assembly product IDs!
-        Object.values(subAssemblyMapping).forEach((comps) => {
+        Object.values(currentSubAssemblyMapping).forEach((comps) => {
             comps.forEach((c) => {
                 const scId = c.component_product_id?.product_id;
                 if (scId) ids.add(scId);
@@ -507,109 +580,164 @@ export function usePlanningEngineering() {
         });
 
         return Array.from(ids);
-    }, [planningLines, subAssemblyMapping]);
+    }, [planningLines, currentSubAssemblyMapping]);
+
+    inventoryRefreshContextRef.current = {
+        branchId: parseValidBranchId(selectedBranchId),
+        productIds: subAssemblyLookupStatus === "ready"
+            ? new Set(demandProductIds.map(Number).filter((productId) => Number.isSafeInteger(productId) && productId > 0))
+            : new Set<number>()
+    };
 
     // Fetch On-Hand & Safety Stock for the Net Requirements Calculation Grid
-    useEffect(() => {
+    const runFetchNetRequirements = async (silent = false) => {
+        if (subAssemblyLookupStatus !== "ready") return;
+
+        const requestId = ++netRequirementsRequestIdRef.current;
+        netRequirementsAbortControllerRef.current?.abort();
+        netRequirementsAbortControllerRef.current = null;
+
         const branchId = parseValidBranchId(selectedBranchId);
         if (branchId === null || demandProductIds.length === 0) {
             setNetRequirements([]);
+            setLoadingRequirements(false);
             return;
         }
 
-        const runFetchNetRequirements = async () => {
+        const controller = new AbortController();
+        netRequirementsAbortControllerRef.current = controller;
+        if (!silent || loadingRequirements || netRequirements.length === 0) {
             setLoadingRequirements(true);
-            try {
-                const data = await fetchNetRequirementsRaw(demandProductIds, branchId);
-                
-                // Group gross demands from all outstanding lines, grouping by SKU product_id directly
-                const grossDemandMap: Record<number, number> = {};
-                planningLines.forEach((line) => {
-                    const pInfo = line.product_id;
-                    if (pInfo && pInfo.product_id) {
-                        const pId = pInfo.product_id;
-                        const qty = Number(line.ordered_quantity || 0);
-                        grossDemandMap[pId] = (grossDemandMap[pId] || 0) + qty;
+        }
+
+        try {
+            const data = await fetchNetRequirementsRaw(demandProductIds, branchId, controller.signal);
+            if (controller.signal.aborted || requestId !== netRequirementsRequestIdRef.current) return;
+
+            // Group gross demands from all outstanding lines, grouping by SKU product_id directly
+            const grossDemandMap: Record<number, number> = {};
+            const parentProductIds = new Set<number>();
+            const parentLineByProductId = new Map<number, SalesOrderDetail>();
+            planningLines.forEach((line) => {
+                const pInfo = line.product_id;
+                if (pInfo?.product_id !== undefined) {
+                    parentProductIds.add(pInfo.product_id);
+                    if (!parentLineByProductId.has(pInfo.product_id)) {
+                        parentLineByProductId.set(pInfo.product_id, line);
                     }
+                }
+                if (pInfo && pInfo.product_id) {
+                    const pId = pInfo.product_id;
+                    const qty = Number(line.ordered_quantity || 0);
+                    grossDemandMap[pId] = (grossDemandMap[pId] || 0) + qty;
+                }
+            });
+
+            const subAssemblyParentsByComponentId = new Map<number, { parentId: number; quantityRequired: number }[]>();
+            Object.entries(currentSubAssemblyMapping).forEach(([parentIdStr, components]) => {
+                const parentId = Number(parentIdStr);
+                const indexedComponentIds = new Set<number>();
+                components.forEach((component) => {
+                    const componentProductId = component.component_product_id?.product_id;
+                    if (indexedComponentIds.has(componentProductId)) return;
+                    indexedComponentIds.add(componentProductId);
+
+                    const parents = subAssemblyParentsByComponentId.get(componentProductId) || [];
+                    parents.push({
+                        parentId,
+                        quantityRequired: Number(component.quantity_required || 0)
+                    });
+                    subAssemblyParentsByComponentId.set(componentProductId, parents);
                 });
+            });
 
-                const calculated: NetRequirementItem[] = [];
+            const calculated: NetRequirementItem[] = [];
 
-                // 1. First pass: calculate parent products requirements
-                const parentShortfalls: Record<number, number> = {};
-                data.forEach((item: any) => {
-                    const pId = Number(item.product_id);
-                    const isParent = planningLines.some((l) => l.product_id?.product_id === pId);
-                    if (isParent) {
-                        const grossDemand = grossDemandMap[pId] || 0;
-                        const onHand = Number(item.on_hand || 0);
-                        const safetyStock = Number(item.safety_stock || 0);
-                        const netShortfall = Math.max(0, grossDemand - (onHand - safetyStock));
+            // 1. First pass: calculate parent products requirements
+            const parentShortfalls: Record<number, number> = {};
+            data.forEach((item: any) => {
+                const pId = Number(item.product_id);
+                const isParent = parentProductIds.has(pId);
+                if (isParent) {
+                    const grossDemand = grossDemandMap[pId] || 0;
+                    const onHand = Number(item.on_hand || 0);
+                    const safetyStock = Number(item.safety_stock || 0);
+                    const netShortfall = Math.max(0, grossDemand - (onHand - safetyStock));
 
-                        parentShortfalls[pId] = netShortfall;
+                    parentShortfalls[pId] = netShortfall;
 
-                        calculated.push({
-                            product_id: pId,
-                            product_name: item.product_name,
-                            product_code: item.product_code,
-                            gross_demand: grossDemand,
-                            on_hand: onHand,
-                            safety_stock: safetyStock,
-                            net_shortfall: netShortfall
-                        });
-                    }
-                });
+                    calculated.push({
+                        product_id: pId,
+                        product_name: item.product_name,
+                        product_code: item.product_code,
+                        gross_demand: grossDemand,
+                        on_hand: onHand,
+                        safety_stock: safetyStock,
+                        net_shortfall: netShortfall
+                    });
+                }
+            });
 
-                // 2. Second pass: calculate sub-assembly requirements based on parent shortfalls
-                data.forEach((item: any) => {
-                    const pId = Number(item.product_id);
-                    const isParent = planningLines.some((l) => l.product_id?.product_id === pId);
-                    if (!isParent) {
-                        let subAssemblyGrossDemand = 0;
-                        const associatedParentNames: string[] = [];
+            // 2. Second pass: calculate sub-assembly requirements based on parent shortfalls
+            data.forEach((item: any) => {
+                const pId = Number(item.product_id);
+                const isParent = parentProductIds.has(pId);
+                if (!isParent) {
+                    let subAssemblyGrossDemand = 0;
+                    const associatedParentNames: string[] = [];
 
-                        Object.entries(subAssemblyMapping).forEach(([parentIdStr, comps]) => {
-                            const parentId = Number(parentIdStr);
-                            const compNeeded = comps.find((c) => c.component_product_id?.product_id === pId);
-                            if (compNeeded) {
-                                const parentShortfall = parentShortfalls[parentId] || 0;
-                                const qtyPerParent = Number(compNeeded.quantity_required || 0);
-                                subAssemblyGrossDemand += parentShortfall * qtyPerParent;
-                                
-                                const parentLine = planningLines.find((l) => l.product_id?.product_id === parentId);
-                                if (parentLine?.product_id?.product_name) {
-                                    associatedParentNames.push(parentLine.product_id.product_name);
-                                }
-                            }
-                        });
+                    (subAssemblyParentsByComponentId.get(pId) || []).forEach(({ parentId, quantityRequired }) => {
+                        const parentShortfall = parentShortfalls[parentId] || 0;
+                        subAssemblyGrossDemand += parentShortfall * quantityRequired;
 
-                        const onHand = Number(item.on_hand || 0);
-                        const safetyStock = Number(item.safety_stock || 0);
-                        const netShortfall = Math.max(0, subAssemblyGrossDemand - (onHand - safetyStock));
+                        const parentLine = parentLineByProductId.get(parentId);
+                        if (parentLine?.product_id?.product_name) {
+                            associatedParentNames.push(parentLine.product_id.product_name);
+                        }
+                    });
 
-                        calculated.push({
-                            product_id: pId,
-                            product_name: item.product_name + (associatedParentNames.length > 0 ? ` (Sub-Assembly for ${associatedParentNames.join(", ")})` : ""),
-                            product_code: item.product_code,
-                            gross_demand: subAssemblyGrossDemand,
-                            on_hand: onHand,
-                            safety_stock: safetyStock,
-                            net_shortfall: netShortfall,
-                            is_sub_assembly: true
-                        });
-                    }
-                });
+                    const onHand = Number(item.on_hand || 0);
+                    const safetyStock = Number(item.safety_stock || 0);
+                    const netShortfall = Math.max(0, subAssemblyGrossDemand - (onHand - safetyStock));
 
+                    calculated.push({
+                        product_id: pId,
+                        product_name: item.product_name + (associatedParentNames.length > 0 ? ` (Sub-Assembly for ${associatedParentNames.join(", ")})` : ""),
+                        product_code: item.product_code,
+                        gross_demand: subAssemblyGrossDemand,
+                        on_hand: onHand,
+                        safety_stock: safetyStock,
+                        net_shortfall: netShortfall,
+                        is_sub_assembly: true
+                    });
+                }
+            });
+
+            if (requestId === netRequirementsRequestIdRef.current) {
                 setNetRequirements(calculated);
-            } catch (err: any) {
+            }
+        } catch (err: any) {
+            if (!controller.signal.aborted && requestId === netRequirementsRequestIdRef.current) {
                 console.error("Error fetching net requirements:", err);
-            } finally {
+            }
+        } finally {
+            if (requestId === netRequirementsRequestIdRef.current) {
+                netRequirementsAbortControllerRef.current = null;
                 setLoadingRequirements(false);
             }
-        };
+        }
+    };
 
-        runFetchNetRequirements();
-    }, [selectedBranchId, demandProductIds, planningLines, subAssemblyMapping]);
+    refreshNetRequirementsRef.current = () => runFetchNetRequirements(true);
+
+    useEffect(() => {
+        void runFetchNetRequirements();
+        return () => {
+            netRequirementsRequestIdRef.current += 1;
+            netRequirementsAbortControllerRef.current?.abort();
+            netRequirementsAbortControllerRef.current = null;
+        };
+    }, [selectedBranchId, demandProductIds, planningLines, currentSubAssemblyMapping, subAssemblyLookupStatus]);
 
     const selectableLinesByDetailId = useMemo(() => {
         const linesByDetailId = new Map<number, SalesOrderDetail>();
@@ -672,10 +800,26 @@ export function usePlanningEngineering() {
         if (checked) {
             const line = salesOrderLines.find((candidate) => candidate.detail_id === detailId);
             if (!line || !isSchedulableSalesOrderLine(line)) return;
-            setSelectedDetailIds((prev) => [...prev, detailId]);
+            setSelectedDetailIds((prev) => prev.includes(detailId) ? prev : [...prev, detailId]);
         } else {
             setSelectedDetailIds((prev) => prev.filter((id) => id !== detailId));
         }
+    };
+
+    const handleSelectLines = (detailIds: number[], checked: boolean) => {
+        const selectableIds = new Set(detailIds.filter((detailId) => {
+            const line = selectableLinesByDetailId.get(detailId);
+            return line && isSchedulableSalesOrderLine(line);
+        }));
+        if (selectableIds.size === 0) return;
+
+        setSelectedDetailIds((previousIds) => {
+            if (!checked) return previousIds.filter((detailId) => !selectableIds.has(detailId));
+
+            const nextIds = new Set(previousIds);
+            selectableIds.forEach((detailId) => nextIds.add(detailId));
+            return Array.from(nextIds);
+        });
     };
 
     const validateReleaseBranch = () => {
@@ -987,6 +1131,9 @@ export function usePlanningEngineering() {
         loadingBranches,
         loadingOrders,
         loadingRequirements,
+        subAssemblyLookupStatus,
+        subAssemblyLookupError,
+        retrySubAssemblyLookup,
         releasingJO,
         branches,
         salesOrders,
@@ -1034,6 +1181,7 @@ export function usePlanningEngineering() {
         mergeValidation,
         handleSelectAll,
         handleSelectLine,
+        handleSelectLines,
         handleInitiateRelease,
         handleInitiateReplacementRelease,
         handleConfirmRelease,

@@ -1,8 +1,8 @@
 /* eslint-disable */
 "use client";
 
-import React, { useState, useMemo, useRef, useEffect } from "react";
-import { Loader2, RefreshCw, ClipboardList, Layers, Database, Printer, Factory, AlertTriangle, History, XCircle, ChevronLeft, ChevronRight } from "lucide-react";
+import React, { useCallback, useState, useMemo, useRef, useEffect } from "react";
+import { Loader2, RefreshCw, ClipboardList, Layers, Database, Printer, Factory, AlertTriangle, History, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +18,7 @@ import { NetRequirementsTable } from "./components/NetRequirementsTable";
 import { ConsolidationPanel } from "./components/ConsolidationPanel";
 import { DemandLinesTable } from "./components/DemandLinesTable";
 import { InProductionSalesOrdersTable } from "./components/InProductionSalesOrdersTable";
+import { PlanningPaginationControls, type PlanningPaginationState } from "./components/PlanningPaginationControls";
 import { ReleaseJODialog } from "./components/ReleaseJODialog";
 import { CreateBufferJODialog } from "./components/CreateBufferJODialog";
 import { DraftJobOrderEditor } from "./components/DraftJobOrderEditor";
@@ -54,6 +55,9 @@ type MaterialLoadState = {
     status: "idle" | "loading" | "success" | "error";
     message?: string;
 };
+
+type PlanningTabKey = "demand" | "production" | "inventory" | "queue" | "cancelled";
+type PlanningPageValues = Pick<PlanningPaginationState, "page" | "pageSize">;
 
 function MaterialLoadErrorState({ message, onRetry }: { message?: string; onRetry: () => void }) {
     return (
@@ -127,6 +131,9 @@ export default function PlanningEngineeringModule() {
         loadingBranches,
         loadingOrders,
         loadingRequirements,
+        subAssemblyLookupStatus,
+        subAssemblyLookupError,
+        retrySubAssemblyLookup,
         releasingJO,
         branches,
         netRequirements,
@@ -161,6 +168,7 @@ export default function PlanningEngineeringModule() {
         releaseGroups,
         mergeValidation,
         handleSelectLine,
+        handleSelectLines,
         handleInitiateRelease,
         handleInitiateReplacementRelease,
         handleConfirmRelease,
@@ -192,7 +200,24 @@ export default function PlanningEngineeringModule() {
     };
     const hasValidTargetBranch = selectedBranchId !== null && Number.isSafeInteger(selectedBranchId) && selectedBranchId > 0;
 
-    const [activeMainTab, setActiveMainTab] = useState<"demand" | "production" | "inventory" | "queue" | "cancelled">("demand");
+    const [activeMainTab, setActiveMainTab] = useState<PlanningTabKey>("demand");
+    const [tabPagination, setTabPagination] = useState<Record<PlanningTabKey, PlanningPageValues>>({
+        demand: { page: 1, pageSize: 10 },
+        production: { page: 1, pageSize: 10 },
+        inventory: { page: 1, pageSize: 10 },
+        queue: { page: 1, pageSize: 10 },
+        cancelled: { page: 1, pageSize: 10 }
+    });
+    const updateTabPage = useCallback((tab: PlanningTabKey, page: number) => {
+        setTabPagination((current) => current[tab].page === page
+            ? current
+            : { ...current, [tab]: { ...current[tab], page } });
+    }, []);
+    const updateTabPageSize = useCallback((tab: PlanningTabKey, pageSize: number) => {
+        setTabPagination((current) => current[tab].pageSize === pageSize && current[tab].page === 1
+            ? current
+            : { ...current, [tab]: { page: 1, pageSize } });
+    }, []);
     const [showWorkflowGuide, setShowWorkflowGuide] = useState(true);
     const [isBufferDialogOpen, setIsBufferDialogOpen] = useState(false);
     const [selectedUnreleasedJo, setSelectedUnreleasedJo] = useState<any | null>(null);
@@ -216,9 +241,33 @@ export default function PlanningEngineeringModule() {
     // Filter bar state for JO Queue
     const [searchQuery, setSearchQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState("all");
-    const [queuePage, setQueuePage] = useState(1);
-    const [queuePageSize, setQueuePageSize] = useState(10);
     const [cancelledSearchQuery, setCancelledSearchQuery] = useState("");
+
+    const demandPagination = useMemo<PlanningPaginationState>(() => ({
+        ...tabPagination.demand,
+        onPageChange: (page) => updateTabPage("demand", page),
+        onPageSizeChange: (pageSize) => updateTabPageSize("demand", pageSize)
+    }), [tabPagination.demand, updateTabPage, updateTabPageSize]);
+    const productionPagination = useMemo<PlanningPaginationState>(() => ({
+        ...tabPagination.production,
+        onPageChange: (page) => updateTabPage("production", page),
+        onPageSizeChange: (pageSize) => updateTabPageSize("production", pageSize)
+    }), [tabPagination.production, updateTabPage, updateTabPageSize]);
+    const inventoryPagination = useMemo<PlanningPaginationState>(() => ({
+        ...tabPagination.inventory,
+        onPageChange: (page) => updateTabPage("inventory", page),
+        onPageSizeChange: (pageSize) => updateTabPageSize("inventory", pageSize)
+    }), [tabPagination.inventory, updateTabPage, updateTabPageSize]);
+    const queuePagination = useMemo<PlanningPaginationState>(() => ({
+        ...tabPagination.queue,
+        onPageChange: (page) => updateTabPage("queue", page),
+        onPageSizeChange: (pageSize) => updateTabPageSize("queue", pageSize)
+    }), [tabPagination.queue, updateTabPage, updateTabPageSize]);
+    const cancelledPagination = useMemo<PlanningPaginationState>(() => ({
+        ...tabPagination.cancelled,
+        onPageChange: (page) => updateTabPage("cancelled", page),
+        onPageSizeChange: (pageSize) => updateTabPageSize("cancelled", pageSize)
+    }), [tabPagination.cancelled, updateTabPage, updateTabPageSize]);
 
     // Deep link support: /mm/planning-engineering?jo=JO-XXXX opens the item.
     useEffect(() => {
@@ -345,23 +394,45 @@ export default function PlanningEngineeringModule() {
     }, [filteredUnreleasedJobs]);
 
     useEffect(() => {
-        setQueuePage(1);
-    }, [selectedBranchId, searchQuery, statusFilter]);
+        updateTabPage("queue", 1);
+    }, [selectedBranchId, searchQuery, statusFilter, updateTabPage]);
 
+    useEffect(() => {
+        updateTabPage("cancelled", 1);
+    }, [selectedBranchId, cancelledSearchQuery, updateTabPage]);
+
+    useEffect(() => {
+        updateTabPage("demand", 1);
+        updateTabPage("production", 1);
+        updateTabPage("inventory", 1);
+    }, [selectedBranchId, updateTabPage]);
+
+    const queuePage = tabPagination.queue.page;
+    const queuePageSize = tabPagination.queue.pageSize;
     const queuePageCount = Math.max(1, Math.ceil(familyGroups.length / queuePageSize));
     const safeQueuePage = Math.min(queuePage, queuePageCount);
 
     useEffect(() => {
-        if (queuePage !== safeQueuePage) setQueuePage(safeQueuePage);
-    }, [queuePage, safeQueuePage]);
+        if (queuePage !== safeQueuePage) updateTabPage("queue", safeQueuePage);
+    }, [queuePage, safeQueuePage, updateTabPage]);
 
     const paginatedFamilyGroups = useMemo(() => {
         const startIndex = (safeQueuePage - 1) * queuePageSize;
         return familyGroups.slice(startIndex, startIndex + queuePageSize);
     }, [familyGroups, safeQueuePage, queuePageSize]);
 
-    const queueRangeStart = familyGroups.length === 0 ? 0 : (safeQueuePage - 1) * queuePageSize + 1;
-    const queueRangeEnd = Math.min(safeQueuePage * queuePageSize, familyGroups.length);
+    const cancelledPageCount = Math.max(1, Math.ceil(cancelledFamilyGroups.length / tabPagination.cancelled.pageSize));
+    const safeCancelledPage = Math.min(tabPagination.cancelled.page, cancelledPageCount);
+    const paginatedCancelledFamilyGroups = useMemo(() => {
+        const startIndex = (safeCancelledPage - 1) * tabPagination.cancelled.pageSize;
+        return cancelledFamilyGroups.slice(startIndex, startIndex + tabPagination.cancelled.pageSize);
+    }, [cancelledFamilyGroups, safeCancelledPage, tabPagination.cancelled.pageSize]);
+
+    useEffect(() => {
+        if (tabPagination.cancelled.page !== safeCancelledPage) {
+            updateTabPage("cancelled", safeCancelledPage);
+        }
+    }, [tabPagination.cancelled.page, safeCancelledPage, updateTabPage]);
 
     const familyChildJobs = useMemo(() => {
         if (!selectedUnreleasedJo) return [];
@@ -1176,7 +1247,9 @@ export default function PlanningEngineeringModule() {
         );
     }
 
-    const shortfallCount = netRequirements.filter((n: any) => n.net_shortfall > 0).length;
+    const shortfallCount = subAssemblyLookupStatus === "ready" && !loadingRequirements && selectedBranchId !== null
+        ? netRequirements.filter((n: any) => n.net_shortfall > 0).length
+        : null;
 
     return (
         <div className="space-y-6 p-1 sm:p-2">
@@ -1306,7 +1379,7 @@ export default function PlanningEngineeringModule() {
                     <TabsTrigger value="inventory" className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs">
                         <Database className="h-4 w-4 text-indigo-500" />
                         <span>Net Requirements</span>
-                        {shortfallCount > 0 && (
+                        {shortfallCount !== null && shortfallCount > 0 && (
                             <Badge variant="destructive" className="text-[10px] px-1.5 py-0 h-4.5 min-w-4.5 flex items-center justify-center font-mono">
                                 {shortfallCount}
                             </Badge>
@@ -1339,6 +1412,8 @@ export default function PlanningEngineeringModule() {
                                 salesOrderGroups={salesOrderGroups}
                                 selectedDetailIds={selectedDetailIds}
                                 handleSelectLine={handleSelectLine}
+                                handleSelectLines={handleSelectLines}
+                                pagination={demandPagination}
                             />
                         </div>
                         {/* Right Column: Consolidation Action Panel */}
@@ -1366,6 +1441,7 @@ export default function PlanningEngineeringModule() {
                         salesOrderGroups={productionSalesOrderGroups}
                         onRetry={() => { void loadInProductionSalesOrders(); }}
                         onCreateJobOrder={handleInitiateReplacementRelease}
+                        pagination={productionPagination}
                     />
                 </TabsContent>
 
@@ -1374,9 +1450,13 @@ export default function PlanningEngineeringModule() {
                     <div className="bg-card border rounded-xl shadow-sm">
                         <NetRequirementsTable
                             loadingRequirements={loadingRequirements}
+                            subAssemblyLookupStatus={subAssemblyLookupStatus}
+                            subAssemblyLookupError={subAssemblyLookupError}
+                            onRetrySubAssemblyLookup={retrySubAssemblyLookup}
                             netRequirements={netRequirements}
                             selectedBranchId={selectedBranchId}
                             branches={branches}
+                            pagination={inventoryPagination}
                         />
                     </div>
                 </TabsContent>
@@ -1420,61 +1500,12 @@ export default function PlanningEngineeringModule() {
                             handleOpenDetails={handleOpenDetails}
                             handleEditDraft={handleEditDraft}
                         />
-                        {familyGroups.length > 0 && (
-                            <div className="flex flex-col gap-3 border-t border-border/60 pt-4 sm:flex-row sm:items-center sm:justify-between">
-                                <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                                    <div className="flex items-center gap-2">
-                                        <span>Entries per page</span>
-                                        <Select
-                                            value={String(queuePageSize)}
-                                            onValueChange={(value) => {
-                                                setQueuePageSize(Number(value));
-                                                setQueuePage(1);
-                                            }}
-                                        >
-                                            <SelectTrigger className="h-8 w-[76px]" aria-label="Queue entries per page">
-                                                <SelectValue />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                {[10, 25, 50].map((size) => (
-                                                    <SelectItem key={size} value={String(size)}>{size}</SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-                                    <span title="An entry is one standalone Job Order or one complete family group.">
-                                        Showing {queueRangeStart}–{queueRangeEnd} of {familyGroups.length} queue entries
-                                    </span>
-                                </div>
-                                <div className="flex items-center justify-between gap-3 sm:justify-end">
-                                    <span className="whitespace-nowrap text-xs font-medium text-muted-foreground">
-                                        Page {safeQueuePage} of {queuePageCount}
-                                    </span>
-                                    <div className="flex items-center gap-1">
-                                        <Button
-                                            type="button"
-                                            variant="outline"
-                                            size="icon-sm"
-                                            aria-label="Previous queue page"
-                                            disabled={safeQueuePage <= 1}
-                                            onClick={() => setQueuePage((page) => Math.max(1, page - 1))}
-                                        >
-                                            <ChevronLeft />
-                                        </Button>
-                                        <Button
-                                            type="button"
-                                            variant="outline"
-                                            size="icon-sm"
-                                            aria-label="Next queue page"
-                                            disabled={safeQueuePage >= queuePageCount}
-                                            onClick={() => setQueuePage((page) => Math.min(queuePageCount, page + 1))}
-                                        >
-                                            <ChevronRight />
-                                        </Button>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
+                        <PlanningPaginationControls
+                            {...queuePagination}
+                            page={safeQueuePage}
+                            totalItems={familyGroups.length}
+                            itemLabel="queue entries"
+                        />
                     </div>
                 </TabsContent>
 
@@ -1511,11 +1542,17 @@ export default function PlanningEngineeringModule() {
 
                         <JOTable
                             unreleasedJobs={filteredCancelledJobs}
-                            familyGroups={cancelledFamilyGroups}
+                            familyGroups={paginatedCancelledFamilyGroups}
                             loadingJobs={loadingJobs}
                             handleOpenDetails={handleOpenDetails}
                             handleEditDraft={handleEditDraft}
                             readOnly
+                        />
+                        <PlanningPaginationControls
+                            {...cancelledPagination}
+                            page={safeCancelledPage}
+                            totalItems={cancelledFamilyGroups.length}
+                            itemLabel="cancelled JOs"
                         />
                     </div>
                 </TabsContent>
