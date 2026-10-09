@@ -104,15 +104,18 @@ function responseRows(body: unknown): Record<string, unknown>[] {
 
 async function readRows<T extends Record<string, unknown> = Record<string, unknown>>(
     path: string,
-    label: string
+    label: string,
+    signal?: AbortSignal
 ): Promise<T[]> {
     let response: Response;
     try {
         response = await fetch(`${DIRECTUS_URL}${path.startsWith("/") ? path : `/${path}`}`, {
             headers,
-            cache: "no-store"
+            cache: "no-store",
+            signal
         });
-    } catch {
+    } catch (error) {
+        if (signal?.aborted) throw error;
         throw new MmLotError(`${label} could not be reached.`);
     }
 
@@ -132,7 +135,7 @@ async function readRows<T extends Record<string, unknown> = Record<string, unkno
     return rows as T[];
 }
 
-export async function resolveProductUnitId(productId: number): Promise<number> {
+export async function resolveProductUnitId(productId: number, signal?: AbortSignal): Promise<number> {
     if (!Number.isSafeInteger(productId) || productId <= 0) {
         throw new MmLotError("A valid product is required to resolve its UOM.", 400, "MM_LOT_INVALID");
     }
@@ -140,9 +143,11 @@ export async function resolveProductUnitId(productId: number): Promise<number> {
     try {
         response = await fetch(`${DIRECTUS_URL}/items/products/${productId}?fields=product_id,unit_of_measurement.unit_id`, {
             headers,
-            cache: "no-store"
+            cache: "no-store",
+            signal
         });
-    } catch {
+    } catch (error) {
+        if (signal?.aborted) throw error;
         throw new MmLotError("Product UOM lookup could not be reached.");
     }
     if (!response.ok) {
@@ -159,6 +164,7 @@ export async function loadMmLots(options: {
     branchId?: number;
     unitId?: number;
     onlyActive?: boolean;
+    signal?: AbortSignal;
 } = {}): Promise<MmLotRecord[]> {
     const params = new URLSearchParams({
         fields: "*",
@@ -173,7 +179,7 @@ export async function loadMmLots(options: {
     // Shelf/bay occupancy is not stored on mm_lots, so it must not remove a
     // lot from the receiving selector.
     if (options.onlyActive !== false) params.set("filter[status][_in]", "ACTIVE,EMPTY,VACANT");
-    return readRows<MmLotRecord>(`/items/${MM_LOT_COLLECTION}?${params.toString()}`, "Manufacturing Management lot lookup");
+    return readRows<MmLotRecord>(`/items/${MM_LOT_COLLECTION}?${params.toString()}`, "Manufacturing Management lot lookup", options.signal);
 }
 
 export async function loadMmInventoryLots(options: {
@@ -183,6 +189,7 @@ export async function loadMmInventoryLots(options: {
     branchId?: number;
     batchNo?: string;
     onlyActive?: boolean;
+    signal?: AbortSignal;
 } = {}): Promise<MmInventoryLotRecord[]> {
     const params = new URLSearchParams({
         fields: "*",
@@ -199,7 +206,8 @@ export async function loadMmInventoryLots(options: {
     if (options.onlyActive !== false) params.set("filter[status][_eq]", "ACTIVE");
     return readRows<MmInventoryLotRecord>(
         `/items/${MM_INVENTORY_LOT_COLLECTION}?${params.toString()}`,
-        "Manufacturing Management inventory-lot lookup"
+        "Manufacturing Management inventory-lot lookup",
+        options.signal
     );
 }
 
@@ -317,11 +325,12 @@ export async function loadEligibleFinishedGoodsLot(options: {
     mmLotId: number;
     branchId: number;
     productId: number;
+    signal?: AbortSignal;
 }): Promise<MmLotRecord> {
     if (!Number.isSafeInteger(options.mmLotId) || options.mmLotId <= 0) {
         throw new MmLotError("A valid existing storage lot is required for finished-goods posting.", 422, "MM_LOT_REQUIRED");
     }
-    const lots = await loadMmLots({ ids: [options.mmLotId], onlyActive: true });
+    const lots = await loadMmLots({ ids: [options.mmLotId], onlyActive: true, signal: options.signal });
     const lot = lots[0];
     if (!lot) {
         throw new MmLotError(`Storage lot ${options.mmLotId} was not found or is not active.`, 422, "MM_LOT_NOT_ELIGIBLE");
@@ -329,7 +338,7 @@ export async function loadEligibleFinishedGoodsLot(options: {
     if (options.branchId > 0 && mmBranchId(lot.branch_id) !== options.branchId) {
         throw new MmLotError("The selected storage lot belongs to another branch.", 422, "MM_LOT_BRANCH_MISMATCH");
     }
-    const expectedUnitId = await resolveProductUnitId(options.productId);
+    const expectedUnitId = await resolveProductUnitId(options.productId, options.signal);
     if (lotUnitId(lot) !== expectedUnitId) {
         throw new MmLotError("The selected storage lot UOM does not match the finished good.", 422, "MM_LOT_UOM_MISMATCH");
     }
@@ -356,6 +365,7 @@ async function recoverExistingInventoryLot(payload: {
     mmLotId: number;
     productId: number;
     batchNo: string;
+    signal?: AbortSignal;
 }): Promise<MmInventoryLotRecord | null> {
     // The database unique key is (lot_id, product_id, batch_no) without a
     // branch, so a batch row created under another branch still conflicts.
@@ -363,7 +373,8 @@ async function recoverExistingInventoryLot(payload: {
         mmLotIds: [payload.mmLotId],
         productId: payload.productId,
         batchNo: payload.batchNo.trim(),
-        onlyActive: false
+        onlyActive: false,
+        signal: payload.signal
     });
     return rows.length > 0 ? { ...rows[0], created: false } : null;
 }
@@ -381,6 +392,7 @@ export async function resolveOrCreateMmInventoryLot(payload: {
     sourceReference?: string | null;
     remarks?: string | null;
     createdBy: number;
+    signal?: AbortSignal;
     onCreate?: (body: MmInventoryLotWritePayload) => Promise<MmInventoryLotRecord>;
 }): Promise<MmInventoryLotRecord> {
     const existing = await loadMmInventoryLots({
@@ -388,7 +400,8 @@ export async function resolveOrCreateMmInventoryLot(payload: {
         branchId: payload.branchId,
         productId: payload.productId,
         batchNo: payload.batchNo,
-        onlyActive: true
+        onlyActive: true,
+        signal: payload.signal
     });
     if (existing.length > 0) return { ...existing[0], created: false };
 
@@ -443,6 +456,7 @@ export async function resolveOrCreateMmInventoryLot(payload: {
         method: "POST",
         headers,
         cache: "no-store",
+        signal: payload.signal,
         body: JSON.stringify(writePayload)
     });
     if (!response.ok) {
