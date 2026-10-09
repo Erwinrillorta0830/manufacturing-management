@@ -225,7 +225,6 @@ export interface SalesOrderSchedulingPlan {
 }
 
 export interface CreateJobOrderOptions {
-    deferSalesOrderTransition?: boolean;
     /** Creation is always a Draft; initialization is an explicit next action. */
     initialize?: boolean;
     /** Legacy buffer flag for initialization against physical on-hand stock. */
@@ -309,38 +308,6 @@ async function assertFreshAllocationCapacity(
     }
 }
 
-export async function transitionLinkedSalesOrdersToInProduction(
-    parentOrderIds: Set<number>,
-    previousParentStatuses: Map<number, string>
-) {
-    for (const parentOrderId of parentOrderIds) {
-        const previousStatus = String(previousParentStatuses.get(parentOrderId) || "").trim();
-        if (previousStatus !== "For Production") continue;
-
-        // Re-read the parent before patching so a concurrent downstream
-        // transition is not overwritten by this JO-link operation.
-        const currentResponse = await fetch(
-            `${DIRECTUS_URL}/items/sales_order/${parentOrderId}?fields=order_id,order_status`,
-            { headers, cache: "no-store" }
-        );
-        if (!currentResponse.ok) {
-            throw new Error(`Failed to re-read Sales Order ${parentOrderId} before status transition: ${currentResponse.status}`);
-        }
-        const currentOrder = (await currentResponse.json()).data;
-        const currentStatus = String(currentOrder?.order_status || "").trim();
-        if (currentStatus !== "For Production") continue;
-
-        const statusResponse = await fetch(`${DIRECTUS_URL}/items/sales_order/${parentOrderId}`, {
-            method: "PATCH",
-            headers,
-            body: JSON.stringify({ order_status: "In Production" })
-        });
-        if (!statusResponse.ok) {
-            throw new Error(`Failed to transition Sales Order ${parentOrderId} to In Production: ${statusResponse.status}`);
-        }
-    }
-}
-
 export async function createJobOrder(
     joData: Partial<DirectusJobOrder>,
     salesOrderIds: number[] = [],
@@ -349,7 +316,6 @@ export async function createJobOrder(
     options: CreateJobOrderOptions = {}
 ): Promise<{ job_order_id?: number | null; jo_id?: string | null; status?: string; shortfalls?: Array<{ name: string; required: number; available: number; shortage: number }> }> {
     let createdJobOrderNo: string | null = null;
-    const previousParentStatuses = new Map<number, string>();
     const createdReplacementCreditIds: number[] = [];
     const movedReservationRestorations: Array<{ id: number; previousJoMaterialId: number }> = [];
     try {
@@ -1242,7 +1208,6 @@ export async function createJobOrder(
             );
             const uncreditedDemandByDetail = new Map<number, number>();
 
-            const affectedOrderIds = new Set<number>();
             for (const detailId of detailIds) {
                 const detail = detailsById.get(detailId);
                 const orderedQuantity = Number(detail.ordered_quantity || 0);
@@ -1289,24 +1254,6 @@ export async function createJobOrder(
                     throw new Error(`Failed to create Sales Order allocation for detail ${detailId}: ${allocationResponse.status}`);
                 }
                 await assertFreshAllocationCapacity(detailId, allocationQuantity, joIdInt, replacementCreditQuantity);
-
-                const parentOrderId = Number(
-                    typeof detail.order_id === "object" ? detail.order_id?.order_id || detail.order_id?.id : detail.order_id
-                );
-                if (Number.isInteger(parentOrderId) && parentOrderId > 0) {
-                    affectedOrderIds.add(parentOrderId);
-                    if (!previousParentStatuses.has(parentOrderId)) {
-                        const parentResponse = await fetch(
-                            `${DIRECTUS_URL}/items/sales_order/${parentOrderId}?fields=order_id,order_status`,
-                            { headers, cache: "no-store" }
-                        );
-                        if (!parentResponse.ok) {
-                            throw new Error(`Failed to read Sales Order ${parentOrderId} before status transition: ${parentResponse.status}`);
-                        }
-                        const parent = (await parentResponse.json()).data;
-                        previousParentStatuses.set(parentOrderId, String(parent?.order_status || ""));
-                    }
-                }
             }
 
             for (const detailId of detailIds) {
@@ -1371,13 +1318,7 @@ export async function createJobOrder(
                 }
             }
 
-            // A regular JO puts its linked parent orders into production only
-            // after every requested allocation has been persisted.
-            if (shouldInitialize && !options.deferSalesOrderTransition) {
-                await transitionLinkedSalesOrdersToInProduction(affectedOrderIds, previousParentStatuses);
-            }
         }
-
         return { job_order_id: joIdInt, jo_id: joNoStr, status: initialStatus, shortfalls };
     } catch (e) {
         console.error("[Manufacturing Directus API] Failed to create job order:", e);
@@ -1395,14 +1336,6 @@ export async function createJobOrder(
                         headers,
                         body: JSON.stringify({ jo_material_id: moved.previousJoMaterialId })
                     }).catch(() => {});
-                }
-                for (const [parentOrderId, previousStatus] of previousParentStatuses) {
-                    if (!previousStatus) continue;
-                    await fetch(`${DIRECTUS_URL}/items/sales_order/${parentOrderId}`, {
-                        method: "PATCH",
-                        headers,
-                        body: JSON.stringify({ order_status: previousStatus })
-                    });
                 }
                 const rolledBack = await deleteJobOrder(createdJobOrderNo);
                 if (!rolledBack) {

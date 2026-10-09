@@ -199,12 +199,19 @@ export default function PlanningEngineeringModule() {
     const [draftJobOrderToEdit, setDraftJobOrderToEdit] = useState<any | null>(null);
     const [joMaterials, setJoMaterials] = useState<any[]>([]);
     const [loadingMaterials, setLoadingMaterials] = useState(false);
+    const [waitingForInventory, setWaitingForInventory] = useState(false);
     const [materialLoadState, setMaterialLoadState] = useState<MaterialLoadState>({ status: "idle" });
     const [familyActiveTab, setFamilyActiveTab] = useState<string>("family-all");
     const [childJoMaterials, setChildJoMaterials] = useState<Record<string, any[]>>({});
     const [childMaterialLoadStates, setChildMaterialLoadStates] = useState<Record<string, MaterialLoadState>>({});
     const materialRequestIdRef = useRef(0);
+    const materialRequestControllerRef = useRef<AbortController | null>(null);
     const [isTravelerOpen, setIsTravelerOpen] = useState(false);
+
+    useEffect(() => () => {
+        materialRequestIdRef.current += 1;
+        materialRequestControllerRef.current?.abort();
+    }, []);
 
     // Filter bar state for JO Queue
     const [searchQuery, setSearchQuery] = useState("");
@@ -447,6 +454,16 @@ export default function PlanningEngineeringModule() {
 
     const handleOpenDetails = async (jo: any, tabToRestore = "family-all") => {
         const requestId = ++materialRequestIdRef.current;
+        materialRequestControllerRef.current?.abort();
+        const controller = new AbortController();
+        materialRequestControllerRef.current = controller;
+        const retryBudget = { deadlineAt: null as number | null };
+        let retryingJobCount = 0;
+        const onRateLimitRetry = (retrying: boolean) => {
+            if (requestId !== materialRequestIdRef.current) return;
+            retryingJobCount = Math.max(0, retryingJobCount + (retrying ? 1 : -1));
+            setWaitingForInventory(retryingJobCount > 0);
+        };
         setDraftJobOrderToEdit(null);
         setIsTravelerOpen(false);
         setSelectedUnreleasedJo(jo);
@@ -456,6 +473,7 @@ export default function PlanningEngineeringModule() {
         setMaterialLoadState({ status: "loading" });
         setChildMaterialLoadStates({});
         setLoadingMaterials(true);
+        setWaitingForInventory(false);
 
         const joNo = String(jo.jo_id || jo.job_order_no || "");
         const parentNo = joNo.includes("-SUB") ? joNo.split("-SUB")[0] : joNo;
@@ -473,20 +491,30 @@ export default function PlanningEngineeringModule() {
         let parentMaterials: any[] = [];
         let parentError: unknown = null;
         try {
-            parentMaterials = await fetchJobMaterials(jo.job_order_id || jo.id || jo.order_id);
+            parentMaterials = await fetchJobMaterials(jo.job_order_id || jo.id || jo.order_id, {
+                signal: controller.signal,
+                retryBudget,
+                onRateLimitRetry
+            });
         } catch (error) {
+            if (controller.signal.aborted || requestId !== materialRequestIdRef.current) return;
             parentError = error;
             console.error("Failed to load materials for unreleased JO details modal:", error);
         }
 
         const childMatMap: Record<string, any[]> = {};
         const childLoadStates: Record<string, MaterialLoadState> = {};
-        await Promise.all(relatedJobs.map(async (rj: any) => {
+        const loadChildMaterials = async (rj: any) => {
             const childKey = String(rj.jo_id);
             try {
-                childMatMap[childKey] = await fetchJobMaterials(rj.job_order_id || rj.id || rj.order_id);
+                childMatMap[childKey] = await fetchJobMaterials(rj.job_order_id || rj.id || rj.order_id, {
+                    signal: controller.signal,
+                    retryBudget,
+                    onRateLimitRetry
+                });
                 childLoadStates[childKey] = { status: "success" };
             } catch (error) {
+                if (controller.signal.aborted || requestId !== materialRequestIdRef.current) return;
                 childMatMap[childKey] = [];
                 childLoadStates[childKey] = {
                     status: "error",
@@ -494,9 +522,22 @@ export default function PlanningEngineeringModule() {
                 };
                 console.error(`Failed to load materials for child Job Order ${childKey}:`, error);
             }
+        };
+
+        let nextChildIndex = 0;
+        const childWorkerCount = Math.min(2, relatedJobs.length);
+        await Promise.all(Array.from({ length: childWorkerCount }, async () => {
+            while (
+                nextChildIndex < relatedJobs.length &&
+                !controller.signal.aborted &&
+                requestId === materialRequestIdRef.current
+            ) {
+                const child = relatedJobs[nextChildIndex++];
+                await loadChildMaterials(child);
+            }
         }));
 
-        if (requestId !== materialRequestIdRef.current) return;
+        if (controller.signal.aborted || requestId !== materialRequestIdRef.current) return;
 
         setJoMaterials(parentMaterials);
         setMaterialLoadState(parentError ? {
@@ -506,11 +547,15 @@ export default function PlanningEngineeringModule() {
         setChildJoMaterials(childMatMap);
         setChildMaterialLoadStates(childLoadStates);
         setLoadingMaterials(false);
+        setWaitingForInventory(false);
+        materialRequestControllerRef.current = null;
     };
 
     const handleEditDraft = (jo: any) => {
         if (!isJobOrderStatus(jo?.status, JOB_ORDER_STATUS.DRAFT)) return;
         materialRequestIdRef.current += 1;
+        materialRequestControllerRef.current?.abort();
+        materialRequestControllerRef.current = null;
         setIsTravelerOpen(false);
         setSelectedUnreleasedJo(jo);
         setDraftJobOrderToEdit(jo);
@@ -520,11 +565,14 @@ export default function PlanningEngineeringModule() {
         setMaterialLoadState({ status: "idle" });
         setChildMaterialLoadStates({});
         setLoadingMaterials(false);
+        setWaitingForInventory(false);
         setActiveMainTab("queue");
     };
 
     const clearDetails = () => {
         materialRequestIdRef.current += 1;
+        materialRequestControllerRef.current?.abort();
+        materialRequestControllerRef.current = null;
         setIsTravelerOpen(false);
         setSelectedUnreleasedJo(null);
         setDraftJobOrderToEdit(null);
@@ -533,6 +581,7 @@ export default function PlanningEngineeringModule() {
         setMaterialLoadState({ status: "idle" });
         setChildMaterialLoadStates({});
         setLoadingMaterials(false);
+        setWaitingForInventory(false);
     };
 
     const retryCurrentMaterials = () => {
@@ -1767,7 +1816,7 @@ export default function PlanningEngineeringModule() {
                                         {materialLoadState.status === "loading" ? (
                                             <div className="flex items-center justify-center py-6 gap-2 text-xs text-muted-foreground">
                                                 <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                                                Loading materials...
+                                                {waitingForInventory ? "Waiting for inventory movements..." : "Loading materials..."}
                                             </div>
                                         ) : materialLoadState.status === "error" ? (
                                             <MaterialLoadErrorState message={materialLoadState.message} onRetry={retryCurrentMaterials} />
@@ -1893,7 +1942,7 @@ export default function PlanningEngineeringModule() {
                                                                     <td colSpan={4} className="px-4 py-6 text-center text-muted-foreground font-medium">
                                                                         <div className="flex flex-col items-center justify-center space-y-1">
                                                                             <Loader2 className="h-5 w-5 animate-spin text-sky-500" />
-                                                                            <span>Loading ingredient materials...</span>
+                                                                            <span>{waitingForInventory ? "Waiting for inventory movements..." : "Loading ingredient materials..."}</span>
                                                                         </div>
                                                                     </td>
                                                                 </tr>
@@ -1981,7 +2030,9 @@ export default function PlanningEngineeringModule() {
                                     {materialLoadState.status === "loading" ? (
                                         <div className="flex flex-col items-center justify-center py-12 space-y-2">
                                             <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                                            <span className="text-sm text-muted-foreground font-medium">Resolving raw material stock levels...</span>
+                                            <span className="text-sm text-muted-foreground font-medium">
+                                                {waitingForInventory ? "Waiting for inventory movements..." : "Resolving raw material stock levels..."}
+                                            </span>
                                         </div>
                                     ) : materialLoadState.status === "error" ? (
                                         <MaterialLoadErrorState message={materialLoadState.message} onRetry={retryCurrentMaterials} />

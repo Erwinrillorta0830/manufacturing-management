@@ -170,16 +170,26 @@ export function usePlanningEngineering() {
                         })
                     });
                     const forceData = await forceRes.json();
+                    const forceWarnings = Array.isArray(forceData.warnings)
+                        ? forceData.warnings
+                        : Array.isArray(forceData.data?.warnings) ? forceData.data.warnings : [];
                     if (!forceRes.ok || forceData.success === false) {
                         throw new Error(forceData.error || "Failed to forcibly release job order.");
                     }
-                    toast.success("Job Order forcibly released. It stays in the queue — next step: stage materials.");
+                    if (forceWarnings.length > 0) toast.warning(forceWarnings.join(" "));
+                    const forceMessage = "Job Order forcibly released. It stays in the queue ? next step: stage materials.";
+                    if (forceWarnings.length > 0) toast.warning(`${forceMessage} ${forceWarnings.join(" ")}`);
+                    else toast.success(forceMessage);
                     await loadInitialData(true);
                     return true;
                 }
                 return false;
             }
+            const warnings = Array.isArray(data.warnings)
+                ? data.warnings
+                : Array.isArray(data.data?.warnings) ? data.data.warnings : [];
             toast.success("Job Order initialized. Next step: stage its materials on the shop floor.");
+            if (warnings.length > 0) toast.warning(warnings.join(" "));
             await loadInitialData(true);
             return true;
         } catch (err: any) {
@@ -782,9 +792,11 @@ export function usePlanningEngineering() {
                 if (!createdJobOrderNo) {
                     throw new Error("The created Job Orders did not return a valid Job Order reference.");
                 }
-                toast.success(initialize
+                const successMessage = initialize
                     ? `${result.jobs?.length || releaseGroups.length} Job Orders initialized and ready for material picking.`
-                    : `${result.jobs?.length || releaseGroups.length} Job Orders saved as Draft.`);
+                    : `${result.jobs?.length || releaseGroups.length} Job Orders saved as Draft.`;
+                if (result.warnings?.length) toast.warning(`${successMessage} ${result.warnings.join(" ")}`);
+                else toast.success(successMessage);
             } else {
                 const firstLine = selectedLines[0];
                 const targetProductId = firstLine.product_id?.product_id;
@@ -826,11 +838,11 @@ export function usePlanningEngineering() {
                 });
                 createdJobOrderNo = String(result.jo_id || result.job_order_no || joNumber).trim();
 
-                if (!initialize) {
-                    toast.success(`Job Order ${joNumber} saved as Draft. Initialize it from the Job Order Queue when ready.`);
-                } else {
-                    toast.success(`Job Order ${joNumber} initialized and ready for material picking.`);
-                }
+                const successMessage = !initialize
+                    ? `Job Order ${joNumber} saved as Draft. Initialize it from the Job Order Queue when ready.`
+                    : `Job Order ${joNumber} initialized and ready for material picking.`;
+                if (result.warnings?.length) toast.warning(`${successMessage} ${result.warnings.join(" ")}`);
+                else toast.success(successMessage);
             }
             setIsConfirmOpen(false);
             setSelectedDetailIds([]);

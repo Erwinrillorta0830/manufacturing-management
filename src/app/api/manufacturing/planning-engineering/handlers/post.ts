@@ -1,7 +1,7 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { createJobOrder, deleteJobOrder, transitionLinkedSalesOrdersToInProduction } from "../planning-helper";
+import { createJobOrder, deleteJobOrder } from "../planning-helper";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { getActiveVersionForProduct } from "../../finished-goods/versions/versions-helper";
 import { formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
@@ -21,7 +21,11 @@ import {
 import { salesOrderStatusAfterFulfillment } from "../../sales-order/_fulfillment";
 import { SalesOrderAllocationConflictError } from "../helpers/create-helper";
 import type { SalesOrderSchedulingPlan } from "../helpers/create-helper";
-import { executeJobOrderWorkflow, JobOrderWorkflowError } from "../../job-orders/_workflow-service";
+import {
+    executeJobOrderWorkflow,
+    JobOrderWorkflowError,
+    reconcileSalesOrdersAfterJobOrderInitialization
+} from "../../job-orders/_workflow-service";
 import { resolveProductUnitId } from "../../services/mm-lots.service";
 import { calculateRequiredBatchCount, resolveProductionShiftHours } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
 import {
@@ -558,8 +562,6 @@ async function handleReleaseMultiple(body: Record<string, any>, encoderId: numbe
         detailIds: number[];
         parentOrderIds: number[];
     }> = [];
-    const parentOrderIds = new Set<number>();
-    const previousParentStatuses = new Map<number, string>();
 
     for (const [index, job] of jobs.entries()) {
         const productId = Number(job?.productId);
@@ -607,15 +609,7 @@ async function handleReleaseMultiple(body: Record<string, any>, encoderId: numbe
         if (!validation.schedulingPlan) {
             throw new PlanningConflictError(`Product group ${index + 1} could not be converted into a Sales Order allocation plan.`);
         }
-        validation.parentOrderIds.forEach((parentOrderId) => parentOrderIds.add(parentOrderId));
         validationResults.push({ job: jobConfig, schedulingPlan: validation.schedulingPlan, detailIds: validation.detailIds, parentOrderIds: validation.parentOrderIds });
-    }
-
-    for (const parentOrderId of parentOrderIds) {
-        const response = await fetch(`${DIRECTUS_URL}/items/sales_order/${parentOrderId}?fields=order_id,order_status`, { headers, cache: "no-store" });
-        if (!response.ok) throw new Error(`Unable to snapshot Sales Order ${parentOrderId} before multi-JO release (${response.status}).`);
-        const order = (await response.json()).data;
-        previousParentStatuses.set(parentOrderId, String(order?.order_status || ""));
     }
 
     const createdJobOrderNos: string[] = [];
@@ -634,7 +628,6 @@ async function handleReleaseMultiple(body: Record<string, any>, encoderId: numbe
                 validation.detailIds,
                 validation.schedulingPlan,
                 {
-                    deferSalesOrderTransition: true,
                     initialize: shouldInitialize,
                     usePhysicalOnHand: shouldInitialize && usePhysicalOnHand
                 }
@@ -647,27 +640,22 @@ async function handleReleaseMultiple(body: Record<string, any>, encoderId: numbe
                     idempotencyKey: String(body.idempotencyKey || `planning-initialize:${result.job_order_id}`).trim(),
                     remarks: String(shared.remarks || "Initialize Job Order for material picking").trim(),
                     overrideReason: forceInitialize ? overrideReason : undefined,
-                    force: forceInitialize
+                    force: forceInitialize,
+                    deferSalesOrderStatusSync: true
                 });
                 createdResults.push({ ...result, ...workflow, jo_id: result.jo_id || validation.job.jo_id });
             } else {
                 createdResults.push({ ...result, jo_id: result.jo_id || validation.job.jo_id });
             }
         }
-        return NextResponse.json({ success: true, data: { jobs: createdResults } });
+        const warnings = shouldInitialize
+            ? await reconcileSalesOrdersAfterJobOrderInitialization(createdResults.map((job) => Number(job.job_order_id)))
+            : [];
+        return NextResponse.json({ success: true, data: { jobs: createdResults, warnings } });
     } catch (error) {
         const cleanupFailures: string[] = [];
         for (const jobOrderNo of [...createdJobOrderNos].reverse()) {
             if (!await deleteJobOrderTree(jobOrderNo)) cleanupFailures.push(jobOrderNo);
-        }
-        for (const [parentOrderId, previousStatus] of previousParentStatuses) {
-            if (!previousStatus) continue;
-            const response = await fetch(`${DIRECTUS_URL}/items/sales_order/${parentOrderId}`, {
-                method: "PATCH",
-                headers,
-                body: JSON.stringify({ order_status: previousStatus })
-            });
-            if (!response.ok) cleanupFailures.push(`SO-${parentOrderId}`);
         }
         if (cleanupFailures.length > 0) {
             return NextResponse.json({
@@ -722,6 +710,30 @@ export async function handlePOST(request: Request) {
             const usePhysicalOnHand = isBufferJobOrder || body.usePhysicalOnHand === true;
 
             if (!isJobOrderStatus(joData.status, JOB_ORDER_STATUS.DRAFT)) {
+                if (isJobOrderStatus(
+                    joData.status,
+                    JOB_ORDER_STATUS.FOR_PICKING,
+                    JOB_ORDER_STATUS.PICKED,
+                    JOB_ORDER_STATUS.IN_PRODUCTION,
+                    JOB_ORDER_STATUS.ON_HOLD,
+                    JOB_ORDER_STATUS.QA_HOLD,
+                    JOB_ORDER_STATUS.PRODUCTION_COMPLETED,
+                    JOB_ORDER_STATUS.FOR_QA_RECONCILIATION
+                )) {
+                    const warnings = await reconcileSalesOrdersAfterJobOrderInitialization(Number(joData.job_order_id));
+                    return NextResponse.json({
+                        success: true,
+                        data: {
+                            jobOrderId: Number(joData.job_order_id),
+                            jobOrderNo: String(joData.job_order_no || ""),
+                            status: String(joData.status || ""),
+                            idempotent: true,
+                            changed: false,
+                            warnings
+                        },
+                        warnings
+                    });
+                }
                 return NextResponse.json({ error: "Only Draft Job Orders can be initialized." }, { status: 409 });
             }
 
@@ -860,7 +872,7 @@ export async function handlePOST(request: Request) {
             const workflow = await executeJobOrderWorkflow(joData.job_order_id, {
                 action: "initialize",
                 actorUserId: encoderId,
-                idempotencyKey: String(body.idempotencyKey || `planning-initialize-${joData.job_order_id}-${Date.now()}`).trim(),
+                idempotencyKey: String(body.idempotencyKey || `planning-initialize:${joData.job_order_id}`).trim(),
                 remarks: String(body.remarks || "Initialize Job Order for material picking").trim(),
                 overrideReason: forceInitialize ? overrideReason : (shortfallMsg ? `Initialized with raw material shortfalls: ${shortfallMsg}` : undefined),
                 force: forceInitialize
