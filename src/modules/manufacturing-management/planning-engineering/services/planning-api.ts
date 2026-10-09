@@ -1,5 +1,5 @@
 /* eslint-disable */
-import { Branch, JobOrderMaterial, SalesOrder, SalesOrderDetail } from "../types";
+import type { Branch, JobOrderMaterial, SalesOrder, SalesOrderDetail } from "../types";
 
 export async function fetchBranches(): Promise<Branch[]> {
     const branchRes = await fetch("/api/manufacturing/branches", { cache: "no-store" });
@@ -30,24 +30,128 @@ export async function fetchBranches(): Promise<Branch[]> {
 
 export type PlanningSalesOrderQueue = "for-production" | "in-production" | "planning";
 
-export async function fetchSalesOrders(
-    queue: PlanningSalesOrderQueue = "for-production"
-): Promise<{ data: SalesOrder[]; detailsMap: Record<number, SalesOrderDetail[]> }> {
-    const soRes = await fetch(`/api/manufacturing/sales-order?queue=${encodeURIComponent(queue)}&limit=200`, { cache: "no-store" });
-    if (!soRes.ok) {
-        const payload = await soRes.json().catch(() => null);
-        const fallbackMessage = queue === "in-production"
-            ? "Failed to fetch Sales Orders in production."
-            : queue === "planning"
-                ? "Failed to fetch schedulable Sales Order demand."
-            : "Failed to fetch For Production Sales Orders.";
-        throw new Error(typeof payload?.error === "string" ? payload.error : fallbackMessage);
+const SALES_ORDER_RETRY_WINDOW_MS = 120_000;
+const SALES_ORDER_MAX_RETRY_DELAY_MS = 15_000;
+const SALES_ORDER_RETRY_MESSAGE = "Sales Orders are temporarily busy while inventory activity is high. Please retry shortly.";
+
+type SalesOrderQueueResult = { data: SalesOrder[]; detailsMap: Record<number, SalesOrderDetail[]> };
+type ActiveSalesOrderRequest = { controller: AbortController; promise: Promise<SalesOrderQueueResult> };
+const activeSalesOrderRequests = new Map<PlanningSalesOrderQueue, ActiveSalesOrderRequest>();
+
+function cancelledSalesOrderRequest(): Error {
+    const error = new Error("Sales Order lookup was cancelled.");
+    error.name = "AbortError";
+    return error;
+}
+
+function waitForSalesOrderRetry(delayMs: number, signal: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+        if (signal.aborted) {
+            reject(cancelledSalesOrderRequest());
+            return;
+        }
+
+        const timeoutId = setTimeout(() => {
+            signal.removeEventListener("abort", abortWait);
+            resolve();
+        }, delayMs);
+        const abortWait = () => {
+            clearTimeout(timeoutId);
+            signal.removeEventListener("abort", abortWait);
+            reject(cancelledSalesOrderRequest());
+        };
+
+        signal.addEventListener("abort", abortWait, { once: true });
+        if (signal.aborted) abortWait();
+    });
+}
+
+function retryAfterDelayMs(response: Response, payload: any): number | null {
+    const header = response.headers.get("Retry-After")?.trim();
+    if (header) {
+        const seconds = Number(header);
+        if (Number.isFinite(seconds) && seconds > 0) return Math.ceil(seconds * 1000);
+
+        const retryAt = Date.parse(header);
+        if (Number.isFinite(retryAt) && retryAt > Date.now()) return retryAt - Date.now();
     }
-    const soData = await soRes.json();
-    return {
-        data: soData.data || [],
-        detailsMap: soData.detailsMap || {}
-    };
+
+    const responseSeconds = Number(payload?.retryAfterSeconds);
+    return Number.isFinite(responseSeconds) && responseSeconds > 0
+        ? Math.ceil(responseSeconds * 1000)
+        : null;
+}
+
+async function fetchSalesOrdersWithRetry(
+    queue: PlanningSalesOrderQueue,
+    signal: AbortSignal
+): Promise<SalesOrderQueueResult> {
+    let retryAttempt = 0;
+    let retryDeadlineAt: number | null = null;
+
+    while (true) {
+        if (signal.aborted) throw cancelledSalesOrderRequest();
+        if (retryAttempt > 0 && retryDeadlineAt !== null && Date.now() >= retryDeadlineAt) {
+            throw new Error(SALES_ORDER_RETRY_MESSAGE);
+        }
+
+        const soRes = await fetch(
+            `/api/manufacturing/sales-order?queue=${encodeURIComponent(queue)}&limit=200`,
+            { cache: "no-store", signal }
+        );
+        const soData = await soRes.json().catch(() => null);
+
+        if (soRes.status === 429) {
+            const now = Date.now();
+            retryDeadlineAt ??= now + SALES_ORDER_RETRY_WINDOW_MS;
+            if (now >= retryDeadlineAt) throw new Error(SALES_ORDER_RETRY_MESSAGE);
+
+            retryAttempt += 1;
+            const baseDelay = Math.min(SALES_ORDER_MAX_RETRY_DELAY_MS, 1000 * (2 ** Math.min(retryAttempt - 1, 4)));
+            const jitteredDelay = Math.min(
+                SALES_ORDER_MAX_RETRY_DELAY_MS,
+                Math.round(baseDelay * (0.75 + Math.random() * 0.5))
+            );
+            const delayMs = retryAfterDelayMs(soRes, soData) ?? jitteredDelay;
+            await waitForSalesOrderRetry(Math.min(delayMs, retryDeadlineAt - now), signal);
+            continue;
+        }
+
+        if (!soRes.ok) {
+            const fallbackMessage = queue === "in-production"
+                ? "Failed to fetch Sales Orders in production."
+                : queue === "planning"
+                    ? "Failed to fetch schedulable Sales Order demand."
+                    : "Failed to fetch For Production Sales Orders.";
+            throw new Error(typeof soData?.error === "string" ? soData.error : fallbackMessage);
+        }
+
+        return {
+            data: soData?.data || [],
+            detailsMap: soData?.detailsMap || {}
+        };
+    }
+}
+
+export function cancelPendingSalesOrderRequests(): void {
+    for (const request of activeSalesOrderRequests.values()) request.controller.abort();
+    activeSalesOrderRequests.clear();
+}
+
+export function fetchSalesOrders(
+    queue: PlanningSalesOrderQueue = "for-production"
+): Promise<SalesOrderQueueResult> {
+    const activeRequest = activeSalesOrderRequests.get(queue);
+    if (activeRequest) return activeRequest.promise;
+
+    const controller = new AbortController();
+    const promise = fetchSalesOrdersWithRetry(queue, controller.signal).finally(() => {
+        if (activeSalesOrderRequests.get(queue)?.promise === promise) {
+            activeSalesOrderRequests.delete(queue);
+        }
+    });
+    activeSalesOrderRequests.set(queue, { controller, promise });
+    return promise;
 }
 
 export async function fetchNetRequirementsRaw(productIds: number[], branchId: number): Promise<any[]> {

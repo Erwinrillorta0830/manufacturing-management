@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "../../job-order-status";
 import { Branch, SalesOrder, SalesOrderDetail, NetRequirementItem } from "../types";
-import { fetchBranches, fetchSalesOrders, fetchNetRequirementsRaw, releaseJobOrder, releaseMultipleJobOrders, directAllocate } from "../services/planning-api";
+import { cancelPendingSalesOrderRequests, fetchBranches, fetchSalesOrders, fetchNetRequirementsRaw, releaseJobOrder, releaseMultipleJobOrders, directAllocate } from "../services/planning-api";
 import { buildSalesOrderDemandGroups, buildSalesOrderReleaseGroups, canCreateReplacementJobOrder, isSchedulableSalesOrderLine, remainingQuantity } from "../utils/demand-groups";
 import { DEFAULT_PRODUCTION_SHIFT_HOURS, normalizeProductionOutputQuantity } from "../utils/production-timing";
 import { addCalendarDaysToDateInput, getPhtDateInputValue } from "../../shared/pht-date";
@@ -99,6 +99,16 @@ export function usePlanningEngineering() {
     const [deepLinkJo, setDeepLinkJo] = useState<any | null>(null);
     const [deepLinkNotice, setDeepLinkNotice] = useState<string | null>(null);
     const productionRequestIdRef = useRef(0);
+    const isMountedRef = useRef(false);
+
+    useEffect(() => {
+        isMountedRef.current = true;
+        return () => {
+            isMountedRef.current = false;
+            productionRequestIdRef.current += 1;
+            cancelPendingSalesOrderRequests();
+        };
+    }, []);
 
     // Filter unreleased jobs based on selected branch
     const unreleasedJobs = useMemo(() => {
@@ -211,14 +221,12 @@ export function usePlanningEngineering() {
             setProductionDetailsMap(result.detailsMap || {});
             setProductionOrdersError(null);
         } catch (err) {
-            if (requestId !== productionRequestIdRef.current) return;
+            if (requestId !== productionRequestIdRef.current || (err instanceof Error && err.name === "AbortError")) return;
             const message = err instanceof Error ? err.message : "Failed to load Sales Orders in production.";
             console.error("Error loading Sales Orders in production:", err);
-            setProductionSalesOrders([]);
-            setProductionDetailsMap({});
             setProductionOrdersError(message);
         } finally {
-            if (requestId === productionRequestIdRef.current) {
+            if (isMountedRef.current && requestId === productionRequestIdRef.current) {
                 setLoadingProductionOrders(false);
             }
         }
@@ -244,6 +252,7 @@ export function usePlanningEngineering() {
                     return { queuedJobs: [], cancelledJobs: [] };
                 }).catch(() => ({ queuedJobs: [], cancelledJobs: [] }))
             ]);
+            if (!isMountedRef.current) return;
 
             setBranches(activeBranches);
 
@@ -252,10 +261,11 @@ export function usePlanningEngineering() {
             setRawUnreleasedJobs(jobOrderQueues.queuedJobs);
             setRawCancelledJobs(jobOrderQueues.cancelledJobs);
         } catch (err: any) {
+            if (err instanceof Error && err.name === "AbortError") return;
             console.error("Error loading initial data:", err);
             toast.error(err.message || "An error occurred while loading planning data.");
         } finally {
-            if (!silent) {
+            if (isMountedRef.current && !silent) {
                 setLoadingBranches(false);
                 setLoadingOrders(false);
                 setLoadingJobs(false);
@@ -316,6 +326,7 @@ export function usePlanningEngineering() {
     useEffect(() => {
         let eventSource: EventSource | null = null;
         let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+        let movementReloadTimeout: ReturnType<typeof setTimeout> | null = null;
         let isDisposed = false;
         let reconnectAttempts = 0;
 
@@ -334,8 +345,12 @@ export function usePlanningEngineering() {
                         const movement = JSON.parse(event.data);
                         console.log(`[Planning Realtime SSE] Inventory movement detected (ID: ${movement.movement_id}). Refreshing planning data...`);
                         
-                        // Silent reload to update demand lines, requirements, and unreleased job orders
-                        loadInitialData(true);
+                        // Coalesce bursts of inventory events into one silent reload.
+                        if (movementReloadTimeout) clearTimeout(movementReloadTimeout);
+                        movementReloadTimeout = setTimeout(() => {
+                            movementReloadTimeout = null;
+                            if (!isDisposed) void loadInitialData(true);
+                        }, 500);
                     } catch (e) {
                         console.error("[Planning Realtime SSE] Error parsing movement event data:", e);
                     }
@@ -372,6 +387,9 @@ export function usePlanningEngineering() {
             }
             if (reconnectTimeout) {
                 clearTimeout(reconnectTimeout);
+            }
+            if (movementReloadTimeout) {
+                clearTimeout(movementReloadTimeout);
             }
         };
     }, []);
