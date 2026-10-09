@@ -1,5 +1,5 @@
-import React from "react";
-import { Loader2, Layers, Info } from "lucide-react";
+import React, { useEffect } from "react";
+import { Loader2, Layers, Info, AlertTriangle, RefreshCw } from "lucide-react";
 import {
     Card,
     CardContent,
@@ -17,32 +17,54 @@ import {
     TableRow
 } from "@/components/ui/table";
 import { Branch, NetRequirementItem } from "../types";
+import { PlanningPaginationControls, type PlanningPaginationState } from "./PlanningPaginationControls";
+import { Button } from "@/components/ui/button";
+
+type SubAssemblyLookupStatus = "loading" | "ready" | "error";
 
 interface NetRequirementsTableProps {
     loadingRequirements: boolean;
+    subAssemblyLookupStatus: SubAssemblyLookupStatus;
+    subAssemblyLookupError: string | null;
+    onRetrySubAssemblyLookup: () => void;
     netRequirements: NetRequirementItem[];
     selectedBranchId: number | null;
     branches: Branch[];
+    pagination: PlanningPaginationState;
 }
 
 export function NetRequirementsTable({
     loadingRequirements,
+    subAssemblyLookupStatus,
+    subAssemblyLookupError,
+    onRetrySubAssemblyLookup,
     netRequirements,
     selectedBranchId,
-    branches
+    branches,
+    pagination
 }: NetRequirementsTableProps) {
     const selectedBranch = branches.find(b => b.id === selectedBranchId);
+    const requestedPage = pagination.page;
+    const pageSize = pagination.pageSize;
+    const onPageChange = pagination.onPageChange;
+    const totalPages = Math.max(1, Math.ceil(netRequirements.length / pageSize));
+    const page = Math.min(requestedPage, totalPages);
+    const visibleRequirements = netRequirements.slice((page - 1) * pageSize, page * pageSize);
+
+    useEffect(() => {
+        if (requestedPage !== page) onPageChange(page);
+    }, [requestedPage, onPageChange, page]);
 
     return (
         <Card className="shadow-sm">
             <CardHeader className="pb-3 border-b bg-muted/10">
                 <div className="flex items-center justify-between">
                     <div>
-                        <CardTitle className="text-base font-bold flex items-center gap-2">
+                        <CardTitle className="text-xl font-bold tracking-tight flex items-center gap-2">
                             <Layers className="h-5 w-5 text-primary" />
                             Net Requirements Calculator
                         </CardTitle>
-                        <CardDescription className="text-xs">
+                        <CardDescription className="text-sm text-muted-foreground">
                             Active inventory checks and safety stock rollups in selected branch.
                         </CardDescription>
                     </div>
@@ -54,12 +76,24 @@ export function NetRequirementsTable({
                 </div>
             </CardHeader>
             <CardContent className="p-0">
-                {loadingRequirements ? (
+                {loadingRequirements || subAssemblyLookupStatus === "loading" ? (
                     <div className="flex flex-col items-center justify-center py-20 gap-3">
                         <Loader2 className="h-8 w-8 text-primary animate-spin" />
                         <span className="text-xs font-bold text-muted-foreground uppercase tracking-widest animate-pulse">
-                            Calculating requirements...
+                            {subAssemblyLookupStatus === "loading" ? "Loading sub-assembly BOMs..." : "Calculating requirements..."}
                         </span>
+                    </div>
+                ) : subAssemblyLookupStatus === "error" ? (
+                    <div role="alert" className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center text-muted-foreground">
+                        <AlertTriangle className="h-8 w-8 text-amber-500" />
+                        <span className="text-sm font-semibold text-foreground">Net requirements are unavailable.</span>
+                        <span className="max-w-lg text-xs">
+                            {subAssemblyLookupError || "Sub-assembly BOM data could not be loaded, so the calculation has been withheld."}
+                        </span>
+                        <Button type="button" variant="outline" size="sm" onClick={onRetrySubAssemblyLookup} className="gap-2">
+                            <RefreshCw className="h-3.5 w-3.5" />
+                            Retry BOM lookup
+                        </Button>
                     </div>
                 ) : selectedBranchId === null ? (
                     <div className="flex flex-col items-center justify-center py-16 px-4 text-center text-muted-foreground">
@@ -78,6 +112,7 @@ export function NetRequirementsTable({
                         </span>
                     </div>
                 ) : (
+                    <>
                     <div className="overflow-x-auto">
                         <Table>
                             <TableHeader className="bg-muted/5">
@@ -90,7 +125,7 @@ export function NetRequirementsTable({
                                 </TableRow>
                             </TableHeader>
                             <TableBody className="divide-y divide-border">
-                                {netRequirements.map((item) => {
+                                {visibleRequirements.map((item) => {
                                     const hasShortfall = item.net_shortfall > 0;
                                     return (
                                         <TableRow
@@ -149,6 +184,13 @@ export function NetRequirementsTable({
                             </TableBody>
                         </Table>
                     </div>
+                    <PlanningPaginationControls
+                        {...pagination}
+                        page={page}
+                        totalItems={netRequirements.length}
+                        itemLabel="products"
+                    />
+                    </>
                 )}
             </CardContent>
         </Card>

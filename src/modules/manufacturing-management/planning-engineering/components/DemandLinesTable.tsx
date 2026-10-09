@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from "react";
-import { Loader2, Plus, Search } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { Loader2, Plus } from "lucide-react";
 import {
     Card,
     CardContent,
@@ -8,7 +8,6 @@ import {
     CardTitle
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
 import {
     Table,
     TableBody,
@@ -20,12 +19,16 @@ import {
 import { SalesOrderDemandGroup, SalesOrderDetail } from "../types";
 import { displayJobOrderStatus } from "../../job-order-status";
 import { isSchedulableSalesOrderLine, remainingQuantity } from "../utils/demand-groups";
+import { PlanningPaginationControls, type PlanningPaginationState } from "./PlanningPaginationControls";
+import { PlanningTableSearchBar } from "./PlanningTableSearchBar";
 
 interface DemandLinesTableProps {
     loadingOrders: boolean;
     salesOrderGroups: SalesOrderDemandGroup[];
     selectedDetailIds: number[];
     handleSelectLine: (detailId: number, checked: boolean) => void;
+    handleSelectLines: (detailIds: number[], checked: boolean) => void;
+    pagination: PlanningPaginationState;
 }
 
 function lineSearchText(line: SalesOrderDetail): string {
@@ -44,7 +47,9 @@ export function DemandLinesTable({
     loadingOrders,
     salesOrderGroups,
     selectedDetailIds,
-    handleSelectLine
+    handleSelectLine,
+    handleSelectLines,
+    pagination
 }: DemandLinesTableProps) {
     const [searchQuery, setSearchQuery] = useState("");
 
@@ -52,47 +57,59 @@ export function DemandLinesTable({
         return salesOrderGroups.flatMap((group) => group.lines);
     }, [salesOrderGroups]);
 
+    const searchTextByDetailId = useMemo(() => {
+        return new Map(allLines.map((line) => [line.detail_id, lineSearchText(line)]));
+    }, [allLines]);
+
     const filteredLines = useMemo(() => {
         const q = searchQuery.trim().toLowerCase();
         if (!q) return allLines;
-        return allLines.filter((line) => lineSearchText(line).includes(q));
-    }, [allLines, searchQuery]);
+        return allLines.filter((line) => searchTextByDetailId.get(line.detail_id)?.includes(q));
+    }, [allLines, searchQuery, searchTextByDetailId]);
 
     const selectableFilteredLines = useMemo(() => {
         return filteredLines.filter(isSchedulableSalesOrderLine);
     }, [filteredLines]);
 
-    const toggleLines = (lines: SalesOrderDetail[], checked: boolean) => {
-        lines.forEach((line) => {
-            const selected = selectedDetailIds.includes(line.detail_id);
-            if (selected !== checked) handleSelectLine(line.detail_id, checked);
-        });
-    };
+    const selectedIds = useMemo(() => new Set(selectedDetailIds), [selectedDetailIds]);
+    const requestedPage = pagination.page;
+    const pageSize = pagination.pageSize;
+    const onPageChange = pagination.onPageChange;
+    const totalPages = Math.max(1, Math.ceil(filteredLines.length / pageSize));
+    const page = Math.min(requestedPage, totalPages);
+    const pageStart = (page - 1) * pageSize;
+    const visibleLines = filteredLines.slice(pageStart, pageStart + pageSize);
+
+    useEffect(() => {
+        if (requestedPage !== page) onPageChange(page);
+    }, [requestedPage, onPageChange, page]);
 
     return (
         <Card className="shadow-sm">
-            <CardHeader className="pb-3 border-b bg-muted/10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <CardHeader className="pb-3">
                 <div>
-                    <CardTitle className="text-base font-bold flex items-center gap-2">
+                    <CardTitle className="text-xl font-bold tracking-tight flex items-center gap-2">
                         <Plus className="h-5 w-5 text-primary" />
                         Schedulable Sales Order Demand
                     </CardTitle>
-                    <CardDescription className="text-xs">
+                    <CardDescription className="text-sm text-muted-foreground">
                         Select residual For Production or In Production demand with no active Job Order. Prior output reduces the remaining quantity only after final QA approval and receipt.
                     </CardDescription>
                 </div>
-                <div className="flex w-full md:w-auto gap-2 shrink-0">
-                    <div className="relative w-full md:w-60">
-                        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                        <Input
-                            placeholder="Search SO, customer, product..."
-                            value={searchQuery}
-                            onChange={(event) => setSearchQuery(event.target.value)}
-                            className="pl-9 h-9 text-xs"
-                        />
-                    </div>
-                </div>
             </CardHeader>
+            <div className="px-6 pb-4">
+                <PlanningTableSearchBar
+                    searchQuery={searchQuery}
+                    onSearchQueryChange={(query) => {
+                        setSearchQuery(query);
+                        onPageChange(1);
+                    }}
+                    placeholder="Search SO, customer, product..."
+                    filteredCount={filteredLines.length}
+                    totalCount={allLines.length}
+                    itemLabel="Sales Order lines"
+                />
+            </div>
             <CardContent className="p-0">
                 {loadingOrders ? (
                     <div className="flex flex-col items-center justify-center py-16 gap-2">
@@ -102,15 +119,16 @@ export function DemandLinesTable({
                 ) : filteredLines.length === 0 ? (
                     <div className="p-12 text-center text-xs text-muted-foreground font-semibold">No matching Sales Order demand found.</div>
                 ) : (
-                    <div className="overflow-x-auto max-h-[50vh] overflow-y-auto">
+                    <>
+                        <div className="overflow-x-auto max-h-[50vh] overflow-y-auto">
                         <Table>
                             <TableHeader className="bg-muted/5 sticky top-0 z-10">
                                 <TableRow>
                                     <TableHead className="w-[40px] text-center">
                                         <Checkbox
-                                            checked={selectableFilteredLines.length > 0 && selectableFilteredLines.every((line) => selectedDetailIds.includes(line.detail_id))}
+                                            checked={selectableFilteredLines.length > 0 && selectableFilteredLines.every((line) => selectedIds.has(line.detail_id))}
                                             disabled={selectableFilteredLines.length === 0}
-                                            onCheckedChange={(checked) => toggleLines(selectableFilteredLines, !!checked)}
+                                            onCheckedChange={(checked) => handleSelectLines(selectableFilteredLines.map((line) => line.detail_id), !!checked)}
                                         />
                                     </TableHead>
                                     <TableHead className="font-bold text-xs">Sales Order</TableHead>
@@ -124,9 +142,9 @@ export function DemandLinesTable({
                                 </TableRow>
                             </TableHeader>
                             <TableBody className="divide-y divide-border">
-                                {filteredLines.map((line) => {
+                                {visibleLines.map((line) => {
                                     const isSchedulable = isSchedulableSalesOrderLine(line);
-                                    const isChecked = selectedDetailIds.includes(line.detail_id);
+                                    const isChecked = selectedIds.has(line.detail_id);
                                     return (
                                         <TableRow key={line.detail_id} className="hover:bg-muted/5 align-middle">
                                             <TableCell className="py-3 text-center">
@@ -186,7 +204,14 @@ export function DemandLinesTable({
                                 })}
                             </TableBody>
                         </Table>
-                    </div>
+                        </div>
+                        <PlanningPaginationControls
+                            {...pagination}
+                            page={page}
+                            totalItems={filteredLines.length}
+                            itemLabel="lines"
+                        />
+                    </>
                 )}
             </CardContent>
         </Card>

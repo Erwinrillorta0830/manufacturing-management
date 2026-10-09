@@ -154,10 +154,11 @@ export function fetchSalesOrders(
     return promise;
 }
 
-export async function fetchNetRequirementsRaw(productIds: number[], branchId: number): Promise<any[]> {
+export async function fetchNetRequirementsRaw(productIds: number[], branchId: number, signal?: AbortSignal): Promise<any[]> {
     const productIdsStr = productIds.join(",");
     const res = await fetch(
-        `/api/manufacturing/planning-engineering?action=net-requirements&productIds=${productIdsStr}&branchId=${branchId}`
+        `/api/manufacturing/planning-engineering?action=net-requirements&productIds=${productIdsStr}&branchId=${branchId}`,
+        { signal }
     );
     if (!res.ok) {
         throw new Error("Failed to load net requirements from API.");

@@ -47,6 +47,7 @@ import {
     JOB_ORDER_MODULE_PATHS,
     type JobOrderModulePath
 } from "@/app/api/manufacturing/job-orders/_module-access";
+import { loadSubassemblyBOMComponents, parseSubassemblyProductIds } from "../helpers/subassembly-bom-components";
 
 const WIZARD_STEP_TIMEOUT_MS = 20000;
 
@@ -196,6 +197,7 @@ export async function handleGET(request: Request) {
                             || action === "version-stock"
                             || action === "wizard-step-2"
                             || action === "sub-assembly-version-details"
+                            || action === "sub-assembly-bom-components"
                             || action === "lots"
                             ? [JOB_ORDER_MODULE_PATHS.planning]
                             : productId || bomId
@@ -224,6 +226,14 @@ export async function handleGET(request: Request) {
             const branchId = Number(branchIdStr);
             const data = await getProductInventoryAndSafetyStock(productIds, branchId);
             return NextResponse.json(data);
+        }
+
+        if (action === "sub-assembly-bom-components") {
+            const productIds = parseSubassemblyProductIds(searchParams.get("productIds"));
+            if (!productIds || productIds.length === 0) {
+                return NextResponse.json({ error: "Provide one or more valid productIds" }, { status: 400 });
+            }
+            return NextResponse.json(await loadSubassemblyBOMComponents(productIds));
         }
 
         if (action === "version-stock") {
