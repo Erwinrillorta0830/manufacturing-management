@@ -37,7 +37,7 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { FinishedGoodsLotSelect } from "../../shared/FinishedGoodsLotSelect";
-import { formatPhtTimestamp, phtTimestampToEpoch } from "../../shared/pht-date";
+import { formatPhtTimestamp12Hour, phtTimestampToEpoch } from "../../shared/pht-date";
 import { isManufacturingEvidenceVideo } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
 import { parseQAOutputQuantity } from "@/modules/manufacturing-management/manufacturing-qa/qa-output-allocation";
 import type { DailyYieldAuditController } from "../hooks/useDailyYieldAudit";
@@ -54,7 +54,7 @@ function numericText(value: unknown): string {
 
 function formatAuditTimestamp(value: unknown): string {
     if (typeof value !== "string" || !value.trim()) return "—";
-    return formatPhtTimestamp(value);
+    return formatPhtTimestamp12Hour(value);
 }
 
 function isParameterFailed(parameter: DailyYieldQAParameter, value: string): boolean {

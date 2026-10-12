@@ -110,7 +110,7 @@ function toInstant(value: string | Date): Date | null {
     return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function formattedParts(value: string | Date) {
+function formattedParts(value: string | Date, hourCycle: "h23" | "h12" = "h23") {
     const instant = toInstant(value);
     if (!instant) return null;
 
@@ -119,10 +119,10 @@ function formattedParts(value: string | Date) {
         year: "numeric",
         month: "short",
         day: "2-digit",
-        hour: "2-digit",
+        hour: hourCycle === "h12" ? "numeric" : "2-digit",
         minute: "2-digit",
         second: "2-digit",
-        hourCycle: "h23"
+        hourCycle
     }).formatToParts(instant);
     return Object.fromEntries(parts.map(part => [part.type, part.value]));
 }
@@ -159,6 +159,13 @@ export function formatPhtTimestamp(value?: string | Date | null): string {
     return `${parts.month} ${parts.day}, ${parts.year} ${parts.hour}:${parts.minute}:${parts.second} PHT`;
 }
 
+export function formatPhtTimestamp12Hour(value?: string | Date | null): string {
+    if (!value) return "N/A";
+    const parts = formattedParts(value, "h12");
+    if (!parts) return String(value);
+    return `${parts.month} ${parts.day}, ${parts.year} ${parts.hour}:${parts.minute}:${parts.second} ${parts.dayPeriod} PHT`;
+}
+
 export function formatPhtDate(value?: string | Date | null): string {
     if (!value) return "N/A";
     const parts = formattedParts(value);
@@ -171,4 +178,11 @@ export function formatPhtTime(value?: string | Date | null): string {
     const parts = formattedParts(value);
     if (!parts) return String(value);
     return `${parts.hour}:${parts.minute}:${parts.second}`;
+}
+
+export function formatPhtTime12Hour(value?: string | Date | null): string {
+    if (!value) return "";
+    const parts = formattedParts(value, "h12");
+    if (!parts) return String(value);
+    return `${parts.hour}:${parts.minute}:${parts.second} ${parts.dayPeriod}`;
 }
