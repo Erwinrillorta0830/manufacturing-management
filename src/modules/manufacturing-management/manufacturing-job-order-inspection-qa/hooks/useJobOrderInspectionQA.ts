@@ -1,16 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { DateRange } from "react-day-picker";
 import { toast } from "sonner";
 import {
     closeJobOrder,
     fetchJobOrderDailyYieldDetails,
     fetchJobOrderDailyYieldSummaries,
+    fetchJobOrderDailyYieldSummaryByNumber,
 } from "../services/job-order-inspection-qa-api";
 import type {
     JobOrderDailyYieldDetails,
     JobOrderDailyYieldSummary,
 } from "../types";
-import { phtDateBoundaryToEpoch, phtTimestampToEpoch } from "../../shared/pht-date";
 
 function phtDateKey(value: Date): string {
     const parts = new Intl.DateTimeFormat("en-US", {
@@ -25,6 +25,12 @@ function phtDateKey(value: Date): string {
 
 export function useJobOrderInspectionQA() {
     const [jobOrders, setJobOrders] = useState<JobOrderDailyYieldSummary[]>([]);
+    const [totalAvailable, setTotalAvailable] = useState(0);
+    const [filteredTotal, setFilteredTotal] = useState(0);
+    const [totalPages, setTotalPages] = useState(1);
+    const [statusOptions, setStatusOptions] = useState<string[]>([]);
+    const [productOptions, setProductOptions] = useState<Array<{ value: string; label: string }>>([]);
+    const [unresolvedJobOrderCount, setUnresolvedJobOrderCount] = useState(0);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [selectedJobOrder, setSelectedJobOrder] = useState<JobOrderDailyYieldSummary | null>(null);
@@ -33,6 +39,7 @@ export function useJobOrderInspectionQA() {
     const [detailsError, setDetailsError] = useState<string | null>(null);
     const [closingJobOrderId, setClosingJobOrderId] = useState<number | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
+    const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
     const [statusFilter, setStatusFilterState] = useState("");
     const [productFilter, setProductFilterState] = useState("");
     const [dateRange, setDateRangeState] = useState<DateRange | undefined>(undefined);
@@ -40,59 +47,111 @@ export function useJobOrderInspectionQA() {
     const [page, setPage] = useState(1);
     const [pageSize, setPageSizeState] = useState(8);
     const closeIdempotencyKeys = useRef(new Map<number, string>());
+    const summaryRequestId = useRef(0);
     const handledDeepLink = useRef<string | null>(null);
 
-    const statusOptions = useMemo(() => (
-        [...new Set(jobOrders.map((jobOrder) => jobOrder.status).filter(Boolean))]
-            .sort((left, right) => left.localeCompare(right))
-    ), [jobOrders]);
+    useEffect(() => {
+        const timeout = window.setTimeout(() => setAppliedSearchQuery(searchQuery.trim()), 250);
+        return () => window.clearTimeout(timeout);
+    }, [searchQuery]);
 
-    const productOptions = useMemo(() => {
-        const options = new Map<string, string>();
-        jobOrders.forEach((jobOrder) => {
-            const value = jobOrder.productId ? String(jobOrder.productId) : `name:${jobOrder.productName}`;
-            options.set(value, jobOrder.productName);
-        });
-        return [...options.entries()]
-            .map(([value, label]) => ({ value, label }))
-            .sort((left, right) => left.label.localeCompare(right.label));
-    }, [jobOrders]);
+    const dateFrom = dateRange?.from ? phtDateKey(dateRange.from) : "";
+    const dateTo = dateRange?.to ? phtDateKey(dateRange.to) : "";
+    const loadJobOrders = useCallback(async (signal?: AbortSignal) => {
+        const requestId = ++summaryRequestId.current;
+        setLoading(true);
+        setError(null);
+        try {
+            const result = await fetchJobOrderDailyYieldSummaries({
+                page,
+                pageSize,
+                search: appliedSearchQuery,
+                status: statusFilter,
+                productId: productFilter,
+                dateFrom,
+                dateTo,
+                flaggedOnly,
+            }, signal);
+            if (signal?.aborted || requestId !== summaryRequestId.current) return;
+            setJobOrders(result.data);
+            setFilteredTotal(result.meta.total);
+            setTotalPages(result.meta.totalPages);
+            setTotalAvailable(result.facets.totalAvailable);
+            setUnresolvedJobOrderCount(result.facets.unresolvedJobOrderCount);
+            setStatusOptions(result.facets.statusOptions);
+            setProductOptions(result.facets.productOptions);
+            if (result.meta.page !== page) setPage(result.meta.page);
+        } catch (loadError) {
+            if (signal?.aborted || requestId !== summaryRequestId.current) return;
+            const message = loadError instanceof Error ? loadError.message : "Failed to load JO Daily Yields.";
+            setError(message);
+        } finally {
+            if (!signal?.aborted && requestId === summaryRequestId.current) setLoading(false);
+        }
+    }, [appliedSearchQuery, dateFrom, dateTo, flaggedOnly, page, pageSize, productFilter, statusFilter]);
 
-    const filteredJobOrders = useMemo(() => {
-        const query = searchQuery.trim().toLowerCase();
-        const startEpoch = dateRange?.from
-            ? phtDateBoundaryToEpoch(phtDateKey(dateRange.from))
-            : null;
-        const endEpoch = dateRange?.to
-            ? phtDateBoundaryToEpoch(phtDateKey(dateRange.to), true)
-            : null;
-
-        return jobOrders.filter((jobOrder) => {
-            const matchesSearch = !query
-                || jobOrder.jobOrderNo.toLowerCase().includes(query)
-                || jobOrder.productName.toLowerCase().includes(query)
-                || Boolean(jobOrder.productCode?.toLowerCase().includes(query));
-            const matchesStatus = !statusFilter || jobOrder.status === statusFilter;
-            const productKey = jobOrder.productId ? String(jobOrder.productId) : `name:${jobOrder.productName}`;
-            const matchesProduct = !productFilter || productKey === productFilter;
-            const latestYieldEpoch = phtTimestampToEpoch(jobOrder.latestYieldAt);
-            const matchesDate = (!startEpoch || latestYieldEpoch >= startEpoch)
-                && (!endEpoch || latestYieldEpoch <= endEpoch);
-            const matchesFlagged = !flaggedOnly || jobOrder.unresolvedYieldCount > 0;
-
-            return matchesSearch && matchesStatus && matchesProduct && matchesDate && matchesFlagged;
-        });
-    }, [dateRange, flaggedOnly, jobOrders, productFilter, searchQuery, statusFilter]);
-
-    const totalPages = Math.max(1, Math.ceil(filteredJobOrders.length / pageSize));
-    const visibleJobOrders = useMemo(() => {
-        const start = (page - 1) * pageSize;
-        return filteredJobOrders.slice(start, start + pageSize);
-    }, [filteredJobOrders, page, pageSize]);
+    const loadDetails = useCallback(async (jobOrderId: number, signal?: AbortSignal) => {
+        setDetailsLoading(true);
+        setDetailsError(null);
+        try {
+            setSelectedDetails(await fetchJobOrderDailyYieldDetails(jobOrderId, signal));
+        } catch (loadError) {
+            if (signal?.aborted) return;
+            const message = loadError instanceof Error ? loadError.message : "Failed to load Job Order details.";
+            setSelectedDetails(null);
+            setDetailsError(message);
+        } finally {
+            if (!signal?.aborted) setDetailsLoading(false);
+        }
+    }, []);
 
     useEffect(() => {
-        setPage((current) => Math.min(current, totalPages));
-    }, [totalPages]);
+        const controller = new AbortController();
+        void loadJobOrders(controller.signal);
+        return () => controller.abort();
+    }, [loadJobOrders]);
+
+    useEffect(() => {
+        if (!selectedJobOrder) {
+            setSelectedDetails(null);
+            setDetailsError(null);
+            return;
+        }
+
+        const controller = new AbortController();
+        void loadDetails(selectedJobOrder.jobOrderId, controller.signal);
+        return () => controller.abort();
+    }, [loadDetails, selectedJobOrder]);
+
+    const openDetails = useCallback((jobOrder: JobOrderDailyYieldSummary) => {
+        setSelectedDetails(null);
+        setDetailsError(null);
+        setSelectedJobOrder(jobOrder);
+    }, []);
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        const requestedJobOrder = String(new URLSearchParams(window.location.search).get("jo") || "").trim();
+        if (!requestedJobOrder || handledDeepLink.current === requestedJobOrder) return;
+
+        const controller = new AbortController();
+        void fetchJobOrderDailyYieldSummaryByNumber(requestedJobOrder, controller.signal)
+            .then((match) => {
+                if (controller.signal.aborted) return;
+                handledDeepLink.current = requestedJobOrder;
+                if (match) {
+                    openDetails(match);
+                } else {
+                    toast.error(`Job Order ${requestedJobOrder} was not found in JO Daily Yields.`);
+                }
+            })
+            .catch((loadError) => {
+                if (controller.signal.aborted) return;
+                handledDeepLink.current = requestedJobOrder;
+                toast.error(loadError instanceof Error ? loadError.message : "Failed to open the requested Job Order.");
+            });
+        return () => controller.abort();
+    }, [openDetails]);
 
     const updateSearchQuery = useCallback((value: string) => {
         setSearchQuery(value);
@@ -142,82 +201,6 @@ export function useJobOrderInspectionQA() {
         || flaggedOnly
     );
 
-    const unresolvedJobOrderCount = useMemo(
-        () => jobOrders.filter((jobOrder) => jobOrder.unresolvedYieldCount > 0).length,
-        [jobOrders]
-    );
-
-    const loadJobOrders = useCallback(async (signal?: AbortSignal) => {
-        setLoading(true);
-        setError(null);
-        try {
-            setJobOrders(await fetchJobOrderDailyYieldSummaries(signal));
-        } catch (loadError) {
-            if (signal?.aborted) return;
-            const message = loadError instanceof Error ? loadError.message : "Failed to load JO Daily Yields.";
-            setError(message);
-        } finally {
-            if (!signal?.aborted) setLoading(false);
-        }
-    }, []);
-
-    const loadDetails = useCallback(async (jobOrderId: number, signal?: AbortSignal) => {
-        setDetailsLoading(true);
-        setDetailsError(null);
-        try {
-            setSelectedDetails(await fetchJobOrderDailyYieldDetails(jobOrderId, signal));
-        } catch (loadError) {
-            if (signal?.aborted) return;
-            const message = loadError instanceof Error ? loadError.message : "Failed to load Job Order details.";
-            setSelectedDetails(null);
-            setDetailsError(message);
-        } finally {
-            if (!signal?.aborted) setDetailsLoading(false);
-        }
-    }, []);
-
-    useEffect(() => {
-        const controller = new AbortController();
-        void loadJobOrders(controller.signal);
-        return () => controller.abort();
-    }, [loadJobOrders]);
-
-    useEffect(() => {
-        if (!selectedJobOrder) {
-            setSelectedDetails(null);
-            setDetailsError(null);
-            return;
-        }
-
-        const controller = new AbortController();
-        void loadDetails(selectedJobOrder.jobOrderId, controller.signal);
-        return () => controller.abort();
-    }, [loadDetails, selectedJobOrder]);
-
-    const openDetails = useCallback((jobOrder: JobOrderDailyYieldSummary) => {
-        setSelectedDetails(null);
-        setDetailsError(null);
-        setSelectedJobOrder(jobOrder);
-    }, []);
-
-    useEffect(() => {
-        if (loading || typeof window === "undefined") return;
-
-        const requestedJobOrder = String(new URLSearchParams(window.location.search).get("jo") || "").trim();
-        if (!requestedJobOrder || handledDeepLink.current === requestedJobOrder) return;
-
-        handledDeepLink.current = requestedJobOrder;
-        const match = jobOrders.find((jobOrder) =>
-            jobOrder.jobOrderNo.trim().toLowerCase() === requestedJobOrder.toLowerCase()
-        );
-
-        if (match) {
-            openDetails(match);
-        } else {
-            toast.error(`Job Order ${requestedJobOrder} was not found in JO Daily Yields.`);
-        }
-    }, [jobOrders, loading, openDetails]);
-
     const closeDetails = useCallback(() => {
         setSelectedJobOrder(null);
         setSelectedDetails(null);
@@ -262,8 +245,8 @@ export function useJobOrderInspectionQA() {
 
     return {
         jobOrders,
-        filteredJobOrders,
-        visibleJobOrders,
+        totalAvailable,
+        filteredTotal,
         statusOptions,
         productOptions,
         statusFilter,
