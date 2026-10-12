@@ -352,30 +352,22 @@ function parseSummaryQuery(searchParams: URLSearchParams): JobOrderDailyYieldSum
 }
 
 async function loadJobOrderDetails(id: number) {
-    const [jobOrder, yields, inspections, routes, products, operations] = await Promise.all([
+    const [jobOrder, yields, inspections, routes] = await Promise.all([
         readRecord(
-            `/items/manufacturing_job_orders/${encodeURIComponent(String(id))}?fields=*`,
+            `/items/manufacturing_job_orders/${encodeURIComponent(String(id))}?fields=job_order_id,job_order_no,status,product_id,branch_id,target_quantity,completed_quantity`,
             `Job Order ${id} lookup`
         ),
         readRows(
-            `/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(id))}&limit=-1&sort=-logged_at&fields=*`,
+            `/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(id))}&limit=-1&sort=-logged_at&fields=ledger_id,job_order_id,commit_status,yield_quantity,rejected_quantity,qa_accepted_quantity,qa_rejected_quantity,scrap_quantity,mm_lot_id,lot_number,manufacturing_date,expiry_date,rejected_mm_lot_id,rejected_lot_number,rejected_manufacturing_date,rejected_expiry_date,daily_qa_image_id,shift_name,session_key,production_date,logged_at`,
             `Yield ledger lookup for Job Order ${id}`
         ),
         readRows(
-            `/items/manufacturing_daily_qa_inspections?filter[job_order_id][_eq]=${encodeURIComponent(String(id))}&limit=-1&sort=-inspected_at&fields=*`,
+            `/items/manufacturing_daily_qa_inspections?filter[job_order_id][_eq]=${encodeURIComponent(String(id))}&limit=-1&sort=-inspected_at&fields=daily_qa_id,job_order_id,ledger_id,jo_route_id,inspector_id,moisture_percentage,acidity_ph,sensory_status,weight_check_passed,lab_status,action_taken,inspected_at,remarks`,
             `Daily QA inspection lookup for Job Order ${id}`
         ),
         readRows(
-            `/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${encodeURIComponent(String(id))}&limit=-1&fields=*`,
+            `/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${encodeURIComponent(String(id))}&limit=-1&fields=jo_route_id,job_order_id,operation_id,sequence_order,qa_template_id,status`,
             `Routing lookup for Job Order ${id}`
-        ),
-        readRows(
-            "/items/products?limit=-1&fields=product_id,product_name,product_code,product_shelf_life,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name",
-            "Product lookup"
-        ),
-        readRows(
-            "/items/manufacturing_operations?limit=-1&fields=id,operation_name",
-            "Manufacturing operation lookup"
         ),
     ]);
 
@@ -388,6 +380,25 @@ async function loadJobOrderDetails(id: number) {
     }
 
     const productId = relationId(jobOrder.product_id, ["product_id", "id"]);
+    const operationIds = [...new Set(
+        routes.map((route) => relationId(route.operation_id, ["operation_id", "id"])).filter(Boolean)
+    )];
+    const [products, operations] = await Promise.all([
+        readRowsForIds(
+            "products",
+            "product_id",
+            productId ? [productId] : [],
+            "product_id,product_name,product_code,product_shelf_life,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name",
+            "Product lookup"
+        ),
+        readRowsForIds(
+            "manufacturing_operations",
+            "id",
+            operationIds,
+            "id,operation_name",
+            "Manufacturing operation lookup"
+        ),
+    ]);
     const product = products.find((row) => relationId(row.product_id, ["product_id", "id"]) === productId);
     const operationsById = new Map<number, string>(
         operations.map((operation) => [
@@ -483,7 +494,7 @@ async function loadJobOrderDetails(id: number) {
     const mmLotIds = Array.from(new Set(yieldRows.map((row) => row.mmLotId).filter((value): value is number => Boolean(value))));
     const mmLots = mmLotIds.length > 0
         ? await readRows(
-            `/items/mm_lots?filter[lot_id][_in]=${mmLotIds.join(",")}&limit=-1&fields=*`,
+            `/items/mm_lots?filter[lot_id][_in]=${mmLotIds.join(",")}&limit=-1&fields=lot_id,lot_name`,
             "Storage lot lookup"
         )
         : [];
@@ -497,7 +508,7 @@ async function loadJobOrderDetails(id: number) {
 
     let closeReadiness: JobOrderClosureReadiness;
     try {
-        closeReadiness = await getJobOrderClosureReadiness(id);
+        closeReadiness = await getJobOrderClosureReadiness(id, { yields, inspections, routes });
     } catch (error) {
         console.error(`Unable to determine close readiness for Job Order ${id}:`, error);
         closeReadiness = {
@@ -519,7 +530,7 @@ async function loadJobOrderDetails(id: number) {
         productUom: productUomValue(product),
         productShelfLifeDays: shelfLifeDaysValue(product?.product_shelf_life),
         branchId: relationId(jobOrder.branch_id, ["branch_id", "id"]) || null,
-        targetQuantity: numberValue(jobOrder.target_quantity ?? jobOrder.quantity),
+        targetQuantity: numberValue(jobOrder.target_quantity),
         completedQuantity: numberValue(jobOrder.completed_quantity),
         producedQuantity: dailyYields.reduce((sum, row) => (
             sum + (row.qaStatus === "Passed" ? row.totalQuantity : 0)
