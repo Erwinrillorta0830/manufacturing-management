@@ -18,6 +18,33 @@ export interface JobOrderDailyYieldSummary {
     modifiedAt: string | null;
 }
 
+export interface JobOrderDailyYieldSummaryQuery {
+    page: number;
+    pageSize: number;
+    search: string;
+    status: string;
+    productId: string;
+    dateFrom: string;
+    dateTo: string;
+    flaggedOnly: boolean;
+}
+
+export interface JobOrderDailyYieldSummaryPage {
+    data: JobOrderDailyYieldSummary[];
+    meta: {
+        page: number;
+        pageSize: number;
+        total: number;
+        totalPages: number;
+    };
+    facets: {
+        totalAvailable: number;
+        unresolvedJobOrderCount: number;
+        statusOptions: string[];
+        productOptions: Array<{ value: string; label: string }>;
+    };
+}
+
 export interface JobOrderDailyYieldRoute {
     id: number;
     sequenceOrder: number;

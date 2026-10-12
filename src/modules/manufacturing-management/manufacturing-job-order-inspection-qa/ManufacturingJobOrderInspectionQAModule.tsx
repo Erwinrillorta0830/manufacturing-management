@@ -319,13 +319,13 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                         <p className="max-w-lg text-sm text-destructive">{jobOrderState.error}</p>
                         <Button type="button" variant="outline" onClick={() => void jobOrderState.refresh()}>Retry</Button>
                     </div>
-                ) : jobOrderState.jobOrders.length === 0 ? (
+                ) : jobOrderState.totalAvailable === 0 ? (
                     <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-muted-foreground">
                         <PackageCheck className="h-8 w-8 opacity-50" />
                         <p className="text-sm font-medium">No daily yields are available.</p>
                         <p className="text-xs">Yield-bearing Job Orders will appear here after a production session is recorded.</p>
                     </div>
-                ) : jobOrderState.filteredJobOrders.length === 0 ? (
+                ) : jobOrderState.filteredTotal === 0 ? (
                     <div className="flex flex-col items-center justify-center gap-3 py-16 text-center text-muted-foreground" role="status">
                         <Search className="h-8 w-8 opacity-50" />
                         <p className="text-sm font-medium">No Job Orders match your search.</p>
@@ -350,7 +350,7 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {jobOrderState.visibleJobOrders.map((jobOrder) => (
+                                    {jobOrderState.jobOrders.map((jobOrder) => (
                                         <TableRow key={jobOrder.jobOrderId}>
                                             <TableCell>
                                                 <div className="font-mono font-bold text-primary">{jobOrder.jobOrderNo}</div>
@@ -393,7 +393,7 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                         </div>
                         <div className="flex flex-col gap-3 border-t bg-muted/20 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
                         <p className="font-medium text-muted-foreground" aria-live="polite">
-                            Showing {((jobOrderState.page - 1) * jobOrderState.pageSize + 1).toLocaleString()}-{Math.min(jobOrderState.page * jobOrderState.pageSize, jobOrderState.filteredJobOrders.length).toLocaleString()} of {jobOrderState.filteredJobOrders.length.toLocaleString()} Job Orders
+                            Showing {jobOrderState.filteredTotal === 0 ? 0 : ((jobOrderState.page - 1) * jobOrderState.pageSize + 1).toLocaleString()}-{Math.min(jobOrderState.page * jobOrderState.pageSize, jobOrderState.filteredTotal).toLocaleString()} of {jobOrderState.filteredTotal.toLocaleString()} Job Orders
                         </p>
                         <div className="flex flex-wrap items-center justify-end gap-2">
                             <label className="flex min-h-9 items-center gap-2 font-medium text-muted-foreground">
