@@ -17,6 +17,9 @@ import {
 import { productionYieldImageUrl } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
 import { directusFileMetadata, fetchDirectusFileMetadata } from "@/app/api/manufacturing/_directus-file-metadata";
 import { getYieldOutputTotals } from "@/modules/manufacturing-management/manufacturing-job-order-inspection-qa/utils/yield-output-quantities";
+import { buildJobOrderDailyYieldSummaryPage } from "@/modules/manufacturing-management/manufacturing-job-order-inspection-qa/utils/summary-query";
+import { buildYieldSummaryIndex } from "./_yield-summary-index";
+import type { JobOrderDailyYieldSummaryQuery } from "@/modules/manufacturing-management/manufacturing-job-order-inspection-qa/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -179,47 +182,104 @@ function formatJobOrderStatus(value: unknown): string {
     return normalizeJobOrderStatus(value) || textValue(value) || "Unknown";
 }
 
-async function loadJobOrderSummaries() {
-    const [jobOrders, yields, products, routes, inspections] = await Promise.all([
-        readRows(
-            "/items/manufacturing_job_orders?limit=-1&sort=-job_order_id",
-            "Job Order lookup"
-        ),
-        readRows(
-            "/items/manufacturing_job_order_yield_ledger?limit=-1&sort=-logged_at",
-            "Yield ledger lookup"
-        ),
-        readRows(
-            "/items/products?limit=-1&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name",
+async function readRowsForIds(
+    collection: string,
+    filterField: string,
+    ids: number[],
+    fields: string,
+    label: string
+): Promise<DirectusRow[]> {
+    const uniqueIds = [...new Set(ids.filter((id) => Number.isSafeInteger(id) && id > 0))];
+    const batches: number[][] = [];
+    for (let index = 0; index < uniqueIds.length; index += 100) {
+        batches.push(uniqueIds.slice(index, index + 100));
+    }
+
+    const rows: DirectusRow[] = [];
+    for (let index = 0; index < batches.length; index += 4) {
+        const results = await Promise.all(batches.slice(index, index + 4).map((batch) => {
+            const query = new URLSearchParams({
+                [`filter[${filterField}][_in]`]: batch.join(","),
+                limit: "-1",
+                fields,
+            });
+            return readRows(`/items/${collection}?${query.toString()}`, label);
+        }));
+        rows.push(...results.flat());
+    }
+    return rows;
+}
+
+async function loadJobOrderSummaries(jobOrderIds?: number[]) {
+    const yieldsQuery = new URLSearchParams({
+        limit: "-1",
+        fields: "ledger_id,job_order_id,commit_status,yield_quantity,rejected_quantity,scrap_quantity,logged_at,production_date",
+    });
+    if (jobOrderIds?.length) {
+        yieldsQuery.set("filter[job_order_id][_in]", [...new Set(jobOrderIds)].join(","));
+    }
+    const yields = await readRows(
+        `/items/manufacturing_job_order_yield_ledger?${yieldsQuery.toString()}`,
+        "Yield ledger lookup"
+    );
+    const committedYields = yields.filter(isCommittedYieldLedger);
+    const candidateJobOrderIds = [...new Set(
+        committedYields.map((row) => jobOrderId(row)).filter(Boolean)
+    )];
+    if (candidateJobOrderIds.length === 0) return [];
+
+    const jobOrders = await readRowsForIds(
+        "manufacturing_job_orders",
+        "job_order_id",
+        candidateJobOrderIds,
+        "job_order_id,job_order_no,status,product_id,branch_id,target_quantity,created_at,modified_at",
+        "Job Order lookup"
+    );
+    const eligibleJobOrders = jobOrders.filter((row) => (
+        jobOrderId(row) > 0 && !isCancelledJobOrderStatus(row.status)
+    ));
+    const eligibleJobOrderIds = eligibleJobOrders.map(jobOrderId);
+    if (eligibleJobOrderIds.length === 0) return [];
+
+    const eligibleJobOrderIdSet = new Set(eligibleJobOrderIds);
+    const relevantYields = committedYields.filter((row) => eligibleJobOrderIdSet.has(jobOrderId(row)));
+    const relevantLedgerIds = [...new Set(relevantYields.map(ledgerId).filter(Boolean))];
+    const productIds = [...new Set(
+        eligibleJobOrders.map((row) => relationId(row.product_id, ["product_id", "id"])).filter(Boolean)
+    )];
+    const [products, routes, inspections] = await Promise.all([
+        readRowsForIds(
+            "products",
+            "product_id",
+            productIds,
+            "product_id,product_name,product_code,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name",
             "Product lookup"
         ),
-        readRows(
-            "/items/manufacturing_job_order_routes?limit=-1&fields=*",
+        readRowsForIds(
+            "manufacturing_job_order_routes",
+            "job_order_id",
+            eligibleJobOrderIds,
+            "jo_route_id,job_order_id",
             "Job Order routing lookup"
         ),
-        readRows(
-            "/items/manufacturing_daily_qa_inspections?limit=-1&fields=*",
+        readRowsForIds(
+            "manufacturing_daily_qa_inspections",
+            "ledger_id",
+            relevantLedgerIds,
+            "ledger_id,jo_route_id,sensory_status,lab_status,action_taken,weight_check_passed",
             "Daily QA inspection lookup"
-        )
+        ),
     ]);
 
-    const committedYields = yields.filter(isCommittedYieldLedger);
-
     const productsById = new Map<number, DirectusRow>(
-        products.map((product) => [
-            relationId(product.product_id, ["product_id", "id"]),
-            product
-        ])
+        products.map((product) => [relationId(product.product_id, ["product_id", "id"]), product])
     );
-    const yieldsByJobOrder = new Map<number, DirectusRow[]>();
-    committedYields.forEach((yieldRow) => {
-        const id = relationId(yieldRow.job_order_id, ["job_order_id", "id"]);
-        if (!id) return;
-        const current = yieldsByJobOrder.get(id) || [];
-        current.push(yieldRow);
-        yieldsByJobOrder.set(id, current);
-    });
-    const assessments = buildQAYieldAssessments(committedYields, inspections, routes);
+    const yieldsByJobOrder = buildYieldSummaryIndex(
+        relevantYields,
+        jobOrderId,
+        (yieldRow) => yieldRow.logged_at || yieldRow.production_date
+    );
+    const assessments = buildQAYieldAssessments(relevantYields, inspections, routes);
     const acceptedByJobOrder = acceptedQuantityByJobOrder(assessments);
     const unresolvedByJobOrder = new Map<number, number>();
     assessments.forEach((assessment) => {
@@ -230,69 +290,77 @@ async function loadJobOrderSummaries() {
         );
     });
 
-    const rows = jobOrders
-        .map((jobOrder) => {
-            const id = jobOrderId(jobOrder);
-            const ledgerRows = yieldsByJobOrder.get(id) || [];
-            return { jobOrder, id, ledgerRows };
-        })
-        .filter(({ jobOrder, id, ledgerRows }) => id > 0 && ledgerRows.length > 0 && !isCancelledJobOrderStatus(jobOrder.status))
-        .map(({ jobOrder, id, ledgerRows }) => {
-            const productId = relationId(jobOrder.product_id, ["product_id", "id"]);
-            const product = productsById.get(productId);
-            const latest = ledgerRows
-                .slice()
-                .sort((left, right) => sortTimestamp(right.logged_at || right.production_date) - sortTimestamp(left.logged_at || left.production_date))[0];
-            const producedQuantity = acceptedByJobOrder.get(id) || 0;
+    return eligibleJobOrders.map((jobOrder) => {
+        const id = jobOrderId(jobOrder);
+        const yieldSummary = yieldsByJobOrder.get(id);
+        const productId = relationId(jobOrder.product_id, ["product_id", "id"]);
+        const product = productsById.get(productId);
+        return {
+            jobOrderId: id,
+            jobOrderNo: textValue(jobOrder.job_order_no) || `JO-${id}`,
+            status: formatJobOrderStatus(jobOrder.status),
+            productId: productId || null,
+            productName: textValue(product?.product_name) || (productId ? `Product #${productId}` : "—"),
+            productCode: textValue(product?.product_code) || null,
+            productUom: productUomValue(product),
+            branchId: relationId(jobOrder.branch_id, ["branch_id", "id"]) || null,
+            targetQuantity: numberValue(jobOrder.target_quantity),
+            producedQuantity: acceptedByJobOrder.get(id) || 0,
+            yieldCount: yieldSummary?.count || 0,
+            unresolvedYieldCount: unresolvedByJobOrder.get(id) || 0,
+            latestYieldAt: yieldSummary?.latestYieldAt ?? null,
+            createdAt: timestampValue(jobOrder.created_at),
+            modifiedAt: timestampValue(jobOrder.modified_at),
+        };
+    });
+}
 
-            return {
-                jobOrderId: id,
-                jobOrderNo: textValue(jobOrder.job_order_no) || `JO-${id}`,
-                status: formatJobOrderStatus(jobOrder.status),
-                productId: productId || null,
-                productName: textValue(product?.product_name) || (productId ? `Product #${productId}` : "—"),
-                productCode: textValue(product?.product_code) || null,
-                productUom: productUomValue(product),
-                branchId: relationId(jobOrder.branch_id, ["branch_id", "id"]) || null,
-                targetQuantity: numberValue(jobOrder.target_quantity ?? jobOrder.quantity),
-                producedQuantity,
-                yieldCount: ledgerRows.length,
-                unresolvedYieldCount: unresolvedByJobOrder.get(id) || 0,
-                latestYieldAt: timestampValue(latest?.logged_at || latest?.production_date),
-                createdAt: timestampValue(jobOrder.created_at),
-                modifiedAt: timestampValue(jobOrder.modified_at)
-            };
-        })
-        .sort((left, right) => sortTimestamp(right.latestYieldAt) - sortTimestamp(left.latestYieldAt) || right.jobOrderId - left.jobOrderId);
+async function loadJobOrderSummaryByNumber(jobOrderNo: string) {
+    const query = new URLSearchParams({
+        "filter[job_order_no][_eq]": jobOrderNo,
+        limit: "1",
+        fields: "job_order_id",
+    });
+    const rows = await readRows(`/items/manufacturing_job_orders?${query.toString()}`, "Job Order lookup");
+    const id = rows[0] ? jobOrderId(rows[0]) : 0;
+    if (!id) return null;
+    return (await loadJobOrderSummaries([id]))[0] || null;
+}
 
-    return rows;
+function parseSummaryQuery(searchParams: URLSearchParams): JobOrderDailyYieldSummaryQuery {
+    const integerParam = (name: string, fallback: number) => {
+        const parsed = Number(searchParams.get(name));
+        return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+    };
+    return {
+        page: integerParam("page", 1),
+        pageSize: integerParam("pageSize", 8),
+        search: textValue(searchParams.get("search")),
+        status: textValue(searchParams.get("status")),
+        productId: textValue(searchParams.get("productId")),
+        dateFrom: textValue(searchParams.get("dateFrom")),
+        dateTo: textValue(searchParams.get("dateTo")),
+        flaggedOnly: searchParams.get("flaggedOnly") === "true",
+    };
 }
 
 async function loadJobOrderDetails(id: number) {
-    const [jobOrder, yields, inspections, routes, products, operations] = await Promise.all([
+    const [jobOrder, yields, inspections, routes] = await Promise.all([
         readRecord(
-            `/items/manufacturing_job_orders/${encodeURIComponent(String(id))}?fields=*`,
+            `/items/manufacturing_job_orders/${encodeURIComponent(String(id))}?fields=job_order_id,job_order_no,status,product_id,branch_id,target_quantity,completed_quantity`,
             `Job Order ${id} lookup`
         ),
         readRows(
-            `/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(id))}&limit=-1&sort=-logged_at&fields=*`,
+            `/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(id))}&limit=-1&sort=-logged_at&fields=ledger_id,job_order_id,commit_status,yield_quantity,rejected_quantity,qa_accepted_quantity,qa_rejected_quantity,scrap_quantity,mm_lot_id,lot_number,manufacturing_date,expiry_date,rejected_mm_lot_id,rejected_lot_number,rejected_manufacturing_date,rejected_expiry_date,daily_qa_image_id,shift_name,session_key,production_date,logged_at`,
             `Yield ledger lookup for Job Order ${id}`
         ),
         readRows(
-            `/items/manufacturing_daily_qa_inspections?filter[job_order_id][_eq]=${encodeURIComponent(String(id))}&limit=-1&sort=-inspected_at&fields=*`,
+            `/items/manufacturing_daily_qa_inspections?filter[job_order_id][_eq]=${encodeURIComponent(String(id))}&limit=-1&sort=-inspected_at&fields=daily_qa_id,job_order_id,ledger_id,jo_route_id,inspector_id,moisture_percentage,acidity_ph,sensory_status,weight_check_passed,lab_status,action_taken,inspected_at,remarks`,
             `Daily QA inspection lookup for Job Order ${id}`
         ),
         readRows(
-            `/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${encodeURIComponent(String(id))}&limit=-1&fields=*`,
+            `/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${encodeURIComponent(String(id))}&limit=-1&fields=jo_route_id,job_order_id,operation_id,sequence_order,qa_template_id,status`,
             `Routing lookup for Job Order ${id}`
-        ),
-        readRows(
-            "/items/products?limit=-1&fields=product_id,product_name,product_code,product_shelf_life,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name",
-            "Product lookup"
-        ),
-        readRows(
-            "/items/manufacturing_operations?limit=-1&fields=id,operation_name",
-            "Manufacturing operation lookup"
         ),
     ]);
 
@@ -305,6 +373,25 @@ async function loadJobOrderDetails(id: number) {
     }
 
     const productId = relationId(jobOrder.product_id, ["product_id", "id"]);
+    const operationIds = [...new Set(
+        routes.map((route) => relationId(route.operation_id, ["operation_id", "id"])).filter(Boolean)
+    )];
+    const [products, operations] = await Promise.all([
+        readRowsForIds(
+            "products",
+            "product_id",
+            productId ? [productId] : [],
+            "product_id,product_name,product_code,product_shelf_life,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name",
+            "Product lookup"
+        ),
+        readRowsForIds(
+            "manufacturing_operations",
+            "id",
+            operationIds,
+            "id,operation_name",
+            "Manufacturing operation lookup"
+        ),
+    ]);
     const product = products.find((row) => relationId(row.product_id, ["product_id", "id"]) === productId);
     const operationsById = new Map<number, string>(
         operations.map((operation) => [
@@ -400,7 +487,7 @@ async function loadJobOrderDetails(id: number) {
     const mmLotIds = Array.from(new Set(yieldRows.map((row) => row.mmLotId).filter((value): value is number => Boolean(value))));
     const mmLots = mmLotIds.length > 0
         ? await readRows(
-            `/items/mm_lots?filter[lot_id][_in]=${mmLotIds.join(",")}&limit=-1&fields=*`,
+            `/items/mm_lots?filter[lot_id][_in]=${mmLotIds.join(",")}&limit=-1&fields=lot_id,lot_name`,
             "Storage lot lookup"
         )
         : [];
@@ -414,7 +501,7 @@ async function loadJobOrderDetails(id: number) {
 
     let closeReadiness: JobOrderClosureReadiness;
     try {
-        closeReadiness = await getJobOrderClosureReadiness(id);
+        closeReadiness = await getJobOrderClosureReadiness(id, { yields, inspections, routes });
     } catch (error) {
         console.error(`Unable to determine close readiness for Job Order ${id}:`, error);
         closeReadiness = {
@@ -436,7 +523,7 @@ async function loadJobOrderDetails(id: number) {
         productUom: productUomValue(product),
         productShelfLifeDays: shelfLifeDaysValue(product?.product_shelf_life),
         branchId: relationId(jobOrder.branch_id, ["branch_id", "id"]) || null,
-        targetQuantity: numberValue(jobOrder.target_quantity ?? jobOrder.quantity),
+        targetQuantity: numberValue(jobOrder.target_quantity),
         completedQuantity: numberValue(jobOrder.completed_quantity),
         producedQuantity: dailyYields.reduce((sum, row) => (
             sum + (row.qaStatus === "Passed" ? row.totalQuantity : 0)
@@ -455,6 +542,7 @@ export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         const rawJoId = textValue(searchParams.get("joId"));
+        const rawJobOrderNo = textValue(searchParams.get("jobOrderNo"));
 
         if (rawJoId) {
             const joId = Number(rawJoId);
@@ -464,7 +552,13 @@ export async function GET(request: Request) {
             return NextResponse.json({ data: await loadJobOrderDetails(joId) });
         }
 
-        return NextResponse.json({ data: await loadJobOrderSummaries() });
+        if (rawJobOrderNo) {
+            return NextResponse.json({ data: await loadJobOrderSummaryByNumber(rawJobOrderNo) });
+        }
+
+        const query = parseSummaryQuery(searchParams);
+        const summaries = await loadJobOrderSummaries();
+        return NextResponse.json({ data: buildJobOrderDailyYieldSummaryPage(summaries, query) });
     } catch (error) {
         const status = error instanceof JobOrderInspectionQAError ? error.status : 500;
         const message = error instanceof Error ? error.message : "Failed to load JO Daily Yields.";

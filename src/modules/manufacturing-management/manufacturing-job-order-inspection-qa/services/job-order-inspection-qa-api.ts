@@ -1,6 +1,8 @@
 import type {
     JobOrderDailyYieldDetails,
     JobOrderDailyYieldSummary,
+    JobOrderDailyYieldSummaryPage,
+    JobOrderDailyYieldSummaryQuery,
 } from "../types";
 
 async function readResponse<T>(response: Response, fallback: string): Promise<T> {
@@ -8,16 +10,39 @@ async function readResponse<T>(response: Response, fallback: string): Promise<T>
     if (!response.ok) {
         throw new Error(payload?.error || fallback);
     }
-    return (payload?.data ?? payload) as T;
+    return (payload && "data" in payload ? payload.data : payload) as T;
 }
 export async function fetchJobOrderDailyYieldSummaries(
+    query: JobOrderDailyYieldSummaryQuery,
     signal?: AbortSignal
-): Promise<JobOrderDailyYieldSummary[]> {
-    const response = await fetch("/api/manufacturing/production/job-order-inspection-qa", {
+): Promise<JobOrderDailyYieldSummaryPage> {
+    const params = new URLSearchParams({
+        page: String(query.page),
+        pageSize: String(query.pageSize),
+        search: query.search,
+        status: query.status,
+        productId: query.productId,
+        dateFrom: query.dateFrom,
+        dateTo: query.dateTo,
+        flaggedOnly: String(query.flaggedOnly),
+    });
+    const response = await fetch(`/api/manufacturing/production/job-order-inspection-qa?${params.toString()}`, {
         signal,
         cache: "no-store"
     });
-    return readResponse<JobOrderDailyYieldSummary[]>(response, "Failed to load JO Daily Yields.");
+    return readResponse<JobOrderDailyYieldSummaryPage>(response, "Failed to load JO Daily Yields.");
+}
+
+export async function fetchJobOrderDailyYieldSummaryByNumber(
+    jobOrderNo: string,
+    signal?: AbortSignal
+): Promise<JobOrderDailyYieldSummary | null> {
+    const query = new URLSearchParams({ jobOrderNo });
+    const response = await fetch(`/api/manufacturing/production/job-order-inspection-qa?${query.toString()}`, {
+        signal,
+        cache: "no-store"
+    });
+    return readResponse<JobOrderDailyYieldSummary | null>(response, "Failed to load Job Order summary.");
 }
 
 export async function fetchJobOrderDailyYieldDetails(

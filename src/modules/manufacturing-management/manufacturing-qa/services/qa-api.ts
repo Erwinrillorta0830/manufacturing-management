@@ -123,8 +123,10 @@ export async function fetchFinalQAQueuePage(page: number, pageSize: number, sear
     return asPage(await readApiResponse<unknown>(res, "Failed to load final QA queue"), page, pageSize);
 }
 
-export async function fetchQALogs(): Promise<QALog[]> {
-    const res = await fetch("/api/manufacturing/planning-engineering?action=qa-logs");
+export async function fetchQALogs(jobOrderId?: number, signal?: AbortSignal): Promise<QALog[]> {
+    const query = new URLSearchParams({ action: "qa-logs" });
+    if (jobOrderId !== undefined) query.set("jobOrderId", String(jobOrderId));
+    const res = await fetch(`/api/manufacturing/planning-engineering?${query}`, { signal });
     if (!res.ok) throw new Error("Failed to load QA logs");
     return res.json();
 }

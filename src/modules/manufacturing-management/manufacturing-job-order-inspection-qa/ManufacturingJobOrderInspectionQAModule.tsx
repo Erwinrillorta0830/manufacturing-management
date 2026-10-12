@@ -42,7 +42,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { formatPhtDate, formatPhtTimestamp } from "../shared/pht-date";
+import { formatPhtDate, formatPhtTime12Hour, formatPhtTimestamp12Hour } from "../shared/pht-date";
 import { useDailyYieldAudit } from "./hooks/useDailyYieldAudit";
 import { useJobOrderInspectionQA } from "./hooks/useJobOrderInspectionQA";
 import { DailyYieldAuditDialog } from "./components/DailyYieldAuditDialog";
@@ -128,7 +128,7 @@ function DailyYieldRow({
             </TableCell>
             <TableCell className="min-w-[150px] align-top">
                 <div className="font-medium">{formatPhtDate(record.productionDate)}</div>
-                {record.loggedAt && <div className="mt-1 text-[11px] text-muted-foreground">Logged {formatPhtTimestamp(record.loggedAt)}</div>}
+                {record.loggedAt && <div className="mt-1 text-[11px] text-muted-foreground">Logged {formatPhtTimestamp12Hour(record.loggedAt)}</div>}
             </TableCell>
             <TableCell className="font-mono text-right align-top font-semibold text-emerald-700 dark:text-emerald-300">{quantity(record.goodQuantity)}</TableCell>
             <TableCell className="font-mono text-right align-top font-semibold text-red-600 dark:text-red-300">{quantity(displayedRejectedQuantity)}</TableCell>
@@ -319,13 +319,13 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                         <p className="max-w-lg text-sm text-destructive">{jobOrderState.error}</p>
                         <Button type="button" variant="outline" onClick={() => void jobOrderState.refresh()}>Retry</Button>
                     </div>
-                ) : jobOrderState.jobOrders.length === 0 ? (
+                ) : jobOrderState.totalAvailable === 0 ? (
                     <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-muted-foreground">
                         <PackageCheck className="h-8 w-8 opacity-50" />
                         <p className="text-sm font-medium">No daily yields are available.</p>
                         <p className="text-xs">Yield-bearing Job Orders will appear here after a production session is recorded.</p>
                     </div>
-                ) : jobOrderState.filteredJobOrders.length === 0 ? (
+                ) : jobOrderState.filteredTotal === 0 ? (
                     <div className="flex flex-col items-center justify-center gap-3 py-16 text-center text-muted-foreground" role="status">
                         <Search className="h-8 w-8 opacity-50" />
                         <p className="text-sm font-medium">No Job Orders match your search.</p>
@@ -350,7 +350,7 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {jobOrderState.visibleJobOrders.map((jobOrder) => (
+                                    {jobOrderState.jobOrders.map((jobOrder) => (
                                         <TableRow key={jobOrder.jobOrderId}>
                                             <TableCell>
                                                 <div className="font-mono font-bold text-primary">{jobOrder.jobOrderNo}</div>
@@ -362,7 +362,7 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                             </TableCell>
                                             <TableCell className="min-w-[145px] text-sm">
                                                 <div>{jobOrder.latestYieldAt ? formatPhtDate(jobOrder.latestYieldAt) : "-"}</div>
-                                                {jobOrder.latestYieldAt && <div className="mt-1 text-[11px] text-muted-foreground">{formatPhtTimestamp(jobOrder.latestYieldAt).split(", ").slice(-1)[0]}</div>}
+                                                {jobOrder.latestYieldAt && <div className="mt-1 text-[11px] text-muted-foreground">{formatPhtTime12Hour(jobOrder.latestYieldAt)}</div>}
                                             </TableCell>
                                             <TableCell className="text-right font-mono">{quantity(jobOrder.targetQuantity)}</TableCell>
                                             <TableCell className="text-right">
@@ -393,7 +393,7 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                         </div>
                         <div className="flex flex-col gap-3 border-t bg-muted/20 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
                         <p className="font-medium text-muted-foreground" aria-live="polite">
-                            Showing {((jobOrderState.page - 1) * jobOrderState.pageSize + 1).toLocaleString()}-{Math.min(jobOrderState.page * jobOrderState.pageSize, jobOrderState.filteredJobOrders.length).toLocaleString()} of {jobOrderState.filteredJobOrders.length.toLocaleString()} Job Orders
+                            Showing {jobOrderState.filteredTotal === 0 ? 0 : ((jobOrderState.page - 1) * jobOrderState.pageSize + 1).toLocaleString()}-{Math.min(jobOrderState.page * jobOrderState.pageSize, jobOrderState.filteredTotal).toLocaleString()} of {jobOrderState.filteredTotal.toLocaleString()} Job Orders
                         </p>
                         <div className="flex flex-wrap items-center justify-end gap-2">
                             <label className="flex min-h-9 items-center gap-2 font-medium text-muted-foreground">

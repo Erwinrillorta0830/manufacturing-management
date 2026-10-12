@@ -37,7 +37,7 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { FinishedGoodsLotSelect } from "../../shared/FinishedGoodsLotSelect";
-import { formatPhtTimestamp, phtTimestampToEpoch } from "../../shared/pht-date";
+import { formatPhtTimestamp12Hour, phtTimestampToEpoch } from "../../shared/pht-date";
 import { isManufacturingEvidenceVideo } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
 import { parseQAOutputQuantity } from "@/modules/manufacturing-management/manufacturing-qa/qa-output-allocation";
 import type { DailyYieldAuditController } from "../hooks/useDailyYieldAudit";
@@ -54,7 +54,7 @@ function numericText(value: unknown): string {
 
 function formatAuditTimestamp(value: unknown): string {
     if (typeof value !== "string" || !value.trim()) return "—";
-    return formatPhtTimestamp(value);
+    return formatPhtTimestamp12Hour(value);
 }
 
 function isParameterFailed(parameter: DailyYieldQAParameter, value: string): boolean {
@@ -579,6 +579,11 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                         {controller.referenceError}
                                     </div>
                                 )}
+                                {controller.referenceLoading && (
+                                    <div className="p-3 bg-muted/40 border border-border rounded-lg text-muted-foreground text-xs" role="status" aria-live="polite">
+                                        Loading audit templates and operator checklist logs…
+                                    </div>
+                                )}
 
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                     <div className="space-y-1">
@@ -866,7 +871,7 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                     {/* Dialog Footer */}
                     <DialogFooter className="shrink-0 pt-3 mt-1 border-t border-border gap-2 flex items-center justify-end bg-background">
                         <Button type="button" variant="outline" onClick={controller.closeAudit} disabled={controller.actionLoading} title={controller.actionLoading ? "Wait for the save to finish or time out." : undefined} className="border-border hover:bg-muted text-foreground min-h-10 text-xs font-semibold">Cancel</Button>
-                        <Button type="submit" disabled={controller.actionLoading || isVerified || controller.saveOutcomeUnclear} title={isVerified ? "This yield has been verified and can no longer be edited." : controller.saveOutcomeUnclear ? "Close and reopen this yield to check its latest saved status before retrying." : undefined} className="bg-primary hover:bg-primary/95 text-white font-bold min-h-10 text-xs px-4">
+                        <Button type="submit" disabled={controller.actionLoading || controller.referenceLoading || isVerified || controller.saveOutcomeUnclear} title={controller.referenceLoading ? "Wait for the audit reference data to finish loading." : isVerified ? "This yield has been verified and can no longer be edited." : controller.saveOutcomeUnclear ? "Close and reopen this yield to check its latest saved status before retrying." : undefined} className="bg-primary hover:bg-primary/95 text-white font-bold min-h-10 text-xs px-4">
                             {controller.actionLoading ? (
                                 <span role="status" className="inline-flex items-center gap-2">
                                     <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />

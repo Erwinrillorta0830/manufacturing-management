@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
     fetchQALogs,
@@ -9,10 +9,11 @@ import {
 } from "../../manufacturing-qa/services/qa-api";
 import { fetchEligibleBadStockLots, fetchEligibleFinishedGoodsLots } from "../../shared/finished-goods-lots-api";
 import type { EligibleFinishedGoodsLot } from "../../shared/finished-goods-lots-api";
-import { fetchRouteOperators, fetchUsersList } from "../../production-workflow/services/production-api";
+import { fetchJobOrderOperatorSnapshot, fetchUsersList } from "../../production-workflow/services/production-api";
 import { fetchJobOrderDailyYieldDetails } from "../services/job-order-inspection-qa-api";
 import { parseQAOutputQuantity, qaOutputAllocationMatchesLoggedTotal } from "../../manufacturing-qa/qa-output-allocation";
 import { expiryDateFromShelfLife } from "../utils/shelf-life-date";
+import { getCachedPromise } from "../utils/cached-promise";
 import type {
     DailyYieldQALog,
     DailyYieldQATemplate,
@@ -43,6 +44,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
     const [inspectorNamesById, setInspectorNamesById] = useState<Record<number, string>>({});
     const [qaTemplates, setQaTemplates] = useState<DailyYieldQATemplate[]>([]);
     const [qaLogs, setQaLogs] = useState<DailyYieldQALog[]>([]);
+    const [referenceLoading, setReferenceLoading] = useState(false);
     const [referenceError, setReferenceError] = useState<string | null>(null);
     const [actionLoading, setActionLoading] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
@@ -74,7 +76,17 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
     const [qaParamValues, setQaParamValues] = useState<Record<number, string>>({});
     const lotRequestId = useRef(0);
     const rejectedLotRequestId = useRef(0);
+    const operatorRequestId = useRef(0);
     const auditSubmitInFlight = useRef(false);
+    const referenceRequestId = useRef(0);
+    const templateCache = useRef(new Map<number, DailyYieldQATemplate>());
+    const loadedTemplateIds = useRef(new Set<number>());
+    const routeOperatorRequests = useRef(new Map<number, Promise<Record<number, string[]>>>());
+    const inspectorNameRequests = useRef(new Map<string, Promise<Record<number, string>>>());
+    const finishedGoodsLotRequests = useRef(new Map<string, Promise<EligibleFinishedGoodsLot[]>>());
+    const badStockLotRequests = useRef(new Map<string, Promise<EligibleFinishedGoodsLot[]>>());
+    const outputLotSelectionInitialized = useRef(false);
+    const rejectedLotSelectionInitialized = useRef(false);
 
     const updateDailyOutputManufacturingDate = useCallback((manufacturingDate: string) => {
         setDailyOutputManufacturingDate(manufacturingDate);
@@ -96,35 +108,60 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         if (expiryDate) setDailyRejectedOutputExpiryDate(expiryDate);
     }, [selectedDetails?.productShelfLifeDays]);
 
-    useEffect(() => {
-        let disposed = false;
-        const loadReferences = async () => {
-            try {
-                const [templatesResponse, logs] = await Promise.all([
-                    fetch("/api/manufacturing/qa?action=templates", { cache: "no-store" }),
-                    fetchQALogs()
-                ]);
-                if (!templatesResponse.ok) throw new Error("Failed to load QA templates.");
-                const templatePayload: unknown = await templatesResponse.json();
-                const templates = Array.isArray(templatePayload)
-                    ? templatePayload as DailyYieldQATemplate[]
-                    : [];
-                if (!disposed) {
-                    setQaTemplates(templates);
-                    setQaLogs(logs);
-                    setReferenceError(null);
-                }
-            } catch (error) {
-                if (!disposed) {
-                    setReferenceError(error instanceof Error ? error.message : "Failed to load QA reference data.");
-                }
-            }
-        };
+    const loadAuditReferences = useCallback(async (details: JobOrderDailyYieldDetails) => {
+        const requestId = ++referenceRequestId.current;
+        const jobOrderId = Number(details.jobOrderId);
+        setReferenceLoading(true);
+        setReferenceError(null);
+        setQaLogs([]);
 
-        void loadReferences();
-        return () => {
-            disposed = true;
-        };
+        if (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0) {
+            setReferenceLoading(false);
+            setReferenceError("A valid Job Order is required to load audit reference data.");
+            return;
+        }
+
+        const templateIds = [...new Set(details.routes
+            .map((route) => routeId(route.qaTemplateId))
+            .filter((id) => id > 0))];
+        const missingTemplateIds = templateIds.filter((id) => !loadedTemplateIds.current.has(id));
+        const templateQuery = new URLSearchParams({
+            action: "templates",
+            templateIds: missingTemplateIds.join(",")
+        });
+
+        try {
+            const [logsResult, templatesResult] = await Promise.allSettled([
+                fetchQALogs(jobOrderId),
+                missingTemplateIds.length > 0
+                    ? fetch(`/api/manufacturing/qa?${templateQuery}`, { cache: "no-store" }).then(async (response) => {
+                        if (!response.ok) throw new Error("Failed to load QA templates.");
+                        const payload: unknown = await response.json();
+                        return Array.isArray(payload) ? payload as DailyYieldQATemplate[] : [];
+                    })
+                    : Promise.resolve([] as DailyYieldQATemplate[])
+            ]);
+
+            if (templatesResult.status === "fulfilled") {
+                templatesResult.value.forEach((template) => {
+                    const id = routeId(template.template_id ?? template.id);
+                    if (id > 0) templateCache.current.set(id, template);
+                });
+                missingTemplateIds.forEach((id) => loadedTemplateIds.current.add(id));
+            }
+
+            if (requestId !== referenceRequestId.current) return;
+            setQaTemplates(Array.from(templateCache.current.values()));
+            if (logsResult.status === "fulfilled") setQaLogs(logsResult.value);
+
+            const errors = [
+                logsResult.status === "rejected" ? "Failed to load operator checklist logs." : "",
+                templatesResult.status === "rejected" ? "Failed to load QA templates." : ""
+            ].filter(Boolean);
+            setReferenceError(errors.length > 0 ? errors.join(" ") : null);
+        } finally {
+            if (requestId === referenceRequestId.current) setReferenceLoading(false);
+        }
     }, []);
 
     const routes = selectedDetails?.routes ?? EMPTY_ROUTES;
@@ -190,24 +227,34 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         lotRequestId.current = requestId;
         setDailyOutputLotsLoading(true);
         setDailyOutputLotsError(null);
-        setDailyOutputEligibleLots([]);
 
-        if (!details.branchId || !details.productId) {
+        const branchId = details.branchId;
+        const productId = details.productId;
+        if (!branchId || !productId) {
             setDailyOutputLotsLoading(false);
             setDailyOutputLotsError("The Job Order branch or finished-good product is unavailable.");
             return;
         }
 
         try {
-            const response = await fetchEligibleFinishedGoodsLots(details.branchId, details.productId);
+            const cacheKey = `${branchId}:${productId}`;
+            const lots = await getCachedPromise(finishedGoodsLotRequests.current, cacheKey, async () => {
+                const response = await fetchEligibleFinishedGoodsLots(branchId, productId);
+                return response.lots;
+            });
             if (lotRequestId.current !== requestId) return;
-            setDailyOutputEligibleLots(response.lots);
-            if (yieldRecord.mmLotId && response.lots.some((lot) => lot.lotId === yieldRecord.mmLotId)) {
-                setDailyOutputMmLotId(String(yieldRecord.mmLotId));
-            } else if (yieldRecord.mmLotId) {
-                setDailyOutputMmLotId("");
-                setDailyOutputLotsError("The previously assigned storage lot is no longer active or eligible for this finished good.");
-            } else if (response.lots.length === 0) {
+            setDailyOutputEligibleLots(lots);
+            if (!outputLotSelectionInitialized.current) {
+                if (yieldRecord.mmLotId && lots.some((lot) => lot.lotId === yieldRecord.mmLotId)) {
+                    setDailyOutputMmLotId(String(yieldRecord.mmLotId));
+                } else if (yieldRecord.mmLotId) {
+                    setDailyOutputMmLotId("");
+                    setDailyOutputLotsError("The previously assigned storage lot is no longer active or eligible for this finished good.");
+                } else if (lots.length === 0) {
+                    setDailyOutputLotsError("No active finished-goods storage lots are available for this Job Order branch and product.");
+                }
+                outputLotSelectionInitialized.current = true;
+            } else if (lots.length === 0) {
                 setDailyOutputLotsError("No active finished-goods storage lots are available for this Job Order branch and product.");
             }
         } catch (error) {
@@ -224,28 +271,34 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         rejectedLotRequestId.current = requestId;
         setDailyRejectedOutputLotsLoading(true);
         setDailyRejectedOutputLotsError(null);
-        setDailyRejectedOutputEligibleLots([]);
 
-        if (!details.branchId || !details.productId) {
+        const branchId = details.branchId;
+        const productId = details.productId;
+        if (!branchId || !productId) {
             setDailyRejectedOutputLotsLoading(false);
             setDailyRejectedOutputLotsError("The Job Order branch or finished-good product is unavailable.");
             return;
         }
-        if (yieldRecord.goodQuantity + yieldRecord.rejectedQuantity <= 0) {
-            setDailyRejectedOutputLotsLoading(false);
-            return;
-        }
 
         try {
-            const response = await fetchEligibleBadStockLots(details.branchId, details.productId);
+            const cacheKey = `${branchId}:${productId}`;
+            const lots = await getCachedPromise(badStockLotRequests.current, cacheKey, async () => {
+                const response = await fetchEligibleBadStockLots(branchId, productId);
+                return response.lots;
+            });
             if (rejectedLotRequestId.current !== requestId) return;
-            setDailyRejectedOutputEligibleLots(response.lots);
-            if (yieldRecord.rejectedMmLotId && response.lots.some((lot) => lot.lotId === yieldRecord.rejectedMmLotId)) {
-                setDailyRejectedOutputMmLotId(String(yieldRecord.rejectedMmLotId));
-            } else if (yieldRecord.rejectedMmLotId) {
-                setDailyRejectedOutputMmLotId("");
-                setDailyRejectedOutputLotsError("The previously assigned bad-stock storage lot is no longer active or eligible.");
-            } else if (response.lots.length === 0) {
+            setDailyRejectedOutputEligibleLots(lots);
+            if (!rejectedLotSelectionInitialized.current) {
+                if (yieldRecord.rejectedMmLotId && lots.some((lot) => lot.lotId === yieldRecord.rejectedMmLotId)) {
+                    setDailyRejectedOutputMmLotId(String(yieldRecord.rejectedMmLotId));
+                } else if (yieldRecord.rejectedMmLotId) {
+                    setDailyRejectedOutputMmLotId("");
+                    setDailyRejectedOutputLotsError("The previously assigned bad-stock storage lot is no longer active or eligible.");
+                } else if (lots.length === 0) {
+                    setDailyRejectedOutputLotsError("No active bad-stock storage lots are configured for this Job Order branch and product.");
+                }
+                rejectedLotSelectionInitialized.current = true;
+            } else if (lots.length === 0) {
                 setDailyRejectedOutputLotsError("No active bad-stock storage lots are configured for this Job Order branch and product.");
             }
         } catch (error) {
@@ -257,44 +310,93 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         }
     }, []);
 
-    const loadRouteOperators = useCallback(async (routeIds: number[]) => {
-        const entries = await Promise.all(routeIds.map(async (routeIdValue) => {
-            try {
-                const response = await fetchRouteOperators(routeIdValue);
-                const names = [...new Set(
-                    (response.data || [])
-                        .filter((record) => record.is_active !== false)
-                        .map((record) => String(record.user_name || "").trim() || `User #${record.user_id}`)
-                        .filter(Boolean)
-                )];
-                return [routeIdValue, names] as const;
-            } catch {
-                return [routeIdValue, []] as const;
+    const loadRouteOperators = useCallback(async (jobOrderId: number, routeIds: number[]) => {
+        const requestId = ++operatorRequestId.current;
+        if (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0) {
+            setRouteOperatorsByRouteId(Object.fromEntries(routeIds.map((id) => [id, []])));
+            return;
+        }
+        try {
+            const operatorsByRouteId = await getCachedPromise(routeOperatorRequests.current, jobOrderId, async () => {
+                const response = await fetchJobOrderOperatorSnapshot(jobOrderId);
+                const entries = new Map<number, Set<string>>();
+                routeIds.forEach((id) => entries.set(id, new Set()));
+                (response.data || []).forEach((record) => {
+                    if (record.is_active === false) return;
+                    const id = routeId(record.routing_id || record.task_id);
+                    if (!id) return;
+                    const names = entries.get(id) || new Set<string>();
+                    names.add(String(record.user_name || "").trim() || `User #${record.user_id}`);
+                    entries.set(id, names);
+                });
+                return Object.fromEntries(Array.from(entries, ([id, names]) => [id, Array.from(names)]));
+            });
+            if (requestId === operatorRequestId.current) setRouteOperatorsByRouteId(operatorsByRouteId);
+        } catch {
+            if (requestId === operatorRequestId.current) {
+                setRouteOperatorsByRouteId(Object.fromEntries(routeIds.map((id) => [id, []])));
             }
-        }));
-        setRouteOperatorsByRouteId(Object.fromEntries(entries));
+        }
     }, []);
 
     const loadInspectorNames = useCallback(async () => {
         try {
-            const users = await fetchUsersList();
-            const entries = (Array.isArray(users) ? users : [])
-                .map((user) => {
-                    const record = user as unknown as Record<string, unknown>;
-                    const id = Number(record.user_id ?? record.id) || 0;
-                    if (!id) return null;
-                    const name = [record.user_fname ?? record.first_name, record.user_lname ?? record.last_name]
-                        .map((part) => String(part || "").trim())
-                        .filter(Boolean)
-                        .join(" ");
-                    return [id, name || `Inspector #${id}`] as const;
-                })
-                .filter((entry): entry is readonly [number, string] => entry !== null);
-            setInspectorNamesById(Object.fromEntries(entries));
+            const names = await getCachedPromise(inspectorNameRequests.current, "users", async () => {
+                const users = await fetchUsersList();
+                const entries = (Array.isArray(users) ? users : [])
+                    .map((user) => {
+                        const record = user as unknown as Record<string, unknown>;
+                        const id = Number(record.user_id ?? record.id) || 0;
+                        if (!id) return null;
+                        const name = [record.user_fname ?? record.first_name, record.user_lname ?? record.last_name]
+                            .map((part) => String(part || "").trim())
+                            .filter(Boolean)
+                            .join(" ");
+                        return [id, name || `Inspector #${id}`] as const;
+                    })
+                    .filter((entry): entry is readonly [number, string] => entry !== null);
+                return Object.fromEntries(entries);
+            });
+            setInspectorNamesById(names);
         } catch {
             setInspectorNamesById({});
         }
     }, []);
+
+    const updateDailyAcceptedOutputQuantity = useCallback((value: string) => {
+        const previousQuantity = parseQAOutputQuantity(dailyAcceptedOutputQuantity) ?? 0;
+        const nextQuantity = parseQAOutputQuantity(value);
+        setDailyAcceptedOutputQuantity(value);
+        if (
+            previousQuantity <= 0
+            && nextQuantity !== null
+            && nextQuantity > 0
+            && selectedYield?.qaStatus !== "Passed"
+            && selectedDetails
+            && selectedYield
+            && !outputLotSelectionInitialized.current
+        ) {
+            void loadOutputLots(selectedDetails, selectedYield);
+        }
+    }, [dailyAcceptedOutputQuantity, loadOutputLots, selectedDetails, selectedYield]);
+
+    const updateDailyRejectedOutputQuantity = useCallback((value: string) => {
+        const previousQuantity = parseQAOutputQuantity(dailyRejectedOutputQuantity) ?? 0;
+        const nextQuantity = parseQAOutputQuantity(value);
+        setDailyRejectedOutputQuantity(value);
+        if (
+            previousQuantity <= 0
+            && nextQuantity !== null
+            && nextQuantity > 0
+            && selectedYield?.qaStatus !== "Passed"
+            && !selectedYield?.rejectedMmLotId
+            && selectedDetails
+            && selectedYield
+            && !rejectedLotSelectionInitialized.current
+        ) {
+            void loadRejectedOutputLots(selectedDetails, selectedYield);
+        }
+    }, [dailyRejectedOutputQuantity, loadRejectedOutputLots, selectedDetails, selectedYield]);
 
     const openAudit = useCallback((
         yieldRecord: JobOrderDailyYieldRecord,
@@ -331,7 +433,9 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
                 : ""
         ));
         setDailyOutputEligibleLots([]);
+        setDailyOutputLotsLoading(false);
         setDailyOutputLotsError(null);
+        outputLotSelectionInitialized.current = false;
         setDailyRejectedOutputBatchNo(yieldRecord.rejectedBatchNo || "");
         setDailyRejectedOutputMmLotId("");
         const rejectedOutputManufacturingDate = yieldRecord.rejectedManufacturingDate || outputManufacturingDate;
@@ -342,18 +446,36 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
                 : yieldRecord.expiryDate || ""
         ));
         setDailyRejectedOutputEligibleLots([]);
+        setDailyRejectedOutputLotsLoading(false);
         setDailyRejectedOutputLotsError(null);
+        rejectedLotSelectionInitialized.current = false;
         setQaParamValues({});
         setSelectedRouteId(preferredRoute?.id || pendingRoutes[0]?.id || sortedRoutes[0]?.id || null);
+        setRouteOperatorsByRouteId({});
+        lotRequestId.current += 1;
+        rejectedLotRequestId.current += 1;
         setIsOpen(true);
-        void loadOutputLots(details, yieldRecord);
-        void loadRejectedOutputLots(details, yieldRecord);
-        void loadRouteOperators(sortedRoutes.map((route) => route.id));
+        void loadAuditReferences(details);
+        const editable = yieldRecord.qaStatus !== "Passed";
+        const acceptedQuantity = Number(yieldRecord.qaAcceptedQuantity ?? yieldRecord.goodQuantity);
+        const rejectedQuantity = Number(yieldRecord.qaRejectedQuantity ?? yieldRecord.rejectedQuantity);
+        if (editable && acceptedQuantity > 0) void loadOutputLots(details, yieldRecord);
+        if (editable && rejectedQuantity > 0 && !yieldRecord.rejectedMmLotId) {
+            void loadRejectedOutputLots(details, yieldRecord);
+        }
+        void loadRouteOperators(Number(details.jobOrderId), sortedRoutes.map((route) => route.id));
         void loadInspectorNames();
-    }, [loadOutputLots, loadRejectedOutputLots, loadRouteOperators, loadInspectorNames]);
+    }, [loadAuditReferences, loadOutputLots, loadRejectedOutputLots, loadRouteOperators, loadInspectorNames]);
 
     const closeAudit = useCallback(() => {
         if (actionLoading) return;
+        referenceRequestId.current += 1;
+        lotRequestId.current += 1;
+        rejectedLotRequestId.current += 1;
+        operatorRequestId.current += 1;
+        setDailyOutputLotsLoading(false);
+        setDailyRejectedOutputLotsLoading(false);
+        setReferenceLoading(false);
         setIsOpen(false);
         setSaveError(null);
     }, [actionLoading]);
@@ -685,6 +807,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         inspectorNamesById,
         routes,
         matchingLogs,
+        referenceLoading,
         referenceError,
         actionLoading,
         saveError,
@@ -704,9 +827,9 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         dailyRemarks,
         setDailyRemarks,
         dailyAcceptedOutputQuantity,
-        setDailyAcceptedOutputQuantity,
+        setDailyAcceptedOutputQuantity: updateDailyAcceptedOutputQuantity,
         dailyRejectedOutputQuantity,
-        setDailyRejectedOutputQuantity,
+        setDailyRejectedOutputQuantity: updateDailyRejectedOutputQuantity,
         dailyOutputBatchNo,
         setDailyOutputBatchNo,
         dailyOutputMmLotId,

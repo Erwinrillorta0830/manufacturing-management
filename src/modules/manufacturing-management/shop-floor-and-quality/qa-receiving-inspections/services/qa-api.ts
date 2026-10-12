@@ -1,4 +1,4 @@
-import { Shipment, ShipmentLineItem, Branch, StorageLot, StorageLotBatch, QaSpecification, ReceivingCommitPayload, ReceivingCommitResult, ReceivingPreview, QuarantineDisposition, QuarantineStock, ForceReceivedResult, SupplierDocumentType, QaReceiptOption } from "../types";
+import { Shipment, ShipmentLineItem, Branch, StorageLot, StorageLotBatch, QaSpecification, ReceivingCommitPayload, ReceivingCommitResult, ReceivingPreview, QuarantineDisposition, QuarantineStock, ForceReceivedResult, SupplierDocumentType, QaReceiptOption, QaReceivingAttachmentRecord } from "../types";
 import {
     isReceivingErrorCode,
     type ReceivingErrorCode
@@ -353,3 +353,66 @@ export async function fetchFifoInventory(branchId: string, signal?: AbortSignal)
     if (!res.ok) throw new Error("Failed to load branch inventory ledger");
     return res.json();
 }
+
+export async function fetchQaReceivingAttachments(options: {
+    purchaseOrderId: number;
+    receivingHeaderId?: number | null;
+    signal?: AbortSignal;
+}): Promise<QaReceivingAttachmentRecord[]> {
+    const params = new URLSearchParams({
+        purchaseOrderId: String(options.purchaseOrderId)
+    });
+    if (options.receivingHeaderId != null && options.receivingHeaderId > 0) {
+        params.set("receivingHeaderId", String(options.receivingHeaderId));
+    }
+    const res = await fetch(`/api/manufacturing/qa-receiving/attachments?${params.toString()}`, {
+        signal: options.signal
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        throw new Error(body.error || "Failed to load receipt attachments.");
+    }
+    return Array.isArray(body) ? body : [];
+}
+
+export async function uploadQaReceivingAttachment(input: {
+    purchaseOrderId: number;
+    receivingHeaderId?: number | null;
+    purchaseOrderProductId?: number | null;
+    file: File;
+    remarks?: string | null;
+}): Promise<QaReceivingAttachmentRecord> {
+    const formData = new FormData();
+    formData.set("purchaseOrderId", String(input.purchaseOrderId));
+    if (input.receivingHeaderId != null && input.receivingHeaderId > 0) {
+        formData.set("receivingHeaderId", String(input.receivingHeaderId));
+    }
+    if (input.purchaseOrderProductId != null && input.purchaseOrderProductId > 0) {
+        formData.set("purchaseOrderProductId", String(input.purchaseOrderProductId));
+    }
+    if (input.remarks) {
+        formData.set("remarks", input.remarks);
+    }
+    formData.set("file", input.file);
+
+    const res = await fetch("/api/manufacturing/qa-receiving/attachments", {
+        method: "POST",
+        body: formData
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        throw new Error(body.error || "Failed to upload attachment.");
+    }
+    return body as QaReceivingAttachmentRecord;
+}
+
+export async function deleteQaReceivingAttachment(attachmentId: number): Promise<void> {
+    const res = await fetch(`/api/manufacturing/qa-receiving/attachments/${attachmentId}`, {
+        method: "DELETE"
+    });
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to delete attachment.");
+    }
+}
+

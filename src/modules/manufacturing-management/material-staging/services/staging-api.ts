@@ -3,7 +3,7 @@
  * Client service for Material Staging & Floor Holds Module
  */
 
-import {
+import type {
     AllocationPreview,
     AllocationPreviewPayload,
     StagingCommitPayload,
@@ -37,6 +37,7 @@ export async function fetchStagingJobOrders(params?: {
     branchId?: string | number;
     status?: string;
     search?: string;
+    signal?: AbortSignal;
 }): Promise<StagingApiResponse> {
     const queryParams = new URLSearchParams();
     if (params?.branchId && params.branchId !== "all") queryParams.set("branchId", String(params.branchId));
@@ -44,7 +45,7 @@ export async function fetchStagingJobOrders(params?: {
     if (params?.search) queryParams.set("search", params.search);
 
     const url = `/api/manufacturing/material-staging${queryParams.toString() ? `?${queryParams.toString()}` : ""}`;
-    const res = await fetch(url, { cache: "no-store" });
+    const res = await fetch(url, { cache: "no-store", signal: params?.signal });
 
     if (!res.ok) {
         const errorJson = await res.json().catch(() => ({}));
