@@ -18,6 +18,7 @@ import { productionYieldImageUrl } from "@/modules/manufacturing-management/prod
 import { directusFileMetadata, fetchDirectusFileMetadata } from "@/app/api/manufacturing/_directus-file-metadata";
 import { getYieldOutputTotals } from "@/modules/manufacturing-management/manufacturing-job-order-inspection-qa/utils/yield-output-quantities";
 import { buildJobOrderDailyYieldSummaryPage } from "@/modules/manufacturing-management/manufacturing-job-order-inspection-qa/utils/summary-query";
+import { buildYieldSummaryIndex } from "./_yield-summary-index";
 import type { JobOrderDailyYieldSummaryQuery } from "@/modules/manufacturing-management/manufacturing-job-order-inspection-qa/types";
 
 export const runtime = "nodejs";
@@ -273,18 +274,11 @@ async function loadJobOrderSummaries(jobOrderIds?: number[]) {
     const productsById = new Map<number, DirectusRow>(
         products.map((product) => [relationId(product.product_id, ["product_id", "id"]), product])
     );
-    const yieldsByJobOrder = new Map<number, { count: number; latest: DirectusRow | null }>();
-    relevantYields.forEach((yieldRow) => {
-        const id = jobOrderId(yieldRow);
-        if (!id) return;
-        const current = yieldsByJobOrder.get(id) || { count: 0, latest: null };
-        current.count += 1;
-        if (!current.latest || sortTimestamp(yieldRow.logged_at || yieldRow.production_date)
-            > sortTimestamp(current.latest.logged_at || current.latest.production_date)) {
-            current.latest = yieldRow;
-        }
-        yieldsByJobOrder.set(id, current);
-    });
+    const yieldsByJobOrder = buildYieldSummaryIndex(
+        relevantYields,
+        jobOrderId,
+        (yieldRow) => yieldRow.logged_at || yieldRow.production_date
+    );
     const assessments = buildQAYieldAssessments(relevantYields, inspections, routes);
     const acceptedByJobOrder = acceptedQuantityByJobOrder(assessments);
     const unresolvedByJobOrder = new Map<number, number>();
@@ -299,7 +293,6 @@ async function loadJobOrderSummaries(jobOrderIds?: number[]) {
     return eligibleJobOrders.map((jobOrder) => {
         const id = jobOrderId(jobOrder);
         const yieldSummary = yieldsByJobOrder.get(id);
-        const latest = yieldSummary?.latest;
         const productId = relationId(jobOrder.product_id, ["product_id", "id"]);
         const product = productsById.get(productId);
         return {
@@ -315,7 +308,7 @@ async function loadJobOrderSummaries(jobOrderIds?: number[]) {
             producedQuantity: acceptedByJobOrder.get(id) || 0,
             yieldCount: yieldSummary?.count || 0,
             unresolvedYieldCount: unresolvedByJobOrder.get(id) || 0,
-            latestYieldAt: timestampValue(latest?.logged_at || latest?.production_date),
+            latestYieldAt: yieldSummary?.latestYieldAt ?? null,
             createdAt: timestampValue(jobOrder.created_at),
             modifiedAt: timestampValue(jobOrder.modified_at),
         };

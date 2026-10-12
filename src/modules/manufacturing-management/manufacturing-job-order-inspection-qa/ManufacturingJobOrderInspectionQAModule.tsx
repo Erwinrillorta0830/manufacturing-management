@@ -42,7 +42,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { formatPhtDate, formatPhtTimestamp } from "../shared/pht-date";
+import { formatPhtDate, formatPhtTime12Hour, formatPhtTimestamp12Hour } from "../shared/pht-date";
 import { useDailyYieldAudit } from "./hooks/useDailyYieldAudit";
 import { useJobOrderInspectionQA } from "./hooks/useJobOrderInspectionQA";
 import { DailyYieldAuditDialog } from "./components/DailyYieldAuditDialog";
@@ -128,7 +128,7 @@ function DailyYieldRow({
             </TableCell>
             <TableCell className="min-w-[150px] align-top">
                 <div className="font-medium">{formatPhtDate(record.productionDate)}</div>
-                {record.loggedAt && <div className="mt-1 text-[11px] text-muted-foreground">Logged {formatPhtTimestamp(record.loggedAt)}</div>}
+                {record.loggedAt && <div className="mt-1 text-[11px] text-muted-foreground">Logged {formatPhtTimestamp12Hour(record.loggedAt)}</div>}
             </TableCell>
             <TableCell className="font-mono text-right align-top font-semibold text-emerald-700 dark:text-emerald-300">{quantity(record.goodQuantity)}</TableCell>
             <TableCell className="font-mono text-right align-top font-semibold text-red-600 dark:text-red-300">{quantity(displayedRejectedQuantity)}</TableCell>
@@ -362,7 +362,7 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                             </TableCell>
                                             <TableCell className="min-w-[145px] text-sm">
                                                 <div>{jobOrder.latestYieldAt ? formatPhtDate(jobOrder.latestYieldAt) : "-"}</div>
-                                                {jobOrder.latestYieldAt && <div className="mt-1 text-[11px] text-muted-foreground">{formatPhtTimestamp(jobOrder.latestYieldAt).split(", ").slice(-1)[0]}</div>}
+                                                {jobOrder.latestYieldAt && <div className="mt-1 text-[11px] text-muted-foreground">{formatPhtTime12Hour(jobOrder.latestYieldAt)}</div>}
                                             </TableCell>
                                             <TableCell className="text-right font-mono">{quantity(jobOrder.targetQuantity)}</TableCell>
                                             <TableCell className="text-right">
