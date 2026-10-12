@@ -1,6 +1,15 @@
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import {
+    buildStagingMovementIndexes,
+    getAllocationsForMaterialGroup,
+    groupMaterialsByJobOrder,
+    indexAllocationsByMaterial,
+    stagingMovementExactKey,
+    stagingMovementLotBatchKey
+} from "./_assembly-indexes";
+import {
+    canonicalTypeName,
     branchProductBatchKey,
     branchProductKey,
     branchProductLotBatchKey,
@@ -57,14 +66,6 @@ interface DirectusAllocation {
 
 class MaterialStagingReadError extends Error {
     readonly status = 503;
-}
-
-function canonicalTypeName(value: unknown): string {
-    return String(value ?? "")
-        .trim()
-        .toUpperCase()
-        .replace(/[^A-Z0-9]+/g, "_")
-        .replace(/^_+|_+$/g, "");
 }
 
 function numericRelationId(value: unknown, keys: string[] = ["id"]): number {
@@ -381,55 +382,17 @@ export async function GET(request: Request) {
         };
 
         const materialById = new Map<number, DirectusMaterial>();
+        const materialsByJobOrder = groupMaterialsByJobOrder(rawMaterials, (material) => getJoId(material.job_order_id));
         rawMaterials.forEach((material) => {
             const materialId = Number(material.jo_material_id || material.id || 0);
             if (materialId) materialById.set(materialId, material);
         });
 
-        const stagingMovementByKey = new Map<string, { quantity: number; lotId: number; inventoryLotId: number; stagingBin: string | null; negativeOverride: boolean }>();
-        rawMovements.forEach((movement) => {
-            const remarks = String(movement.remarks || "");
-            const productId = Number(movement.product_id || 0);
-            const lotId = Number(movement.mm_lot_id || 0);
-            const inventoryLotId = Number(movement.inventory_lot_id || 0);
-            const jobOrderId = Number(movement.source_document_id || 0);
-            const branchId = Number(movement.branch_id || 0);
-            const batchNo = String(movement.batch_no || "").trim().toLowerCase();
-            const quantity = Number(movement.quantity || 0);
-            const isStagingMovement = remarks.includes("[MM-MATERIAL-STAGING]");
-            const isReturnMovement = remarks.includes("[MM-MATERIAL-STAGING-RETURN]");
-            const canonicalType = canonicalTypeName(String((movement as unknown as Record<string, unknown>).transaction_type || ""));
-            const isCanonicalIssue = canonicalType === "MATERIAL_STAGING_ISSUE";
-            const isCanonicalReversal = canonicalType === "MATERIAL_STAGING_REVERSAL";
-            if (
-                (!isStagingMovement && !isReturnMovement) ||
-                (!isCanonicalIssue && !isCanonicalReversal && Number(movement.transaction_type_id) !== 4) ||
-                quantity === 0 ||
-                !productId ||
-                !lotId ||
-                !jobOrderId ||
-                !branchId ||
-                !batchNo
-            ) return;
-
-            const key = `${jobOrderId}:${branchId}:${productId}:${lotId}:${inventoryLotId}:${batchNo}`;
-            const targetBin = remarks.match(/target_bin=([^;|]+)/i)?.[1]?.trim() || null;
-            const stagedQuantity = isReturnMovement
-                ? -Math.abs(quantity)
-                : isCanonicalIssue || quantity < 0
-                    ? Math.abs(quantity)
-                    : quantity;
-            const current = stagingMovementByKey.get(key);
-            stagingMovementByKey.set(key, {
-                quantity: (current?.quantity || 0) + stagedQuantity,
-                lotId: lotId || current?.lotId || 0,
-                inventoryLotId: inventoryLotId || current?.inventoryLotId || 0,
-                stagingBin: isReturnMovement ? (current?.stagingBin || null) : (targetBin || current?.stagingBin || null),
-                negativeOverride: isReturnMovement
-                    ? Boolean(current?.negativeOverride)
-                    : Boolean(current?.negativeOverride || remarks.includes("[NEGATIVE OVERRIDE]"))
-            });
-        });
+        const stagingMovementIndexes = buildStagingMovementIndexes(
+            rawMovements,
+            normalizeBatchNo,
+            canonicalTypeName
+        );
 
         // Combine reservations and allocations
         const allAllocationsByJo = new Map<number, DirectusAllocation[]>();
@@ -458,8 +421,16 @@ export async function GET(request: Request) {
             const normalizedBatchNo = normalizeBatchNo(batchNo);
             const reservationLotId = numericRelationId(res.mm_lot_id, ["lot_id", "mm_lot_id", "id"]);
             const reservationInventoryLotId = numericRelationId(res.inventory_lot_id, ["inventory_lot_id", "id"]);
-            const stagingMovement = stagingMovementByKey.get(`${joId}:${branchId}:${productId}:${reservationLotId}:${reservationInventoryLotId}:${normalizedBatchNo}`)
-                || [...stagingMovementByKey.entries()].find(([key]) => key.startsWith(`${joId}:${branchId}:${productId}:${reservationLotId}:`) && key.endsWith(`:${normalizedBatchNo}`))?.[1];
+            const movementIdentity = {
+                jobOrderId: joId,
+                branchId,
+                productId,
+                lotId: reservationLotId,
+                inventoryLotId: reservationInventoryLotId,
+                normalizedBatchNo
+            };
+            const stagingMovement = stagingMovementIndexes.byExactIdentity.get(stagingMovementExactKey(movementIdentity))
+                || stagingMovementIndexes.firstByLotBatch.get(stagingMovementLotBatchKey(movementIdentity));
             const lot = reservationLotId > 0
                 ? stockByBranchProductBatchLot.get(
                     branchProductLotBatchKey(branchId, productId, reservationLotId, normalizedBatchNo)
@@ -503,6 +474,12 @@ export async function GET(request: Request) {
                 allAllocationsByJo.set(joId, list);
             }
         });
+
+        const allocationIndexes = indexAllocationsByMaterial(
+            allAllocationsByJo,
+            (allocation) => Number(allocation.jo_material_id || 0),
+            (allocation) => Number(allocation.product_id || 0)
+        );
 
         // Resolve human-readable lot names once so allocations and printed
         // staging slips never surface raw primary keys.
@@ -557,7 +534,7 @@ export async function GET(request: Request) {
             const suggestedStagingBin = "FLOOR-STAGING";
 
             // Filter materials belonging to this JO
-            const joMaterials = rawMaterials.filter((m) => getJoId(m.job_order_id) === joId);
+            const joMaterials = materialsByJobOrder.get(joId) || [];
             const groupedJoMaterials = groupMaterialRequirements(joMaterials, {
                 productId: (material) => numericRelationId(material.product_id, ["product_id", "id"]),
                 uomId: (material) => {
@@ -567,8 +544,6 @@ export async function GET(request: Request) {
                 },
                 quantity: (material) => material.allocated_quantity
             });
-            const joAllocs = allAllocationsByJo.get(joId) || [];
-
             let totalMaterialsCount = 0;
             let stagedMaterialsCount = 0;
             let hasAnyShortage = false;
@@ -579,7 +554,6 @@ export async function GET(request: Request) {
                 const sourceMaterialIds = sourceMaterials
                     .map((source) => Number(source.jo_material_id || source.id || 0))
                     .filter((id) => id > 0);
-                const sourceMaterialIdSet = new Set(sourceMaterialIds);
                 const sourceRequiredById = new Map(sourceMaterials.map((source) => [
                     Number(source.jo_material_id || source.id || 0),
                     Number(source.allocated_quantity || 0)
@@ -589,11 +563,12 @@ export async function GET(request: Request) {
                 const requiredQty = materialGroup.requiredQuantity;
                 const matId = sourceMaterialIds[0] || Number(mat.jo_material_id || mat.id || 0);
 
-                // Find allocations for this specific material
-                const relatedAllocs = joAllocs.filter((a) => {
-                    if (a.jo_material_id) return sourceMaterialIdSet.has(Number(a.jo_material_id));
-                    return Number(a.product_id) === mProductId;
-                });
+                const relatedAllocs = getAllocationsForMaterialGroup(
+                    allocationIndexes,
+                    joId,
+                    sourceMaterialIds,
+                    mProductId
+                );
 
                 const allocatedLots = relatedAllocs.map((al, idx) => {
                     const lotNo = (al.batch_no || `LOT-${jo.job_order_no}-${idx + 1}`).trim();
