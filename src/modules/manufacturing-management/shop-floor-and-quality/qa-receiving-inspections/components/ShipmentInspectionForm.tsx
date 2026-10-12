@@ -15,6 +15,7 @@ import type { FormSiblingAllocation } from "./QAMultiLotBatchAllocationModal";
 import type { LotAllocationGroup, QAStatus } from "@/modules/manufacturing-management/shared/types/lot-tracking.types";
 import QAProductItemsAllocationTable from "./QAProductItemsAllocationTable";
 import QaInspectionSkeleton from "./QaInspectionSkeleton";
+import QaReceivingAttachments from "./QaReceivingAttachments";
 
 function relationNumber(value: unknown, keys: string[]): number | null {
     if (value === null || value === undefined || value === "") return null;
@@ -730,6 +731,13 @@ export default function ShipmentInspectionForm({
                     </div>
                 </div>
             )}
+
+            {/* Receipt & Delivery File Attachments */}
+            <QaReceivingAttachments
+                purchaseOrderId={Number(selectedShipment.shipment_id || selectedShipment.purchase_order_no)}
+                receivingHeaderId={selectedReceipt?.receivingHeaderId || null}
+                readOnly={readOnly}
+            />
 
             {!readOnly && overDeliveryLines.length > 0 && (
                 <div className="mx-4 mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-amber-800" role="alert">

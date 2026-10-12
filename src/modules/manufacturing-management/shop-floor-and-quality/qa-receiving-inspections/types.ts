@@ -476,3 +476,19 @@ export interface ForceReceivedResult {
     idempotent: boolean;
     lines: ForceReceivedLineResult[];
 }
+
+export interface QaReceivingAttachmentRecord {
+    id: number;
+    receiving_header_id?: number | null;
+    purchase_order_id: number;
+    purchase_order_product_id?: number | null;
+    directus_file_id: string;
+    file_name: string;
+    mime_type: string | null;
+    file_size: number;
+    remarks?: string | null;
+    created_by?: number | null;
+    created_at: string;
+    updated_at?: string | null;
+}
+
