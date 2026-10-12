@@ -1597,11 +1597,11 @@ export function useFinishedGoods(initialTab: string = "details") {
         }
 
         // 2. Validate BOM ingredients across all routes
-        const totalBomItems = editedRoutes.reduce((sum, r) => sum + (r.bom_items || []).length, 0);
-        if (totalBomItems === 0) {
-            toast.error("Cannot submit for approval: At least one raw material or BOM ingredient component is required.");
-            return;
-        }
+        // const totalBomItems = editedRoutes.reduce((sum, r) => sum + (r.bom_items || []).length, 0);
+        // if (totalBomItems === 0) {
+        //     toast.error("Cannot submit for approval: At least one raw material or BOM ingredient component is required.");
+        //     return;
+        // }
 
         // 3. Validate BOM ingredient rows
         const invalidBomRow = editedRoutes.flatMap(route => (route.bom_items || []).map((item, index) => ({
