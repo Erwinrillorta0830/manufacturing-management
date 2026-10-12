@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3000",
+    "dev": "next dotenv",
     "build": "next build",
-    "start": "next start -p 3000",
+    "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit"
   },
