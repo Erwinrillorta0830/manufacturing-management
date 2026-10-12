@@ -52,7 +52,7 @@ export interface ProductTracingFiltersType {
     branch_id: number | null;
     product_type_id: number | null;
     product_id: number | null;
-    lot_id: number | null;
+    lot_id?: number | null;
     batch_no?: string;
     transaction_type?: string;
     movement_direction?: "ALL" | "IN" | "OUT";
