@@ -2,9 +2,10 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { JobOrder, User, RouteOperatorRecord, RoutingTask, JobOrderCancellationPreview, JobOrderCancellationResponse, SalesOrderLink, JobOrderMaterialLine } from "../types";
+import { JobOrder, User, RouteOperatorRecord, RoutingTask, JobOrderCancellationPreview, JobOrderCancellationResponse, SalesOrderLink, JobOrderMaterialLine, TerminalQueueJobOrder } from "../types";
 import {
-    fetchJobOrders,
+    fetchTerminalJobOrderQueue,
+    fetchTerminalJobOrderDetails,
     fetchUsersList as apiFetchUsers,
     fetchRouteOperators,
     fetchJobOrderMaterials,
@@ -20,7 +21,8 @@ import {
     isJobOrderStatus,
     JOB_ORDER_STATUS,
     displayJobOrderStatus,
-    normalizeJobOrderStatus
+    normalizeJobOrderStatus,
+    SHOP_FLOOR_QUEUE_STATUSES
 } from "../../job-order-status";
 import { elapsedSecondsBetween, hoursFromSeconds } from "../operator-time";
 import type { JobOrderWorkflowAction } from "../../job-order-workflow";
@@ -30,17 +32,6 @@ import {
     getJobOrderOperatorAssignments,
     normalizeOperatorAssignmentMap
 } from "../operator-assignment-display";
-
-const SHOP_FLOOR_QUEUE_STATUSES = [
-    JOB_ORDER_STATUS.PICKED,
-    JOB_ORDER_STATUS.IN_PRODUCTION,
-    JOB_ORDER_STATUS.ON_HOLD,
-    JOB_ORDER_STATUS.PRODUCTION_COMPLETED,
-    JOB_ORDER_STATUS.FOR_QA_RECONCILIATION,
-    JOB_ORDER_STATUS.QA_HOLD,
-    JOB_ORDER_STATUS.CLOSED,
-    JOB_ORDER_STATUS.CANCELLED
-] as const;
 
 const SHOP_FLOOR_QUEUE_STATUS_OPTIONS = SHOP_FLOOR_QUEUE_STATUSES.map((status) => ({
     value: status,
@@ -77,9 +68,14 @@ function roundHours(value: number): number {
 export function useProductionWorkflow() {
     const searchParams = useSearchParams();
     // --- State Variables ---
-    const [jobOrders, setJobOrders] = useState<JobOrder[]>([]);
+    const [jobOrders, setJobOrders] = useState<TerminalQueueJobOrder[]>([]);
     const [users, setUsers] = useState<User[]>([]);
     const [selectedJobOrderId, setSelectedJobOrderId] = useState<string>("");
+    const [selectedJobOrderDetails, setSelectedJobOrder] = useState<JobOrder | null>(null);
+    const [loadingSelectedJobOrder, setLoadingSelectedJobOrder] = useState(false);
+    const [selectedJobOrderError, setSelectedJobOrderError] = useState<string | null>(null);
+    const selectedJobOrderDetailRequestIdRef = useRef(0);
+    const selectedJobOrderDetailAbortRef = useRef<AbortController | null>(null);
     const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
     const [jobOrderMaterials, setJobOrderMaterials] = useState<JobOrderMaterialLine[]>([]);
     const [jobOrderMaterialsJobOrderId, setJobOrderMaterialsJobOrderId] = useState<number | null>(null);
@@ -147,7 +143,7 @@ export function useProductionWorkflow() {
         return jobOrders.filter((jo) => isJobOrderStatus(jo.status, ...SHOP_FLOOR_QUEUE_STATUSES));
     }, [jobOrders]);
 
-    const salesOrderLinksOf = useCallback((jo: JobOrder): SalesOrderLink[] => {
+    const salesOrderLinksOf = useCallback((jo: TerminalQueueJobOrder): SalesOrderLink[] => {
         return jo.salesOrders || jo.sales_orders || [];
     }, []);
 
@@ -180,10 +176,19 @@ export function useProductionWorkflow() {
 
     const statusFilterOptions = SHOP_FLOOR_QUEUE_STATUS_OPTIONS;
 
-    // Get current Job Order object. The details modal follows the queue scope.
-    const selectedJobOrder = useMemo(() => {
+    const selectedQueueJobOrder = useMemo(() => {
         return terminalJobOrders.find((jo) => jo.jo_id === selectedJobOrderId) || null;
     }, [terminalJobOrders, selectedJobOrderId]);
+    const selectedQueueJobOrderId = selectedQueueJobOrder?.job_order_id ?? null;
+    const selectedJobOrder = selectedJobOrderDetails
+        && Number(selectedJobOrderDetails.job_order_id || selectedJobOrderDetails.order_id) === Number(selectedQueueJobOrderId)
+        ? selectedJobOrderDetails
+        : null;
+    const selectedQueueJobOrderIdRef = useRef<number | null>(selectedQueueJobOrderId);
+
+    useEffect(() => {
+        selectedQueueJobOrderIdRef.current = selectedQueueJobOrderId;
+    }, [selectedQueueJobOrderId]);
 
     // Sorted routing steps for selected Job Order
     const sortedTasks = useMemo(() => {
@@ -247,23 +252,83 @@ const selectedTask = useMemo(() => {
         setPendingDeepLinkTarget(null);
     }, [pendingDeepLinkTarget, loadingJobs, terminalJobOrders]);
 
-    // Fetch Job Orders
-    const fetchJobs = useCallback(async (selectIdAfterFetch?: string, silent = false): Promise<boolean> => {
+    const loadSelectedJobOrderDetails = useCallback(async (jobOrderId: number, clearBeforeLoad: boolean) => {
+        selectedJobOrderDetailRequestIdRef.current += 1;
+        const requestId = selectedJobOrderDetailRequestIdRef.current;
+        selectedJobOrderDetailAbortRef.current?.abort();
+        const controller = new AbortController();
+        selectedJobOrderDetailAbortRef.current = controller;
+        if (clearBeforeLoad) setSelectedJobOrder(null);
+        setSelectedJobOrderError(null);
+        setLoadingSelectedJobOrder(true);
+
+        try {
+            const details = await fetchTerminalJobOrderDetails(jobOrderId, controller.signal);
+            if (requestId === selectedJobOrderDetailRequestIdRef.current && !controller.signal.aborted) {
+                setSelectedJobOrder(details);
+            }
+        } catch (error) {
+            if (requestId === selectedJobOrderDetailRequestIdRef.current && !controller.signal.aborted) {
+                setSelectedJobOrderError(error instanceof Error ? error.message : "Failed to load the selected Job Order.");
+                if (clearBeforeLoad) setSelectedJobOrder(null);
+            }
+        } finally {
+            if (requestId === selectedJobOrderDetailRequestIdRef.current) {
+                setLoadingSelectedJobOrder(false);
+            }
+        }
+    }, []);
+
+    const retrySelectedJobOrderDetails = useCallback(() => {
+        if (selectedQueueJobOrderId) void loadSelectedJobOrderDetails(selectedQueueJobOrderId, true);
+    }, [loadSelectedJobOrderDetails, selectedQueueJobOrderId]);
+
+    useEffect(() => {
+        if (!selectedJobOrderId) {
+            selectedJobOrderDetailRequestIdRef.current += 1;
+            selectedJobOrderDetailAbortRef.current?.abort();
+            setSelectedJobOrder(null);
+            setSelectedJobOrderError(null);
+            setLoadingSelectedJobOrder(false);
+            return;
+        }
+
+        if (!selectedQueueJobOrderId) {
+            if (loadingJobs) return;
+            selectedJobOrderDetailRequestIdRef.current += 1;
+            selectedJobOrderDetailAbortRef.current?.abort();
+            setSelectedJobOrder(null);
+            setSelectedJobOrderError("This Job Order is no longer available in the Shop Floor Execution Terminal.");
+            setLoadingSelectedJobOrder(false);
+            return;
+        }
+
+        void loadSelectedJobOrderDetails(selectedQueueJobOrderId, true);
+    }, [selectedJobOrderId, selectedQueueJobOrderId, loadingJobs, loadSelectedJobOrderDetails]);
+
+    useEffect(() => () => {
+        selectedJobOrderDetailRequestIdRef.current += 1;
+        selectedJobOrderDetailAbortRef.current?.abort();
+    }, []);
+
+    // Fetch only the terminal queue; the selected Job Order is loaded separately on demand.
+    const fetchJobs = useCallback(async (
+        selectIdAfterFetch?: string,
+        silent = false,
+        refreshSelectedDetails = true
+    ): Promise<boolean> => {
         if (!silent) setLoadingJobs(true);
         try {
-            const data = await fetchJobOrders();
-            const activeJobs = data.filter((jo: any) => !isJobOrderStatus(
-                jo.status,
-                JOB_ORDER_STATUS.DRAFT,
-                JOB_ORDER_STATUS.PLANNED,
-                JOB_ORDER_STATUS.PLANNING
-            ));
-            setJobOrders(activeJobs);
+            const queueRows = await fetchTerminalJobOrderQueue();
+            setJobOrders(queueRows);
 
             const nextId = selectIdAfterFetch || selectedJobOrderIdRef.current || "";
-            const nextJobOrder = activeJobs.find((jo) => jo.jo_id === nextId);
+            const nextJobOrder = queueRows.find((jo) => jo.jo_id === nextId);
             if (nextJobOrder && isJobOrderStatus(nextJobOrder.status, ...SHOP_FLOOR_QUEUE_STATUSES)) {
                 setSelectedJobOrderId(nextJobOrder.jo_id);
+                if (refreshSelectedDetails && nextJobOrder.job_order_id === selectedQueueJobOrderIdRef.current) {
+                    await loadSelectedJobOrderDetails(nextJobOrder.job_order_id, false);
+                }
             } else {
                 setSelectedJobOrderId("");
                 setSelectedTaskId(null);
@@ -275,7 +340,7 @@ const selectedTask = useMemo(() => {
         } finally {
             if (!silent) setLoadingJobs(false);
         }
-    }, []);
+    }, [loadSelectedJobOrderDetails]);
 
     // Fetch User Master List (Operators)
     const loadUsersList = async () => {
@@ -358,8 +423,25 @@ const selectedTask = useMemo(() => {
     useEffect(() => {
         let eventSource: EventSource | null = null;
         let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+        let movementRefreshTimeout: ReturnType<typeof setTimeout> | null = null;
+        let queueRefreshInFlight = false;
+        let queueRefreshPending = false;
         let isDisposed = false;
         let reconnectAttempts = 0;
+
+        const refreshQueueAfterMovement = async () => {
+            if (queueRefreshInFlight) {
+                queueRefreshPending = true;
+                return;
+            }
+
+            queueRefreshInFlight = true;
+            do {
+                queueRefreshPending = false;
+                await fetchJobs(undefined, true, false);
+            } while (queueRefreshPending && !isDisposed);
+            queueRefreshInFlight = false;
+        };
 
         const connectSSE = () => {
             if (isDisposed) return;
@@ -376,8 +458,12 @@ const selectedTask = useMemo(() => {
                         const movement = JSON.parse(event.data);
                         console.log(`[Production Realtime SSE] Inventory movement detected (ID: ${movement.movement_id}). Refreshing active job orders...`);
                         
-                        // Silent reload to update active job orders
-                        fetchJobs(undefined, true);
+                        // Coalesce movement bursts into one queue refresh; details load on demand.
+                        if (movementRefreshTimeout) clearTimeout(movementRefreshTimeout);
+                        movementRefreshTimeout = setTimeout(() => {
+                            movementRefreshTimeout = null;
+                            void refreshQueueAfterMovement();
+                        }, 250);
                     } catch (e) {
                         console.error("[Production Realtime SSE] Error parsing movement event data:", e);
                     }
@@ -414,6 +500,9 @@ const selectedTask = useMemo(() => {
             }
             if (reconnectTimeout) {
                 clearTimeout(reconnectTimeout);
+            }
+            if (movementRefreshTimeout) {
+                clearTimeout(movementRefreshTimeout);
             }
         };
     }, [fetchJobs]);
@@ -1195,6 +1284,9 @@ const selectedTask = useMemo(() => {
         activeManualUserId,
         setActiveManualUserId,
         selectedJobOrder,
+        loadingSelectedJobOrder,
+        selectedJobOrderError,
+        retrySelectedJobOrderDetails,
         sortedTasks,
         jobOrderMaterials,
         jobOrderMaterialsJobOrderId,

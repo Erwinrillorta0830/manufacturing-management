@@ -14,7 +14,8 @@ import {
     WipTopUpPayload,
     WipTopUpResponse,
     WorkCenterJobOrderAvailability,
-    JobOrderMaterialLine
+    JobOrderMaterialLine,
+    TerminalQueueJobOrder
 } from "../types";
 import type { JobOrderWorkflowAction } from "../../job-order-workflow";
 
@@ -24,6 +25,29 @@ export async function fetchJobOrders(): Promise<JobOrder[]> {
     const res = await fetch("/api/manufacturing/planning-engineering", { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to load job orders");
     return res.json();
+}
+
+export async function fetchTerminalJobOrderQueue(): Promise<TerminalQueueJobOrder[]> {
+    const res = await fetch("/api/manufacturing/planning-engineering?action=terminal-queue", { cache: "no-store" });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(data?.error || "Failed to load the Shop Floor Execution Terminal queue.");
+    if (!Array.isArray(data)) throw new Error("The Shop Floor Execution Terminal queue response is invalid.");
+    return data as TerminalQueueJobOrder[];
+}
+
+export async function fetchTerminalJobOrderDetails(jobOrderId: number, signal?: AbortSignal): Promise<JobOrder> {
+    const params = new URLSearchParams({
+        action: "terminal-job-order",
+        joId: String(jobOrderId)
+    });
+    const res = await fetch(`/api/manufacturing/planning-engineering?${params.toString()}`, {
+        cache: "no-store",
+        signal
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(data?.error || "Failed to load the selected Job Order.");
+    if (!data || typeof data !== "object") throw new Error("The selected Job Order response is invalid.");
+    return data as JobOrder;
 }
 
 export async function fetchJobOrderMaterials(jobOrderId: number | string): Promise<JobOrderMaterialLine[]> {

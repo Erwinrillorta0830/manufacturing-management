@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { JobOrder } from "../types";
+import { TerminalQueueJobOrder } from "../types";
 import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 import { resolveJobOrderJourney } from "../../shared/job-order-journey";
 import { JobOrderJourneyBar } from "../../shared/components/JobOrderJourneyBar";
@@ -14,8 +14,7 @@ import { calculatePipelinedLineDurationHours } from "../../planning-engineering/
 import { formatPhtDate } from "../../shared/pht-date";
 
 interface ReleasedJobQueueProps {
-    filteredJobOrders: JobOrder[];
-    jobOrders: JobOrder[];
+    filteredJobOrders: TerminalQueueJobOrder[];
     selectedJobOrderId: string;
     setSelectedJobOrderId: (id: string) => void;
     searchQuery: string;
@@ -71,7 +70,6 @@ function StepProgressBar({ completedSteps, totalSteps }: { completedSteps: numbe
 
 export function ReleasedJobQueue({
     filteredJobOrders,
-    jobOrders,
     selectedJobOrderId,
     setSelectedJobOrderId,
     searchQuery,
@@ -92,13 +90,7 @@ export function ReleasedJobQueue({
     hasActiveFilters,
     onClearFilters
 }: ReleasedJobQueueProps) {
-    const parentByChildId = new Map(
-        filteredJobOrders
-            .filter((jo) => jo.parentJobOrderId)
-            .map((jo) => [jo.jo_id, jobOrders.find((parent) => Number(parent.order_id) === Number(jo.parentJobOrderId))])
-    );
-
-    const openTerminal = (jo: JobOrder) => setSelectedJobOrderId(jo.jo_id);
+    const openTerminal = (jo: TerminalQueueJobOrder) => setSelectedJobOrderId(jo.jo_id);
 
     return (
         <Card className="h-full overflow-hidden font-sans">
@@ -219,7 +211,7 @@ export function ReleasedJobQueue({
                                     const isInProduction = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.IN_PRODUCTION);
                                     const isOnHold = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD);
                                     const canOpenTerminal = isForPicking || isPicked || isInProduction || isOnHold;
-                                    const parent = parentByChildId.get(jo.jo_id);
+                                    const parentJobOrderNo = jo.parent_job_order_no;
                                     const producedQty = jo.producedQty ?? jo.completed_quantity ?? jo.productionOutputQuantity ?? 0;
                                     const routeTasks = jo.routing_tasks?.length
                                         ? jo.routing_tasks
@@ -259,12 +251,12 @@ export function ReleasedJobQueue({
                                         >
                                             <td className="px-3 py-3 align-top">
                                                 <div className="flex items-start gap-2">
-                                                    {parent && <CornerDownRight className="mt-0.5 h-4 w-4 shrink-0 text-primary" />}
+                                                    {parentJobOrderNo && <CornerDownRight className="mt-0.5 h-4 w-4 shrink-0 text-primary" />}
                                                     <div className="min-w-0">
                                                         <div className="font-sans text-sm font-bold tracking-tight">{jo.jo_id}</div>
-                                                        {parent && (
+                                                        {parentJobOrderNo && (
                                                             <div className="mt-1 text-xs font-semibold text-primary/80">
-                                                                Sub-assembly of {parent.jo_id}
+                                                                Sub-assembly of {parentJobOrderNo}
                                                             </div>
                                                         )}
                                                         <div className="mt-2">
