@@ -32,17 +32,17 @@ function ConnectedSalesOrderCell({ jobOrder }: { jobOrder: any }) {
         .filter((orderNo: string, index: number, orderNumbers: string[]) => orderNumbers.indexOf(orderNo) === index);
 
     return (
-        <td className="px-2 py-3 align-top">
+        <td className="px-2 py-3">
             {salesOrders.length > 0 ? (
                 <div className="flex flex-col gap-1">
                     {salesOrders.map((orderNo: string) => (
-                        <span key={orderNo} className="block break-all font-mono text-xs font-semibold text-primary">
+                        <span key={orderNo} className="block break-all font-mono font-semibold text-primary">
                             {orderNo}
                         </span>
                     ))}
                 </div>
             ) : (
-                <span className="text-xs text-muted-foreground">—</span>
+                <span className="text-muted-foreground">—</span>
             )}
         </td>
     );

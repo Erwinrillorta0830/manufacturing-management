@@ -32,7 +32,7 @@ import { JobOrderJourneyBar } from "../shared/components/JobOrderJourneyBar";
 import { JobOrderStatusBadge } from "../shared/components/JobOrderStatusBadge";
 import { NextStepCallout } from "../shared/components/NextStepCallout";
 import { StatusLegendPopover } from "../shared/components/StatusLegendPopover";
-import { formatPhtTimestamp } from "../shared/pht-date";
+import { formatPhtTimestamp, formatPhtTimestamp12Hour } from "../shared/pht-date";
 import { isManufacturingEvidenceVideo } from "../production-workflow/services/production-yield-image";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -108,7 +108,7 @@ function JobOrderStatusHistoryPanel({ history }: { history?: any[] }) {
                 {rows.slice(0, 8).map((entry, index) => {
                     const previous = entry.old_status || entry.previous_status || "Created";
                     const next = entry.new_status || "Unknown";
-                    const changedAt = entry.changed_at ? formatPhtTimestamp(entry.changed_at) : "Time not recorded";
+                    const changedAt = entry.changed_at ? formatPhtTimestamp12Hour(entry.changed_at) : "Time not recorded";
                     return (
                         <div key={entry.history_id || entry.id || `${next}-${changedAt}-${index}`} className="flex flex-col gap-1 rounded-lg border border-border/50 bg-muted/20 px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                             <div className="min-w-0">
@@ -1733,7 +1733,7 @@ export default function PlanningEngineeringModule() {
                                     </div>
                                     {activeFamilyJo?.cancelled_at && (
                                         <time className="text-[10px] text-muted-foreground" dateTime={activeFamilyJo.cancelled_at}>
-                                            {formatPhtTimestamp(activeFamilyJo.cancelled_at)}
+                                            {formatPhtTimestamp12Hour(activeFamilyJo.cancelled_at)}
                                         </time>
                                     )}
                                 </div>
