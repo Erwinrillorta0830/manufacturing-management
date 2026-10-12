@@ -202,6 +202,75 @@ async function fetchDirectusRecords(taskId?: number, userId?: number, activeOnly
     return Array.isArray(payload?.data) ? payload.data : [];
 }
 
+function activeOperatorCount(records: DirectusRouteOperator[]): number {
+    return new Set(records
+        .filter((record) => Boolean(record.started_at) && !record.stopped_at)
+        .map((record) => Number(record.operator_id))
+        .filter((operatorId) => Number.isSafeInteger(operatorId) && operatorId > 0)
+    ).size;
+}
+
+async function fetchActiveOperatorCount(): Promise<number> {
+    const params = new URLSearchParams({
+        limit: "-1",
+        fields: "operator_id,started_at,stopped_at",
+        "filter[started_at][_nnull]": "true",
+        "filter[stopped_at][_null]": "true"
+    });
+    const payload = await directusRequest<{ data?: DirectusRouteOperator[] }>(`/items/${COLLECTION}?${params.toString()}`);
+    return activeOperatorCount(Array.isArray(payload?.data) ? payload.data : []);
+}
+
+async function fetchJobOrderOperatorSnapshot(jobOrderId: number) {
+    const [jobOrderPayload, routesPayload] = await Promise.all([
+        directusRequest<{ data?: { job_order_id?: unknown; job_order_no?: unknown; assigned_personnel?: unknown } }>(
+            `/items/manufacturing_job_orders/${jobOrderId}?fields=job_order_id,job_order_no,assigned_personnel`
+        ),
+        directusRequest<{ data?: Array<{ jo_route_id?: unknown; sequence_order?: unknown }> }>(
+            `/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${jobOrderId}&fields=jo_route_id,sequence_order&limit=-1`
+        )
+    ]);
+    const jobOrder = jobOrderPayload?.data;
+    if (!jobOrder) {
+        throw new DirectusRouteOperatorError(404, "Job Order was not found.", "JOB_ORDER_NOT_FOUND");
+    }
+
+    const routes = Array.isArray(routesPayload?.data) ? routesPayload.data : [];
+    const routeIds = routes
+        .map((route) => positiveInteger(route.jo_route_id))
+        .filter((routeId) => routeId > 0);
+    const params = new URLSearchParams({ limit: "-1", fields: ROUTE_OPERATOR_FIELDS });
+    if (routeIds.length > 0) {
+        params.set("filter[_or][0][jo_route_id][_in]", routeIds.join(","));
+        params.set("filter[_or][1][started_at][_nnull]", "true");
+        params.set("filter[_or][1][stopped_at][_null]", "true");
+    } else {
+        params.set("filter[started_at][_nnull]", "true");
+        params.set("filter[stopped_at][_null]", "true");
+    }
+    const operatorPayload = await directusRequest<{ data?: DirectusRouteOperator[] }>(`/items/${COLLECTION}?${params.toString()}`);
+    const records = Array.isArray(operatorPayload?.data) ? operatorPayload.data : [];
+    const routeIdSet = new Set(routeIds);
+    const jobOrderRecords = records.filter((record) => routeIdSet.has(Number(record.jo_route_id)));
+    const jobOrderNo = String(jobOrder.job_order_no || `JO-${jobOrderId}`);
+    const mappedRecords = jobOrderRecords.map((record) => mapDirectusRecord(record, jobOrderNo));
+    const enrichedRecords = await enrichRecords(mappedRecords);
+    const totalHours = enrichedRecords.reduce((sum, record) => sum + record.actual_hours, 0);
+    const totalLaborCost = enrichedRecords.reduce((sum, record) => sum + record.labor_cost, 0);
+    const assignedPersonnel = normalizeOperatorAssignments(jobOrder.assigned_personnel);
+
+    return {
+        data: enrichedRecords,
+        assignedPersonnel,
+        assignmentState: { jobOrderId, jobOrderNo, assignedPersonnel },
+        activeOperatorCount: activeOperatorCount(records),
+        summary: {
+            total_hours: Math.round(totalHours * 100) / 100,
+            total_labor_cost: Math.round(totalLaborCost * 100) / 100
+        }
+    };
+}
+
 async function findDirectusRecord(taskId: number, userId: number, activeOnly = false): Promise<DirectusRouteOperator | null> {
     const records = await fetchDirectusRecords(taskId, userId, activeOnly);
     if (activeOnly) return latestRunningRouteOperatorTimer(records);
@@ -473,8 +542,22 @@ export async function GET(request: Request) {
         const { searchParams } = new URL(request.url);
         const taskIdParam = searchParams.get("taskId");
         const taskId = taskIdParam === null ? undefined : Number(taskIdParam);
+        const jobOrderIdParam = searchParams.get("jobOrderId");
+        const jobOrderId = jobOrderIdParam === null ? undefined : Number(jobOrderIdParam);
+        const countOnly = searchParams.get("countOnly") === "true";
         const joId = searchParams.get("joId") || "";
         const activeOnly = searchParams.get("activeOnly") === "true";
+
+        if (jobOrderId !== undefined) {
+            if (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0) {
+                return NextResponse.json({ error: "jobOrderId must be a positive integer" }, { status: 400 });
+            }
+            return NextResponse.json(await fetchJobOrderOperatorSnapshot(jobOrderId));
+        }
+
+        if (countOnly) {
+            return NextResponse.json({ activeOperatorCount: await fetchActiveOperatorCount() });
+        }
 
         if (taskId !== undefined && (!Number.isInteger(taskId) || taskId <= 0)) {
             return NextResponse.json({ error: "taskId must be a positive integer" }, { status: 400 });

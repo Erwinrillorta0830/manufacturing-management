@@ -140,6 +140,7 @@ export async function fetchUsersList(): Promise<User[]> {
 
 export interface RouteOperatorsResponse {
     data: RouteOperatorRecord[];
+    activeOperatorCount?: number;
     assignedPersonnel?: Record<string, number[]> | null;
     assignmentState?: {
         jobOrderId: number;
@@ -156,6 +157,25 @@ export async function fetchRouteOperators(taskId: number): Promise<RouteOperator
     const res = await fetch(`/api/manufacturing/production/route-operators?taskId=${taskId}`, { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to load operators logs");
     return res.json();
+}
+
+export async function fetchJobOrderOperatorSnapshot(jobOrderId: number, signal?: AbortSignal): Promise<RouteOperatorsResponse> {
+    const res = await fetch(`/api/manufacturing/production/route-operators?jobOrderId=${jobOrderId}`, {
+        cache: "no-store",
+        signal
+    });
+    if (!res.ok) throw new Error("Failed to load Job Order operator snapshot");
+    return res.json();
+}
+
+export async function fetchActiveOperatorCount(signal?: AbortSignal): Promise<number> {
+    const res = await fetch("/api/manufacturing/production/route-operators?countOnly=true", {
+        cache: "no-store",
+        signal
+    });
+    if (!res.ok) throw new Error("Failed to load active operator count");
+    const payload = await res.json();
+    return Number(payload?.activeOperatorCount || 0);
 }
 
 export interface RouteOperatorPayload {

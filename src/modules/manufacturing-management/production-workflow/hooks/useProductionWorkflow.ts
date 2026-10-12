@@ -7,7 +7,8 @@ import {
     fetchTerminalJobOrderQueue,
     fetchTerminalJobOrderDetails,
     fetchUsersList as apiFetchUsers,
-    fetchRouteOperators,
+    fetchJobOrderOperatorSnapshot,
+    fetchActiveOperatorCount,
     fetchJobOrderMaterials,
     manageRouteOperator,
     patchRoutingTask,
@@ -29,7 +30,6 @@ import type { JobOrderWorkflowAction } from "../../job-order-workflow";
 import { areJobOrderMaterialsFullyStaged } from "../utils/material-staging-readiness";
 import {
     buildDisplayRouteOperatorRecords,
-    getJobOrderOperatorAssignments,
     normalizeOperatorAssignmentMap
 } from "../operator-assignment-display";
 
@@ -84,6 +84,9 @@ export function useProductionWorkflow() {
     // Operator logs for the selected task
     const [routeOperators, setRouteOperators] = useState<RouteOperatorRecord[]>([]);
     const [operatorsSummary, setOperatorsSummary] = useState({ total_hours: 0 });
+    const [clockedInCount, setClockedInCount] = useState(0);
+    const operatorSnapshotRequestIdRef = useRef(0);
+    const loadedOperatorJobOrderIdRef = useRef<number | null>(null);
     // Pending timer mutation key `${taskId}:${userId}` — drives the per-cell
     // pending shimmer and pauses the poller while a request is in flight.
     const [pendingTimerKey, setPendingTimerKey] = useState<string | null>(null);
@@ -356,35 +359,46 @@ const selectedTask = useMemo(() => {
     const fetchJobOrderOperators = useCallback(async (
         tasks: RoutingTask[],
         silent = false,
-        assignmentOverride?: unknown
+        assignmentOverride?: unknown,
+        signal?: AbortSignal
     ) => {
-        if (tasks.length === 0) {
-            setRouteOperators([]);
-            setOperatorsSummary({ total_hours: 0 });
-            return;
-        }
+        const jobOrderId = Number(selectedJobOrder?.job_order_id || selectedJobOrder?.order_id || 0);
+        if (Number(selectedQueueJobOrderIdRef.current || 0) !== jobOrderId) return;
+        const requestId = ++operatorSnapshotRequestIdRef.current;
+        const isCurrentRequest = () => requestId === operatorSnapshotRequestIdRef.current
+            && !signal?.aborted
+            && Number(selectedQueueJobOrderIdRef.current || 0) === jobOrderId;
         if (!silent) setLoadingOperators(true);
         try {
+            if (!jobOrderId) {
+                const count = await fetchActiveOperatorCount(signal);
+                if (!isCurrentRequest()) return;
+                setClockedInCount(count);
+                setRouteOperators([]);
+                setOperatorsSummary({ total_hours: 0 });
+                return;
+            }
+
+            const snapshot = await fetchJobOrderOperatorSnapshot(jobOrderId, signal);
+            if (!isCurrentRequest()) return;
+            loadedOperatorJobOrderIdRef.current = jobOrderId;
             const selectedAssignments = assignmentOverride === undefined
-                ? getJobOrderOperatorAssignments(selectedJobOrder)
+                ? normalizeOperatorAssignmentMap(snapshot.assignmentState?.assignedPersonnel ?? snapshot.assignedPersonnel)
                 : normalizeOperatorAssignmentMap(assignmentOverride);
-            const results = await Promise.all(
-                tasks.map(async (t) => {
-                    try {
-                        const res = await fetchRouteOperators(t.id);
-                        const responseAssignments = res.assignmentState
-                            ? normalizeOperatorAssignmentMap(res.assignmentState.assignedPersonnel)
-                            : res.assignedPersonnel !== undefined && res.assignedPersonnel !== null
-                                ? normalizeOperatorAssignmentMap(res.assignedPersonnel)
-                                : selectedAssignments;
-                        return buildDisplayRouteOperatorRecords(t, res.data || [], responseAssignments, users);
-                    } catch (e) {
-                        console.error(`Error fetching operators for task ${t.id}:`, e);
-                        return buildDisplayRouteOperatorRecords(t, [], selectedAssignments, users);
-                    }
-                })
-            );
+            const recordsByTask = new Map<number, RouteOperatorRecord[]>();
+            for (const record of snapshot.data || []) {
+                const records = recordsByTask.get(Number(record.task_id)) || [];
+                records.push(record);
+                recordsByTask.set(Number(record.task_id), records);
+            }
+            const results = tasks.map((task) => buildDisplayRouteOperatorRecords(
+                task,
+                recordsByTask.get(task.id) || [],
+                selectedAssignments,
+                users
+            ));
             const allOps = results.flat();
+            setClockedInCount(Number(snapshot.activeOperatorCount || 0));
             setRouteOperators(allOps);
 
             // Compute total hours and cost across all tasks
@@ -393,9 +407,9 @@ const selectedTask = useMemo(() => {
                 total_hours: Math.round(totalHours * 100) / 100
             });
         } catch (err: any) {
-            console.error("Error fetching job order operators:", err);
+            if (!signal?.aborted) console.error("Error fetching job order operators:", err);
         } finally {
-            if (!silent) setLoadingOperators(false);
+            if (isCurrentRequest()) setLoadingOperators(false);
         }
     }, [selectedJobOrder, users]);
 
@@ -557,26 +571,61 @@ const selectedTask = useMemo(() => {
     }, [selectedJobOrder]);
 
     useEffect(() => {
-        if (sortedTasks.length > 0) {
-            fetchJobOrderOperators(sortedTasks);
-            setActiveManualUserId(null);
-            setManualHours("");
-        } else {
-            setRouteOperators([]);
-            setOperatorsSummary({ total_hours: 0 });
-        }
-    }, [selectedJobOrderId, sortedTasks, fetchJobOrderOperators]);
+        setRouteOperators([]);
+        setOperatorsSummary({ total_hours: 0 });
+        setLoadingOperators(false);
+        setActiveManualUserId(null);
+        setManualHours("");
+    }, [selectedJobOrderId]);
 
-    // Auto-refresh operators logs inside all tasks (every 10 seconds for live updates, silently).
-    // Skipped while a timer mutation is in flight so the poller cannot
-    // overwrite the optimistic patch before the server confirms it.
+    // Refresh one batch snapshot every 10 seconds while visible. The same
+    // response supplies the selected JO operators and the floor-wide count.
     useEffect(() => {
-        if (sortedTasks.length === 0 || pendingTimerKey) return;
-        const interval = setInterval(() => {
-            fetchJobOrderOperators(sortedTasks, true);
-        }, 10000);
-        return () => clearInterval(interval);
-    }, [sortedTasks, fetchJobOrderOperators, pendingTimerKey]);
+        let interval: ReturnType<typeof setInterval> | null = null;
+        let controller: AbortController | null = null;
+        let disposed = false;
+
+        const stopPolling = () => {
+            if (interval) clearInterval(interval);
+            interval = null;
+            controller?.abort();
+            controller = null;
+        };
+
+        const refresh = () => {
+            if (disposed || pendingTimerKey || document.visibilityState === "hidden" || controller) return;
+            const nextController = new AbortController();
+            controller = nextController;
+            const jobOrderId = Number(selectedJobOrder?.job_order_id || selectedJobOrder?.order_id || 0);
+            const silent = !jobOrderId || loadedOperatorJobOrderIdRef.current === jobOrderId;
+            void fetchJobOrderOperators(sortedTasks, silent, undefined, nextController.signal).finally(() => {
+                if (controller === nextController) controller = null;
+            });
+        };
+
+        const startPolling = () => {
+            if (interval || pendingTimerKey || document.visibilityState === "hidden") return;
+            refresh();
+            interval = setInterval(refresh, 10000);
+        };
+
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === "hidden") stopPolling();
+            else startPolling();
+        };
+
+        startPolling();
+        document.addEventListener("visibilitychange", handleVisibilityChange);
+        return () => {
+            disposed = true;
+            stopPolling();
+            document.removeEventListener("visibilitychange", handleVisibilityChange);
+        };
+    }, [selectedJobOrderId, sortedTasks, selectedJobOrder, fetchJobOrderOperators, pendingTimerKey]);
+
+    const refreshOperators = useCallback(() => {
+        void fetchJobOrderOperators(sortedTasks, true);
+    }, [fetchJobOrderOperators, sortedTasks]);
 
     // Clock In / Check In Operator
     const handleAddOperator = async (startTimer: boolean, taskId: number, assigneeId: string) => {
@@ -1271,6 +1320,8 @@ const selectedTask = useMemo(() => {
         setSelectedTaskId,
         routeOperators,
         operatorsSummary,
+        clockedInCount,
+        refreshOperators,
         pendingTimerKey,
         loadingJobs,
         loadingOperators,

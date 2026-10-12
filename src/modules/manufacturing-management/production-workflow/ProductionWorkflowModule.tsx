@@ -57,6 +57,8 @@ export default function ProductionWorkflowModule() {
         selectedTaskId,
         setSelectedTaskId,
         routeOperators,
+        clockedInCount,
+        refreshOperators,
         loadingJobs,
         loadingOperators,
         pendingTimerKey,
@@ -147,7 +149,6 @@ export default function ProductionWorkflowModule() {
     }, []);
 
     // UI state
-    const [clockedInCount, setClockedInCount] = React.useState(0);
     const [isShiftLogOpen, setIsShiftLogOpen] = useState(false);
     const [isRouteAssignmentOpen, setIsRouteAssignmentOpen] = useState(false);
     const [isGenealogyOpen, setIsGenealogyOpen] = useState(false);
@@ -183,32 +184,6 @@ export default function ProductionWorkflowModule() {
     }, [fetchJobs, selectedJobOrderId]);
 
     const dailyYieldAuditState = useDailyYieldAudit({ onSaved: handleAuditSaved });
-
-    const isMountedRef = React.useRef(true);
-
-    const fetchClockedIn = React.useCallback(async () => {
-        try {
-            const res = await fetch("/api/manufacturing/production/route-operators?activeOnly=true");
-            if (res.ok && isMountedRef.current) {
-                const json = await res.json();
-                const active = (json.data || []).filter((r: any) => r.started_at !== null && r.stopped_at === null);
-                const uniqueUsers = new Set(active.map((r: any) => r.user_id));
-                setClockedInCount(uniqueUsers.size);
-            }
-        } catch (err) {
-            console.error("Error loading active operators count:", err);
-        }
-    }, []);
-
-    React.useEffect(() => {
-        isMountedRef.current = true;
-        fetchClockedIn();
-        const interval = setInterval(fetchClockedIn, 10000);
-        return () => {
-            isMountedRef.current = false;
-            clearInterval(interval);
-        };
-    }, [fetchClockedIn]);
 
     const activeRuns = React.useMemo(() => {
         return inProductionJobOrders.length;
@@ -321,7 +296,7 @@ export default function ProductionWorkflowModule() {
                             size="default" 
                             onClick={() => {
                                 fetchJobs(selectedJobOrderId);
-                                fetchClockedIn();
+                                refreshOperators();
                             }}
                             className="h-10 text-xs font-bold shadow-sm bg-background border-input hover:bg-accent"
                         >
@@ -357,7 +332,7 @@ export default function ProductionWorkflowModule() {
                 </div>
 
                 {/* Clocked-in Operators Card */}
-                <div className="flex items-center justify-between p-5 bg-gradient-to-br from-card to-muted/20 border rounded-2xl shadow-sm hover:shadow-md transition-all duration-200" title="Operators with a running shift timer anywhere on the floor (refreshes every 10 seconds).">
+                <div className="flex items-center justify-between p-5 bg-gradient-to-br from-card to-muted/20 border rounded-2xl shadow-sm hover:shadow-md transition-all duration-200" title="Operators with a running shift timer anywhere on the floor (refreshes every 10 seconds while this page is visible).">
                     <div className="space-y-1">
                         <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Clocked-in Operators</span>
                         <div className="flex items-baseline gap-2">
