@@ -1262,10 +1262,10 @@ export async function submitDraftForApproval(
         return { success: false, error: "At least one workstation routing step is required before submitting." };
     }
 
-    const totalBom = fullDraft.routes.reduce((sum, r) => sum + (Array.isArray(r.bom_items) ? r.bom_items.length : 0), 0);
-    if (totalBom === 0) {
-        return { success: false, error: "At least one BOM ingredient component is required before submitting." };
-    }
+    // const totalBom = fullDraft.routes.reduce((sum, r) => sum + (Array.isArray(r.bom_items) ? r.bom_items.length : 0), 0);
+    // if (totalBom === 0) {
+    //     return { success: false, error: "At least one BOM ingredient component is required before submitting." };
+    // }
 
     const patchRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft/${draftId}`, {
         method: "PATCH",
