@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
     AllocatedLot,
@@ -14,6 +14,7 @@ import {
 } from "../types";
 import { commitMaterialStaging, fetchAllocationPreview, fetchStagingJobOrders, markJobOrderPicked } from "../services/staging-api";
 import { createMaterialStagingOperationId } from "../utils/operation-id";
+import { buildMaterialStagingSearchIndex } from "../utils/search-index";
 import { canStageJobOrderMaterials, isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 
 export function useMaterialStaging() {
@@ -48,6 +49,10 @@ export function useMaterialStaging() {
     const [stageProgressLabel, setStageProgressLabel] = useState<string | null>(null);
     const [debouncedSearch, setDebouncedSearch] = useState("");
     const [pendingDeepLinkJo, setPendingDeepLinkJo] = useState<string | null>(null);
+    const loadRequestSequence = useRef(0);
+    const activeLoadController = useRef<AbortController | null>(null);
+    const currentLoadFilters = useRef({ branchId: selectedBranchId, search: debouncedSearch });
+    currentLoadFilters.current = { branchId: selectedBranchId, search: debouncedSearch };
 
     // Debounce the server search so typing does not refetch on every keystroke.
     useEffect(() => {
@@ -73,9 +78,24 @@ export function useMaterialStaging() {
     }, [pendingDeepLinkJo, jobOrders]);
 
     const loadData = useCallback(async (showToast = false) => {
+        const requestFilters = currentLoadFilters.current;
+        const requestId = ++loadRequestSequence.current;
+        activeLoadController.current?.abort();
+        const controller = new AbortController();
+        activeLoadController.current = controller;
+        const isCurrentRequest = () => requestId === loadRequestSequence.current
+            && !controller.signal.aborted
+            && requestFilters.branchId === currentLoadFilters.current.branchId
+            && requestFilters.search === currentLoadFilters.current.search;
+
         try {
             setLoading(true);
-            const response = await fetchStagingJobOrders({ branchId: selectedBranchId, search: debouncedSearch });
+            const response = await fetchStagingJobOrders({
+                branchId: requestFilters.branchId,
+                search: requestFilters.search,
+                signal: controller.signal
+            });
+            if (!isCurrentRequest()) return null;
             if (!response.success) throw new Error(response.error || "Failed to load data");
             setLoadError(null);
             setJobOrders(response.data);
@@ -85,20 +105,31 @@ export function useMaterialStaging() {
             if (showToast) toast.success("Material staging data refreshed");
             return response.data;
         } catch (error) {
+            if (!isCurrentRequest()) return null;
             const message = error instanceof Error ? error.message : "Failed to load material staging data";
             console.error("Failed to load material staging data:", error);
             setLoadError(message);
             toast.error(message);
             return null;
         } finally {
-            setLoading(false);
+            if (isCurrentRequest()) {
+                if (activeLoadController.current === controller) activeLoadController.current = null;
+                setLoading(false);
+            }
         }
-    }, [selectedBranchId, debouncedSearch]);
+    }, []);
 
     useEffect(() => {
         void loadData();
-    }, [loadData]);
+        return () => {
+            loadRequestSequence.current += 1;
+            activeLoadController.current?.abort();
+            activeLoadController.current = null;
+        };
+    }, [loadData, selectedBranchId, debouncedSearch]);
 
+    const searchIndex = useMemo(() => buildMaterialStagingSearchIndex(jobOrders), [jobOrders]);
+    const normalizedSearchQuery = searchQuery.trim().toLowerCase();
     const filteredJobOrders = useMemo(() => jobOrders.filter(jobOrder => {
         if (selectedStatusFilter === "PICKED") {
             if (!isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.PICKED)) return false;
@@ -108,18 +139,9 @@ export function useMaterialStaging() {
             if (!canStageJobOrderMaterials(jobOrder.status)) return false;
         }
         if (onlyShortages && !jobOrder.has_shortage) return false;
-        const query = searchQuery.trim().toLowerCase();
-        if (!query) return true;
-        return Boolean(
-            jobOrder.job_order_no?.toLowerCase().includes(query)
-            || jobOrder.product_name?.toLowerCase().includes(query)
-            || jobOrder.product_code?.toLowerCase().includes(query)
-            || jobOrder.primary_work_center_name?.toLowerCase().includes(query)
-            || jobOrder.materials?.some(material => material.product_name?.toLowerCase().includes(query)
-                || material.product_code?.toLowerCase().includes(query)
-                || material.allocations?.some(allocation => allocation.batch_no?.toLowerCase().includes(query)))
-        );
-    }), [jobOrders, selectedStatusFilter, onlyShortages, searchQuery]);
+        if (!normalizedSearchQuery) return true;
+        return searchIndex.get(jobOrder.job_order_id)?.includes(normalizedSearchQuery) ?? false;
+    }), [jobOrders, selectedStatusFilter, onlyShortages, normalizedSearchQuery, searchIndex]);
 
     useEffect(() => {
         // A pending deep link owns the initial selection.

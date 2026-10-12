@@ -38,6 +38,12 @@ import {
     exceedsAvailableQuantity,
     getAllocationShortage
 } from "@/modules/manufacturing-management/material-staging/utils/allocation-quantity";
+import {
+    addStagedMovementQuantity,
+    allocationStockIdentityKey,
+    buildAllocationReservationIndexes,
+    indexInventoryLotsByProduct
+} from "./_allocation-indexes";
 
 const QUANTITY_EPSILON = ALLOCATION_QUANTITY_EPSILON;
 const PREVIEW_TOKEN_VERSION = 2;
@@ -237,10 +243,6 @@ function movementBatch(movement: NormalizedMmInventoryMovement | MaterialStaging
 
 function movementRemarks(movement: NormalizedMmInventoryMovement | MaterialStagingStockMovement): string {
     return text((movement as NormalizedMmInventoryMovement).remarks ?? (movement as MaterialStagingStockMovement).remarks);
-}
-
-function movementKey(productId: number, mmLotIdValue: number, batchNo: unknown): string {
-    return `${productId}:${mmLotIdValue}:${normalizeBatchNo(batchNo)}`;
 }
 
 function materialRequiredQuantity(row: DirectusRecord): number {
@@ -481,9 +483,8 @@ async function loadAllocationContext(payload: AllocationPreviewPayload): Promise
         ...directusMovements.filter(movement => !movement.movement_id || !springMovementIds.has(Number(movement.movement_id)))
     ];
 
-    const stockByLotBatch = new Map<string, number>();
     const stockByInventoryLotBatch = new Map<string, number>();
-    const stagedByMaterialLotBatch = new Map<string, number>();
+    const stagedMovementQuantityByMaterialId = new Map<number, number>();
     movements.forEach(movement => {
         const movementBranch = movementBranchId(movement);
         const productId = movementProductId(movement);
@@ -491,8 +492,6 @@ async function loadAllocationContext(payload: AllocationPreviewPayload): Promise
         const inventoryLotId = movementInventoryLotId(movement);
         const batchNo = movementBatch(movement);
         if (movementBranch !== branchId || !productId || !lotId || !batchNo) return;
-        const key = movementKey(productId, lotId, batchNo);
-        stockByLotBatch.set(key, (stockByLotBatch.get(key) || 0) + movementQuantity(movement));
         if (inventoryLotId > 0) {
             const inventoryKey = `${productId}:${lotId}:${inventoryLotId}:${normalizeBatchNo(batchNo)}`;
             stockByInventoryLotBatch.set(inventoryKey, (stockByInventoryLotBatch.get(inventoryKey) || 0) + movementQuantity(movement));
@@ -504,15 +503,21 @@ async function loadAllocationContext(payload: AllocationPreviewPayload): Promise
         if (movementSourceId(movement) === jobOrderId && (isStagingMovement || isReturnMovement)) {
             const materialMatch = remarks.match(/jo_material_id=(\d+)/i);
             if (materialMatch) {
-                const stagingQuantity = movementQuantity(movement);
-                const issueQuantity = isReturnMovement
-                    ? -Math.abs(stagingQuantity)
-                    : stagingQuantity < 0 ? Math.abs(stagingQuantity) : stagingQuantity;
-                const materialKey = `${Number(materialMatch[1])}:${key}`;
-                stagedByMaterialLotBatch.set(materialKey, (stagedByMaterialLotBatch.get(materialKey) || 0) + issueQuantity);
+                addStagedMovementQuantity(
+                    stagedMovementQuantityByMaterialId,
+                    Number(materialMatch[1]),
+                    movementQuantity(movement),
+                    isReturnMovement
+                );
             }
         }
     });
+
+    const reservationIndexes = buildAllocationReservationIndexes(reservationContexts, selectedMaterialIds, normalizeBatchNo);
+    const inventoryLotsByProduct = indexInventoryLotsByProduct(
+        inventoryLots,
+        inventoryLot => relationId(inventoryLot.product_id, ["product_id", "id"])
+    );
 
     const mmLotMap = new Map<number, MmLotRecord>(mmLots.map(lot => [mmLotId(lot.lot_id) || 0, lot]));
     const productMaterials = materialRows.map(row => {
@@ -545,27 +550,20 @@ async function loadAllocationContext(payload: AllocationPreviewPayload): Promise
     }).filter(material => material.id > 0 && material.productId > 0);
 
     const materials = productMaterials.map(material => {
-        const currentStagedFromReservations = reservationContexts
-            .filter(reservation => reservation.materialId === material.id)
-            .reduce((total, reservation) => total + reservation.stagedQuantity, 0);
-        const currentStagedFromMovements = [...stockByLotBatch.keys()]
-            .filter(key => key.startsWith(`${material.productId}:`))
-            .reduce((total, key) => total + [...stagedByMaterialLotBatch.entries()]
-                .filter(([stagedKey]) => stagedKey.endsWith(`:${key}`) && stagedKey.startsWith(`${material.id}:`))
-                .reduce((sum, [, value]) => sum + value, 0), 0);
+        const currentStagedFromReservations = reservationIndexes.stagedByMaterialId.get(material.id) || 0;
+        const currentStagedFromMovements = stagedMovementQuantityByMaterialId.get(material.id) || 0;
         return { ...material, stagedQuantity: roundQuantity(Math.max(currentStagedFromReservations, currentStagedFromMovements)) };
     });
 
     const candidatesByMaterial = new Map<number, AllocationCandidate[]>();
     for (const material of materials) {
         const candidates: AllocationCandidate[] = [];
-        for (const inventoryLot of inventoryLots) {
+        for (const inventoryLot of inventoryLotsByProduct.get(material.productId) || []) {
             const inventoryId = mmInventoryLotId(inventoryLot.inventory_lot_id) || 0;
             const inventoryMmLotId = relationId(inventoryLot.lot_id, ["lot_id", "id"]);
-            const inventoryProductId = relationId(inventoryLot.product_id, ["product_id", "id"]);
             const inventoryBranchId = relationId(inventoryLot.branch_id, ["branch_id", "id"]);
             const lot = mmLotMap.get(inventoryMmLotId);
-            if (!inventoryId || !inventoryMmLotId || inventoryProductId !== material.productId || inventoryBranchId !== branchId || !lot) continue;
+            if (!inventoryId || !inventoryMmLotId || inventoryBranchId !== branchId || !lot) continue;
             if (!material.productUnitId || unitId(lot.unit_id) !== material.productUnitId) continue;
             if (!isValidQaStatus(inventoryLot.qa_status) || isExpired(inventoryLot.expiry_date)) continue;
             const batchNo = text(inventoryLot.batch_no);
@@ -577,14 +575,13 @@ async function loadAllocationContext(payload: AllocationPreviewPayload): Promise
                 stockByInventoryLotBatch.get(`${material.productId}:${inventoryMmLotId}:${inventoryId}:${normalizeBatchNo(batchNo)}`)
                 ?? 0
             );
-            const reservedElsewhere = reservationContexts
-                .filter(reservation => !selectedMaterialIds.has(reservation.materialId)
-                    && reservation.productId === material.productId
-                    && reservation.branchId === branchId
-                    && reservation.mmLotId === inventoryMmLotId
-                    && reservation.inventoryLotId === inventoryId
-                    && normalizeBatchNo(reservation.batchNo) === normalizeBatchNo(batchNo))
-                .reduce((total, reservation) => total + Math.max(0, reservation.reservedQuantity - reservation.actualUsedQuantity - reservation.stagedQuantity), 0);
+            const reservedElsewhere = reservationIndexes.reservedElsewhereByStockIdentity.get(allocationStockIdentityKey({
+                productId: material.productId,
+                branchId,
+                mmLotId: inventoryMmLotId,
+                inventoryLotId: inventoryId,
+                batchNo
+            }, normalizeBatchNo)) || 0;
             candidates.push({
                 allocation_line_id: `candidate-${material.id}-${inventoryId}`,
                 product_id: material.productId,
