@@ -31,6 +31,29 @@ export const JOB_ORDER_STATUS = {
     SHORTAGE: "Draft"
 } as const;
 
+/** Job Orders shown in the Shop Floor Execution Terminal queue. */
+export const SHOP_FLOOR_QUEUE_STATUSES: CanonicalJobOrderStatus[] = [
+    JOB_ORDER_STATUS.PICKED,
+    JOB_ORDER_STATUS.IN_PRODUCTION,
+    JOB_ORDER_STATUS.ON_HOLD,
+    JOB_ORDER_STATUS.PRODUCTION_COMPLETED,
+    JOB_ORDER_STATUS.FOR_QA_RECONCILIATION,
+    JOB_ORDER_STATUS.QA_HOLD,
+    JOB_ORDER_STATUS.CLOSED,
+    JOB_ORDER_STATUS.CANCELLED
+];
+
+/** Stored legacy spellings that normalize into a status visible in the queue. */
+export const SHOP_FLOOR_QUEUE_STATUS_VALUES = [
+    ...SHOP_FLOOR_QUEUE_STATUSES,
+    "Reserved",
+    "Ongoing",
+    "In Progress",
+    "Finished",
+    "Completed",
+    "Canceled"
+] as const;
+
 export type CanonicalJobOrderStatus = typeof JOB_ORDER_STATUS[keyof typeof JOB_ORDER_STATUS];
 
 const STATUS_BY_KEY = new Map<string, CanonicalJobOrderStatus>([

@@ -48,6 +48,7 @@ import {
     type JobOrderModulePath
 } from "@/app/api/manufacturing/job-orders/_module-access";
 import { loadSubassemblyBOMComponents, parseSubassemblyProductIds } from "../helpers/subassembly-bom-components";
+import { fetchTerminalJobOrderDetails, fetchTerminalJobOrderQueue } from "../helpers/terminal-job-orders";
 
 const WIZARD_STEP_TIMEOUT_MS = 20000;
 
@@ -187,6 +188,8 @@ export async function handleGET(request: Request) {
 
         const readModulePaths: readonly JobOrderModulePath[] | null = action === "users"
             ? null
+            : action === "terminal-queue" || action === "terminal-job-order"
+                ? [JOB_ORDER_MODULE_PATHS.production]
             : action === "qa-job-orders" || action === "qa-logs" || action === "job-order-materials"
                 ? [JOB_ORDER_MODULE_PATHS.qualityAssurance]
                 : action === "job-materials"
@@ -234,6 +237,23 @@ export async function handleGET(request: Request) {
                 return NextResponse.json({ error: "Provide one or more valid productIds" }, { status: 400 });
             }
             return NextResponse.json(await loadSubassemblyBOMComponents(productIds));
+        }
+
+        if (action === "terminal-queue") {
+            return NextResponse.json(await fetchTerminalJobOrderQueue());
+        }
+
+        if (action === "terminal-job-order") {
+            const rawJoId = searchParams.get("joId");
+            const jobOrderId = Number(rawJoId);
+            if (!rawJoId || !Number.isSafeInteger(jobOrderId) || jobOrderId <= 0) {
+                return NextResponse.json({ error: "A valid Job Order ID is required." }, { status: 400 });
+            }
+            const jobOrder = await fetchTerminalJobOrderDetails(jobOrderId);
+            if (!jobOrder) {
+                return NextResponse.json({ error: "This Job Order is no longer available in the Shop Floor Execution Terminal." }, { status: 404 });
+            }
+            return NextResponse.json(jobOrder);
         }
 
         if (action === "version-stock") {

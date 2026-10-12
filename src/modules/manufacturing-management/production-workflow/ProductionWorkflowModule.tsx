@@ -51,7 +51,6 @@ import { isManufacturingEvidenceVideo } from "./services/production-yield-image"
 export default function ProductionWorkflowModule() {
     const router = useRouter();
     const {
-        jobOrders,
         users,
         selectedJobOrderId,
         setSelectedJobOrderId,
@@ -71,6 +70,9 @@ export default function ProductionWorkflowModule() {
         activeManualUserId,
         setActiveManualUserId,
         selectedJobOrder,
+        loadingSelectedJobOrder,
+        selectedJobOrderError,
+        retrySelectedJobOrderDetails,
         sortedTasks,
         jobOrderMaterials,
         jobOrderMaterialsJobOrderId,
@@ -283,8 +285,7 @@ export default function ProductionWorkflowModule() {
         return count;
     }, [inProductionJobOrders]);
 
-    const parentJo = selectedJobOrder?.parentJobOrderId ? jobOrders.find((j) => Number(j.order_id) === Number(selectedJobOrder.parentJobOrderId)) : null;
-    const parentJoNo = parentJo?.jo_id || null;
+    const parentJoNo = selectedJobOrder?.parent_job_order_no || null;
 
     return (
         <div className={`flex flex-col space-y-6 max-w-7xl mx-auto p-1 sm:p-2 transition-all ${isKioskMode ? "fixed inset-0 z-50 bg-background p-4 overflow-y-auto max-w-none" : ""}`}>
@@ -388,7 +389,6 @@ export default function ProductionWorkflowModule() {
             <div className="w-full">
                 <ReleasedJobQueue
                     filteredJobOrders={filteredJobOrders}
-                    jobOrders={jobOrders}
                     selectedJobOrderId={selectedJobOrderId}
                     setSelectedJobOrderId={setSelectedJobOrderId}
                     searchQuery={searchQuery}
@@ -413,7 +413,7 @@ export default function ProductionWorkflowModule() {
 
             {/* Focused Full-Featured Job Order Details Modal */}
             <Dialog 
-                open={selectedJobOrderId !== "" && selectedJobOrder !== null} 
+                open={selectedJobOrderId !== ""}
                 onOpenChange={(open) => {
                     if (!open && !jobOrderActionLocked) {
                         setSelectedJobOrderId("");
@@ -422,6 +422,23 @@ export default function ProductionWorkflowModule() {
                 }}
             >
                 <DialogContent className="w-[calc(100vw-1rem)] !max-w-[calc(100vw-1rem)] max-h-[96vh] h-[95vh] flex flex-col bg-background border border-border/80 shadow-2xl rounded-2xl p-0 overflow-hidden">
+                    {!selectedJobOrder ? (
+                        <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center" role={selectedJobOrderError ? "alert" : "status"} aria-live="polite">
+                            <DialogHeader className="items-center">
+                                <DialogTitle>{selectedJobOrderError ? "Job Order unavailable" : "Loading Job Order"}</DialogTitle>
+                                <DialogDescription>
+                                    {selectedJobOrderError || "Loading the selected Job Order details..."}
+                                </DialogDescription>
+                            </DialogHeader>
+                            {loadingSelectedJobOrder && <RefreshCw className="h-6 w-6 animate-spin text-primary" aria-hidden="true" />}
+                            {selectedJobOrderError && (
+                                <Button type="button" onClick={retrySelectedJobOrderDetails}>
+                                    Retry
+                                </Button>
+                            )}
+                        </div>
+                    ) : (
+                    <>
                     {/* Header */}
                     <div className="bg-gradient-to-r from-primary/10 via-primary/5 to-background p-4 sm:p-5 border-b border-border/50 shrink-0">
                         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -710,6 +727,8 @@ export default function ProductionWorkflowModule() {
                             />
                         )}
                     </div>
+                    </>
+                    )}
                 </DialogContent>
             </Dialog>
 
