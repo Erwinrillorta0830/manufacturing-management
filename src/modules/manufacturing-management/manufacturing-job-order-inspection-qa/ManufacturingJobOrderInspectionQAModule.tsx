@@ -41,6 +41,7 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatPhtDate, formatPhtTime12Hour, formatPhtTimestamp12Hour } from "../shared/pht-date";
 import { useDailyYieldAudit } from "./hooks/useDailyYieldAudit";
@@ -312,7 +313,62 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                 )}
 
                 {jobOrderState.loading ? (
-                    <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" /> Loading Job Orders...</div>
+                    <div role="status" aria-label="Loading Job Orders">
+                        <span className="sr-only">Loading Job Orders…</span>
+                        <div className="overflow-x-auto" aria-hidden="true">
+                            <Table>
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead className="min-w-[170px]">Job Order</TableHead>
+                                        <TableHead className="min-w-[170px]">Product</TableHead>
+                                        <TableHead className="min-w-[145px]">Latest Yield</TableHead>
+                                        <TableHead className="text-right">Target Qty</TableHead>
+                                        <TableHead className="min-w-[145px] text-right">Produced Qty</TableHead>
+                                        <TableHead className="min-w-[165px]">Status</TableHead>
+                                        <TableHead className="min-w-[135px] text-right">Action</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {Array.from({ length: 8 }, (_, index) => (
+                                        <TableRow key={index}>
+                                            <TableCell>
+                                                <Skeleton className="h-4 w-28" />
+                                                <Skeleton className="mt-2 h-3 w-20" />
+                                            </TableCell>
+                                            <TableCell>
+                                                <Skeleton className="h-4 w-36" />
+                                                <Skeleton className="mt-2 h-3 w-24" />
+                                            </TableCell>
+                                            <TableCell>
+                                                <Skeleton className="h-4 w-24" />
+                                                <Skeleton className="mt-2 h-3 w-16" />
+                                            </TableCell>
+                                            <TableCell>
+                                                <div className="flex justify-end">
+                                                    <Skeleton className="h-4 w-16" />
+                                                </div>
+                                            </TableCell>
+                                            <TableCell>
+                                                <div className="flex flex-col items-end gap-2">
+                                                    <Skeleton className="h-4 w-16" />
+                                                    <Skeleton className="h-3 w-20" />
+                                                </div>
+                                            </TableCell>
+                                            <TableCell>
+                                                <Skeleton className="h-6 w-28" />
+                                                <Skeleton className="mt-2 h-3 w-24" />
+                                            </TableCell>
+                                            <TableCell>
+                                                <div className="flex justify-end">
+                                                    <Skeleton className="h-9 w-28" />
+                                                </div>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                        </div>
+                    </div>
                 ) : jobOrderState.error ? (
                     <div className="flex flex-col items-center justify-center gap-3 py-16 text-center" role="alert">
                         <AlertCircle className="h-7 w-7 text-destructive" />

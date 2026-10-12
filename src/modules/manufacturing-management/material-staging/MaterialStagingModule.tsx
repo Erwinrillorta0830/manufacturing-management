@@ -18,6 +18,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
     Select,
     SelectContent,
@@ -471,17 +472,44 @@ export default function MaterialStagingModule() {
                 {/* Right Panel: Detailed Staging Pick List & Workspace (fully
                     expanded — no in-card scrolling; sets the row height). */}
                 <div className="lg:col-span-7 lg:h-full lg:min-h-0">
-                    <StagingPickList
-                        jobOrder={selectedJobOrder}
-                        onOpenTransferModal={handleOpenAllocationModal}
-                        onStageAllAvailable={handleStageAllAvailable}
-                        onMarkAsPicked={handleMarkAsPicked}
-                        isMarkingPicked={markingPicked}
-                        batchStageResult={batchStageResult}
-                        stageProgressLabel={stageProgressLabel}
-                        onDismissBatchStageResult={handleDismissBatchStageResult}
-                        isProcessing={transferring}
-                    />
+                    {loading && !hasSuccessfulLoad ? (
+                        <div
+                            role="status"
+                            aria-label="Loading Job Order staging details"
+                            className="flex min-h-[380px] flex-col space-y-5 rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6 lg:h-full lg:min-h-0"
+                        >
+                            <span className="sr-only">Loading Job Order details…</span>
+                            <div aria-hidden="true" className="space-y-4 border-b border-border pb-5">
+                                <div className="flex items-center gap-2">
+                                    <Skeleton className="h-7 w-32" />
+                                    <Skeleton className="h-6 w-24" />
+                                </div>
+                                <Skeleton className="h-6 w-3/4" />
+                                <Skeleton className="h-4 w-1/2" />
+                            </div>
+                            <div aria-hidden="true" className="grid grid-cols-2 gap-3">
+                                <Skeleton className="h-20 w-full" />
+                                <Skeleton className="h-20 w-full" />
+                            </div>
+                            <div aria-hidden="true" className="space-y-3">
+                                {[1, 2, 3].map((row) => (
+                                    <Skeleton key={row} className="h-16 w-full" />
+                                ))}
+                            </div>
+                        </div>
+                    ) : (
+                        <StagingPickList
+                            jobOrder={selectedJobOrder}
+                            onOpenTransferModal={handleOpenAllocationModal}
+                            onStageAllAvailable={handleStageAllAvailable}
+                            onMarkAsPicked={handleMarkAsPicked}
+                            isMarkingPicked={markingPicked}
+                            batchStageResult={batchStageResult}
+                            stageProgressLabel={stageProgressLabel}
+                            onDismissBatchStageResult={handleDismissBatchStageResult}
+                            isProcessing={transferring}
+                        />
+                    )}
                 </div>
             </div>
                 </>
