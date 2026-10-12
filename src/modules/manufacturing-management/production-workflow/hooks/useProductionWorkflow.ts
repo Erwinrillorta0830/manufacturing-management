@@ -146,6 +146,12 @@ export function useProductionWorkflow() {
         return jobOrders.filter((jo) => isJobOrderStatus(jo.status, ...SHOP_FLOOR_QUEUE_STATUSES));
     }, [jobOrders]);
 
+    const searchableTerminalJobOrders = useMemo(() => terminalJobOrders.map((jo) => ({
+        jobOrder: jo,
+        normalizedJoId: String(jo.jo_id || "").toLowerCase(),
+        normalizedProductName: String(jo.product_name || "").toLowerCase()
+    })), [terminalJobOrders]);
+
     const salesOrderLinksOf = useCallback((jo: TerminalQueueJobOrder): SalesOrderLink[] => {
         return jo.salesOrders || jo.sales_orders || [];
     }, []);
@@ -1265,12 +1271,9 @@ const selectedTask = useMemo(() => {
     }, [selectedJobOrder, fetchJobs]);
 
     const filteredJobOrders = useMemo(() => {
-        return terminalJobOrders.filter((jo) => {
-            const matchesSearch =
-                jo.jo_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                jo.product_name.toLowerCase().includes(searchQuery.toLowerCase());
-
-            if (!matchesSearch) return false;
+        const normalizedSearchQuery = searchQuery.toLowerCase();
+        return searchableTerminalJobOrders.filter(({ jobOrder: jo, normalizedJoId, normalizedProductName }) => {
+            if (!normalizedJoId.includes(normalizedSearchQuery) && !normalizedProductName.includes(normalizedSearchQuery)) return false;
 
             // Branch filter check
             if (selectedBranchFilter !== "All" && Number(jo.branch_id) !== Number(selectedBranchFilter)) {
@@ -1293,8 +1296,8 @@ const selectedTask = useMemo(() => {
             }
 
             return true;
-        });
-    }, [terminalJobOrders, searchQuery, selectedBranchFilter, selectedProductFilter, selectedStatusFilter, selectedCustomerFilter, salesOrderLinksOf]);
+        }).map(({ jobOrder }) => jobOrder);
+    }, [searchableTerminalJobOrders, searchQuery, selectedBranchFilter, selectedProductFilter, selectedStatusFilter, selectedCustomerFilter, salesOrderLinksOf]);
 
     const hasActiveFilters =
         searchQuery.trim().length > 0
