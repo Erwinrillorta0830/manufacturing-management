@@ -14,12 +14,14 @@ export interface UserLookup {
     lastName?: string;
 }
 
+const BASE_API = "/api/manufacturing/inventory-warehousing/product-tracing";
+
 /**
  * Fetches branches lookup for filtering
  */
 export async function fetchBranches(): Promise<BranchLookup[]> {
     try {
-        const res = await fetch("/api/manufacturing/branches", { cache: "no-store" });
+        const res = await fetch(`${BASE_API}/branches`, { cache: "no-store" });
         if (!res.ok) {
             console.warn("[ProductTracing] Failed to fetch branches");
             return [];
@@ -41,7 +43,7 @@ export async function fetchBranches(): Promise<BranchLookup[]> {
  */
 export async function fetchProductTypes(): Promise<ProductTypeLookup[]> {
     try {
-        const res = await fetch("/api/manufacturing/physical-inventory/product-types", { cache: "no-store" });
+        const res = await fetch(`${BASE_API}/product-types`, { cache: "no-store" });
         if (!res.ok) {
             return [
                 { id: 388, name: "Finished Goods", type_name: "Finished Goods" },
@@ -62,11 +64,11 @@ export async function fetchProductTypes(): Promise<ProductTypeLookup[]> {
 }
 
 /**
- * Fetches products list lookup
+ * Fetches parent products only (smallest/base unit of measurement).
  */
 export async function fetchProducts(): Promise<ProductLookup[]> {
     try {
-        const res = await fetch("/api/manufacturing/lots/products", { cache: "no-store" });
+        const res = await fetch(`${BASE_API}/products`, { cache: "no-store" });
         if (!res.ok) {
             return [];
         }
@@ -91,7 +93,7 @@ export async function fetchProducts(): Promise<ProductLookup[]> {
 }
 
 /**
- * Fetches lots list lookup
+ * Fetches lots list lookup (for detail modal inspection)
  */
 export async function fetchLots(branchId?: number): Promise<LotLookup[]> {
     try {
@@ -119,7 +121,7 @@ export async function fetchLots(branchId?: number): Promise<LotLookup[]> {
  */
 export async function fetchUsers(): Promise<UserLookup[]> {
     try {
-        const res = await fetch("/api/manufacturing/financial-management/collection-posting/master-data/users", { cache: "no-store" });
+        const res = await fetch(`${BASE_API}/users`, { cache: "no-store" });
         if (!res.ok) return [];
         const data = await res.json();
         return (data || []).map((u: Record<string, unknown>) => ({
@@ -135,39 +137,29 @@ export async function fetchUsers(): Promise<UserLookup[]> {
 }
 
 /**
- * Fetches movement ledger records directly from the Spring Boot API proxy endpoint.
+ * Fetches movement ledger records directly from the product-tracing BFF endpoint.
  * Throws an error if the Spring Boot API fails (no Directus fallback).
  */
 export async function fetchMovements(filters: ProductTracingFiltersType): Promise<MMInventoryMovement[]> {
     const params = new URLSearchParams();
     if (filters.branch_id !== null && filters.branch_id !== undefined) {
-        params.set("branch", String(filters.branch_id));
+        params.set("branch_id", String(filters.branch_id));
     }
     if (filters.product_type_id !== null && filters.product_type_id !== undefined) {
-        params.set("productType", String(filters.product_type_id));
+        params.set("product_type_id", String(filters.product_type_id));
     }
     if (filters.product_id !== null && filters.product_id !== undefined) {
-        params.set("productId", String(filters.product_id));
+        params.set("product_id", String(filters.product_id));
     }
-    if (filters.lot_id !== null && filters.lot_id !== undefined) {
-        params.set("lotId", String(filters.lot_id));
+    if (filters.startDate) {
+        params.set("start_date", filters.startDate);
     }
-    if (filters.batch_no && filters.batch_no.trim()) {
-        params.set("batchNo", filters.batch_no.trim());
-    }
-    if (filters.transaction_type && filters.transaction_type !== "ALL") {
-        params.set("transactionType", filters.transaction_type);
-    }
-    if (filters.movement_direction && filters.movement_direction !== "ALL") {
-        params.set("direction", filters.movement_direction);
-    }
-    if (filters.search_query && filters.search_query.trim()) {
-        params.set("referenceNo", filters.search_query.trim());
+    if (filters.endDate) {
+        params.set("end_date", filters.endDate);
     }
 
     params.set("_t", String(Date.now()));
-    //src\app\api\manufacturing\invoicing-and-billing\invoicing\inventory-movements
-    const requestUrl = `/api/manufacturing/inventory-movements?${params.toString()}`;
+    const requestUrl = `${BASE_API}?${params.toString()}`;
 
     const res = await fetch(requestUrl, {
         cache: "no-store",
@@ -175,7 +167,7 @@ export async function fetchMovements(filters: ProductTracingFiltersType): Promis
 
     if (!res.ok) {
         const errorJson = await res.json().catch(() => ({}));
-        const errorMessage = errorJson.error || `Spring Boot API returned status ${res.status}: ${res.statusText}`;
+        const errorMessage = errorJson.error || `Inventory API returned status ${res.status}: ${res.statusText}`;
         throw new Error(errorMessage);
     }
 
