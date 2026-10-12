@@ -35,6 +35,7 @@ import {
     JobOrderCancellationExecution
 } from "@/app/api/manufacturing/production/_material-return";
 import { materialReturnFingerprint, verifyMaterialReturnToken } from "./material-returns/_token";
+import { attachTemplateParameters } from "./_template-parameters";
 
 class QAPersistenceError extends Error {
     constructor(message: string, readonly statusCode = 502) {
@@ -335,9 +336,23 @@ export async function GET(request: Request) {
 
         // Action: Fetch QA templates and parameters
         if (action === "templates") {
+            const templateIdsParam = searchParams.get("templateIds");
+            const templateIds = templateIdsParam === null
+                ? null
+                : [...new Set(templateIdsParam.split(",").map((value) => Number(value.trim())).filter((value) => Number.isSafeInteger(value) && value > 0))];
+            if (templateIds?.length === 0) return NextResponse.json([]);
+
+            const templateQuery = new URLSearchParams({ limit: "-1" });
+            const parameterQuery = new URLSearchParams({ limit: "-1" });
+            if (templateIds) {
+                templateQuery.set("filter[template_id][_in]", templateIds.join(","));
+                templateQuery.set("fields", "template_id,template_name");
+                parameterQuery.set("filter[template_id][_in]", templateIds.join(","));
+                parameterQuery.set("fields", "parameter_id,template_id,test_name,test_type,min_value,max_value,target_value,is_critical");
+            }
             const [templatesRes, parametersRes] = await Promise.all([
-                fetch(`${DIRECTUS_URL}/items/quality_inspection_templates?limit=-1`, { headers, cache: "no-store" }),
-                fetch(`${DIRECTUS_URL}/items/quality_inspection_parameters?limit=-1`, { headers, cache: "no-store" })
+                fetch(`${DIRECTUS_URL}/items/quality_inspection_templates?${templateQuery}`, { headers, cache: "no-store" }),
+                fetch(`${DIRECTUS_URL}/items/quality_inspection_parameters?${parameterQuery}`, { headers, cache: "no-store" })
             ]);
 
             if (!templatesRes.ok || !parametersRes.ok) {
@@ -347,10 +362,7 @@ export async function GET(request: Request) {
             const templates = (await templatesRes.json()).data || [];
             const parameters = (await parametersRes.json()).data || [];
 
-            const templatesWithParams = templates.map((tpl: any) => ({
-                ...tpl,
-                parameters: parameters.filter((param: any) => param.template_id === tpl.template_id)
-            }));
+            const templatesWithParams = attachTemplateParameters(templates, parameters);
 
             return NextResponse.json(templatesWithParams);
         }

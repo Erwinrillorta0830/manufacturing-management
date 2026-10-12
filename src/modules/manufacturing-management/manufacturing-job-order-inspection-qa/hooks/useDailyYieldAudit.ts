@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
     fetchQALogs,
@@ -43,6 +43,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
     const [inspectorNamesById, setInspectorNamesById] = useState<Record<number, string>>({});
     const [qaTemplates, setQaTemplates] = useState<DailyYieldQATemplate[]>([]);
     const [qaLogs, setQaLogs] = useState<DailyYieldQALog[]>([]);
+    const [referenceLoading, setReferenceLoading] = useState(false);
     const [referenceError, setReferenceError] = useState<string | null>(null);
     const [actionLoading, setActionLoading] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
@@ -75,6 +76,9 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
     const lotRequestId = useRef(0);
     const rejectedLotRequestId = useRef(0);
     const auditSubmitInFlight = useRef(false);
+    const referenceRequestId = useRef(0);
+    const templateCache = useRef(new Map<number, DailyYieldQATemplate>());
+    const loadedTemplateIds = useRef(new Set<number>());
 
     const updateDailyOutputManufacturingDate = useCallback((manufacturingDate: string) => {
         setDailyOutputManufacturingDate(manufacturingDate);
@@ -96,35 +100,60 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         if (expiryDate) setDailyRejectedOutputExpiryDate(expiryDate);
     }, [selectedDetails?.productShelfLifeDays]);
 
-    useEffect(() => {
-        let disposed = false;
-        const loadReferences = async () => {
-            try {
-                const [templatesResponse, logs] = await Promise.all([
-                    fetch("/api/manufacturing/qa?action=templates", { cache: "no-store" }),
-                    fetchQALogs()
-                ]);
-                if (!templatesResponse.ok) throw new Error("Failed to load QA templates.");
-                const templatePayload: unknown = await templatesResponse.json();
-                const templates = Array.isArray(templatePayload)
-                    ? templatePayload as DailyYieldQATemplate[]
-                    : [];
-                if (!disposed) {
-                    setQaTemplates(templates);
-                    setQaLogs(logs);
-                    setReferenceError(null);
-                }
-            } catch (error) {
-                if (!disposed) {
-                    setReferenceError(error instanceof Error ? error.message : "Failed to load QA reference data.");
-                }
-            }
-        };
+    const loadAuditReferences = useCallback(async (details: JobOrderDailyYieldDetails) => {
+        const requestId = ++referenceRequestId.current;
+        const jobOrderId = Number(details.jobOrderId);
+        setReferenceLoading(true);
+        setReferenceError(null);
+        setQaLogs([]);
 
-        void loadReferences();
-        return () => {
-            disposed = true;
-        };
+        if (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0) {
+            setReferenceLoading(false);
+            setReferenceError("A valid Job Order is required to load audit reference data.");
+            return;
+        }
+
+        const templateIds = [...new Set(details.routes
+            .map((route) => routeId(route.qaTemplateId))
+            .filter((id) => id > 0))];
+        const missingTemplateIds = templateIds.filter((id) => !loadedTemplateIds.current.has(id));
+        const templateQuery = new URLSearchParams({
+            action: "templates",
+            templateIds: missingTemplateIds.join(",")
+        });
+
+        try {
+            const [logsResult, templatesResult] = await Promise.allSettled([
+                fetchQALogs(jobOrderId),
+                missingTemplateIds.length > 0
+                    ? fetch(`/api/manufacturing/qa?${templateQuery}`, { cache: "no-store" }).then(async (response) => {
+                        if (!response.ok) throw new Error("Failed to load QA templates.");
+                        const payload: unknown = await response.json();
+                        return Array.isArray(payload) ? payload as DailyYieldQATemplate[] : [];
+                    })
+                    : Promise.resolve([] as DailyYieldQATemplate[])
+            ]);
+
+            if (templatesResult.status === "fulfilled") {
+                templatesResult.value.forEach((template) => {
+                    const id = routeId(template.template_id ?? template.id);
+                    if (id > 0) templateCache.current.set(id, template);
+                });
+                missingTemplateIds.forEach((id) => loadedTemplateIds.current.add(id));
+            }
+
+            if (requestId !== referenceRequestId.current) return;
+            setQaTemplates(Array.from(templateCache.current.values()));
+            if (logsResult.status === "fulfilled") setQaLogs(logsResult.value);
+
+            const errors = [
+                logsResult.status === "rejected" ? "Failed to load operator checklist logs." : "",
+                templatesResult.status === "rejected" ? "Failed to load QA templates." : ""
+            ].filter(Boolean);
+            setReferenceError(errors.length > 0 ? errors.join(" ") : null);
+        } finally {
+            if (requestId === referenceRequestId.current) setReferenceLoading(false);
+        }
     }, []);
 
     const routes = selectedDetails?.routes ?? EMPTY_ROUTES;
@@ -346,14 +375,17 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         setQaParamValues({});
         setSelectedRouteId(preferredRoute?.id || pendingRoutes[0]?.id || sortedRoutes[0]?.id || null);
         setIsOpen(true);
+        void loadAuditReferences(details);
         void loadOutputLots(details, yieldRecord);
         void loadRejectedOutputLots(details, yieldRecord);
         void loadRouteOperators(sortedRoutes.map((route) => route.id));
         void loadInspectorNames();
-    }, [loadOutputLots, loadRejectedOutputLots, loadRouteOperators, loadInspectorNames]);
+    }, [loadAuditReferences, loadOutputLots, loadRejectedOutputLots, loadRouteOperators, loadInspectorNames]);
 
     const closeAudit = useCallback(() => {
         if (actionLoading) return;
+        referenceRequestId.current += 1;
+        setReferenceLoading(false);
         setIsOpen(false);
         setSaveError(null);
     }, [actionLoading]);
@@ -685,6 +717,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         inspectorNamesById,
         routes,
         matchingLogs,
+        referenceLoading,
         referenceError,
         actionLoading,
         saveError,

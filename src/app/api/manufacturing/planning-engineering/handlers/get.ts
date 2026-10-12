@@ -13,7 +13,7 @@ import { committedGoodOutputOrAggregate, goodOutputAggregateFallback } from "@/m
 import { getBOMDetailsForVersion, getActiveVersionForProduct, selectPreferredActiveVersion } from "../../finished-goods/versions/versions-helper";
 import { movementMmLotReference, movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
 import { loadYieldMaterials, YieldMaterialsError } from "../../production/_yield-materials";
-import { enrichDispositions, readDispositions } from "../../qa/_dispositions";
+import { DISPOSITIONS_COLLECTION, enrichDispositions, readDispositions } from "../../qa/_dispositions";
 import { fetchMmInventoryMovements, MmInventoryMovementError, movementErrorStatus } from "../../services/mm-inventory-movements.service";
 import { loadMmInventoryLots, loadMmLots, MmLotError, mmInventoryLotId, mmLotId, unitId } from "../../services/mm-lots.service";
 import { getAvailableInventoryLots } from "../helpers/inventory-helper";
@@ -1324,29 +1324,66 @@ export async function handleGET(request: Request) {
         }
 
         if (action === "qa-logs") {
-            const qaRecordsRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_qa_records?limit=-1&sort=-inspected_at`, { headers, cache: "no-store" });
+            const jobOrderIdParam = searchParams.get("jobOrderId");
+            const requestedJobOrderId = jobOrderIdParam === null ? null : Number(jobOrderIdParam);
+            if (jobOrderIdParam !== null && (!Number.isSafeInteger(requestedJobOrderId) || Number(requestedJobOrderId) <= 0)) {
+                return NextResponse.json({ error: "Invalid jobOrderId query parameter" }, { status: 400 });
+            }
+            const jobOrderId = requestedJobOrderId === null ? null : Number(requestedJobOrderId);
+
+            const qaRecordsQuery = new URLSearchParams({
+                limit: "-1",
+                sort: "-inspected_at",
+                fields: "qa_record_id,job_order_id,jo_route_id,inspected_at,is_passed,remarks"
+            });
+            if (jobOrderId !== null) qaRecordsQuery.set("filter[job_order_id][_eq]", String(jobOrderId));
+            const qaRecordsRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_qa_records?${qaRecordsQuery}`, { headers, cache: "no-store" });
+            if (!qaRecordsRes.ok && jobOrderId !== null) throw new Error(`Failed to read QA records (${qaRecordsRes.status}).`);
             const qaRecords = qaRecordsRes.ok ? ((await qaRecordsRes.json()).data || []) : [];
 
             if (qaRecords.length === 0) {
                 return NextResponse.json([]);
             }
 
-            const joRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?limit=-1`, { headers, cache: "no-store" });
+            const jobOrdersQuery = new URLSearchParams({
+                limit: jobOrderId === null ? "-1" : "1",
+                fields: "job_order_id,job_order_no,target_quantity"
+            });
+            if (jobOrderId !== null) jobOrdersQuery.set("filter[job_order_id][_eq]", String(jobOrderId));
+            const joRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?${jobOrdersQuery}`, { headers, cache: "no-store" });
+            if (!joRes.ok && jobOrderId !== null) throw new Error(`Failed to read Job Order references (${joRes.status}).`);
             const jobOrders = joRes.ok ? ((await joRes.json()).data || []) : [];
             const joMap = new Map<number, any>();
             jobOrders.forEach((jo: any) => joMap.set(Number(jo.job_order_id), jo));
 
-            const routesRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes?limit=-1&fields=jo_route_id,job_order_id,sequence_order,work_center_id,operation_id,planned_setup_hours,planned_run_hours,actual_setup_hours,actual_run_hours,step_batch_size,run_time_hours_factor`, { headers, cache: "no-store" });
+            const routesQuery = new URLSearchParams({
+                limit: "-1",
+                fields: "jo_route_id,job_order_id,sequence_order,operation_id,status"
+            });
+            if (jobOrderId !== null) routesQuery.set("filter[job_order_id][_eq]", String(jobOrderId));
+            const routesRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes?${routesQuery}`, { headers, cache: "no-store" });
+            if (!routesRes.ok && jobOrderId !== null) throw new Error(`Failed to read Job Order routes (${routesRes.status}).`);
             const routes = routesRes.ok ? ((await routesRes.json()).data || []) : [];
             const routeMap = new Map<number, any>();
             routes.forEach((r: any) => routeMap.set(Number(r.jo_route_id), r));
 
-            const opsRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_operations?limit=-1`, { headers, cache: "no-store" });
-            const operations = opsRes.ok ? ((await opsRes.json()).data || []) : [];
+            const operationIds = [...new Set(routes.map((route: any) => Number(route.operation_id)).filter((id: number) => Number.isSafeInteger(id) && id > 0))];
+            const operationsQuery = new URLSearchParams({ limit: "-1", fields: "id,operation_name" });
+            if (operationIds.length > 0) {
+                operationsQuery.set("filter[id][_in]", operationIds.join(","));
+            }
+            const operations = operationIds.length > 0
+                ? await fetch(`${DIRECTUS_URL}/items/manufacturing_operations?${operationsQuery}`, { headers, cache: "no-store" })
+                    .then(async (response) => {
+                        if (!response.ok) {
+                            if (jobOrderId !== null) throw new Error(`Failed to read operation references (${response.status}).`);
+                            return [];
+                        }
+                        return (await response.json()).data || [];
+                    })
+                : [];
             const opsMap = new Map<number, string>();
             operations.forEach((o: any) => opsMap.set(Number(o.id), o.operation_name));
-
-            const dispositions = await enrichDispositions(await readDispositions());
 
             const groupsMap = new Map<string, any[]>();
             qaRecords.forEach((rec: any) => {
@@ -1357,7 +1394,39 @@ export async function handleGET(request: Request) {
                 groupsMap.get(key)!.push(rec);
             });
 
-            const mappedLogs = Array.from(groupsMap.values()).map((group, index) => {
+            const groups = Array.from(groupsMap.values());
+            const failedRouteIds = [...new Set(groups
+                .filter((group) => !group.every((record: any) => record.is_passed === true || record.is_passed === 1))
+                .map((group) => Number(group[0]?.jo_route_id))
+                .filter((id) => Number.isSafeInteger(id) && id > 0))];
+            let dispositions: any[] = [];
+            if (failedRouteIds.length > 0) {
+                if (jobOrderId !== null) {
+                    const dispositionsQuery = new URLSearchParams({
+                        limit: "-1",
+                        fields: "job_order_id,task_id,expected_quantity,actual_quantity",
+                        "filter[job_order_id][_eq]": String(jobOrderId),
+                        "filter[task_id][_in]": failedRouteIds.join(",")
+                    });
+                    const dispositionsRes = await fetch(`${DIRECTUS_URL}/items/${DISPOSITIONS_COLLECTION}?${dispositionsQuery}`, { headers, cache: "no-store" });
+                    if (!dispositionsRes.ok) throw new Error(`Failed to read QA disposition references (${dispositionsRes.status}).`);
+                    dispositions = (await dispositionsRes.json()).data || [];
+                } else {
+                    dispositions = await enrichDispositions(await readDispositions());
+                }
+            }
+            const dispositionByJobOrderAndRoute = new Map<string, any>();
+            const dispositionByRoute = new Map<number, any>();
+            dispositions.forEach((disposition: any) => {
+                const dispositionJobOrderId = Number(disposition.job_order_id || 0);
+                const dispositionRouteId = Number(disposition.task_id || 0);
+                if (!Number.isSafeInteger(dispositionRouteId) || dispositionRouteId <= 0) return;
+                const key = `${dispositionJobOrderId}:${dispositionRouteId}`;
+                if (!dispositionByJobOrderAndRoute.has(key)) dispositionByJobOrderAndRoute.set(key, disposition);
+                if (!dispositionByRoute.has(dispositionRouteId)) dispositionByRoute.set(dispositionRouteId, disposition);
+            });
+
+            const mappedLogs = groups.map((group, index) => {
                 const first = group[0];
                 const joId = Number(first.job_order_id);
                 const routeId = Number(first.jo_route_id);
@@ -1379,10 +1448,9 @@ export async function handleGET(request: Request) {
 
                 let expected = targetQty;
                 let actual = targetQty;
-                if (!overallPassed && dispositions.length > 0) {
-                    const disp = dispositions.find(d =>
-                        Number(d.job_order_id) === joId && Number(d.task_id) === routeId
-                    ) || dispositions.find(d => Number(d.task_id) === routeId);
+                if (!overallPassed) {
+                    const disp = dispositionByJobOrderAndRoute.get(`${joId}:${routeId}`)
+                        || dispositionByRoute.get(routeId);
                     if (disp) {
                         expected = Number(disp.expected_quantity || targetQty);
                         actual = Number(disp.actual_quantity || targetQty);

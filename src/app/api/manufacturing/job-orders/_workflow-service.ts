@@ -86,6 +86,12 @@ export interface JobOrderClosureReadiness {
     blockers: JobOrderClosureBlocker[];
 }
 
+export interface JobOrderClosureReadinessSnapshot {
+    yields: DirectusRecord[];
+    inspections: DirectusRecord[];
+    routes: DirectusRecord[];
+}
+
 function numberValue(value: unknown): number {
     let rawValue = value;
     if (value && typeof value === "object") {
@@ -828,20 +834,29 @@ async function assertProductionTargetNotReached(jobOrder: DirectusRecord): Promi
     }
 }
 
-export async function getJobOrderClosureReadiness(jobOrderId: number): Promise<JobOrderClosureReadiness> {
+export async function getJobOrderClosureReadiness(
+    jobOrderId: number,
+    snapshot?: JobOrderClosureReadinessSnapshot
+): Promise<JobOrderClosureReadiness> {
     const [yields, inspections, routes, dispositions] = await Promise.all([
-        directusRows(
-            `/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${jobOrderId}&fields=ledger_id,job_order_id,yield_quantity,rejected_quantity,scrap_quantity&limit=-1`,
-            `Load daily yields for Job Order ${jobOrderId}`
-        ),
-        directusRows(
-            `/items/manufacturing_daily_qa_inspections?filter[job_order_id][_eq]=${jobOrderId}&fields=*&limit=-1`,
-            `Load daily QA outcomes for Job Order ${jobOrderId}`
-        ),
-        directusRows(
-            `/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${jobOrderId}&fields=jo_route_id,job_order_id&limit=-1`,
-            `Load QA routes for Job Order ${jobOrderId}`
-        ),
+        snapshot
+            ? Promise.resolve(snapshot.yields)
+            : directusRows(
+                `/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${jobOrderId}&fields=ledger_id,job_order_id,commit_status,yield_quantity,rejected_quantity,scrap_quantity&limit=-1`,
+                `Load daily yields for Job Order ${jobOrderId}`
+            ),
+        snapshot
+            ? Promise.resolve(snapshot.inspections)
+            : directusRows(
+                `/items/manufacturing_daily_qa_inspections?filter[job_order_id][_eq]=${jobOrderId}&fields=daily_qa_id,job_order_id,ledger_id,jo_route_id,inspector_id,moisture_percentage,acidity_ph,sensory_status,weight_check_passed,lab_status,action_taken,inspected_at,remarks&limit=-1`,
+                `Load daily QA outcomes for Job Order ${jobOrderId}`
+            ),
+        snapshot
+            ? Promise.resolve(snapshot.routes)
+            : directusRows(
+                `/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${jobOrderId}&fields=jo_route_id,job_order_id&limit=-1`,
+                `Load QA routes for Job Order ${jobOrderId}`
+            ),
         directusRows(
             `/items/manufacturing_qa_dispositions?filter[job_order_id][_eq]=${jobOrderId}&fields=id,disposition_status&limit=-1`,
             `Load QA dispositions for Job Order ${jobOrderId}`
