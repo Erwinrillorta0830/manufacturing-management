@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { TerminalQueueJobOrder } from "../types";
 import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 import { resolveJobOrderJourney } from "../../shared/job-order-journey";
@@ -337,8 +338,54 @@ export const ReleasedJobQueue = React.memo(function ReleasedJobQueue({
                 </div>
 
                 {loadingJobs ? (
-                    <div className="flex items-center justify-center py-12">
-                        <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+                    <div role="status" aria-label="Loading shop-floor Job Orders" className="overflow-hidden rounded-xl border border-border/60">
+                        <span className="sr-only">Loading shop-floor Job Orders…</span>
+                        <div className="overflow-x-auto" aria-hidden="true">
+                            <table className="w-full min-w-[1060px] border-collapse text-left">
+                                <thead className="bg-muted/30 text-[10px] uppercase tracking-wider text-muted-foreground">
+                                    <tr>
+                                        <th className="px-3 py-3 font-bold">Job Order</th>
+                                        <th className="px-3 py-3 font-bold">Product / Journey</th>
+                                        <th className="px-3 py-3 text-right font-bold">Target / Produced</th>
+                                        <th className="px-3 py-3 font-bold">Workstations</th>
+                                        <th className="px-3 py-3 font-bold">Due</th>
+                                        <th className="px-3 py-3 text-right font-bold">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-border/50">
+                                    {Array.from({ length: 5 }, (_, index) => (
+                                        <tr key={index}>
+                                            <td className="px-3 py-4">
+                                                <Skeleton className="h-4 w-32" />
+                                                <Skeleton className="mt-2 h-3 w-20" />
+                                            </td>
+                                            <td className="px-3 py-4">
+                                                <Skeleton className="h-4 w-40" />
+                                                <Skeleton className="mt-2 h-3 w-28" />
+                                            </td>
+                                            <td className="px-3 py-4">
+                                                <div className="flex flex-col items-end gap-2">
+                                                    <Skeleton className="h-4 w-16" />
+                                                    <Skeleton className="h-3 w-12" />
+                                                </div>
+                                            </td>
+                                            <td className="px-3 py-4">
+                                                <Skeleton className="h-5 w-24" />
+                                                <Skeleton className="mt-2 h-5 w-20" />
+                                            </td>
+                                            <td className="px-3 py-4">
+                                                <Skeleton className="h-4 w-24" />
+                                            </td>
+                                            <td className="px-3 py-4">
+                                                <div className="flex justify-end">
+                                                    <Skeleton className="h-8 w-24" />
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 ) : filteredJobOrders.length === 0 ? (
                     <div className="border-2 border-dashed rounded-lg py-12 text-center text-sm text-muted-foreground">
