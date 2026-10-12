@@ -24,7 +24,15 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { RoutingTask, JobOrder, User as UserType, RouteOperatorRecord, RejectionReason, ProductionMaterialReservation } from "../types";
-import { submitShiftRunLog, ShiftRunLogPayload, fetchRejectionReasons } from "../services/production-api";
+import {
+    fetchRecoverableShiftRunSessions,
+    fetchRejectionReasons,
+    RecoverableShiftRunSession,
+    resumeShiftRunLogSession,
+    ShiftRunLogPayload,
+    ShiftRunLogRequestError,
+    submitShiftRunLog
+} from "../services/production-api";
 import { EvidenceMediaInput } from "./EvidenceMediaInput";
 import { AddReservedMaterialDialog, type TopUpTarget } from "./AddReservedMaterialDialog";
 import { toast } from "sonner";
@@ -50,12 +58,11 @@ interface JobOrderShiftLogModalProps {
     onSuccess?: () => void;
 }
 
-type OutputQuantityField = "good" | "rejected" | "scrap";
+type OutputQuantityField = "good" | "rejected";
 
 interface OutputQuantities {
     good: string;
     rejected: string;
-    scrap: string;
 }
 
 function formatExactMaterialQuantity(value: number): string {
@@ -89,7 +96,6 @@ export function JobOrderShiftLogModal({
     const [sessionKey, setSessionKey] = useState("");
     const [shiftYieldQty, setShiftYieldQty] = useState("");
     const [rejectedQty, setRejectedQty] = useState("0");
-    const [scrapQty, setScrapQty] = useState("0");
     const [rejectionReasons, setRejectionReasons] = useState<RejectionReason[]>([]);
     const [selectedReasonId, setSelectedReasonId] = useState<string>("");
     const [rejectionRemarks, setRejectionRemarks] = useState("");
@@ -101,6 +107,9 @@ export function JobOrderShiftLogModal({
     const [materialsLoadError, setMaterialsLoadError] = useState<string | null>(null);
     const [loadingShiftMaterials, setLoadingShiftMaterials] = useState(false);
     const [submittingShiftLog, setSubmittingShiftLog] = useState(false);
+    const [recoveryStatus, setRecoveryStatus] = useState<"checking" | "none" | "pending" | "resuming" | "error">("checking");
+    const [recoverableSessions, setRecoverableSessions] = useState<RecoverableShiftRunSession[]>([]);
+    const [recoveryError, setRecoveryError] = useState<string | null>(null);
     const [isConfirmationOpen, setIsConfirmationOpen] = useState(false);
     const [insufficiencyError, setInsufficiencyError] = useState<string | null>(null);
     const [isInsufficiencyOpen, setIsInsufficiencyOpen] = useState(false);
@@ -108,8 +117,9 @@ export function JobOrderShiftLogModal({
     const [isTopUpOpen, setIsTopUpOpen] = useState(false);
     const [evidenceImage, setEvidenceImage] = useState<File | null>(null);
     const [evidenceImageError, setEvidenceImageError] = useState<string | null>(null);
-    const outputQuantitiesRef = useRef<OutputQuantities>({ good: "", rejected: "0", scrap: "0" });
+    const outputQuantitiesRef = useRef<OutputQuantities>({ good: "", rejected: "0" });
     const manuallyEditedMaterialKeysRef = useRef<Set<string>>(new Set());
+    const autoResumeAttemptedRef = useRef<Set<string>>(new Set());
 
     const filteredShiftMaterials = React.useMemo(() => {
         const query = reservationSearch.trim().toLowerCase();
@@ -127,6 +137,8 @@ export function JobOrderShiftLogModal({
     const totalPlannedHours = calculatePipelinedLineDurationHours(sortedTasks);
     const shiftHours = Number(selectedJobOrder?.shiftOption || 8);
     const estDays = Math.ceil(totalPlannedHours / shiftHours) || 1;
+    const jobOrderId = selectedJobOrder?.order_id || selectedJobOrder?.job_order_id;
+    const jobOrderSessionKey = selectedJobOrder?.jo_id ?? null;
     const targetQuantity = resolveJobOrderTargetQuantity(selectedJobOrder);
 
     const getUserLabel = (uId: number) => {
@@ -144,7 +156,7 @@ export function JobOrderShiftLogModal({
     );
 
     const getAvailableShifts = useCallback(() => {
-        const hours = Number(selectedJobOrder?.shiftOption || 8);
+        const hours = shiftHours;
         const options = [];
         if (hours > 0) {
             options.push({ value: "Shift 1 - Day", label: "Shift 1 - Day (6AM - 2PM)" });
@@ -157,17 +169,16 @@ export function JobOrderShiftLogModal({
         }
         options.push({ value: "Daily Summary", label: "Daily Summary / Continuous Run" });
         return options;
-    }, [selectedJobOrder]);
+    }, [shiftHours]);
 
     const loadShiftMaterials = useCallback(async () => {
-        const joId = selectedJobOrder?.order_id || selectedJobOrder?.job_order_id;
-        if (!joId) return;
+        if (!jobOrderId) return;
 
         setLoadingShiftMaterials(true);
         setMaterialsLoadError(null);
 
         try {
-            const response = await fetch(`/api/manufacturing/planning-engineering?action=job-materials&joId=${joId}&_t=${Date.now()}`);
+            const response = await fetch(`/api/manufacturing/planning-engineering?action=job-materials&joId=${jobOrderId}&_t=${Date.now()}`);
             const data = await response.json().catch(() => null);
 
             if (!response.ok) {
@@ -211,7 +222,7 @@ export function JobOrderShiftLogModal({
                     sumProductionOutputQuantities(
                         outputQuantitiesRef.current.good,
                         outputQuantitiesRef.current.rejected,
-                        outputQuantitiesRef.current.scrap
+                        0
                     )
                 ),
                 previous,
@@ -225,46 +236,104 @@ export function JobOrderShiftLogModal({
         } finally {
             setLoadingShiftMaterials(false);
         }
-    }, [selectedJobOrder]);
+    }, [jobOrderId, targetQuantity]);
 
-    // Fetch full Job Order BOM materials, physical lots, and rejection reasons
+    const initializedFormJobOrderKeyRef = useRef<string | null>(null);
+
+    // Reset shift-entry fields only for a new modal session or a different Job Order.
     useEffect(() => {
-        if (open && selectedJobOrder && (selectedJobOrder.order_id || selectedJobOrder.job_order_id)) {
-            outputQuantitiesRef.current = { good: "", rejected: "0", scrap: "0" };
-            setShiftYieldQty("");
-            setRejectedQty("0");
-            setScrapQty("0");
-            setSelectedReasonId("");
-            setRejectionRemarks("");
-            setRemarks("");
-            setVarianceReason("");
-            setApproveVariance(false);
-            setEvidenceImage(null);
-            setEvidenceImageError(null);
-            setShiftMaterials([]);
-            manuallyEditedMaterialKeysRef.current.clear();
-            setMaterialsLoadError(null);
-            setProductionDay("1");
-            const todayStr = getPhtDateInputValue();
-            setProductionDate(todayStr);
-            setSessionKey(typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-                ? crypto.randomUUID()
-                : `production-session-${Date.now()}`);
-
-            const available = getAvailableShifts();
-            if (available.length > 0) {
-                setShiftName(available[0].value);
-            }
-
-            // Fetch rejection reasons
-            fetchRejectionReasons()
-                .then((reasons) => setRejectionReasons(reasons))
-                .catch((err) => console.error("Error loading rejection reasons:", err));
-
-            // Fetch all BOM materials for the whole Job Order
-            void loadShiftMaterials();
+        if (!open) {
+            initializedFormJobOrderKeyRef.current = null;
+            autoResumeAttemptedRef.current.clear();
+            return;
         }
-    }, [open, selectedJobOrder, getAvailableShifts, loadShiftMaterials]);
+
+        if (!jobOrderId || !jobOrderSessionKey || initializedFormJobOrderKeyRef.current === jobOrderSessionKey) return;
+        initializedFormJobOrderKeyRef.current = jobOrderSessionKey;
+
+        outputQuantitiesRef.current = { good: "", rejected: "0" };
+        setShiftYieldQty("");
+        setRejectedQty("0");
+        setSelectedReasonId("");
+        setRejectionRemarks("");
+        setRemarks("");
+        setVarianceReason("");
+        setApproveVariance(false);
+        setEvidenceImage(null);
+        setEvidenceImageError(null);
+        setShiftMaterials([]);
+        manuallyEditedMaterialKeysRef.current.clear();
+        setMaterialsLoadError(null);
+        setProductionDay("1");
+        const todayStr = getPhtDateInputValue();
+        setProductionDate(todayStr);
+        setSessionKey("");
+        setRecoverableSessions([]);
+        setRecoveryError(null);
+        setRecoveryStatus("checking");
+
+        const available = getAvailableShifts();
+        if (available.length > 0) {
+            setShiftName(available[0].value);
+        }
+
+        // Fetch rejection reasons
+        fetchRejectionReasons()
+            .then((reasons) => setRejectionReasons(reasons))
+            .catch((err) => console.error("Error loading rejection reasons:", err));
+
+        let cancelled = false;
+        const newSessionKey = () => typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+            ? crypto.randomUUID()
+            : `production-session-${Date.now()}`;
+
+        fetchRecoverableShiftRunSessions(jobOrderId)
+            .then(async (sessions) => {
+                if (cancelled) return;
+                setRecoverableSessions(sessions);
+                if (sessions.length === 0) {
+                    setSessionKey(newSessionKey());
+                    setRecoveryStatus("none");
+                    return;
+                }
+
+                setRecoveryStatus("pending");
+                if (sessions.length !== 1 || !sessions[0].canResume) return;
+
+                const session = sessions[0];
+                const attemptKey = `${jobOrderId}:${session.sessionKey}`;
+                if (autoResumeAttemptedRef.current.has(attemptKey)) return;
+                autoResumeAttemptedRef.current.add(attemptKey);
+                setRecoveryStatus("resuming");
+                setRecoveryError(null);
+                try {
+                    await resumeShiftRunLogSession(jobOrderId, session.sessionKey);
+                    if (cancelled) return;
+                    toast.success(`Recovered and recorded the pending shift for ${session.shiftName}.`);
+                    onOpenChange(false);
+                    onSuccess?.();
+                } catch (error) {
+                    if (cancelled) return;
+                    setRecoveryError(error instanceof Error ? error.message : "The pending shift could not be resumed.");
+                    setRecoveryStatus("pending");
+                    fetchRecoverableShiftRunSessions(jobOrderId)
+                        .then((latest) => { if (!cancelled) setRecoverableSessions(latest); })
+                        .catch(() => undefined);
+                }
+            })
+            .catch((error) => {
+                if (cancelled) return;
+                setRecoveryError(error instanceof Error ? error.message : "Unable to check for pending shifts.");
+                setRecoveryStatus("error");
+            });
+
+        return () => { cancelled = true; };
+    }, [open, jobOrderId, jobOrderSessionKey, getAvailableShifts]);
+
+    // Keep material refreshes independent from shift-entry initialization.
+    useEffect(() => {
+        if (open && jobOrderId) void loadShiftMaterials();
+    }, [open, jobOrderId, loadShiftMaterials]);
 
     useEffect(() => {
         setReservationSearch("");
@@ -323,21 +392,18 @@ export function JobOrderShiftLogModal({
 
         if (field === "good") setShiftYieldQty(value);
         if (field === "rejected") setRejectedQty(value);
-        if (field === "scrap") setScrapQty(value);
 
         setShiftMaterials((previous) => {
             const recalculated = applyConsumptionDefaults(
                 previous,
                 targetQuantity,
-                sumProductionOutputQuantities(nextQuantities.good, nextQuantities.rejected, nextQuantities.scrap)
+                sumProductionOutputQuantities(nextQuantities.good, nextQuantities.rejected, 0)
             );
             return preserveExistingActualQuantities(recalculated, previous, manuallyEditedMaterialKeysRef.current);
         });
     };
 
-    const totalOutputQuantity = (Number(shiftYieldQty) || 0)
-        + (Number(rejectedQty) || 0)
-        + (Number(scrapQty) || 0);
+    const totalOutputQuantity = sumProductionOutputQuantities(shiftYieldQty, rejectedQty, 0);
 
     const validateShiftLog = () => {
         if (submittingShiftLog) return false;
@@ -353,9 +419,8 @@ export function JobOrderShiftLogModal({
 
         const newYield = Number(shiftYieldQty) || 0;
         const newRejected = Number(rejectedQty) || 0;
-        const newScrap = Number(scrapQty) || 0;
-        if (newYield + newRejected + newScrap <= 0) {
-            toast.error("Record at least one good, rejected, or scrap unit.");
+        if (newYield + newRejected <= 0) {
+            toast.error("Record at least one good or rejected unit.");
             return false;
         }
 
@@ -416,6 +481,48 @@ export function JobOrderShiftLogModal({
         if (validateShiftLog()) setIsConfirmationOpen(true);
     };
 
+    const handleResumePendingSession = async (session: RecoverableShiftRunSession) => {
+        if (!session.canResume || submittingShiftLog) return;
+        setRecoveryStatus("resuming");
+        setRecoveryError(null);
+        try {
+            await resumeShiftRunLogSession(jobOrderId || session.jobOrderId, session.sessionKey);
+            toast.success(`Recovered and recorded the pending shift for ${session.shiftName}.`);
+            onOpenChange(false);
+            onSuccess?.();
+        } catch (error) {
+            setRecoveryError(error instanceof Error ? error.message : "The pending shift could not be resumed.");
+            setRecoveryStatus("pending");
+            try {
+                const latest = await fetchRecoverableShiftRunSessions(jobOrderId || session.jobOrderId);
+                setRecoverableSessions(latest);
+            } catch {
+                // Keep the existing pending session visible if refresh also fails.
+            }
+        }
+    };
+
+    const handleRetryRecoveryCheck = async () => {
+        if (!jobOrderId) return;
+        setRecoveryStatus("checking");
+        setRecoveryError(null);
+        try {
+            const sessions = await fetchRecoverableShiftRunSessions(jobOrderId);
+            setRecoverableSessions(sessions);
+            if (sessions.length === 0) {
+                setSessionKey(typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+                    ? crypto.randomUUID()
+                    : `production-session-${Date.now()}`);
+                setRecoveryStatus("none");
+            } else {
+                setRecoveryStatus("pending");
+            }
+        } catch (error) {
+            setRecoveryError(error instanceof Error ? error.message : "Unable to check for pending shifts.");
+            setRecoveryStatus("error");
+        }
+    };
+
     const handleConfirmShiftLog = async (completeProductionAfterLog = false) => {
         if (!validateShiftLog()) {
             setIsConfirmationOpen(false);
@@ -424,7 +531,6 @@ export function JobOrderShiftLogModal({
 
         const newYield = Number(shiftYieldQty) || 0;
         const newRejected = Number(rejectedQty) || 0;
-        const newScrap = Number(scrapQty) || 0;
         const evidenceImageToSubmit = evidenceImage;
         if (!evidenceImageToSubmit || evidenceImageError) {
             setIsConfirmationOpen(false);
@@ -445,7 +551,8 @@ export function JobOrderShiftLogModal({
                 productionDate,
                 yieldQty: newYield,
                 rejectedQty: newRejected,
-                scrapQty: newScrap,
+                // Keep the existing API contract while recording all shift loss as rejected output.
+                scrapQty: 0,
                 rejectionReasonId: selectedReasonId ? Number(selectedReasonId) : null,
                 rejectionRemarks: rejectionRemarks || undefined,
                 varianceReason: varianceReason || undefined,
@@ -498,7 +605,28 @@ export function JobOrderShiftLogModal({
                 }
             }
         } catch (err: any) {
-            toast.error(err.message || "Failed to submit shift log.");
+            if (err instanceof ShiftRunLogRequestError
+                && ["MATERIAL_AGGREGATE_CHANGED", "MATERIAL_RESERVATION_CHANGED"].includes(err.code || "")) {
+                setIsConfirmationOpen(false);
+                setRecoveryError(err.message);
+                setRecoverableSessions([{
+                    ledgerId: Number(err.details?.ledgerId || 0),
+                    jobOrderId: Number(jobOrderId || 0),
+                    sessionKey,
+                    shiftName: `Day ${productionDay} - ${shiftName}`,
+                    productionDate,
+                    goodQuantity: newYield,
+                    rejectedQuantity: newRejected,
+                    scrapQuantity: 0,
+                    loggedAt: null,
+                    canResume: true,
+                    recoveryError: { code: err.code, message: err.message, details: err.details || null }
+                }]);
+                setRecoveryStatus("pending");
+                toast.warning("This shift is saved as pending. Resume it from this screen; don’t enter the same output again.");
+            } else {
+                toast.error(err.message || "Failed to submit shift log.");
+            }
         } finally {
             setSubmittingShiftLog(false);
         }
@@ -560,7 +688,7 @@ export function JobOrderShiftLogModal({
                     </div>
                     <div>
                         <div><strong>Shift Run:</strong> ${fullShiftName}</div>
-                        <div><strong>Good Yield:</strong> ${formatProductionQuantity(Number(shiftYieldQty))} pcs • <strong>Scrap:</strong> ${formatProductionQuantity(Number(scrapQty))} pcs</div>
+                        <div><strong>Good Yield:</strong> ${formatProductionQuantity(Number(shiftYieldQty))} pcs • <strong>Rejected Units:</strong> ${formatProductionQuantity(Number(rejectedQty))} pcs</div>
                         <div><strong>Output Traceability:</strong> Assigned during In-Process QA</div>
                     </div>
                 </div>
@@ -635,7 +763,7 @@ export function JobOrderShiftLogModal({
     const hasMissingMaterialConsumption = shiftMaterials.length === 0 || shiftMaterials.some((material) =>
         (consumedByMaterial.get(Number(material.jo_material_id || 0)) || 0) <= 0
     );
-    const hasOutput = Number(shiftYieldQty || 0) + Number(rejectedQty || 0) + Number(scrapQty || 0) > 0;
+    const hasOutput = totalOutputQuantity > 0;
     const varianceTolerancePct = Math.max(0, Number(
         shiftMaterials.find((material) => material.material_consumption_variance_tolerance_pct !== undefined)
             ?.material_consumption_variance_tolerance_pct || 0
@@ -686,7 +814,13 @@ export function JobOrderShiftLogModal({
 
     return (
         <>
-            <Dialog open={open} onOpenChange={onOpenChange}>
+            <Dialog
+                open={open}
+                onOpenChange={(nextOpen) => {
+                    if (!nextOpen && isTopUpOpen) return;
+                    onOpenChange(nextOpen);
+                }}
+            >
                 <DialogContent className="w-[98vw] md:w-full md:max-w-[1200px] lg:max-w-[1400px] max-h-[96vh] md:max-h-[92vh] flex flex-col bg-background border border-border/60 shadow-2xl rounded-2xl p-0 overflow-hidden">
                     <div className="bg-gradient-to-r from-primary/15 via-primary/5 to-background p-4 sm:p-6 border-b border-border/50 shrink-0">
                         <DialogHeader>
@@ -707,8 +841,10 @@ export function JobOrderShiftLogModal({
                     </div>
 
                     <form onSubmit={handleShiftLogSubmit} className="p-4 sm:p-6 flex-1 flex flex-col overflow-hidden min-h-0 text-xs">
+                        {recoveryStatus === "none" ? (
+                            <>
                         <div className="grid grid-cols-1 items-start lg:grid-cols-12 gap-4 sm:gap-6 flex-1 overflow-y-auto pr-1 min-h-0">
-                            {/* Left Column: Yield, Scrap, Batch Metadata, Operators */}
+                            {/* Left Column: Yield, Rejection, Batch Metadata, Operators */}
                             <div className="min-w-0 lg:col-span-6 space-y-5">
                                 <div className="bg-card/50 backdrop-blur-sm border border-border/60 rounded-xl p-4 sm:p-5 space-y-4 shadow-sm">
                                     <div className="flex items-center gap-2 pb-2 border-b border-border/40">
@@ -808,20 +944,20 @@ export function JobOrderShiftLogModal({
                                          </div>
                                      </div>
 
-                                    {/* Scrap / Rejection Log Section */}
+                                    {/* Rejected Output Tracking Section */}
                                     <div className="bg-rose-500/[0.03] border border-rose-500/20 rounded-xl p-3.5 space-y-3">
                                         <div className="flex items-center justify-between pb-1.5 border-b border-rose-500/10">
                                             <div className="flex items-center gap-1.5">
                                                 <ShieldAlert className="h-4 w-4 text-rose-500" />
                                          <h5 className="font-bold text-rose-800 dark:text-rose-300 uppercase tracking-wider text-[10px]">
-                                                     Rejected & Scrap Output
+                                                     Rejected Output Tracking
                                                 </h5>
                                             </div>
                                             <Badge variant="outline" className="text-[9px] text-rose-600 border-rose-500/20">
                                                 QA Tracking
                                             </Badge>
                                         </div>
-                                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                              <div className="space-y-1">
                                                  <Label htmlFor="rejectedQty" className="text-muted-foreground text-[10px]">Rejected Units</Label>
                                                  <Input
@@ -835,19 +971,6 @@ export function JobOrderShiftLogModal({
                                                      placeholder="0"
                                                  />
                                              </div>
-                                             <div className="space-y-1">
-                                                 <Label htmlFor="scrapQty" className="text-muted-foreground text-[10px]">Scrap Units</Label>
-                                                 <Input
-                                                     id="scrapQty"
-                                                     type="number"
-                                                     min="0"
-                                                     step="0.000001"
-                                                     value={scrapQty}
-                                                    onChange={(e) => handleOutputQuantityChange("scrap", e.target.value)}
-                                                    className="h-8.5 rounded-lg bg-background border-rose-500/30 text-xs font-mono font-bold"
-                                                    placeholder="0"
-                                                />
-                                            </div>
                                              <div className="space-y-1">
                                                  <Label htmlFor="rejectionReason" className="text-muted-foreground text-[10px]">Rejection Reason</Label>
                                                 <select
@@ -864,7 +987,7 @@ export function JobOrderShiftLogModal({
                                                      ))}
                                                  </select>
                                              </div>
-                                             <div className="space-y-1 sm:col-span-3">
+                                             <div className="space-y-1 sm:col-span-2">
                                                  <Label htmlFor="productionRemarks" className="text-muted-foreground text-[10px]">Session Remarks</Label>
                                                  <Textarea
                                                      id="productionRemarks"
@@ -1208,8 +1331,92 @@ export function JobOrderShiftLogModal({
                                 </Button>
                             </div>
                         </DialogFooter>
+                            </>
+                        ) : (
+                            <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-2 py-8 text-center">
+                                <div className="w-full max-w-2xl space-y-5">
+                                    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                                        <AlertTriangle className="h-6 w-6" />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <h3 className="text-base font-semibold text-foreground">
+                                            {recoveryStatus === "checking" ? "Checking for a saved shift…"
+                                                : recoveryStatus === "resuming" ? "Resuming the saved shift…"
+                                                    : recoveryStatus === "error" ? "Unable to check for saved shifts"
+                                                        : "A shift is waiting to be recovered"}
+                                        </h3>
+                                        <p className="text-sm text-muted-foreground">
+                                            {recoveryStatus === "checking" || recoveryStatus === "resuming"
+                                                ? "Please wait. Keep this window open while the saved session is checked."
+                                                : recoveryError || "This Job Order has an incomplete shift session. Resume it before entering another shift so the output is not duplicated."}
+                                        </p>
+                                    </div>
+
+                                    {recoverableSessions.length > 0 && (
+                                        <div className="space-y-3 text-left">
+                                            {recoverableSessions.map((session) => {
+                                                const details = session.recoveryError?.details || {};
+                                                return (
+                                                    <div key={`${session.ledgerId}:${session.sessionKey}`} className="rounded-xl border border-amber-200 bg-amber-50/70 p-4 dark:border-amber-900 dark:bg-amber-950/20">
+                                                        <div className="flex flex-wrap items-start justify-between gap-3">
+                                                            <div>
+                                                                <p className="font-semibold text-foreground">{session.shiftName || "Saved production shift"}</p>
+                                                                <p className="mt-1 text-xs text-muted-foreground">
+                                                                    {session.productionDate || "Date unavailable"} · Good {formatProductionQuantity(session.goodQuantity)} pcs · Rejected {formatProductionQuantity(session.rejectedQuantity)} pcs
+                                                                </p>
+                                                                {session.recoveryError?.message && (
+                                                                    <p className="mt-2 text-xs text-amber-900 dark:text-amber-200">{session.recoveryError.message}</p>
+                                                                )}
+                                                                {details.joMaterialId !== undefined && (
+                                                                    <p className="mt-2 text-xs text-muted-foreground">
+                                                                        Material #{String(details.joMaterialId)}: saved balance {String(details.expectedActualBefore ?? details.expectedRemainingBefore ?? "—")}; live balance {String(details.liveActual ?? details.liveRemaining ?? "—")}.
+                                                                    </p>
+                                                                )}
+                                                            </div>
+                                                            {session.canResume ? (
+                                                                <Button
+                                                                    type="button"
+                                                                    disabled={recoveryStatus === "resuming"}
+                                                                    onClick={() => void handleResumePendingSession(session)}
+                                                                >
+                                                                    Resume saved shift
+                                                                </Button>
+                                                            ) : (
+                                                                <Badge variant="outline" className="border-amber-400 text-amber-800 dark:text-amber-200">
+                                                                    Needs supervisor reconciliation
+                                                                </Badge>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+
+                                    <div className="flex flex-wrap justify-center gap-2">
+                                        {recoveryStatus === "error" && (
+                                            <Button type="button" variant="outline" onClick={() => void handleRetryRecoveryCheck()}>
+                                                Retry check
+                                            </Button>
+                                        )}
+                                        <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+                                            Close
+                                        </Button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </form>
                 </DialogContent>
+                <AddReservedMaterialDialog
+                    open={isTopUpOpen}
+                    onOpenChange={(nextOpen) => {
+                        setIsTopUpOpen(nextOpen);
+                        if (!nextOpen) setTopUpTarget(null);
+                    }}
+                    target={topUpTarget}
+                    onAdded={loadShiftMaterials}
+                />
             </Dialog>
 
             <Dialog
@@ -1242,10 +1449,6 @@ export function JobOrderShiftLogModal({
                         <div>
                             <p className="text-xs text-muted-foreground">Rejected Units</p>
                             <p className="font-semibold">{formatProductionQuantity(Number(rejectedQty) || 0)}</p>
-                        </div>
-                        <div>
-                            <p className="text-xs text-muted-foreground">Scrap Units</p>
-                            <p className="font-semibold">{formatProductionQuantity(Number(scrapQty) || 0)}</p>
                         </div>
                         <div className="col-span-2 rounded-md border border-border/60 bg-background/70 px-3 py-2">
                             <p className="text-xs text-muted-foreground">Projected Good Output / Target</p>
@@ -1361,15 +1564,6 @@ export function JobOrderShiftLogModal({
                 </DialogContent>
             </Dialog>
 
-            <AddReservedMaterialDialog
-                open={isTopUpOpen}
-                onOpenChange={(nextOpen) => {
-                    setIsTopUpOpen(nextOpen);
-                    if (!nextOpen) setTopUpTarget(null);
-                }}
-                target={topUpTarget}
-                onAdded={loadShiftMaterials}
-            />
         </>
     );
 }

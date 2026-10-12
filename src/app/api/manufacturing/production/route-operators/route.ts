@@ -11,6 +11,13 @@ import {
 } from "@/modules/manufacturing-management/job-order-status";
 import { committedGoodOutputOrAggregate, goodOutputAggregateFallback, hasReachedProductionTarget } from "@/modules/manufacturing-management/production-workflow/utils/production-output";
 import { formatPhtDateTime, parsePhtDateTime } from "../../directus-api";
+import {
+    accumulateHoursFromSeconds,
+    elapsedSecondsBetween,
+    isRunningRouteOperatorTimer,
+    latestRunningRouteOperatorTimer
+} from "@/modules/manufacturing-management/production-workflow/operator-time";
+import { canMutateOperatorActionOnRoute } from "@/modules/manufacturing-management/production-workflow/route-status";
 import { getSessionUserId } from "../../lot-transfers/_session";
 import {
     findOperatorRosterAudit,
@@ -195,9 +202,78 @@ async function fetchDirectusRecords(taskId?: number, userId?: number, activeOnly
     return Array.isArray(payload?.data) ? payload.data : [];
 }
 
+function activeOperatorCount(records: DirectusRouteOperator[]): number {
+    return new Set(records
+        .filter((record) => Boolean(record.started_at) && !record.stopped_at)
+        .map((record) => Number(record.operator_id))
+        .filter((operatorId) => Number.isSafeInteger(operatorId) && operatorId > 0)
+    ).size;
+}
+
+async function fetchActiveOperatorCount(): Promise<number> {
+    const params = new URLSearchParams({
+        limit: "-1",
+        fields: "operator_id,started_at,stopped_at",
+        "filter[started_at][_nnull]": "true",
+        "filter[stopped_at][_null]": "true"
+    });
+    const payload = await directusRequest<{ data?: DirectusRouteOperator[] }>(`/items/${COLLECTION}?${params.toString()}`);
+    return activeOperatorCount(Array.isArray(payload?.data) ? payload.data : []);
+}
+
+async function fetchJobOrderOperatorSnapshot(jobOrderId: number) {
+    const [jobOrderPayload, routesPayload] = await Promise.all([
+        directusRequest<{ data?: { job_order_id?: unknown; job_order_no?: unknown; assigned_personnel?: unknown } }>(
+            `/items/manufacturing_job_orders/${jobOrderId}?fields=job_order_id,job_order_no,assigned_personnel`
+        ),
+        directusRequest<{ data?: Array<{ jo_route_id?: unknown; sequence_order?: unknown }> }>(
+            `/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${jobOrderId}&fields=jo_route_id,sequence_order&limit=-1`
+        )
+    ]);
+    const jobOrder = jobOrderPayload?.data;
+    if (!jobOrder) {
+        throw new DirectusRouteOperatorError(404, "Job Order was not found.", "JOB_ORDER_NOT_FOUND");
+    }
+
+    const routes = Array.isArray(routesPayload?.data) ? routesPayload.data : [];
+    const routeIds = routes
+        .map((route) => positiveInteger(route.jo_route_id))
+        .filter((routeId) => routeId > 0);
+    const params = new URLSearchParams({ limit: "-1", fields: ROUTE_OPERATOR_FIELDS });
+    if (routeIds.length > 0) {
+        params.set("filter[_or][0][jo_route_id][_in]", routeIds.join(","));
+        params.set("filter[_or][1][started_at][_nnull]", "true");
+        params.set("filter[_or][1][stopped_at][_null]", "true");
+    } else {
+        params.set("filter[started_at][_nnull]", "true");
+        params.set("filter[stopped_at][_null]", "true");
+    }
+    const operatorPayload = await directusRequest<{ data?: DirectusRouteOperator[] }>(`/items/${COLLECTION}?${params.toString()}`);
+    const records = Array.isArray(operatorPayload?.data) ? operatorPayload.data : [];
+    const routeIdSet = new Set(routeIds);
+    const jobOrderRecords = records.filter((record) => routeIdSet.has(Number(record.jo_route_id)));
+    const jobOrderNo = String(jobOrder.job_order_no || `JO-${jobOrderId}`);
+    const mappedRecords = jobOrderRecords.map((record) => mapDirectusRecord(record, jobOrderNo));
+    const enrichedRecords = await enrichRecords(mappedRecords);
+    const totalHours = enrichedRecords.reduce((sum, record) => sum + record.actual_hours, 0);
+    const totalLaborCost = enrichedRecords.reduce((sum, record) => sum + record.labor_cost, 0);
+    const assignedPersonnel = normalizeOperatorAssignments(jobOrder.assigned_personnel);
+
+    return {
+        data: enrichedRecords,
+        assignedPersonnel,
+        assignmentState: { jobOrderId, jobOrderNo, assignedPersonnel },
+        activeOperatorCount: activeOperatorCount(records),
+        summary: {
+            total_hours: Math.round(totalHours * 100) / 100,
+            total_labor_cost: Math.round(totalLaborCost * 100) / 100
+        }
+    };
+}
+
 async function findDirectusRecord(taskId: number, userId: number, activeOnly = false): Promise<DirectusRouteOperator | null> {
     const records = await fetchDirectusRecords(taskId, userId, activeOnly);
-    if (activeOnly) return records.find((record) => isActiveValue(record.is_active)) || null;
+    if (activeOnly) return latestRunningRouteOperatorTimer(records);
     return records.find((record) => isActiveValue(record.is_active)) || records[0] || null;
 }
 
@@ -258,13 +334,14 @@ interface RouteJobOrderContext {
     jobOrderId: number;
     jobOrderNo: string;
     sequenceOrder: number;
+    routeStatus: string;
     status: string;
     assignedPersonnel: ReturnType<typeof normalizeOperatorAssignments>;
 }
 
 async function getRouteJobOrderContext(taskId: number): Promise<RouteJobOrderContext> {
-    const routePayload = await directusRequest<{ data?: { job_order_id?: unknown; sequence_order?: unknown } }>(
-        `/items/manufacturing_job_order_routes/${taskId}?fields=jo_route_id,job_order_id,sequence_order`,
+    const routePayload = await directusRequest<{ data?: { job_order_id?: unknown; sequence_order?: unknown; status?: unknown } }>(
+        `/items/manufacturing_job_order_routes/${taskId}?fields=jo_route_id,job_order_id,sequence_order,status`,
     );
     const jobOrderId = relationId(routePayload?.data?.job_order_id);
     if (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0) {
@@ -286,6 +363,7 @@ async function getRouteJobOrderContext(taskId: number): Promise<RouteJobOrderCon
         jobOrderId,
         jobOrderNo: String(jobOrder.job_order_no || `JO-${jobOrderId}`),
         sequenceOrder,
+        routeStatus: String(routePayload?.data?.status || ""),
         status: String(jobOrder.status || ""),
         assignedPersonnel: normalizeOperatorAssignments(jobOrder.assigned_personnel)
     };
@@ -331,6 +409,13 @@ async function assertProductionMutationAllowed(
         throw new DirectusRouteOperatorError(409, "The Job Order has an unknown status and cannot be changed.", "JOB_ORDER_STATUS_UNKNOWN");
     }
     if (action === "stop-timer") return context;
+    if (!canMutateOperatorActionOnRoute(context.routeStatus, action)) {
+        throw new DirectusRouteOperatorError(
+            409,
+            `Route ${context.sequenceOrder} is ${context.routeStatus.toLowerCase()} and does not accept operator roster or time-entry changes.`,
+            "ROUTE_COMPLETED"
+        );
+    }
     if (isCancelledJobOrderStatus(status)) {
         throw new DirectusRouteOperatorError(409, `Job Order ${jobOrder?.job_order_no || jobOrderId} is cancelled and cannot be changed.`, "JOB_ORDER_CANCELLED");
     }
@@ -340,11 +425,14 @@ async function assertProductionMutationAllowed(
     if (isJobOrderStatus(status, JOB_ORDER_STATUS.PRODUCTION_COMPLETED, JOB_ORDER_STATUS.FOR_QA_RECONCILIATION, JOB_ORDER_STATUS.CLOSED)) {
         throw new DirectusRouteOperatorError(409, `Job Order ${jobOrder?.job_order_no || jobOrderId} has completed production and cannot be changed.`, "PRODUCTION_COMPLETED");
     }
-    await assertProductionTargetNotReached(jobOrderId, jobOrderNo);
-    if (allowPreProductionRosterChanges && canChangeJobOrderOperatorRoster(status)) return context;
+    if (allowPreProductionRosterChanges && canChangeJobOrderOperatorRoster(status)) {
+        await assertProductionTargetNotReached(jobOrderId, jobOrderNo);
+        return context;
+    }
     if (!isJobOrderStatus(status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
         throw new DirectusRouteOperatorError(409, `Job Order ${jobOrder?.job_order_no || jobOrderId} must be In Production before operator activity can be changed.`, "JOB_ORDER_NOT_IN_PRODUCTION");
     }
+    if (action !== "edit-times") await assertProductionTargetNotReached(jobOrderId, jobOrderNo);
     return context;
 }
 
@@ -454,8 +542,22 @@ export async function GET(request: Request) {
         const { searchParams } = new URL(request.url);
         const taskIdParam = searchParams.get("taskId");
         const taskId = taskIdParam === null ? undefined : Number(taskIdParam);
+        const jobOrderIdParam = searchParams.get("jobOrderId");
+        const jobOrderId = jobOrderIdParam === null ? undefined : Number(jobOrderIdParam);
+        const countOnly = searchParams.get("countOnly") === "true";
         const joId = searchParams.get("joId") || "";
         const activeOnly = searchParams.get("activeOnly") === "true";
+
+        if (jobOrderId !== undefined) {
+            if (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0) {
+                return NextResponse.json({ error: "jobOrderId must be a positive integer" }, { status: 400 });
+            }
+            return NextResponse.json(await fetchJobOrderOperatorSnapshot(jobOrderId));
+        }
+
+        if (countOnly) {
+            return NextResponse.json({ activeOperatorCount: await fetchActiveOperatorCount() });
+        }
 
         if (taskId !== undefined && (!Number.isInteger(taskId) || taskId <= 0)) {
             return NextResponse.json({ error: "taskId must be a positive integer" }, { status: 400 });
@@ -465,7 +567,7 @@ export async function GET(request: Request) {
         const directusRecords = await fetchDirectusRecords(taskId, undefined, activeOnly);
         const responseJoId = joId || context?.jobOrderNo || (context ? String(context.jobOrderId) : "");
         const records = directusRecords
-            .filter((record) => !activeOnly || isActiveValue(record.is_active))
+            .filter((record) => !activeOnly || isRunningRouteOperatorTimer(record))
             .map(record => mapDirectusRecord(record, responseJoId));
         const enrichedRecords = await enrichRecords(records);
         const totalHours = enrichedRecords.reduce((sum, record) => sum + record.actual_hours, 0);
@@ -631,7 +733,8 @@ export async function POST(request: Request) {
                 started_at: now,
                 stopped_at: null,
                 hourly_rate: determinedRate,
-                logged_at: now
+                logged_at: now,
+                is_active: true
             };
             const saved = existingRecord
                 ? await directusRequest<{ data?: DirectusRouteOperator }>(`/items/${COLLECTION}/${existingRecord.jo_route_operator_id}`, {
@@ -644,7 +747,6 @@ export async function POST(request: Request) {
                         jo_route_id: taskId,
                         operator_id: userId,
                         logged_hours: 0,
-                        is_active: true,
                         ...payload
                     })
                 });
@@ -666,7 +768,10 @@ export async function POST(request: Request) {
         if (action === "stop-timer") {
             const activeRecord = await findDirectusRecord(taskId, userId, true);
             if (!activeRecord) {
-                return NextResponse.json({ error: "No running timer found for this operator and task" }, { status: 400 });
+                return NextResponse.json({
+                    error: "This operator has no running timer on this route. Refresh the Job Order and try again.",
+                    code: "ROUTE_OPERATOR_TIMER_NOT_RUNNING"
+                }, { status: 409 });
             }
 
             const startedAt = activeRecord.started_at ? parseDirectusDateTime(activeRecord.started_at) : Number.NaN;
@@ -675,8 +780,11 @@ export async function POST(request: Request) {
             }
 
             const stoppedAt = formatPhtDateTime();
-            const elapsedHours = Math.max(0.01, (Date.now() - startedAt) / (1000 * 60 * 60));
-            const totalHours = Math.round((Number(activeRecord.logged_hours || 0) + elapsedHours) * 100) / 100;
+            const elapsedSeconds = elapsedSecondsBetween(activeRecord.started_at, stoppedAt);
+            if (elapsedSeconds === null) {
+                return NextResponse.json({ error: "The active timer has no valid duration" }, { status: 409 });
+            }
+            const totalHours = accumulateHoursFromSeconds(Number(activeRecord.logged_hours || 0), elapsedSeconds);
             const hourlyRate = Number(activeRecord.hourly_rate || determinedRate);
             const saved = await directusRequest<{ data?: DirectusRouteOperator }>(`/items/${COLLECTION}/${activeRecord.jo_route_operator_id}`, {
                 method: "PATCH",
@@ -684,7 +792,8 @@ export async function POST(request: Request) {
                     logged_hours: totalHours,
                     hourly_rate: hourlyRate,
                     stopped_at: stoppedAt,
-                    logged_at: stoppedAt
+                    logged_at: stoppedAt,
+                    is_active: true
                 })
             });
             const mapped = responseRecord(saved, joId);

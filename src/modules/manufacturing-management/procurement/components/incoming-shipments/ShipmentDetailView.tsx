@@ -127,14 +127,14 @@ export function ShipmentDetailView({
                             >
                                 <ArrowLeft className="h-3.5 w-3.5" /> Back to Incoming Shipments
                             </button>
-                        ) : (
+                        ) : backHref !== undefined ? (
                             <Link
                                 href={backHref || "/mm/procurement-and-inbound/incoming-purchase-shipments"}
                                 className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold text-foreground hover:bg-muted"
                             >
                                 <ArrowLeft className="h-3.5 w-3.5" /> Back to Incoming Shipments
                             </Link>
-                        )}
+                        ) : null}
                     </div>
                 </div>
             ) : activeShipment ? (

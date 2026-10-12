@@ -28,8 +28,12 @@ export interface ReleaseSummaryFinancials {
     machineOverhead: number;
     configuredOverhead: number;
     configuredOverheadBasis: string;
+    yieldFactor?: number;
     baseCogs: number;
     adjustedCogs: number;
+    targetSellingPrice?: number;
+    grossMarginAmount?: number;
+    grossMarginPercentage?: number;
 }
 
 export interface ReleaseSummaryPrintData {

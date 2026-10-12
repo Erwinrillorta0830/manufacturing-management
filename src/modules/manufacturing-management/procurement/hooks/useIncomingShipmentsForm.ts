@@ -390,13 +390,10 @@ export function useIncomingShipmentsForm({
         ) || rawMaterials.find(material =>
             String(material.product_id) === String(line.parent_product_id)
         );
-        const selectedMaterialType = purchaseOrderMaterialTypeFromProduct(selectedMaterial, rawMaterials);
+        const selectedMaterialType = purchaseOrderMaterialTypeFromProduct(selectedMaterial, rawMaterials) || line.material_type;
 
-        if (!line.material_type) errors.push("Type is required");
         if (!line.product_id) errors.push("Product Name is required");
-        if (line.material_type && selectedMaterial && selectedMaterialType !== line.material_type) {
-            errors.push("Product Name must match the selected Type");
-        }
+        if (!selectedMaterialType && !line.material_type) errors.push("Type is required");
         if (!Number.isFinite(quantity) || quantity <= 0) errors.push("Qty Ordered must be greater than zero");
         if (normalizedUnitPrice === null) {
             if (canonicalDrafting && priceControlMissingProductIds.includes(Number(line.product_id))) {
@@ -454,14 +451,25 @@ export function useIncomingShipmentsForm({
         }
 
         if (editingShipmentId) {
-            const linesForEdit = linesForm.map(line => ({
-                ...line,
-                category_type: line.material_type === "raw_material"
-                    ? "RAW_MATERIAL" as const
-                    : line.material_type === "packaging"
-                        ? "PACKAGING" as const
-                        : "FINISHED_GOODS" as const
-            }));
+            const linesForEdit = linesForm.map(line => {
+                const selectedMaterial = rawMaterials.find(material =>
+                    String(material.product_id) === String(line.product_id)
+                ) || rawMaterials.find(material =>
+                    String(material.product_id) === String(line.parent_product_id)
+                );
+                const derivedMaterialType = purchaseOrderMaterialTypeFromProduct(selectedMaterial, rawMaterials) || line.material_type;
+                const derivedCategoryType = derivedMaterialType === "raw_material"
+                    ? ("RAW_MATERIAL" as const)
+                    : derivedMaterialType === "packaging"
+                        ? ("PACKAGING" as const)
+                        : ("FINISHED_GOODS" as const);
+
+                return {
+                    ...line,
+                    material_type: derivedMaterialType,
+                    category_type: derivedCategoryType
+                };
+            });
             const editSucceeded = await onEditShipment(editingShipmentId, shipmentForm, linesForEdit);
             if (editSucceeded !== false) {
                 setEditingShipmentId(null);
@@ -485,7 +493,7 @@ export function useIncomingShipmentsForm({
         setLinesForm(copy);
     };
 
-    const handleLineFormChange = (index: number, fieldOrObject: string | Record<string, unknown>, value?: unknown) => {
+    const handleLineFormChange = (index: number, fieldOrObject: string | Partial<ManifestLineFormItem> | Record<string, unknown>, value?: unknown) => {
         const copy = [...linesForm];
         const currentLine = copy[index];
         const nextLine = (typeof fieldOrObject === "object" && fieldOrObject !== null

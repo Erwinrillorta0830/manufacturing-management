@@ -14,7 +14,8 @@ import {
     WipTopUpPayload,
     WipTopUpResponse,
     WorkCenterJobOrderAvailability,
-    JobOrderMaterialLine
+    JobOrderMaterialLine,
+    TerminalQueueJobOrder
 } from "../types";
 import type { JobOrderWorkflowAction } from "../../job-order-workflow";
 
@@ -24,6 +25,29 @@ export async function fetchJobOrders(): Promise<JobOrder[]> {
     const res = await fetch("/api/manufacturing/planning-engineering", { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to load job orders");
     return res.json();
+}
+
+export async function fetchTerminalJobOrderQueue(): Promise<TerminalQueueJobOrder[]> {
+    const res = await fetch("/api/manufacturing/planning-engineering?action=terminal-queue", { cache: "no-store" });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(data?.error || "Failed to load the Shop Floor Execution Terminal queue.");
+    if (!Array.isArray(data)) throw new Error("The Shop Floor Execution Terminal queue response is invalid.");
+    return data as TerminalQueueJobOrder[];
+}
+
+export async function fetchTerminalJobOrderDetails(jobOrderId: number, signal?: AbortSignal): Promise<JobOrder> {
+    const params = new URLSearchParams({
+        action: "terminal-job-order",
+        joId: String(jobOrderId)
+    });
+    const res = await fetch(`/api/manufacturing/planning-engineering?${params.toString()}`, {
+        cache: "no-store",
+        signal
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(data?.error || "Failed to load the selected Job Order.");
+    if (!data || typeof data !== "object") throw new Error("The selected Job Order response is invalid.");
+    return data as JobOrder;
 }
 
 export async function fetchJobOrderMaterials(jobOrderId: number | string): Promise<JobOrderMaterialLine[]> {
@@ -116,6 +140,7 @@ export async function fetchUsersList(): Promise<User[]> {
 
 export interface RouteOperatorsResponse {
     data: RouteOperatorRecord[];
+    activeOperatorCount?: number;
     assignedPersonnel?: Record<string, number[]> | null;
     assignmentState?: {
         jobOrderId: number;
@@ -132,6 +157,25 @@ export async function fetchRouteOperators(taskId: number): Promise<RouteOperator
     const res = await fetch(`/api/manufacturing/production/route-operators?taskId=${taskId}`, { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to load operators logs");
     return res.json();
+}
+
+export async function fetchJobOrderOperatorSnapshot(jobOrderId: number, signal?: AbortSignal): Promise<RouteOperatorsResponse> {
+    const res = await fetch(`/api/manufacturing/production/route-operators?jobOrderId=${jobOrderId}`, {
+        cache: "no-store",
+        signal
+    });
+    if (!res.ok) throw new Error("Failed to load Job Order operator snapshot");
+    return res.json();
+}
+
+export async function fetchActiveOperatorCount(signal?: AbortSignal): Promise<number> {
+    const res = await fetch("/api/manufacturing/production/route-operators?countOnly=true", {
+        cache: "no-store",
+        signal
+    });
+    if (!res.ok) throw new Error("Failed to load active operator count");
+    const payload = await res.json();
+    return Number(payload?.activeOperatorCount || 0);
 }
 
 export interface RouteOperatorPayload {
@@ -180,7 +224,10 @@ export async function patchRoutingTask(payload: PatchTaskPayload): Promise<void>
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
     });
-    if (!res.ok) throw new Error("Failed to update task.");
+    if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        throw new Error(error.error || error.message || "Failed to update task.");
+    }
 }
 
 export async function fetchQATemplate(taskName: string, productId: number, templateId?: number | null): Promise<any> {
@@ -239,10 +286,73 @@ export async function submitShiftRunLog(payload: ShiftRunLogPayload): Promise<an
         body: formData
     });
     if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || "Failed to submit shift run log.");
+        const errData = await res.json().catch(() => ({}));
+        throw new ShiftRunLogRequestError(
+            errData.error || "Failed to submit shift run log.",
+            errData.code,
+            errData.details
+        );
     }
     return res.json();
+}
+
+export interface RecoverableShiftRunSession {
+    ledgerId: number;
+    jobOrderId: number;
+    sessionKey: string;
+    shiftName: string;
+    productionDate: string;
+    goodQuantity: number;
+    rejectedQuantity: number;
+    scrapQuantity: number;
+    loggedAt: string | null;
+    canResume: boolean;
+    recoveryError: {
+        code?: string;
+        message?: string;
+        details?: Record<string, unknown> | null;
+    } | null;
+}
+
+export class ShiftRunLogRequestError extends Error {
+    constructor(
+        message: string,
+        readonly code?: string,
+        readonly details?: Record<string, unknown>
+    ) {
+        super(message);
+        this.name = "ShiftRunLogRequestError";
+    }
+}
+
+export async function fetchRecoverableShiftRunSessions(
+    jobOrderId: string | number
+): Promise<RecoverableShiftRunSession[]> {
+    const response = await fetch(
+        `/api/manufacturing/production/shift-run-log/recovery?jobOrderId=${encodeURIComponent(String(jobOrderId))}`,
+        { cache: "no-store" }
+    );
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new ShiftRunLogRequestError(data.error || "Unable to load pending shift sessions.", data.code, data.details);
+    }
+    return Array.isArray(data.sessions) ? data.sessions : [];
+}
+
+export async function resumeShiftRunLogSession(
+    jobOrderId: string | number,
+    sessionKey: string
+): Promise<any> {
+    const response = await fetch("/api/manufacturing/production/shift-run-log/recovery", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobOrderId, sessionKey })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new ShiftRunLogRequestError(data.error || "Unable to resume the pending shift session.", data.code, data.details);
+    }
+    return data;
 }
 
 export async function addReservedMaterial(payload: WipTopUpPayload): Promise<WipTopUpResponse> {

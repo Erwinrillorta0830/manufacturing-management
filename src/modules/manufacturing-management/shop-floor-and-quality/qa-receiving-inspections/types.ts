@@ -218,7 +218,7 @@ export interface ShipmentLineItem {
 export interface InspectionRow {
     receivedQty: number | string;
     acceptedQty: number | string;
-    rejectedQty: number;
+    rejectedQty: number | string;
     rejectionReason: string;
     isPackaging: boolean;
     acceptedLotAllocations: ReceivingLotAllocationInput[];

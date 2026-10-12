@@ -11,7 +11,7 @@ export class AuthenticatedActorError extends Error {
     }
 }
 
-export async function requireManufacturingActorId(): Promise<number> {
+export async function requireManufacturingActorId(signal?: AbortSignal): Promise<number> {
     const token = (await cookies()).get("vos_access_token")?.value;
     if (!token) {
         throw new AuthenticatedActorError("Authentication is required for this operation.", 401, "AUTHENTICATION_REQUIRED");
@@ -29,9 +29,11 @@ export async function requireManufacturingActorId(): Promise<number> {
                 Authorization: `Bearer ${token}`,
                 Accept: "application/json"
             },
-            cache: "no-store"
+            cache: "no-store",
+            signal
         });
-    } catch {
+    } catch (error) {
+        if (signal?.aborted) throw error;
         throw new AuthenticatedActorError("Authentication service is unavailable.", 503, "AUTHENTICATION_SERVICE_UNAVAILABLE");
     }
 
@@ -43,6 +45,7 @@ export async function requireManufacturingActorId(): Promise<number> {
     }
 
     const body = await response.json().catch(() => null) as unknown;
+    if (signal?.aborted) throw signal.reason;
     const user = body && typeof body === "object"
         ? (body as { data?: unknown }).data ?? body
         : null;

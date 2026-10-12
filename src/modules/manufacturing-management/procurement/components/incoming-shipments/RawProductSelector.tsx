@@ -19,7 +19,8 @@ import { cn } from "@/lib/utils";
 import {
     PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS,
     SUPPLIER_PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS,
-    PurchaseOrderMaterialType
+    PurchaseOrderMaterialType,
+    purchaseOrderMaterialTypeFromProduct
 } from "./types";
 import { normalizeProductRelationId, resolveProductParentId } from "../../product-relation";
 import { normalizePurchaseOrderUnitPrice } from "../../price-precision";
@@ -37,6 +38,7 @@ export interface RawProductSelectorProps {
     onSelect: (selected: {
         parent_product_id: string;
         product_id: string;
+        material_type?: PurchaseOrderMaterialType | "";
         product_name: string;
         product_code: string;
         selected_uom: string;
@@ -67,13 +69,15 @@ function primaryPurchaseMaterial(members: RawMaterial[], familyId: number): RawM
     return members.find(material => Number(material.product_id) === familyId) || members[0];
 }
 
-function ProductSearchableSelect({
+export function ProductSearchableSelect({
     id,
     options,
     value,
     onValueChange,
     placeholder,
     disabled,
+    className,
+    popoverWidthClass = "w-[--radix-popover-trigger-width]"
 }: {
     id?: string;
     options: Array<{ value: string; label: string }>;
@@ -81,6 +85,8 @@ function ProductSearchableSelect({
     onValueChange: (value: string) => void;
     placeholder: string;
     disabled: boolean;
+    className?: string;
+    popoverWidthClass?: string;
 }) {
     const [open, setOpen] = React.useState(false);
     const selectedLabel = useMemo(() => options.find(option => option.value === value)?.label, [options, value]);
@@ -95,15 +101,16 @@ function ProductSearchableSelect({
                     aria-expanded={open}
                     className={cn(
                         "h-8 w-full min-w-0 justify-between overflow-hidden text-xs font-semibold bg-background",
-                        !value && "text-muted-foreground"
+                        !value && "text-muted-foreground",
+                        className
                     )}
                     disabled={disabled}
                 >
                     <span className="min-w-0 flex-1 truncate text-left">{selectedLabel || placeholder}</span>
-                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    <ChevronsUpDown className="ml-1 h-3.5 w-3.5 shrink-0 opacity-50" />
                 </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+            <PopoverContent className={cn("p-0", popoverWidthClass)} align="start">
                 <Command>
                     <CommandInput placeholder={`Search ${placeholder.toLowerCase()}...`} />
                     <CommandList>
@@ -136,6 +143,7 @@ function ProductSearchableSelect({
 }
 
 export function RawProductSelector({
+    id,
     rawMaterials,
     selectedProductId,
     parentProductId,
@@ -145,6 +153,9 @@ export function RawProductSelector({
     onSelect
 }: RawProductSelectorProps) {
     const filteredMaterials = useMemo(() => {
+        if (!materialType) {
+            return [];
+        }
         const materialTypeOptions = canonicalDrafting
             ? PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS
             : SUPPLIER_PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS;
@@ -185,11 +196,12 @@ export function RawProductSelector({
     }, [filteredMaterials]);
 
     const selectedFamilyId = useMemo(() => {
+        if (!materialType) return "";
         if (parentProductId) return String(parentProductId);
         const selected = filteredMaterials.find(material => String(material.product_id) === String(selectedProductId));
         if (!selected) return String(selectedProductId || "");
         return String(familyIdForMaterial(selected) || selected.product_id);
-    }, [filteredMaterials, parentProductId, selectedProductId]);
+    }, [filteredMaterials, materialType, parentProductId, selectedProductId]);
 
     const handleValueChange = (val: string) => {
         const familyId = Number(val);
@@ -201,10 +213,14 @@ export function RawProductSelector({
 
         const parentMaterial = members.find(material => Number(material.product_id) === familyId) || defaultMaterial;
         const cost = Number(defaultMaterial.cost_per_unit || defaultMaterial.estimated_unit_cost || 0);
+        const derivedMaterialType = purchaseOrderMaterialTypeFromProduct(defaultMaterial, rawMaterials)
+            || purchaseOrderMaterialTypeFromProduct(parentMaterial, rawMaterials)
+            || (materialType || "");
 
         onSelect({
             parent_product_id: String(familyId),
             product_id: String(defaultMaterial.product_id),
+            material_type: derivedMaterialType,
             product_name: parentMaterial.product_name || defaultMaterial.product_name,
             product_code: defaultMaterial.product_code || "",
             selected_uom: defaultMaterial.unit_of_measurement?.unit_shortcut || "PCS",
@@ -219,13 +235,17 @@ export function RawProductSelector({
         });
     };
 
+    const isEffectivelyDisabled = disabled || !materialType;
+    const placeholderText = !materialType ? "Select type first..." : "Select product...";
+
     return (
         <ProductSearchableSelect
+            id={id}
             options={options}
             value={selectedFamilyId}
             onValueChange={handleValueChange}
-            placeholder={materialType ? "Select product..." : "Select type first..."}
-            disabled={disabled || !materialType}
+            placeholder={placeholderText}
+            disabled={isEffectivelyDisabled}
         />
     );
 }

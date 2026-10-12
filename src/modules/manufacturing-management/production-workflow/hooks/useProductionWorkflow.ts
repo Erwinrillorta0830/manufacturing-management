@@ -2,11 +2,13 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { JobOrder, User, RouteOperatorRecord, RoutingTask, JobOrderCancellationPreview, JobOrderCancellationResponse, SalesOrderLink, JobOrderMaterialLine } from "../types";
+import { JobOrder, User, RouteOperatorRecord, RoutingTask, JobOrderCancellationPreview, JobOrderCancellationResponse, SalesOrderLink, JobOrderMaterialLine, TerminalQueueJobOrder } from "../types";
 import {
-    fetchJobOrders,
+    fetchTerminalJobOrderQueue,
+    fetchTerminalJobOrderDetails,
     fetchUsersList as apiFetchUsers,
-    fetchRouteOperators,
+    fetchJobOrderOperatorSnapshot,
+    fetchActiveOperatorCount,
     fetchJobOrderMaterials,
     manageRouteOperator,
     patchRoutingTask,
@@ -20,27 +22,16 @@ import {
     isJobOrderStatus,
     JOB_ORDER_STATUS,
     displayJobOrderStatus,
-    normalizeJobOrderStatus
+    normalizeJobOrderStatus,
+    SHOP_FLOOR_QUEUE_STATUSES
 } from "../../job-order-status";
-import { elapsedHours } from "../operator-time";
+import { elapsedSecondsBetween, hoursFromSeconds } from "../operator-time";
 import type { JobOrderWorkflowAction } from "../../job-order-workflow";
 import { areJobOrderMaterialsFullyStaged } from "../utils/material-staging-readiness";
 import {
     buildDisplayRouteOperatorRecords,
-    getJobOrderOperatorAssignments,
     normalizeOperatorAssignmentMap
 } from "../operator-assignment-display";
-
-const SHOP_FLOOR_QUEUE_STATUSES = [
-    JOB_ORDER_STATUS.PICKED,
-    JOB_ORDER_STATUS.IN_PRODUCTION,
-    JOB_ORDER_STATUS.ON_HOLD,
-    JOB_ORDER_STATUS.PRODUCTION_COMPLETED,
-    JOB_ORDER_STATUS.FOR_QA_RECONCILIATION,
-    JOB_ORDER_STATUS.QA_HOLD,
-    JOB_ORDER_STATUS.CLOSED,
-    JOB_ORDER_STATUS.CANCELLED
-] as const;
 
 const SHOP_FLOOR_QUEUE_STATUS_OPTIONS = SHOP_FLOOR_QUEUE_STATUSES.map((status) => ({
     value: status,
@@ -77,9 +68,14 @@ function roundHours(value: number): number {
 export function useProductionWorkflow() {
     const searchParams = useSearchParams();
     // --- State Variables ---
-    const [jobOrders, setJobOrders] = useState<JobOrder[]>([]);
+    const [jobOrders, setJobOrders] = useState<TerminalQueueJobOrder[]>([]);
     const [users, setUsers] = useState<User[]>([]);
     const [selectedJobOrderId, setSelectedJobOrderId] = useState<string>("");
+    const [selectedJobOrderDetails, setSelectedJobOrder] = useState<JobOrder | null>(null);
+    const [loadingSelectedJobOrder, setLoadingSelectedJobOrder] = useState(false);
+    const [selectedJobOrderError, setSelectedJobOrderError] = useState<string | null>(null);
+    const selectedJobOrderDetailRequestIdRef = useRef(0);
+    const selectedJobOrderDetailAbortRef = useRef<AbortController | null>(null);
     const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
     const [jobOrderMaterials, setJobOrderMaterials] = useState<JobOrderMaterialLine[]>([]);
     const [jobOrderMaterialsJobOrderId, setJobOrderMaterialsJobOrderId] = useState<number | null>(null);
@@ -88,6 +84,9 @@ export function useProductionWorkflow() {
     // Operator logs for the selected task
     const [routeOperators, setRouteOperators] = useState<RouteOperatorRecord[]>([]);
     const [operatorsSummary, setOperatorsSummary] = useState({ total_hours: 0 });
+    const [clockedInCount, setClockedInCount] = useState(0);
+    const operatorSnapshotRequestIdRef = useRef(0);
+    const loadedOperatorJobOrderIdRef = useRef<number | null>(null);
     // Pending timer mutation key `${taskId}:${userId}` — drives the per-cell
     // pending shimmer and pauses the poller while a request is in flight.
     const [pendingTimerKey, setPendingTimerKey] = useState<string | null>(null);
@@ -147,7 +146,7 @@ export function useProductionWorkflow() {
         return jobOrders.filter((jo) => isJobOrderStatus(jo.status, ...SHOP_FLOOR_QUEUE_STATUSES));
     }, [jobOrders]);
 
-    const salesOrderLinksOf = useCallback((jo: JobOrder): SalesOrderLink[] => {
+    const salesOrderLinksOf = useCallback((jo: TerminalQueueJobOrder): SalesOrderLink[] => {
         return jo.salesOrders || jo.sales_orders || [];
     }, []);
 
@@ -180,10 +179,19 @@ export function useProductionWorkflow() {
 
     const statusFilterOptions = SHOP_FLOOR_QUEUE_STATUS_OPTIONS;
 
-    // Get current Job Order object. The details modal follows the queue scope.
-    const selectedJobOrder = useMemo(() => {
+    const selectedQueueJobOrder = useMemo(() => {
         return terminalJobOrders.find((jo) => jo.jo_id === selectedJobOrderId) || null;
     }, [terminalJobOrders, selectedJobOrderId]);
+    const selectedQueueJobOrderId = selectedQueueJobOrder?.job_order_id ?? null;
+    const selectedJobOrder = selectedJobOrderDetails
+        && Number(selectedJobOrderDetails.job_order_id || selectedJobOrderDetails.order_id) === Number(selectedQueueJobOrderId)
+        ? selectedJobOrderDetails
+        : null;
+    const selectedQueueJobOrderIdRef = useRef<number | null>(selectedQueueJobOrderId);
+
+    useEffect(() => {
+        selectedQueueJobOrderIdRef.current = selectedQueueJobOrderId;
+    }, [selectedQueueJobOrderId]);
 
     // Sorted routing steps for selected Job Order
     const sortedTasks = useMemo(() => {
@@ -247,23 +255,83 @@ const selectedTask = useMemo(() => {
         setPendingDeepLinkTarget(null);
     }, [pendingDeepLinkTarget, loadingJobs, terminalJobOrders]);
 
-    // Fetch Job Orders
-    const fetchJobs = useCallback(async (selectIdAfterFetch?: string, silent = false): Promise<boolean> => {
+    const loadSelectedJobOrderDetails = useCallback(async (jobOrderId: number, clearBeforeLoad: boolean) => {
+        selectedJobOrderDetailRequestIdRef.current += 1;
+        const requestId = selectedJobOrderDetailRequestIdRef.current;
+        selectedJobOrderDetailAbortRef.current?.abort();
+        const controller = new AbortController();
+        selectedJobOrderDetailAbortRef.current = controller;
+        if (clearBeforeLoad) setSelectedJobOrder(null);
+        setSelectedJobOrderError(null);
+        setLoadingSelectedJobOrder(true);
+
+        try {
+            const details = await fetchTerminalJobOrderDetails(jobOrderId, controller.signal);
+            if (requestId === selectedJobOrderDetailRequestIdRef.current && !controller.signal.aborted) {
+                setSelectedJobOrder(details);
+            }
+        } catch (error) {
+            if (requestId === selectedJobOrderDetailRequestIdRef.current && !controller.signal.aborted) {
+                setSelectedJobOrderError(error instanceof Error ? error.message : "Failed to load the selected Job Order.");
+                if (clearBeforeLoad) setSelectedJobOrder(null);
+            }
+        } finally {
+            if (requestId === selectedJobOrderDetailRequestIdRef.current) {
+                setLoadingSelectedJobOrder(false);
+            }
+        }
+    }, []);
+
+    const retrySelectedJobOrderDetails = useCallback(() => {
+        if (selectedQueueJobOrderId) void loadSelectedJobOrderDetails(selectedQueueJobOrderId, true);
+    }, [loadSelectedJobOrderDetails, selectedQueueJobOrderId]);
+
+    useEffect(() => {
+        if (!selectedJobOrderId) {
+            selectedJobOrderDetailRequestIdRef.current += 1;
+            selectedJobOrderDetailAbortRef.current?.abort();
+            setSelectedJobOrder(null);
+            setSelectedJobOrderError(null);
+            setLoadingSelectedJobOrder(false);
+            return;
+        }
+
+        if (!selectedQueueJobOrderId) {
+            if (loadingJobs) return;
+            selectedJobOrderDetailRequestIdRef.current += 1;
+            selectedJobOrderDetailAbortRef.current?.abort();
+            setSelectedJobOrder(null);
+            setSelectedJobOrderError("This Job Order is no longer available in the Shop Floor Execution Terminal.");
+            setLoadingSelectedJobOrder(false);
+            return;
+        }
+
+        void loadSelectedJobOrderDetails(selectedQueueJobOrderId, true);
+    }, [selectedJobOrderId, selectedQueueJobOrderId, loadingJobs, loadSelectedJobOrderDetails]);
+
+    useEffect(() => () => {
+        selectedJobOrderDetailRequestIdRef.current += 1;
+        selectedJobOrderDetailAbortRef.current?.abort();
+    }, []);
+
+    // Fetch only the terminal queue; the selected Job Order is loaded separately on demand.
+    const fetchJobs = useCallback(async (
+        selectIdAfterFetch?: string,
+        silent = false,
+        refreshSelectedDetails = true
+    ): Promise<boolean> => {
         if (!silent) setLoadingJobs(true);
         try {
-            const data = await fetchJobOrders();
-            const activeJobs = data.filter((jo: any) => !isJobOrderStatus(
-                jo.status,
-                JOB_ORDER_STATUS.DRAFT,
-                JOB_ORDER_STATUS.PLANNED,
-                JOB_ORDER_STATUS.PLANNING
-            ));
-            setJobOrders(activeJobs);
+            const queueRows = await fetchTerminalJobOrderQueue();
+            setJobOrders(queueRows);
 
             const nextId = selectIdAfterFetch || selectedJobOrderIdRef.current || "";
-            const nextJobOrder = activeJobs.find((jo) => jo.jo_id === nextId);
+            const nextJobOrder = queueRows.find((jo) => jo.jo_id === nextId);
             if (nextJobOrder && isJobOrderStatus(nextJobOrder.status, ...SHOP_FLOOR_QUEUE_STATUSES)) {
                 setSelectedJobOrderId(nextJobOrder.jo_id);
+                if (refreshSelectedDetails && nextJobOrder.job_order_id === selectedQueueJobOrderIdRef.current) {
+                    await loadSelectedJobOrderDetails(nextJobOrder.job_order_id, false);
+                }
             } else {
                 setSelectedJobOrderId("");
                 setSelectedTaskId(null);
@@ -275,7 +343,7 @@ const selectedTask = useMemo(() => {
         } finally {
             if (!silent) setLoadingJobs(false);
         }
-    }, []);
+    }, [loadSelectedJobOrderDetails]);
 
     // Fetch User Master List (Operators)
     const loadUsersList = async () => {
@@ -291,35 +359,46 @@ const selectedTask = useMemo(() => {
     const fetchJobOrderOperators = useCallback(async (
         tasks: RoutingTask[],
         silent = false,
-        assignmentOverride?: unknown
+        assignmentOverride?: unknown,
+        signal?: AbortSignal
     ) => {
-        if (tasks.length === 0) {
-            setRouteOperators([]);
-            setOperatorsSummary({ total_hours: 0 });
-            return;
-        }
+        const jobOrderId = Number(selectedJobOrder?.job_order_id || selectedJobOrder?.order_id || 0);
+        if (Number(selectedQueueJobOrderIdRef.current || 0) !== jobOrderId) return;
+        const requestId = ++operatorSnapshotRequestIdRef.current;
+        const isCurrentRequest = () => requestId === operatorSnapshotRequestIdRef.current
+            && !signal?.aborted
+            && Number(selectedQueueJobOrderIdRef.current || 0) === jobOrderId;
         if (!silent) setLoadingOperators(true);
         try {
+            if (!jobOrderId) {
+                const count = await fetchActiveOperatorCount(signal);
+                if (!isCurrentRequest()) return;
+                setClockedInCount(count);
+                setRouteOperators([]);
+                setOperatorsSummary({ total_hours: 0 });
+                return;
+            }
+
+            const snapshot = await fetchJobOrderOperatorSnapshot(jobOrderId, signal);
+            if (!isCurrentRequest()) return;
+            loadedOperatorJobOrderIdRef.current = jobOrderId;
             const selectedAssignments = assignmentOverride === undefined
-                ? getJobOrderOperatorAssignments(selectedJobOrder)
+                ? normalizeOperatorAssignmentMap(snapshot.assignmentState?.assignedPersonnel ?? snapshot.assignedPersonnel)
                 : normalizeOperatorAssignmentMap(assignmentOverride);
-            const results = await Promise.all(
-                tasks.map(async (t) => {
-                    try {
-                        const res = await fetchRouteOperators(t.id);
-                        const responseAssignments = res.assignmentState
-                            ? normalizeOperatorAssignmentMap(res.assignmentState.assignedPersonnel)
-                            : res.assignedPersonnel !== undefined && res.assignedPersonnel !== null
-                                ? normalizeOperatorAssignmentMap(res.assignedPersonnel)
-                                : selectedAssignments;
-                        return buildDisplayRouteOperatorRecords(t, res.data || [], responseAssignments, users);
-                    } catch (e) {
-                        console.error(`Error fetching operators for task ${t.id}:`, e);
-                        return buildDisplayRouteOperatorRecords(t, [], selectedAssignments, users);
-                    }
-                })
-            );
+            const recordsByTask = new Map<number, RouteOperatorRecord[]>();
+            for (const record of snapshot.data || []) {
+                const records = recordsByTask.get(Number(record.task_id)) || [];
+                records.push(record);
+                recordsByTask.set(Number(record.task_id), records);
+            }
+            const results = tasks.map((task) => buildDisplayRouteOperatorRecords(
+                task,
+                recordsByTask.get(task.id) || [],
+                selectedAssignments,
+                users
+            ));
             const allOps = results.flat();
+            setClockedInCount(Number(snapshot.activeOperatorCount || 0));
             setRouteOperators(allOps);
 
             // Compute total hours and cost across all tasks
@@ -328,9 +407,9 @@ const selectedTask = useMemo(() => {
                 total_hours: Math.round(totalHours * 100) / 100
             });
         } catch (err: any) {
-            console.error("Error fetching job order operators:", err);
+            if (!signal?.aborted) console.error("Error fetching job order operators:", err);
         } finally {
-            if (!silent) setLoadingOperators(false);
+            if (isCurrentRequest()) setLoadingOperators(false);
         }
     }, [selectedJobOrder, users]);
 
@@ -358,8 +437,25 @@ const selectedTask = useMemo(() => {
     useEffect(() => {
         let eventSource: EventSource | null = null;
         let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+        let movementRefreshTimeout: ReturnType<typeof setTimeout> | null = null;
+        let queueRefreshInFlight = false;
+        let queueRefreshPending = false;
         let isDisposed = false;
         let reconnectAttempts = 0;
+
+        const refreshQueueAfterMovement = async () => {
+            if (queueRefreshInFlight) {
+                queueRefreshPending = true;
+                return;
+            }
+
+            queueRefreshInFlight = true;
+            do {
+                queueRefreshPending = false;
+                await fetchJobs(undefined, true, false);
+            } while (queueRefreshPending && !isDisposed);
+            queueRefreshInFlight = false;
+        };
 
         const connectSSE = () => {
             if (isDisposed) return;
@@ -376,8 +472,12 @@ const selectedTask = useMemo(() => {
                         const movement = JSON.parse(event.data);
                         console.log(`[Production Realtime SSE] Inventory movement detected (ID: ${movement.movement_id}). Refreshing active job orders...`);
                         
-                        // Silent reload to update active job orders
-                        fetchJobs(undefined, true);
+                        // Coalesce movement bursts into one queue refresh; details load on demand.
+                        if (movementRefreshTimeout) clearTimeout(movementRefreshTimeout);
+                        movementRefreshTimeout = setTimeout(() => {
+                            movementRefreshTimeout = null;
+                            void refreshQueueAfterMovement();
+                        }, 250);
                     } catch (e) {
                         console.error("[Production Realtime SSE] Error parsing movement event data:", e);
                     }
@@ -414,6 +514,9 @@ const selectedTask = useMemo(() => {
             }
             if (reconnectTimeout) {
                 clearTimeout(reconnectTimeout);
+            }
+            if (movementRefreshTimeout) {
+                clearTimeout(movementRefreshTimeout);
             }
         };
     }, [fetchJobs]);
@@ -468,26 +571,61 @@ const selectedTask = useMemo(() => {
     }, [selectedJobOrder]);
 
     useEffect(() => {
-        if (sortedTasks.length > 0) {
-            fetchJobOrderOperators(sortedTasks);
-            setActiveManualUserId(null);
-            setManualHours("");
-        } else {
-            setRouteOperators([]);
-            setOperatorsSummary({ total_hours: 0 });
-        }
-    }, [selectedJobOrderId, sortedTasks, fetchJobOrderOperators]);
+        setRouteOperators([]);
+        setOperatorsSummary({ total_hours: 0 });
+        setLoadingOperators(false);
+        setActiveManualUserId(null);
+        setManualHours("");
+    }, [selectedJobOrderId]);
 
-    // Auto-refresh operators logs inside all tasks (every 10 seconds for live updates, silently).
-    // Skipped while a timer mutation is in flight so the poller cannot
-    // overwrite the optimistic patch before the server confirms it.
+    // Refresh one batch snapshot every 10 seconds while visible. The same
+    // response supplies the selected JO operators and the floor-wide count.
     useEffect(() => {
-        if (sortedTasks.length === 0 || pendingTimerKey) return;
-        const interval = setInterval(() => {
-            fetchJobOrderOperators(sortedTasks, true);
-        }, 10000);
-        return () => clearInterval(interval);
-    }, [sortedTasks, fetchJobOrderOperators, pendingTimerKey]);
+        let interval: ReturnType<typeof setInterval> | null = null;
+        let controller: AbortController | null = null;
+        let disposed = false;
+
+        const stopPolling = () => {
+            if (interval) clearInterval(interval);
+            interval = null;
+            controller?.abort();
+            controller = null;
+        };
+
+        const refresh = () => {
+            if (disposed || pendingTimerKey || document.visibilityState === "hidden" || controller) return;
+            const nextController = new AbortController();
+            controller = nextController;
+            const jobOrderId = Number(selectedJobOrder?.job_order_id || selectedJobOrder?.order_id || 0);
+            const silent = !jobOrderId || loadedOperatorJobOrderIdRef.current === jobOrderId;
+            void fetchJobOrderOperators(sortedTasks, silent, undefined, nextController.signal).finally(() => {
+                if (controller === nextController) controller = null;
+            });
+        };
+
+        const startPolling = () => {
+            if (interval || pendingTimerKey || document.visibilityState === "hidden") return;
+            refresh();
+            interval = setInterval(refresh, 10000);
+        };
+
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === "hidden") stopPolling();
+            else startPolling();
+        };
+
+        startPolling();
+        document.addEventListener("visibilitychange", handleVisibilityChange);
+        return () => {
+            disposed = true;
+            stopPolling();
+            document.removeEventListener("visibilitychange", handleVisibilityChange);
+        };
+    }, [selectedJobOrderId, sortedTasks, selectedJobOrder, fetchJobOrderOperators, pendingTimerKey]);
+
+    const refreshOperators = useCallback(() => {
+        void fetchJobOrderOperators(sortedTasks, true);
+    }, [fetchJobOrderOperators, sortedTasks]);
 
     // Clock In / Check In Operator
     const handleAddOperator = async (startTimer: boolean, taskId: number, assigneeId: string) => {
@@ -644,13 +782,23 @@ const selectedTask = useMemo(() => {
                 : r);
         });
         try {
-            await manageRouteOperator({
+            const response = await manageRouteOperator({
                 action: "start-timer",
                 taskId: taskId,
                 userId: opUserId,
                 joId: selectedJobOrder.jo_id,
                 routingId: taskObj?.routing_id || 0
             });
+            if (response?.data) {
+                setRouteOperators((prev) => {
+                    const candidates = prev.filter((record) => record.task_id === taskId && record.user_id === opUserId);
+                    if (candidates.length === 0) return [...prev, response.data as RouteOperatorRecord];
+                    const latestId = Math.max(...candidates.map((record) => record.id));
+                    return prev.map((record) => record.task_id === taskId && record.user_id === opUserId && record.id === latestId
+                        ? { ...record, ...response.data, is_placeholder: false }
+                        : record);
+                });
+            }
             toast.success("Shift timer started.");
         } catch (err: any) {
             setRouteOperators(snapshot);
@@ -672,28 +820,37 @@ const selectedTask = useMemo(() => {
         const key = `${taskId}:${opUserId}`;
         const snapshot = routeOperators;
         const now = nowPhtWallClock();
-        const elapsed = elapsedHours(active.started_at, now) || 0;
-        const newHours = roundHours(active.actual_hours + elapsed);
+        const elapsedSeconds = elapsedSecondsBetween(active.started_at, now) ?? 0;
+        const newHours = Math.max(0, active.actual_hours) + hoursFromSeconds(elapsedSeconds);
         setPendingTimerKey(key);
         setRouteOperators((prev) => prev.map((r) => (r.id === active.id)
             ? {
                 ...r,
                 stopped_at: now,
                 actual_hours: newHours,
-                labor_cost: roundHours(newHours * (r.hourly_rate || 0))
+                labor_cost: roundHours(newHours * (r.hourly_rate || 0)),
+                is_active: true
             }
             : r));
         setOperatorsSummary({
             total_hours: roundHours(snapshot.reduce((sum, r) => sum + (r.id === active.id ? newHours : (r.actual_hours || 0)), 0))
         });
         try {
-            await manageRouteOperator({
+            const response = await manageRouteOperator({
                 action: "stop-timer",
                 taskId: taskId,
                 userId: opUserId,
                 joId: selectedJobOrder.jo_id,
                 routingId: taskObj?.routing_id || 0
             });
+            if (response?.data) {
+                const saved = response.data as RouteOperatorRecord;
+                setRouteOperators((prev) => prev.map((record) => record.task_id === taskId && record.user_id === opUserId
+                    && (record.id === active.id || record.id < 0)
+                    ? { ...record, ...saved, is_placeholder: false }
+                    : record));
+                setOperatorsSummary((current) => ({ total_hours: roundHours(current.total_hours + (saved.actual_hours - newHours)) }));
+            }
             toast.success("Shift clocked out successfully.");
         } catch (err: any) {
             setRouteOperators(snapshot);
@@ -807,25 +964,22 @@ const selectedTask = useMemo(() => {
             return false;
         }
 
-        const taskOps = routeOperators.filter((op) => op.task_id === taskId);
-        if (taskOps.some((op) => op.started_at !== null && op.stopped_at === null)) {
-            toast.warning("Cannot complete routing step while operators have active running shifts. Please clock them out first.");
-            return false;
-        }
-
         try {
-            const totalHours = taskOps.reduce((sum, operator) => sum + (operator.actual_hours || 0), 0);
             await patchRoutingTask({
                 taskId,
                 taskPatch: {
-                    status: "Completed",
-                    actual_run_hours: Math.round(totalHours * 100) / 100
+                    status: "Completed"
                 }
             });
             toast.success(`Routing step "${task.name}" completed.`);
             await fetchJobs(selectedJobOrder.jo_id, true);
             return true;
         } catch (err: any) {
+            try {
+                await fetchJobs(selectedJobOrder.jo_id, true);
+            } catch {
+                // Keep the original completion error visible; the poller can reconcile any partial timer saves.
+            }
             toast.error(err.message || "Failed to complete routing step.");
             return false;
         }
@@ -1166,6 +1320,8 @@ const selectedTask = useMemo(() => {
         setSelectedTaskId,
         routeOperators,
         operatorsSummary,
+        clockedInCount,
+        refreshOperators,
         pendingTimerKey,
         loadingJobs,
         loadingOperators,
@@ -1179,6 +1335,9 @@ const selectedTask = useMemo(() => {
         activeManualUserId,
         setActiveManualUserId,
         selectedJobOrder,
+        loadingSelectedJobOrder,
+        selectedJobOrderError,
+        retrySelectedJobOrderDetails,
         sortedTasks,
         jobOrderMaterials,
         jobOrderMaterialsJobOrderId,

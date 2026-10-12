@@ -19,6 +19,7 @@ export interface Step1BasicDetailsProps {
     setSelectedBranchId: (id: string) => void;
     joNumber: string;
     setJoNumber: (no: string) => void;
+    readOnlyJobOrderNumber?: boolean;
     loadingProducts: boolean;
     parentProductOptions: { value: string; label: string }[];
     selectedParentProductId: string;
@@ -57,6 +58,7 @@ export function Step1BasicDetails({
     setSelectedBranchId,
     joNumber,
     setJoNumber,
+    readOnlyJobOrderNumber = false,
     loadingProducts,
     parentProductOptions,
     selectedParentProductId,
@@ -112,6 +114,7 @@ export function Step1BasicDetails({
                     <Input
                         value={joNumber}
                         onChange={(e) => setJoNumber(e.target.value)}
+                        readOnly={readOnlyJobOrderNumber}
                         className="h-9 font-semibold bg-card border-input text-foreground"
                         placeholder="JO-BUF-XXXXXX"
                     />

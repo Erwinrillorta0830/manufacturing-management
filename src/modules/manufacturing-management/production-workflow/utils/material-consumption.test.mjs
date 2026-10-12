@@ -5,7 +5,7 @@ import {
     sumProductionOutputQuantities
 } from "./material-consumption.ts";
 
-assert.equal(sumProductionOutputQuantities("8", "1", "2"), 11);
+assert.equal(sumProductionOutputQuantities("8", "1", 0), 9);
 
 assert.deepEqual(preserveExistingActualQuantities([
     { jo_material_id: 1, reservation_id: 10, actual_qty: "73.333333", available_stock: 100 },
@@ -30,10 +30,10 @@ assert.deepEqual(preserveExistingActualQuantities([
 const balancedReservations = calculateMaterialConsumptionDefaults([
     { jo_material_id: 1, allocated_quantity: 100, available_stock: 100 },
     { jo_material_id: 1, allocated_quantity: 100, available_stock: 50 }
-], 10, sumProductionOutputQuantities("8", "1", "2"));
+], 10, sumProductionOutputQuantities("8", "1", 0));
 assert.deepEqual(balancedReservations, [
-    { theoreticalQuantity: 73.333333, actualQuantity: "73.333333" },
-    { theoreticalQuantity: 36.666667, actualQuantity: "36.666667" }
+    { theoreticalQuantity: 60, actualQuantity: "60.000000" },
+    { theoreticalQuantity: 30, actualQuantity: "30.000000" }
 ]);
 
 const shortageReservations = calculateMaterialConsumptionDefaults([

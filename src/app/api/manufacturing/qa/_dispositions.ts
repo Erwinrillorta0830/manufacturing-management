@@ -23,13 +23,14 @@ function sameText(left: string, right: string): boolean {
     return left.trim().toLowerCase() === right.trim().toLowerCase();
 }
 
-async function fetchCollection<T>(pathname: string): Promise<T[]> {
+async function fetchCollection<T>(pathname: string, signal?: AbortSignal): Promise<T[]> {
     try {
-        const response = await fetch(`${DIRECTUS_URL}${pathname}`, { headers, cache: "no-store" });
+        const response = await fetch(`${DIRECTUS_URL}${pathname}`, { headers, cache: "no-store", signal });
         if (!response.ok) return [];
         const payload = await response.json();
         return Array.isArray(payload?.data) ? payload.data as T[] : [];
     } catch (error) {
+        if (signal?.aborted) throw error;
         console.error(`Failed to load QA disposition reference data from ${pathname}:`, error);
         return [];
     }
@@ -80,15 +81,18 @@ interface WorkCenterReference {
 
 export async function resolveDispositionMetadata(
     jobOrderId: number,
-    joRouteId: number | null
+    joRouteId: number | null,
+    signal?: AbortSignal
 ): Promise<DispositionMetadata> {
     const [jobOrders, routes] = await Promise.all([
         fetchCollection<JobOrderReference>(
-            `/items/manufacturing_job_orders?filter[job_order_id][_eq]=${jobOrderId}&fields=job_order_id,job_order_no,product_id,target_quantity&limit=1`
+            `/items/manufacturing_job_orders?filter[job_order_id][_eq]=${jobOrderId}&fields=job_order_id,job_order_no,product_id,target_quantity&limit=1`,
+            signal
         ),
         joRouteId
             ? fetchCollection<RouteReference>(
-                `/items/manufacturing_job_order_routes?filter[jo_route_id][_eq]=${joRouteId}&fields=jo_route_id,job_order_id,operation_id,work_center_id&limit=1`
+                `/items/manufacturing_job_order_routes?filter[jo_route_id][_eq]=${joRouteId}&fields=jo_route_id,job_order_id,operation_id,work_center_id&limit=1`,
+                signal
             )
             : Promise.resolve([])
     ]);
@@ -148,15 +152,17 @@ function directusErrorMessage(payload: unknown, fallback: string): string {
     return fallback;
 }
 
-async function directusRequest(pathname: string, init: RequestInit = {}, operation: string): Promise<unknown> {
+async function directusRequest(pathname: string, init: RequestInit = {}, operation: string, signal?: AbortSignal): Promise<unknown> {
     let response: Response;
     try {
         response = await fetch(`${DIRECTUS_URL}${pathname}`, {
             ...init,
             headers: { ...headers, ...(init.headers || {}) },
-            cache: "no-store"
+            cache: "no-store",
+            signal
         });
     } catch (error) {
+        if (signal?.aborted) throw error;
         throw new DispositionPersistenceError(
             `${operation} could not reach Directus: ${error instanceof Error ? error.message : String(error)}`
         );
@@ -236,7 +242,7 @@ export async function getDisposition(dispositionId: string): Promise<StoredDispo
     }
 }
 
-export async function findPendingDisposition(jobOrderId: number, taskId: number | null): Promise<StoredDisposition | null> {
+export async function findPendingDisposition(jobOrderId: number, taskId: number | null, signal?: AbortSignal): Promise<StoredDisposition | null> {
     if (!taskId) return null;
     const params = new URLSearchParams({
         "filter[job_order_id][_eq]": String(jobOrderId),
@@ -247,7 +253,8 @@ export async function findPendingDisposition(jobOrderId: number, taskId: number 
     const payload = await directusRequest(
         `/items/${DISPOSITIONS_COLLECTION}?${params.toString()}`,
         {},
-        "Find pending QA disposition"
+        "Find pending QA disposition",
+        signal
     );
     if (!payload || typeof payload !== "object" || !Array.isArray((payload as Record<string, unknown>).data)) {
         throw new DispositionPersistenceError("Find pending QA disposition returned an invalid response from Directus.");
@@ -257,11 +264,12 @@ export async function findPendingDisposition(jobOrderId: number, taskId: number 
     return record ? normalizeStoredDisposition(record) : null;
 }
 
-export async function createDisposition(data: StoredDisposition): Promise<StoredDisposition> {
+export async function createDisposition(data: StoredDisposition, signal?: AbortSignal): Promise<StoredDisposition> {
     const payload = await directusRequest(
         `/items/${DISPOSITIONS_COLLECTION}`,
         { method: "POST", body: JSON.stringify(data) },
-        "Create QA disposition"
+        "Create QA disposition",
+        signal
     );
     const record = payload && typeof payload === "object"
         ? asRecord((payload as Record<string, unknown>).data)
@@ -270,11 +278,12 @@ export async function createDisposition(data: StoredDisposition): Promise<Stored
     return normalizeStoredDisposition(record);
 }
 
-export async function updateDisposition(dispositionId: string, data: StoredDisposition): Promise<StoredDisposition> {
+export async function updateDisposition(dispositionId: string, data: StoredDisposition, signal?: AbortSignal): Promise<StoredDisposition> {
     const payload = await directusRequest(
         `/items/${DISPOSITIONS_COLLECTION}/${encodeURIComponent(dispositionId)}`,
         { method: "PATCH", body: JSON.stringify(data) },
-        "Update QA disposition"
+        "Update QA disposition",
+        signal
     );
     const record = payload && typeof payload === "object"
         ? asRecord((payload as Record<string, unknown>).data)

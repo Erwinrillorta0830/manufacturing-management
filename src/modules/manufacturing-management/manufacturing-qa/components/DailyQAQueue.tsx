@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { deriveDailyQAOutcome, getDailyQAAuditStatus } from "../daily-qa-outcome";
+import { buildShiftYieldRunLabels } from "../shift-yield-run-labels";
 import { ResponsiveDataView } from "./ResponsiveDataView";
 import { FinishedGoodsLotSelect } from "../../shared/FinishedGoodsLotSelect";
 import type { EligibleFinishedGoodsLot } from "../../shared/finished-goods-lots-api";
@@ -113,6 +114,7 @@ export function DailyQAQueue({
         if (!query) return yieldLedger;
         return yieldLedger.filter((entry: any) => `${entry.job_order_no || ""} ${entry.job_order_id || ""} ${entry.shift_name || ""} ${entry.lot_number || ""}`.toLowerCase().includes(query));
     }, [yieldLedger, searchQuery]);
+    const shiftRunLabels = React.useMemo(() => buildShiftYieldRunLabels(yieldLedger), [yieldLedger]);
 
     // Filter qaLogs to find matching operator checklist parameter entries for selected yield ledger entry's job_order_id, shift, and selectedRouteId
     const matchingLogs = React.useMemo(() => {
@@ -196,7 +198,7 @@ export function DailyQAQueue({
                 <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
                         <p className="font-mono text-base font-bold">{entry.job_order_no || `JO #${entry.job_order_id}`}</p>
-                        <p className="mt-1 text-sm text-muted-foreground">{entry.shift_name || "Shift not specified"} · {formatPhtTimestamp(entry.logged_at)}</p>
+                        <p className="mt-1 text-sm text-muted-foreground">{shiftRunLabels.get(entry) || entry.shift_name || "Shift not specified"} · {formatPhtTimestamp(entry.logged_at)}</p>
                     </div>
                     <Badge variant={outcome.status === "Passed" ? "default" : outcome.status === "Pending" ? "outline" : "destructive"} className={outcome.status === "Passed" ? "min-h-7 bg-emerald-600 text-sm" : "min-h-7 text-sm"}>
                         {outcome.status === "Pending" ? "Pending Audit" : outcome.status}
@@ -267,7 +269,7 @@ export function DailyQAQueue({
                                 return (
                                     <TableRow key={entry.id || entry.ledger_id || idx}>
                                         <TableCell className="font-mono font-bold text-xs">{entry.job_order_no || `JO #${entry.job_order_id}`}</TableCell>
-                                        <TableCell className="text-xs font-medium text-muted-foreground">{entry.shift_name}</TableCell>
+                                        <TableCell className="text-xs font-medium text-muted-foreground">{shiftRunLabels.get(entry) || entry.shift_name || "Shift not specified"}</TableCell>
                                         <TableCell className="text-xs font-mono font-bold">{Number(entry.yield_quantity || 0).toLocaleString()} pcs</TableCell>
                                         <TableCell className="text-xs text-muted-foreground">{formatPhtTimestamp(entry.logged_at)}</TableCell>
                                         <TableCell className="text-xs text-center">

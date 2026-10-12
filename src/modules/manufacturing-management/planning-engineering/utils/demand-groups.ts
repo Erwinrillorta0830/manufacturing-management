@@ -15,6 +15,10 @@ export function remainingQuantity(line: SalesOrderDetail): number {
     return Math.max(0, ordered - Math.max(allocated, served) - Math.max(0, planned));
 }
 
+export function isPlanningDemandSalesOrder(order: Pick<SalesOrder, "order_status">): boolean {
+    return order.order_status === "For Production";
+}
+
 export function isSchedulableSalesOrderLine(line: SalesOrderDetail): boolean {
     return (line.parent_order_status === "For Production" || line.parent_order_status === "In Production")
         && remainingQuantity(line) > 0

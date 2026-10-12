@@ -2,7 +2,6 @@ import React from "react";
 import Image from "next/image";
 import { ArrowLeft, MapPin, AlertTriangle, CheckCircle2, Search, ChevronDown, Plus, Minus, Loader2, ReceiptText, CalendarDays, Radio, RefreshCw } from "lucide-react";
 import { Shipment, ShipmentLineItem, Branch, InspectionRow, StorageLot, StorageLotBatch, StorageLotLookupState, QaSpecificationLoadState, QaSpecificationReadings, ReceivingQaEvaluation, ReceivingLotAllocationInput, OverDeliveryLine, SupplierDocumentType, QaReceiptOption } from "../types";
-import { deriveRejectedQuantity } from "@/app/api/manufacturing/qa/_receiving-evaluation";
 import { canForceReceivePurchaseOrder, isForceReceived } from "@/app/api/manufacturing/qa-receiving/_force-received";
 import { INVENTORY_STATUS } from "@/app/api/manufacturing/procurement/_domain";
 import type { ReceivingValidationIssue } from "../receiving-metadata";
@@ -15,6 +14,7 @@ import { LotAllocationSection } from "./LotAllocationModal";
 import type { FormSiblingAllocation } from "./QAMultiLotBatchAllocationModal";
 import type { LotAllocationGroup, QAStatus } from "@/modules/manufacturing-management/shared/types/lot-tracking.types";
 import QAProductItemsAllocationTable from "./QAProductItemsAllocationTable";
+import QaInspectionSkeleton from "./QaInspectionSkeleton";
 
 function relationNumber(value: unknown, keys: string[]): number | null {
     if (value === null || value === undefined || value === "") return null;
@@ -93,7 +93,7 @@ interface ShipmentInspectionFormProps {
     loadingSupplierDocumentTypes: boolean;
     supplierDocumentTypeError: string | null;
     supplierDocumentTypeId: number | null;
-    onSupplierDocumentTypeChange: (value: string) => void;
+    onSupplierDocumentTypeChange?: (value: string) => void;
     processOverDelivery: boolean;
     setProcessOverDelivery: (value: boolean) => void;
     overDeliveryLines: OverDeliveryLine[];
@@ -144,7 +144,6 @@ export default function ShipmentInspectionForm({
     loadingSupplierDocumentTypes,
     supplierDocumentTypeError,
     supplierDocumentTypeId,
-    onSupplierDocumentTypeChange,
     selectedBranchId,
     processOverDelivery,
     setProcessOverDelivery,
@@ -268,11 +267,11 @@ export default function ShipmentInspectionForm({
     }, [lineItems, selectedReceipt, totalOrderedQty]);
 
     const receiptProgressMetrics = [
-        { 
-            label: "PO Ordered", 
-            value: formatQuantity(totalOrderedQty), 
+        {
+            label: "PO Ordered",
+            value: formatQuantity(totalOrderedQty),
             subtext: "Total ordered on PO",
-            className: "text-foreground" 
+            className: "text-foreground"
         },
         {
             label: selectedReceipt?.isCurrent ? "Posted Before This" : "Posted & Stored",
@@ -286,11 +285,11 @@ export default function ShipmentInspectionForm({
             subtext: selectedReceipt ? `${formatQuantity(receiptProgress.selectedReceived)} received` : "No receipt selected",
             className: "text-primary"
         },
-        { 
-            label: "Remaining to Receive", 
-            value: formatQuantity(receiptProgress.remainingAccepted), 
+        {
+            label: "Remaining to Receive",
+            value: formatQuantity(receiptProgress.remainingAccepted),
             subtext: "Balance remaining",
-            className: "text-amber-700" 
+            className: "text-amber-700"
         },
     ];
 
@@ -339,12 +338,13 @@ export default function ShipmentInspectionForm({
     const hasQuantityMismatch = React.useMemo(() => lineItems.some(line => {
         const row = inspectionRows[line.line_id];
         const received = Number(row?.receivedQty || 0);
-        const accepted = Number(row?.acceptedQty || 0);
-        if (![received, accepted].every(Number.isFinite)) return true;
-        if (received === 0 && accepted === 0) return false;
-        return received <= 0
-            || accepted < 0
-            || accepted > received;
+        if (row?.acceptedQty === "" && row?.rejectedQty === "") return true;
+        const accepted = row?.acceptedQty !== "" ? Number(row?.acceptedQty || 0) : 0;
+        const rejected = row?.rejectedQty !== "" ? Number(row?.rejectedQty || 0) : 0;
+        if (![received, accepted, rejected].every(Number.isFinite)) return true;
+        if (received <= 0) return false;
+        if (accepted < 0 || rejected < 0) return true;
+        return (accepted + rejected) !== received;
     }), [inspectionRows, lineItems]);
 
     const hasAllocationMismatch = React.useMemo(() => lineItems.some(line => {
@@ -357,11 +357,7 @@ export default function ShipmentInspectionForm({
 
     const hasRejectedAllocationMismatch = React.useMemo(() => lineItems.some(line => {
         const row = inspectionRows[line.line_id];
-        const received = Number(row?.receivedQty || 0);
-        const accepted = Number(row?.acceptedQty || 0);
-        const rejected = Number.isFinite(received) && Number.isFinite(accepted)
-            ? Math.max(0, deriveRejectedQuantity(received, accepted))
-            : 0;
+        const rejected = Number(row?.rejectedQty || 0);
         const allocations = row?.rejectedLotAllocations || [];
         if (rejected <= 0) return allocations.length > 0;
         return allocationValidity[`${line.line_id}:rejected`] !== true;
@@ -384,22 +380,6 @@ export default function ShipmentInspectionForm({
         }, 3000);
     };
 
-    // Filter out Bihon Bad Branch and quarantine branches from main selector
-    const filteredBranches = React.useMemo(() => {
-        const eligibleBranches = branches.filter(b => {
-            if (b.isBadStock === true || Number(b.isBadStock) === 1) return false;
-            const name = (b.branch_name || "").toLowerCase();
-            return !name.includes("bad branch") &&
-                !name.includes("quarantine") &&
-                !name.includes("damaged") &&
-                !name.includes("holding") &&
-                !name.includes("bad order");
-        });
-        return selectedBranchId
-            ? eligibleBranches.filter(branch => Number(branch.id) === Number(selectedBranchId))
-            : eligibleBranches;
-    }, [branches, selectedBranchId]);
-
     const hasConfiguredBadOrderBranch = React.useMemo(() => {
         const receivingBranch = branches.find(branch => Number(branch.id) === Number(selectedBranchId || selectedShipment.branch_id));
         return configuredBadStockBranchId(receivingBranch) > 0;
@@ -419,6 +399,24 @@ export default function ShipmentInspectionForm({
             default: return `Branch ID ${selectedShipment.branch_id}`;
         }
     }, [branches, selectedShipment.branch_id]);
+
+    const receivingBranchDisplay = React.useMemo(() => {
+        if (selectedBranchId) {
+            const branch = branches.find(b => Number(b.id) === Number(selectedBranchId));
+            if (branch) return branch.branch_name;
+        }
+        return originalBranchName || "—";
+    }, [branches, originalBranchName, selectedBranchId]);
+
+    const supplierDocumentTypeDisplay = React.useMemo(() => {
+        if (!supplierDocumentTypeId) return "Not specified";
+        const found = supplierDocumentTypes.find(doc => doc.id === supplierDocumentTypeId);
+        return found ? found.label : `Document Type #${supplierDocumentTypeId}`;
+    }, [supplierDocumentTypeId, supplierDocumentTypes]);
+
+    if (loadingLines) {
+        return <QaInspectionSkeleton />;
+    }
 
     return (
         <form onSubmit={handleSubmitInspection} className="flex flex-col">
@@ -604,21 +602,16 @@ export default function ShipmentInspectionForm({
                     </label>
                     <div className="relative">
                         <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-primary pointer-events-none" />
-                        <select
+                        <input
                             id="receiving-branch"
-                            required={false}
-                            value={selectedBranchId}
-                            disabled={true}
+                            type="text"
+                            readOnly
+                            value={receivingBranchDisplay}
                             aria-readonly="true"
                             aria-invalid={Boolean(issueFor(undefined, "branchId"))}
                             aria-describedby={issueFor(undefined, "branchId") ? "receiving-branch-error" : undefined}
-                            className={`w-full h-10 rounded-xl border bg-muted/40 text-foreground text-xs font-semibold pl-9 pr-3 py-2 outline-none cursor-not-allowed disabled:opacity-100 ${issueFor(undefined, "branchId") ? "border-red-500" : ""}`}
-                        >
-                            <option value="">Select receiving branch...</option>
-                            {filteredBranches.map(branch => (
-                                <option key={branch.id} value={branch.id.toString()}>{branch.branch_name}</option>
-                            ))}
-                        </select>
+                            className={`w-full h-10 rounded-xl border bg-muted/30 text-foreground text-xs font-semibold pl-9 pr-3 py-2 outline-none cursor-default select-none ${issueFor(undefined, "branchId") ? "border-red-500" : ""}`}
+                        />
                     </div>
                     {issueFor(undefined, "branchId") && <p id="receiving-branch-error" className="text-[9px] font-semibold text-red-600" role="alert">{issueFor(undefined, "branchId")?.message}</p>}
                     {!issueFor(undefined, "branchId") && <p className="text-[9px] text-muted-foreground">Locked to the Purchase Order branch for inventory routing.</p>}
@@ -626,29 +619,25 @@ export default function ShipmentInspectionForm({
 
                 <div className="min-w-0 space-y-1">
                     <label htmlFor="receiving-document-type" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                        Supplier Document Type {!readOnly && !isReplacement && <span className="text-red-500">*</span>}
+                        Supplier Document Type
                     </label>
-                    <select
-                        id="receiving-document-type"
-                        data-testid="receiving-document-type"
-                        value={supplierDocumentTypeId ?? ""}
-                        onChange={event => onSupplierDocumentTypeChange(event.target.value)}
-                        disabled={readOnly || isReplacement || loadingSupplierDocumentTypes || supplierDocumentTypes.length === 0}
-                        required={!readOnly && !isReplacement}
-                        aria-invalid={Boolean(issueFor(undefined, "supplierDocumentTypeId"))}
-                        aria-describedby={issueFor(undefined, "supplierDocumentTypeId") ? "receiving-document-type-error" : undefined}
-                        className={`w-full h-10 rounded-xl border bg-background text-foreground text-xs font-semibold px-3 py-2 outline-none focus:ring-1 focus:ring-primary cursor-pointer disabled:cursor-not-allowed disabled:bg-muted/40 ${issueFor(undefined, "supplierDocumentTypeId") ? "border-red-500" : ""}`}
-                    >
-                        <option value="" disabled>
-                            {loadingSupplierDocumentTypes ? "Loading document types..." : "Select document type..."}
-                        </option>
-                        {supplierDocumentTypes.map(documentType => (
-                            <option key={documentType.id} value={documentType.id}>{documentType.label}</option>
-                        ))}
-                    </select>
+                    <div className="relative">
+                        <ReceiptText className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-primary pointer-events-none" />
+                        <input
+                            id="receiving-document-type"
+                            data-testid="receiving-document-type"
+                            type="text"
+                            readOnly
+                            value={loadingSupplierDocumentTypes ? "Loading..." : supplierDocumentTypeDisplay}
+                            aria-readonly="true"
+                            aria-invalid={Boolean(issueFor(undefined, "supplierDocumentTypeId"))}
+                            aria-describedby={issueFor(undefined, "supplierDocumentTypeId") ? "receiving-document-type-error" : undefined}
+                            className={`w-full h-10 rounded-xl border bg-muted/30 text-foreground text-xs font-semibold pl-9 pr-3 py-2 outline-none cursor-default select-none ${issueFor(undefined, "supplierDocumentTypeId") ? "border-red-500" : ""}`}
+                        />
+                    </div>
                     {issueFor(undefined, "supplierDocumentTypeId") && <p id="receiving-document-type-error" className="text-[9px] font-semibold text-red-600" role="alert">{issueFor(undefined, "supplierDocumentTypeId")?.message}</p>}
                     {!issueFor(undefined, "supplierDocumentTypeId") && supplierDocumentTypeError && !readOnly && <p className="text-[9px] font-semibold text-red-600" role="alert">{supplierDocumentTypeError}</p>}
-                    {!issueFor(undefined, "supplierDocumentTypeId") && !supplierDocumentTypeError && <p className="text-[9px] text-muted-foreground">Classifies the supplier document provided with this delivery.</p>}
+                    {!issueFor(undefined, "supplierDocumentTypeId") && !supplierDocumentTypeError && <p className="text-[9px] text-muted-foreground">Document type encoded during Warehouse Receiving.</p>}
                 </div>
             </div>
 
@@ -668,8 +657,8 @@ export default function ShipmentInspectionForm({
 
                     {/* Progress Bar */}
                     <div className="w-full bg-muted/60 h-2 rounded-full overflow-hidden">
-                        <div 
-                            className="bg-primary h-full transition-all duration-300 rounded-full" 
+                        <div
+                            className="bg-primary h-full transition-all duration-300 rounded-full"
                             style={{ width: `${receiptProgress.progressPercent}%` }}
                         />
                     </div>
@@ -776,7 +765,7 @@ export default function ShipmentInspectionForm({
             {/* Manifest Items Table */}
             <div className="space-y-4 p-4">
                 {loadingLines ? (
-                    <div className="p-8 text-center text-xs text-muted-foreground">Fetching manifest detail...</div>
+                    <QaInspectionSkeleton />
                 ) : (
                     lineItems.map((line, lineIndex) => {
                         const row = inspectionRows[line.line_id] || {
@@ -817,7 +806,7 @@ export default function ShipmentInspectionForm({
                         const previouslyAcceptedVal = Number(line.previously_accepted_quantity ?? Math.max(0, Number(line.quantity_received || 0) - Number(line.quantity_rejected || 0)));
                         const remainingAcceptedVal = Math.max(0, Number(line.remaining_accepted_quantity ?? (orderedVal - previouslyAcceptedVal)));
                         const acceptedVal = row.acceptedQty !== "" ? Number(row.acceptedQty) : 0;
-                        const rejectedVal = Math.max(0, deriveRejectedQuantity(receivedVal, acceptedVal));
+                        const rejectedVal = row.rejectedQty !== "" ? Number(row.rejectedQty) : 0;
                         const currentReceiptQuantity = line.current_receipt_quantity === null || line.current_receipt_quantity === undefined
                             ? null
                             : Number(line.current_receipt_quantity);
@@ -831,13 +820,13 @@ export default function ShipmentInspectionForm({
                         const currentReceiptAcceptedVal = hasCurrentReceipt ? acceptedVal : null;
                         const lineInputDisabled = readOnly || (!isReplacement && !hasCurrentReceipt);
                         const overDeliveryQuantity = Math.max(0, receivedVal - remainingVal);
-                        const quantitiesReconcile = [receivedVal, acceptedVal].every(Number.isFinite)
-                            && acceptedVal >= 0
-                            && acceptedVal <= receivedVal;
+                        const totalInspectedVal = acceptedVal + rejectedVal;
+                        const isExceeded = totalInspectedVal > receivedVal;
+                        const quantitiesReconcile = !isExceeded;
                         const isRemarksMandatory = rejectedVal > 0;
                         const evaluation = qaEvaluationResults[line.line_id];
                         const lineIssue = (field: string) => issueFor(line.line_id, field);
-                        const quantityIssue = lineIssue("quantity") || lineIssue("receivedQuantity");
+                        const quantityIssue = lineIssue("quantity") || lineIssue("receivedQuantity") || lineIssue("acceptedQuantity") || lineIssue("rejectedQuantity");
 
                         return (
                             <div
@@ -958,110 +947,124 @@ export default function ShipmentInspectionForm({
                                     const rejectedEquiv = rejectedVal * convFactor;
 
                                     return (
-                                        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-                                            {/* Received Quantity Stepper */}
-                                            <div className="space-y-1">
-                                                <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                                    This Receipt - Received Quantity {!readOnly && receivedVal > 0 && <span className="text-red-500">*</span>}
-                                                </label>
-                                                <div className="flex items-center">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleUpdateRow(line.line_id, "receivedQty", Math.max(0, receivedVal - 1))}
-                                                        disabled={lineInputDisabled}
-                                                        className="w-10 h-10 border border-r-0 bg-background text-foreground rounded-l-lg hover:bg-muted font-extrabold flex items-center justify-center transition-colors text-base select-none shrink-0"
+                                        <div className="space-y-3">
+                                            <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                                                {/* Received Quantity - Read Only Display */}
+                                                <div className="space-y-1">
+                                                    <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                                        This Receipt - Received Quantity <span className="text-[8px] normal-case font-semibold text-muted-foreground">(Warehouse Intake)</span>
+                                                    </label>
+                                                    <div
+                                                        data-testid={`received-quantity-display-${line.line_id}`}
+                                                        className="flex h-10 items-center justify-center rounded-xl border border-border bg-muted/40 px-3 text-center text-xs font-extrabold text-foreground select-none"
                                                     >
-                                                        <Minus className="h-3.5 w-3.5" />
-                                                    </button>
-                                                    <input
-                                                        type="number"
-                                                        min="0"
-                                                        step="any"
-                                                        placeholder="Manually count"
-                                                        value={row.receivedQty}
-                                                        onChange={e => handleUpdateRow(line.line_id, "receivedQty", e.target.value === "" ? "" : Number(e.target.value))}
-                                                        disabled={lineInputDisabled}
-                                                        aria-invalid={!readOnly && Boolean(quantityIssue)}
-                                                        className="w-full h-10 border border-border bg-background text-center text-xs font-semibold text-foreground outline-none focus:ring-0 transition-all"
-                                                    />
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleUpdateRow(line.line_id, "receivedQty", receivedVal + 1)}
-                                                        disabled={lineInputDisabled}
-                                                        className="w-10 h-10 border border-l-0 bg-background text-foreground rounded-r-lg hover:bg-muted font-extrabold flex items-center justify-center transition-colors text-base select-none shrink-0"
-                                                    >
-                                                        <Plus className="h-3.5 w-3.5" />
-                                                    </button>
+                                                        {Number.isFinite(receivedVal) ? receivedVal.toLocaleString() : "—"}
+                                                    </div>
+                                                    {receivedEquiv > 0 && convFactor !== 1 && (
+                                                        <span className="text-[9px] text-primary font-bold block mt-1 bg-primary/5 px-2 py-0.5 rounded border border-primary/10 w-fit select-none">
+                                                            = {receivedEquiv.toLocaleString()} {baseUom}
+                                                        </span>
+                                                    )}
                                                 </div>
-                                                {receivedEquiv > 0 && convFactor !== 1 && (
-                                                    <span className="text-[9px] text-primary font-bold block mt-1 bg-primary/5 px-2 py-0.5 rounded border border-primary/10 w-fit select-none">
-                                                        = {receivedEquiv.toLocaleString()} {baseUom}
-                                                    </span>
-                                                )}
+
+                                                {/* Accepted Quantity Stepper */}
+                                                <div className="space-y-1">
+                                                    <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                                        This Receipt - Accepted Quantity {!readOnly && receivedVal > 0 && <span className="text-red-500">*</span>}
+                                                    </label>
+                                                    <div className="flex items-center">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleUpdateRow(line.line_id, "acceptedQty", Math.max(0, acceptedVal - 1))}
+                                                            disabled={lineInputDisabled}
+                                                            className="w-10 h-10 border border-r-0 bg-background text-foreground rounded-l-lg hover:bg-muted font-extrabold flex items-center justify-center transition-colors text-base select-none shrink-0"
+                                                        >
+                                                            <Minus className="h-3.5 w-3.5" />
+                                                        </button>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            max={receivedVal || undefined}
+                                                            step="any"
+                                                            placeholder="Accepted qty"
+                                                            value={row.acceptedQty}
+                                                            onChange={e => handleUpdateRow(line.line_id, "acceptedQty", e.target.value === "" ? "" : Number(e.target.value))}
+                                                            disabled={lineInputDisabled}
+                                                            aria-invalid={!readOnly && (isExceeded || Boolean(quantityIssue))}
+                                                            className={`w-full h-10 border bg-background text-center text-xs font-semibold text-foreground outline-none focus:ring-0 ${!readOnly && isExceeded ? "border-red-500 bg-red-500/5" : "border-border"}`}
+                                                        />
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleUpdateRow(line.line_id, "acceptedQty", Math.min(receivedVal, acceptedVal + 1))}
+                                                            disabled={lineInputDisabled}
+                                                            className="w-10 h-10 border border-l-0 bg-background text-foreground rounded-r-lg hover:bg-muted font-extrabold flex items-center justify-center transition-colors text-base select-none shrink-0"
+                                                        >
+                                                            <Plus className="h-3.5 w-3.5" />
+                                                        </button>
+                                                    </div>
+                                                    {acceptedEquiv > 0 && convFactor !== 1 && (
+                                                        <span className="text-[9px] text-emerald-600 font-bold block mt-1 bg-emerald-500/5 px-2 py-0.5 rounded border border-emerald-500/10 w-fit select-none">
+                                                            = {acceptedEquiv.toLocaleString()} {baseUom}
+                                                        </span>
+                                                    )}
+                                                </div>
+
+                                                {/* Rejected Quantity Stepper */}
+                                                <div className="space-y-1">
+                                                    <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                                        This Receipt - Rejected Quantity {!readOnly && <span className="text-[8px] normal-case font-semibold text-muted-foreground">(Manual count)</span>}
+                                                    </label>
+                                                    <div className="flex items-center">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleUpdateRow(line.line_id, "rejectedQty", Math.max(0, rejectedVal - 1))}
+                                                            disabled={lineInputDisabled}
+                                                            className="w-10 h-10 border border-r-0 bg-background text-foreground rounded-l-lg hover:bg-muted font-extrabold flex items-center justify-center transition-colors text-base select-none shrink-0"
+                                                        >
+                                                            <Minus className="h-3.5 w-3.5" />
+                                                        </button>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            max={receivedVal || undefined}
+                                                            step="any"
+                                                            placeholder="0"
+                                                            value={row.rejectedQty}
+                                                            onChange={e => handleUpdateRow(line.line_id, "rejectedQty", e.target.value === "" ? "" : Number(e.target.value))}
+                                                            disabled={lineInputDisabled}
+                                                            aria-invalid={!readOnly && (isExceeded || Boolean(quantityIssue))}
+                                                            className={`w-full h-10 border bg-background text-center text-xs font-semibold text-foreground outline-none focus:ring-0 ${!readOnly && isExceeded ? "border-red-500 bg-red-500/5" : "border-border"}`}
+                                                        />
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleUpdateRow(line.line_id, "rejectedQty", Math.min(receivedVal, rejectedVal + 1))}
+                                                            disabled={lineInputDisabled}
+                                                            className="w-10 h-10 border border-l-0 bg-background text-foreground rounded-r-lg hover:bg-muted font-extrabold flex items-center justify-center transition-colors text-base select-none shrink-0"
+                                                        >
+                                                            <Plus className="h-3.5 w-3.5" />
+                                                        </button>
+                                                    </div>
+                                                    {rejectedEquiv > 0 && convFactor !== 1 && (
+                                                        <span className="text-[9px] text-red-600 font-bold block mt-1 bg-red-500/5 px-2 py-0.5 rounded border border-red-500/10 w-fit select-none">
+                                                            = {rejectedEquiv.toLocaleString()} {baseUom}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </div>
 
-                                            {/* Accepted Quantity Stepper */}
-                                            <div className="space-y-1">
-                                                <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                                    This Receipt - Accepted Quantity {!readOnly && receivedVal > 0 && <span className="text-red-500">*</span>}
-                                                </label>
-                                                <div className="flex items-center">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleUpdateRow(line.line_id, "acceptedQty", Math.max(0, acceptedVal - 1))}
-                                                        disabled={lineInputDisabled}
-                                                        className="w-10 h-10 border border-r-0 bg-background text-foreground rounded-l-lg hover:bg-muted font-extrabold flex items-center justify-center transition-colors text-base select-none shrink-0"
-                                                    >
-                                                        <Minus className="h-3.5 w-3.5" />
-                                                    </button>
-                                                    <input
-                                                        type="number"
-                                                        min="0"
-                                                        max={receivedVal || undefined}
-                                                        step="any"
-                                                        placeholder="Accepted qty"
-                                                        value={row.acceptedQty}
-                                                        onChange={e => handleUpdateRow(line.line_id, "acceptedQty", e.target.value === "" ? "" : Number(e.target.value))}
-                                                        disabled={lineInputDisabled}
-                                                        aria-invalid={!readOnly && (!quantitiesReconcile || Boolean(quantityIssue))}
-                                                        className={`w-full h-10 border bg-background text-center text-xs font-semibold text-foreground outline-none focus:ring-0 ${!readOnly && !quantitiesReconcile ? "border-red-500 bg-red-500/5" : ""}`}
-                                                    />
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleUpdateRow(line.line_id, "acceptedQty", Math.min(receivedVal, acceptedVal + 1))}
-                                                        disabled={lineInputDisabled}
-                                                        className="w-10 h-10 border border-l-0 bg-background text-foreground rounded-r-lg hover:bg-muted font-extrabold flex items-center justify-center transition-colors text-base select-none shrink-0"
-                                                    >
-                                                        <Plus className="h-3.5 w-3.5" />
-                                                    </button>
+                                            {/* Quantity Excess Guard Alert */}
+                                            {!readOnly && receivedVal > 0 && isExceeded && (
+                                                <div className="pt-1">
+                                                    <div className="flex items-center gap-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-[10px] font-bold text-red-700" role="alert">
+                                                        <AlertTriangle className="h-4 w-4 shrink-0 text-red-600" />
+                                                        <span>
+                                                            Total inspected ({totalInspectedVal.toLocaleString()}) exceeds received quantity ({receivedVal.toLocaleString()}) by {(totalInspectedVal - receivedVal).toLocaleString()}.
+                                                        </span>
+                                                    </div>
                                                 </div>
-                                                {acceptedEquiv > 0 && convFactor !== 1 && (
-                                                    <span className="text-[9px] text-emerald-600 font-bold block mt-1 bg-emerald-500/5 px-2 py-0.5 rounded border border-emerald-500/10 w-fit select-none">
-                                                        = {acceptedEquiv.toLocaleString()} {baseUom}
-                                                    </span>
-                                                )}
-                                            </div>
+                                            )}
 
-                                            {/* Rejected Quantity */}
-                                            <div className="space-y-1">
-                                                <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                                    This Receipt - Rejected Quantity <span className="text-[8px] normal-case font-semibold text-muted-foreground">(calculated)</span>
-                                                </label>
-                                                <div
-                                                    role="status"
-                                                    aria-label="Rejected quantity (calculated)"
-                                                    className={`flex h-10 items-center justify-center rounded-lg border bg-muted/40 px-3 text-center text-xs font-semibold text-foreground ${!readOnly && (!quantitiesReconcile || Boolean(quantityIssue)) ? "border-red-500 bg-red-500/5" : "border-border"}`}
-                                                >
-                                                    {Number.isFinite(rejectedVal) ? rejectedVal.toLocaleString() : "—"}
-                                                </div>
-                                                <span className="text-[9px] text-muted-foreground block mt-1">Received − Accepted</span>
-                                                {rejectedEquiv > 0 && convFactor !== 1 && (
-                                                    <span className="text-[9px] text-red-600 font-bold block mt-1 bg-red-500/5 px-2 py-0.5 rounded border border-red-500/10 w-fit select-none">
-                                                        = {rejectedEquiv.toLocaleString()} {baseUom}
-                                                    </span>
-                                                )}
-                                            </div>
-                                            {quantityIssue && <p className="sm:col-span-3 text-[9px] font-semibold text-red-600" role="alert">{quantityIssue.message}</p>}
+                                            {quantityIssue && <p className="text-[9px] font-semibold text-red-600" role="alert">{quantityIssue.message}</p>}
                                         </div>
                                     );
                                 })()}

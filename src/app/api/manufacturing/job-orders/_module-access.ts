@@ -74,7 +74,8 @@ async function getJson(response: Response): Promise<unknown> {
 }
 
 export async function requireJobOrderModuleAccess(
-    modulePaths: JobOrderModulePath | readonly JobOrderModulePath[]
+    modulePaths: JobOrderModulePath | readonly JobOrderModulePath[],
+    signal?: AbortSignal
 ): Promise<AuthorizedJobOrderUser> {
     const requestedPaths: readonly JobOrderModulePath[] = typeof modulePaths === "string"
         ? [modulePaths]
@@ -97,9 +98,11 @@ export async function requireJobOrderModuleAccess(
     try {
         authResponse = await fetch(`${springBase}/auth/me`, {
             headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
-            cache: "no-store"
+            cache: "no-store",
+            signal
         });
-    } catch {
+    } catch (error) {
+        if (signal?.aborted) throw error;
         throw new JobOrderModuleAccessError(503, "MODULE_ACCESS_SERVICE_UNAVAILABLE", "Authentication service is unavailable.");
     }
     if (authResponse.status === 401 || authResponse.status === 403) {
@@ -110,6 +113,7 @@ export async function requireJobOrderModuleAccess(
     }
 
     const authenticatedPayload = await getJson(authResponse);
+    if (signal?.aborted) throw signal.reason;
     const authenticated = responseData<AuthenticatedUser>(authenticatedPayload);
     const userId = positiveId(authenticated?.id);
     if (!userId) {
@@ -133,10 +137,11 @@ export async function requireJobOrderModuleAccess(
     let accessResponse: Response;
     try {
         [userResponse, accessResponse] = await Promise.all([
-            fetch(`${directusBase}/items/user/${userId}?fields=role,isAdmin`, { headers: authHeaders, cache: "no-store" }),
-            fetch(`${directusBase}/items/user_access_modules?${accessParams.toString()}`, { headers: authHeaders, cache: "no-store" })
+            fetch(`${directusBase}/items/user/${userId}?fields=role,isAdmin`, { headers: authHeaders, cache: "no-store", signal }),
+            fetch(`${directusBase}/items/user_access_modules?${accessParams.toString()}`, { headers: authHeaders, cache: "no-store", signal })
         ]);
-    } catch {
+    } catch (error) {
+        if (signal?.aborted) throw error;
         throw new JobOrderModuleAccessError(503, "MODULE_ACCESS_SERVICE_UNAVAILABLE", "Module authorization service is unavailable.");
     }
     if (!userResponse.ok || !accessResponse.ok) {
@@ -145,6 +150,7 @@ export async function requireJobOrderModuleAccess(
 
     const directusUser = responseData<DirectusUser>(await getJson(userResponse));
     const accessPayload = await getJson(accessResponse);
+    if (signal?.aborted) throw signal.reason;
     const accessRows = responseData<ModuleAccessRow[]>(accessPayload);
     if (!directusUser || !Array.isArray(accessRows)) {
         throw new JobOrderModuleAccessError(503, "MODULE_ACCESS_SERVICE_UNAVAILABLE", "Module authorization service returned an invalid response.");
@@ -168,12 +174,14 @@ export async function requireJobOrderModuleAccess(
 }
 
 export async function authorizeJobOrderModuleAccess(
-    modulePaths: JobOrderModulePath | readonly JobOrderModulePath[]
+    modulePaths: JobOrderModulePath | readonly JobOrderModulePath[],
+    signal?: AbortSignal
 ): Promise<NextResponse | null> {
     try {
-        await requireJobOrderModuleAccess(modulePaths);
+        await requireJobOrderModuleAccess(modulePaths, signal);
         return null;
     } catch (error) {
+        if (signal?.aborted) throw error;
         if (error instanceof JobOrderModuleAccessError) {
             return NextResponse.json({ success: false, error: error.message, code: error.code }, { status: error.status });
         }

@@ -1,8 +1,8 @@
 /* eslint-disable */
 "use client";
 
-import React, { useState, useMemo, useRef, useEffect } from "react";
-import { Loader2, RefreshCw, ClipboardList, Layers, Database, Printer, Factory, AlertTriangle, History, Pencil, Check, X, XCircle, ChevronLeft, ChevronRight } from "lucide-react";
+import React, { useCallback, useState, useMemo, useRef, useEffect } from "react";
+import { Loader2, RefreshCw, ClipboardList, Layers, Database, Printer, Factory, AlertTriangle, History, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,8 +18,10 @@ import { NetRequirementsTable } from "./components/NetRequirementsTable";
 import { ConsolidationPanel } from "./components/ConsolidationPanel";
 import { DemandLinesTable } from "./components/DemandLinesTable";
 import { InProductionSalesOrdersTable } from "./components/InProductionSalesOrdersTable";
+import { PlanningPaginationControls, type PlanningPaginationState } from "./components/PlanningPaginationControls";
 import { ReleaseJODialog } from "./components/ReleaseJODialog";
 import { CreateBufferJODialog } from "./components/CreateBufferJODialog";
+import { DraftJobOrderEditor } from "./components/DraftJobOrderEditor";
 import { PlanningSummaryCards } from "./components/PlanningSummaryCards";
 import { JOFilterBar } from "./components/JOFilterBar";
 import { JOTable } from "./components/JOTable";
@@ -53,6 +55,9 @@ type MaterialLoadState = {
     status: "idle" | "loading" | "success" | "error";
     message?: string;
 };
+
+type PlanningTabKey = "demand" | "production" | "inventory" | "queue" | "cancelled";
+type PlanningPageValues = Pick<PlanningPaginationState, "page" | "pageSize">;
 
 function MaterialLoadErrorState({ message, onRetry }: { message?: string; onRetry: () => void }) {
     return (
@@ -126,6 +131,9 @@ export default function PlanningEngineeringModule() {
         loadingBranches,
         loadingOrders,
         loadingRequirements,
+        subAssemblyLookupStatus,
+        subAssemblyLookupError,
+        retrySubAssemblyLookup,
         releasingJO,
         branches,
         netRequirements,
@@ -160,6 +168,7 @@ export default function PlanningEngineeringModule() {
         releaseGroups,
         mergeValidation,
         handleSelectLine,
+        handleSelectLines,
         handleInitiateRelease,
         handleInitiateReplacementRelease,
         handleConfirmRelease,
@@ -180,6 +189,7 @@ export default function PlanningEngineeringModule() {
         handleReleaseDraftFromPlanning,
         deepLinkJo,
         clearDeepLinkJo,
+        closeJobOrderEditor,
         deepLinkNotice,
         setDeepLinkNotice
     } = usePlanningEngineering();
@@ -190,71 +200,74 @@ export default function PlanningEngineeringModule() {
     };
     const hasValidTargetBranch = selectedBranchId !== null && Number.isSafeInteger(selectedBranchId) && selectedBranchId > 0;
 
-    const [activeMainTab, setActiveMainTab] = useState<"demand" | "production" | "inventory" | "queue" | "cancelled">("demand");
+    const [activeMainTab, setActiveMainTab] = useState<PlanningTabKey>("demand");
+    const [tabPagination, setTabPagination] = useState<Record<PlanningTabKey, PlanningPageValues>>({
+        demand: { page: 1, pageSize: 10 },
+        production: { page: 1, pageSize: 10 },
+        inventory: { page: 1, pageSize: 10 },
+        queue: { page: 1, pageSize: 10 },
+        cancelled: { page: 1, pageSize: 10 }
+    });
+    const updateTabPage = useCallback((tab: PlanningTabKey, page: number) => {
+        setTabPagination((current) => current[tab].page === page
+            ? current
+            : { ...current, [tab]: { ...current[tab], page } });
+    }, []);
+    const updateTabPageSize = useCallback((tab: PlanningTabKey, pageSize: number) => {
+        setTabPagination((current) => current[tab].pageSize === pageSize && current[tab].page === 1
+            ? current
+            : { ...current, [tab]: { page: 1, pageSize } });
+    }, []);
     const [showWorkflowGuide, setShowWorkflowGuide] = useState(true);
     const [isBufferDialogOpen, setIsBufferDialogOpen] = useState(false);
     const [selectedUnreleasedJo, setSelectedUnreleasedJo] = useState<any | null>(null);
+    const [draftJobOrderToEdit, setDraftJobOrderToEdit] = useState<any | null>(null);
     const [joMaterials, setJoMaterials] = useState<any[]>([]);
     const [loadingMaterials, setLoadingMaterials] = useState(false);
+    const [waitingForInventory, setWaitingForInventory] = useState(false);
     const [materialLoadState, setMaterialLoadState] = useState<MaterialLoadState>({ status: "idle" });
     const [familyActiveTab, setFamilyActiveTab] = useState<string>("family-all");
     const [childJoMaterials, setChildJoMaterials] = useState<Record<string, any[]>>({});
     const [childMaterialLoadStates, setChildMaterialLoadStates] = useState<Record<string, MaterialLoadState>>({});
     const materialRequestIdRef = useRef(0);
+    const materialRequestControllerRef = useRef<AbortController | null>(null);
     const [isTravelerOpen, setIsTravelerOpen] = useState(false);
+
+    useEffect(() => () => {
+        materialRequestIdRef.current += 1;
+        materialRequestControllerRef.current?.abort();
+    }, []);
 
     // Filter bar state for JO Queue
     const [searchQuery, setSearchQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState("all");
-    const [queuePage, setQueuePage] = useState(1);
-    const [queuePageSize, setQueuePageSize] = useState(10);
     const [cancelledSearchQuery, setCancelledSearchQuery] = useState("");
 
-    // Quantity editing state for Draft JOs
-    const [isEditingQuantity, setIsEditingQuantity] = useState(false);
-    const [editQuantityValue, setEditQuantityValue] = useState("");
-    const [updatingQuantity, setUpdatingQuantity] = useState(false);
-
-    const handleSaveQuantity = async () => {
-        if (isCancelledJobOrderStatus(selectedUnreleasedJo?.status)) {
-            toast.error("Cancelled Job Orders are read-only.");
-            return;
-        }
-        const num = Number(editQuantityValue);
-        if (!Number.isFinite(num) || num <= 0) {
-            toast.error("Please enter a valid positive target quantity.");
-            return;
-        }
-        const joToUpdate = activeFamilyJo || selectedUnreleasedJo;
-        if (!joToUpdate) return;
-        const joId = joToUpdate.jo_id;
-        setUpdatingQuantity(true);
-        try {
-            const res = await fetch("/api/manufacturing/planning-engineering", {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    joId: joId,
-                    patch: {
-                        quantity: num
-                    }
-                })
-            });
-            const data = await res.json();
-            if (!res.ok || data.error) {
-                throw new Error(data.error || "Failed to update Job Order quantity.");
-            }
-            toast.success(`Job Order ${joId} target quantity updated to ${num.toLocaleString()} pcs!`);
-            setIsEditingQuantity(false);
-            await loadInitialData();
-            const updatedJo = { ...joToUpdate, quantity: num, target_quantity: num };
-            await handleOpenDetails(updatedJo, familyActiveTab);
-        } catch (err: any) {
-            toast.error(err.message || "Failed to update quantity.");
-        } finally {
-            setUpdatingQuantity(false);
-        }
-    };
+    const demandPagination = useMemo<PlanningPaginationState>(() => ({
+        ...tabPagination.demand,
+        onPageChange: (page) => updateTabPage("demand", page),
+        onPageSizeChange: (pageSize) => updateTabPageSize("demand", pageSize)
+    }), [tabPagination.demand, updateTabPage, updateTabPageSize]);
+    const productionPagination = useMemo<PlanningPaginationState>(() => ({
+        ...tabPagination.production,
+        onPageChange: (page) => updateTabPage("production", page),
+        onPageSizeChange: (pageSize) => updateTabPageSize("production", pageSize)
+    }), [tabPagination.production, updateTabPage, updateTabPageSize]);
+    const inventoryPagination = useMemo<PlanningPaginationState>(() => ({
+        ...tabPagination.inventory,
+        onPageChange: (page) => updateTabPage("inventory", page),
+        onPageSizeChange: (pageSize) => updateTabPageSize("inventory", pageSize)
+    }), [tabPagination.inventory, updateTabPage, updateTabPageSize]);
+    const queuePagination = useMemo<PlanningPaginationState>(() => ({
+        ...tabPagination.queue,
+        onPageChange: (page) => updateTabPage("queue", page),
+        onPageSizeChange: (pageSize) => updateTabPageSize("queue", pageSize)
+    }), [tabPagination.queue, updateTabPage, updateTabPageSize]);
+    const cancelledPagination = useMemo<PlanningPaginationState>(() => ({
+        ...tabPagination.cancelled,
+        onPageChange: (page) => updateTabPage("cancelled", page),
+        onPageSizeChange: (pageSize) => updateTabPageSize("cancelled", pageSize)
+    }), [tabPagination.cancelled, updateTabPage, updateTabPageSize]);
 
     // Deep link support: /mm/planning-engineering?jo=JO-XXXX opens the item.
     useEffect(() => {
@@ -381,23 +394,45 @@ export default function PlanningEngineeringModule() {
     }, [filteredUnreleasedJobs]);
 
     useEffect(() => {
-        setQueuePage(1);
-    }, [selectedBranchId, searchQuery, statusFilter]);
+        updateTabPage("queue", 1);
+    }, [selectedBranchId, searchQuery, statusFilter, updateTabPage]);
 
+    useEffect(() => {
+        updateTabPage("cancelled", 1);
+    }, [selectedBranchId, cancelledSearchQuery, updateTabPage]);
+
+    useEffect(() => {
+        updateTabPage("demand", 1);
+        updateTabPage("production", 1);
+        updateTabPage("inventory", 1);
+    }, [selectedBranchId, updateTabPage]);
+
+    const queuePage = tabPagination.queue.page;
+    const queuePageSize = tabPagination.queue.pageSize;
     const queuePageCount = Math.max(1, Math.ceil(familyGroups.length / queuePageSize));
     const safeQueuePage = Math.min(queuePage, queuePageCount);
 
     useEffect(() => {
-        if (queuePage !== safeQueuePage) setQueuePage(safeQueuePage);
-    }, [queuePage, safeQueuePage]);
+        if (queuePage !== safeQueuePage) updateTabPage("queue", safeQueuePage);
+    }, [queuePage, safeQueuePage, updateTabPage]);
 
     const paginatedFamilyGroups = useMemo(() => {
         const startIndex = (safeQueuePage - 1) * queuePageSize;
         return familyGroups.slice(startIndex, startIndex + queuePageSize);
     }, [familyGroups, safeQueuePage, queuePageSize]);
 
-    const queueRangeStart = familyGroups.length === 0 ? 0 : (safeQueuePage - 1) * queuePageSize + 1;
-    const queueRangeEnd = Math.min(safeQueuePage * queuePageSize, familyGroups.length);
+    const cancelledPageCount = Math.max(1, Math.ceil(cancelledFamilyGroups.length / tabPagination.cancelled.pageSize));
+    const safeCancelledPage = Math.min(tabPagination.cancelled.page, cancelledPageCount);
+    const paginatedCancelledFamilyGroups = useMemo(() => {
+        const startIndex = (safeCancelledPage - 1) * tabPagination.cancelled.pageSize;
+        return cancelledFamilyGroups.slice(startIndex, startIndex + tabPagination.cancelled.pageSize);
+    }, [cancelledFamilyGroups, safeCancelledPage, tabPagination.cancelled.pageSize]);
+
+    useEffect(() => {
+        if (tabPagination.cancelled.page !== safeCancelledPage) {
+            updateTabPage("cancelled", safeCancelledPage);
+        }
+    }, [tabPagination.cancelled.page, safeCancelledPage, updateTabPage]);
 
     const familyChildJobs = useMemo(() => {
         if (!selectedUnreleasedJo) return [];
@@ -434,6 +469,7 @@ export default function PlanningEngineeringModule() {
     }, [activeFamilyJoKey]);
 
     const isReadOnlyDetails = isCancelledJobOrderStatus(selectedUnreleasedJo?.status);
+    const isDraftDetailsReadOnly = isJobOrderStatus(selectedUnreleasedJo?.status, JOB_ORDER_STATUS.DRAFT);
     const isTerminatedDetails = isTerminatedJobOrder(activeFamilyJo);
     const terminalEvidenceImageUrl = isTerminatedDetails
         ? activeFamilyJo?.termination_image_url
@@ -465,13 +501,13 @@ export default function PlanningEngineeringModule() {
     // Only Draft Job Orders can be initialized; initialized JOs are read-only
     // from this planning detail view.
     const releasableFamilyMembers = useMemo(() => {
-        if (!activeFamilyJo || isCancelledJobOrderStatus(selectedUnreleasedJo?.status)) return [];
+        if (!activeFamilyJo || isCancelledJobOrderStatus(selectedUnreleasedJo?.status) || isDraftDetailsReadOnly) return [];
         const members = isFamilyOverview ? [activeFamilyJo, ...familyChildJobs] : [activeFamilyJo];
         return members.filter((jo: any) => isJobOrderStatus(
             jo?.status,
             JOB_ORDER_STATUS.DRAFT
         ));
-    }, [activeFamilyJo, familyChildJobs, isFamilyOverview, selectedUnreleasedJo]);
+    }, [activeFamilyJo, familyChildJobs, isDraftDetailsReadOnly, isFamilyOverview, selectedUnreleasedJo]);
 
     const activeMaterialLoadState = useMemo<MaterialLoadState>(() => {
         if (!activeFamilyJo || familyActiveTab === "family-all" || familyActiveTab === "parent") {
@@ -489,6 +525,17 @@ export default function PlanningEngineeringModule() {
 
     const handleOpenDetails = async (jo: any, tabToRestore = "family-all") => {
         const requestId = ++materialRequestIdRef.current;
+        materialRequestControllerRef.current?.abort();
+        const controller = new AbortController();
+        materialRequestControllerRef.current = controller;
+        const retryBudget = { deadlineAt: null as number | null };
+        let retryingJobCount = 0;
+        const onRateLimitRetry = (retrying: boolean) => {
+            if (requestId !== materialRequestIdRef.current) return;
+            retryingJobCount = Math.max(0, retryingJobCount + (retrying ? 1 : -1));
+            setWaitingForInventory(retryingJobCount > 0);
+        };
+        setDraftJobOrderToEdit(null);
         setIsTravelerOpen(false);
         setSelectedUnreleasedJo(jo);
         setFamilyActiveTab(tabToRestore);
@@ -497,6 +544,7 @@ export default function PlanningEngineeringModule() {
         setMaterialLoadState({ status: "loading" });
         setChildMaterialLoadStates({});
         setLoadingMaterials(true);
+        setWaitingForInventory(false);
 
         const joNo = String(jo.jo_id || jo.job_order_no || "");
         const parentNo = joNo.includes("-SUB") ? joNo.split("-SUB")[0] : joNo;
@@ -514,20 +562,30 @@ export default function PlanningEngineeringModule() {
         let parentMaterials: any[] = [];
         let parentError: unknown = null;
         try {
-            parentMaterials = await fetchJobMaterials(jo.job_order_id || jo.id || jo.order_id);
+            parentMaterials = await fetchJobMaterials(jo.job_order_id || jo.id || jo.order_id, {
+                signal: controller.signal,
+                retryBudget,
+                onRateLimitRetry
+            });
         } catch (error) {
+            if (controller.signal.aborted || requestId !== materialRequestIdRef.current) return;
             parentError = error;
             console.error("Failed to load materials for unreleased JO details modal:", error);
         }
 
         const childMatMap: Record<string, any[]> = {};
         const childLoadStates: Record<string, MaterialLoadState> = {};
-        await Promise.all(relatedJobs.map(async (rj: any) => {
+        const loadChildMaterials = async (rj: any) => {
             const childKey = String(rj.jo_id);
             try {
-                childMatMap[childKey] = await fetchJobMaterials(rj.job_order_id || rj.id || rj.order_id);
+                childMatMap[childKey] = await fetchJobMaterials(rj.job_order_id || rj.id || rj.order_id, {
+                    signal: controller.signal,
+                    retryBudget,
+                    onRateLimitRetry
+                });
                 childLoadStates[childKey] = { status: "success" };
             } catch (error) {
+                if (controller.signal.aborted || requestId !== materialRequestIdRef.current) return;
                 childMatMap[childKey] = [];
                 childLoadStates[childKey] = {
                     status: "error",
@@ -535,9 +593,22 @@ export default function PlanningEngineeringModule() {
                 };
                 console.error(`Failed to load materials for child Job Order ${childKey}:`, error);
             }
+        };
+
+        let nextChildIndex = 0;
+        const childWorkerCount = Math.min(2, relatedJobs.length);
+        await Promise.all(Array.from({ length: childWorkerCount }, async () => {
+            while (
+                nextChildIndex < relatedJobs.length &&
+                !controller.signal.aborted &&
+                requestId === materialRequestIdRef.current
+            ) {
+                const child = relatedJobs[nextChildIndex++];
+                await loadChildMaterials(child);
+            }
         }));
 
-        if (requestId !== materialRequestIdRef.current) return;
+        if (controller.signal.aborted || requestId !== materialRequestIdRef.current) return;
 
         setJoMaterials(parentMaterials);
         setMaterialLoadState(parentError ? {
@@ -547,17 +618,41 @@ export default function PlanningEngineeringModule() {
         setChildJoMaterials(childMatMap);
         setChildMaterialLoadStates(childLoadStates);
         setLoadingMaterials(false);
+        setWaitingForInventory(false);
+        materialRequestControllerRef.current = null;
     };
 
-    const clearDetails = () => {
+    const handleEditDraft = (jo: any) => {
+        if (!isJobOrderStatus(jo?.status, JOB_ORDER_STATUS.DRAFT)) return;
         materialRequestIdRef.current += 1;
+        materialRequestControllerRef.current?.abort();
+        materialRequestControllerRef.current = null;
         setIsTravelerOpen(false);
-        setSelectedUnreleasedJo(null);
+        setSelectedUnreleasedJo(jo);
+        setDraftJobOrderToEdit(jo);
+        setFamilyActiveTab("family-all");
         setJoMaterials([]);
         setChildJoMaterials({});
         setMaterialLoadState({ status: "idle" });
         setChildMaterialLoadStates({});
         setLoadingMaterials(false);
+        setWaitingForInventory(false);
+        setActiveMainTab("queue");
+    };
+
+    const clearDetails = () => {
+        materialRequestIdRef.current += 1;
+        materialRequestControllerRef.current?.abort();
+        materialRequestControllerRef.current = null;
+        setIsTravelerOpen(false);
+        setSelectedUnreleasedJo(null);
+        setDraftJobOrderToEdit(null);
+        setJoMaterials([]);
+        setChildJoMaterials({});
+        setMaterialLoadState({ status: "idle" });
+        setChildMaterialLoadStates({});
+        setLoadingMaterials(false);
+        setWaitingForInventory(false);
     };
 
     const retryCurrentMaterials = () => {
@@ -1036,6 +1131,10 @@ export default function PlanningEngineeringModule() {
             toast.error("Cancelled Job Orders are read-only.");
             return;
         }
+        if (isDraftDetailsReadOnly) {
+            toast.error("Draft Job Order details are read-only. Use Edit to make changes.");
+            return;
+        }
         if (!materialActionsReady) {
             toast.error("Required materials are unavailable. Retry the materials lookup before releasing the Job Order.");
             return;
@@ -1054,7 +1153,103 @@ export default function PlanningEngineeringModule() {
         }
     };
 
-    const shortfallCount = netRequirements.filter((n: any) => n.net_shortfall > 0).length;
+    const saveDraftChanges = async (draft: Record<string, unknown>) => {
+        setSelectedUnreleasedJo((current: any) => current ? {
+            ...current,
+            quantity: draft.targetQuantity,
+            target_quantity: draft.targetQuantity,
+            start_date: draft.plannedDate,
+            due_date: draft.dueDate,
+            end_date: draft.dueDate,
+            shiftOption: draft.shiftOption,
+            shift_option: draft.shiftOption,
+            priority: draft.priority,
+            remarks: draft.remarks,
+            product_id: draft.productId ?? current?.product_id,
+            branch_id: draft.branchId ?? current?.branch_id,
+            version_id: draft.versionId ?? current?.version_id,
+            uom_id: draft.uomId ?? current?.uom_id,
+            assignedPersonnel: draft.assignedPersonnel,
+            assigned_personnel: draft.assignedPersonnel,
+            subAssemblyVersionMap: draft.subAssemblyVersionMap ?? current?.subAssemblyVersionMap,
+            sub_assembly_version_map: draft.subAssemblyVersionMap ?? current?.sub_assembly_version_map
+        } : current);
+        await loadInitialData(true);
+    };
+
+    const leaveDraftEditor = () => {
+        clearDetails();
+        closeJobOrderEditor();
+        setActiveMainTab("queue");
+    };
+
+    const draftJobOrder = draftJobOrderToEdit;
+
+    if (isConfirmOpen) {
+        return (
+            <div className="space-y-2 p-1 sm:p-2">
+                <ReleaseJODialog
+                    isConfirmOpen={isConfirmOpen}
+                    setIsConfirmOpen={setIsConfirmOpen}
+                    selectedLines={selectedLines}
+                    releaseGroups={releaseGroups}
+                    branches={branches}
+                    selectedBranchId={selectedBranchId}
+                    joNumber={joNumber}
+                    setJoNumber={setJoNumber}
+                    targetQuantity={targetQuantity}
+                    setTargetQuantity={setTargetQuantity}
+                    plannedDate={plannedDate}
+                    setPlannedDate={setPlannedDate}
+                    dueDate={dueDate}
+                    setDueDate={setDueDate}
+                    shiftOption={shiftOption}
+                    setShiftOption={setShiftOption}
+                    priority={priority}
+                    setPriority={setPriority}
+                    remarks={remarks}
+                    setRemarks={setRemarks}
+                    releasingJO={releasingJO}
+                    handleConfirmRelease={handleConfirmRelease}
+                    assignments={assignments}
+                    setAssignments={setAssignments}
+                />
+            </div>
+        );
+    }
+
+    if (isBufferDialogOpen) {
+        return (
+            <div className="space-y-2 p-1 sm:p-2">
+                <CreateBufferJODialog
+                    isOpen={isBufferDialogOpen}
+                    onOpenChange={setIsBufferDialogOpen}
+                    branches={branches}
+                    initialBranchId={selectedBranchId}
+                    onSuccess={openCreatedJobOrder}
+                />
+            </div>
+        );
+    }
+
+    if (draftJobOrder) {
+        return (
+            <div className="space-y-2 p-1 sm:p-2">
+                <DraftJobOrderEditor
+                    key={draftJobOrder.job_order_id || draftJobOrder.order_id || draftJobOrder.id}
+                    jobOrder={draftJobOrder}
+                    branches={branches}
+                    onBack={leaveDraftEditor}
+                    onSaved={saveDraftChanges}
+                    onInitialize={() => handleReleaseDraftFromPlanning(draftJobOrder.job_order_id || draftJobOrder.order_id || draftJobOrder.id)}
+                />
+            </div>
+        );
+    }
+
+    const shortfallCount = subAssemblyLookupStatus === "ready" && !loadingRequirements && selectedBranchId !== null
+        ? netRequirements.filter((n: any) => n.net_shortfall > 0).length
+        : null;
 
     return (
         <div className="space-y-6 p-1 sm:p-2">
@@ -1184,7 +1379,7 @@ export default function PlanningEngineeringModule() {
                     <TabsTrigger value="inventory" className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs">
                         <Database className="h-4 w-4 text-indigo-500" />
                         <span>Net Requirements</span>
-                        {shortfallCount > 0 && (
+                        {shortfallCount !== null && shortfallCount > 0 && (
                             <Badge variant="destructive" className="text-[10px] px-1.5 py-0 h-4.5 min-w-4.5 flex items-center justify-center font-mono">
                                 {shortfallCount}
                             </Badge>
@@ -1217,6 +1412,8 @@ export default function PlanningEngineeringModule() {
                                 salesOrderGroups={salesOrderGroups}
                                 selectedDetailIds={selectedDetailIds}
                                 handleSelectLine={handleSelectLine}
+                                handleSelectLines={handleSelectLines}
+                                pagination={demandPagination}
                             />
                         </div>
                         {/* Right Column: Consolidation Action Panel */}
@@ -1244,6 +1441,7 @@ export default function PlanningEngineeringModule() {
                         salesOrderGroups={productionSalesOrderGroups}
                         onRetry={() => { void loadInProductionSalesOrders(); }}
                         onCreateJobOrder={handleInitiateReplacementRelease}
+                        pagination={productionPagination}
                     />
                 </TabsContent>
 
@@ -1252,9 +1450,13 @@ export default function PlanningEngineeringModule() {
                     <div className="bg-card border rounded-xl shadow-sm">
                         <NetRequirementsTable
                             loadingRequirements={loadingRequirements}
+                            subAssemblyLookupStatus={subAssemblyLookupStatus}
+                            subAssemblyLookupError={subAssemblyLookupError}
+                            onRetrySubAssemblyLookup={retrySubAssemblyLookup}
                             netRequirements={netRequirements}
                             selectedBranchId={selectedBranchId}
                             branches={branches}
+                            pagination={inventoryPagination}
                         />
                     </div>
                 </TabsContent>
@@ -1296,62 +1498,14 @@ export default function PlanningEngineeringModule() {
                             familyGroups={paginatedFamilyGroups}
                             loadingJobs={loadingJobs}
                             handleOpenDetails={handleOpenDetails}
+                            handleEditDraft={handleEditDraft}
                         />
-                        {familyGroups.length > 0 && (
-                            <div className="flex flex-col gap-3 border-t border-border/60 pt-4 sm:flex-row sm:items-center sm:justify-between">
-                                <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                                    <div className="flex items-center gap-2">
-                                        <span>Entries per page</span>
-                                        <Select
-                                            value={String(queuePageSize)}
-                                            onValueChange={(value) => {
-                                                setQueuePageSize(Number(value));
-                                                setQueuePage(1);
-                                            }}
-                                        >
-                                            <SelectTrigger className="h-8 w-[76px]" aria-label="Queue entries per page">
-                                                <SelectValue />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                {[10, 25, 50].map((size) => (
-                                                    <SelectItem key={size} value={String(size)}>{size}</SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-                                    <span title="An entry is one standalone Job Order or one complete family group.">
-                                        Showing {queueRangeStart}–{queueRangeEnd} of {familyGroups.length} queue entries
-                                    </span>
-                                </div>
-                                <div className="flex items-center justify-between gap-3 sm:justify-end">
-                                    <span className="whitespace-nowrap text-xs font-medium text-muted-foreground">
-                                        Page {safeQueuePage} of {queuePageCount}
-                                    </span>
-                                    <div className="flex items-center gap-1">
-                                        <Button
-                                            type="button"
-                                            variant="outline"
-                                            size="icon-sm"
-                                            aria-label="Previous queue page"
-                                            disabled={safeQueuePage <= 1}
-                                            onClick={() => setQueuePage((page) => Math.max(1, page - 1))}
-                                        >
-                                            <ChevronLeft />
-                                        </Button>
-                                        <Button
-                                            type="button"
-                                            variant="outline"
-                                            size="icon-sm"
-                                            aria-label="Next queue page"
-                                            disabled={safeQueuePage >= queuePageCount}
-                                            onClick={() => setQueuePage((page) => Math.min(queuePageCount, page + 1))}
-                                        >
-                                            <ChevronRight />
-                                        </Button>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
+                        <PlanningPaginationControls
+                            {...queuePagination}
+                            page={safeQueuePage}
+                            totalItems={familyGroups.length}
+                            itemLabel="queue entries"
+                        />
                     </div>
                 </TabsContent>
 
@@ -1388,51 +1542,21 @@ export default function PlanningEngineeringModule() {
 
                         <JOTable
                             unreleasedJobs={filteredCancelledJobs}
-                            familyGroups={cancelledFamilyGroups}
+                            familyGroups={paginatedCancelledFamilyGroups}
                             loadingJobs={loadingJobs}
                             handleOpenDetails={handleOpenDetails}
+                            handleEditDraft={handleEditDraft}
                             readOnly
+                        />
+                        <PlanningPaginationControls
+                            {...cancelledPagination}
+                            page={safeCancelledPage}
+                            totalItems={cancelledFamilyGroups.length}
+                            itemLabel="cancelled JOs"
                         />
                     </div>
                 </TabsContent>
             </Tabs>
-
-            {/* Release Job Order Dialog */}
-            <ReleaseJODialog
-                isConfirmOpen={isConfirmOpen}
-                setIsConfirmOpen={setIsConfirmOpen}
-                selectedLines={selectedLines}
-                releaseGroups={releaseGroups}
-                branches={branches}
-                selectedBranchId={selectedBranchId}
-                joNumber={joNumber}
-                setJoNumber={setJoNumber}
-                targetQuantity={targetQuantity}
-                setTargetQuantity={setTargetQuantity}
-                plannedDate={plannedDate}
-                setPlannedDate={setPlannedDate}
-                dueDate={dueDate}
-                setDueDate={setDueDate}
-                shiftOption={shiftOption}
-                setShiftOption={setShiftOption}
-                priority={priority}
-                setPriority={setPriority}
-                remarks={remarks}
-                setRemarks={setRemarks}
-                releasingJO={releasingJO}
-                handleConfirmRelease={handleConfirmRelease}
-                assignments={assignments}
-                setAssignments={setAssignments}
-            />
-
-            {/* Create Buffer Job Order Dialog */}
-            <CreateBufferJODialog
-                isOpen={isBufferDialogOpen}
-                onOpenChange={setIsBufferDialogOpen}
-                branches={branches}
-                initialBranchId={selectedBranchId}
-                onSuccess={openCreatedJobOrder}
-            />
 
             {/* Direct Allocation Confirmation Dialog */}
             <AlertDialog open={isDirectAllocDialogOpen} onOpenChange={setIsDirectAllocDialogOpen}>
@@ -1729,7 +1853,7 @@ export default function PlanningEngineeringModule() {
                                         {materialLoadState.status === "loading" ? (
                                             <div className="flex items-center justify-center py-6 gap-2 text-xs text-muted-foreground">
                                                 <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                                                Loading materials...
+                                                {waitingForInventory ? "Waiting for inventory movements..." : "Loading materials..."}
                                             </div>
                                         ) : materialLoadState.status === "error" ? (
                                             <MaterialLoadErrorState message={materialLoadState.message} onRetry={retryCurrentMaterials} />
@@ -1768,47 +1892,6 @@ export default function PlanningEngineeringModule() {
                                                                     <td className="px-4 py-3.5 text-right font-bold text-foreground text-sm">
                                                                         <div className="flex items-center justify-end gap-2">
                                                                             <span>{needed.toLocaleString()} <span className="text-xs text-muted-foreground">{mat.unit_shortcut}</span></span>
-                                                                        {!isReadOnlyDetails && String(selectedUnreleasedJo?.status || "").toLowerCase() === "draft" && (
-                                                                                isEditingQuantity ? (
-                                                                                    <div className="flex items-center gap-1 ml-1">
-                                                                                        <input
-                                                                                            type="number"
-                                                                                            min="1"
-                                                                                            value={editQuantityValue}
-                                                                                            onChange={(e) => setEditQuantityValue(e.target.value)}
-                                                                                            className="w-20 h-7 px-2 border border-primary rounded-md text-xs font-bold bg-background text-foreground focus:outline-none"
-                                                                                            autoFocus
-                                                                                        />
-                                                                                        <Button
-                                                                                            size="sm"
-                                                                                            onClick={handleSaveQuantity}
-                                                                                            disabled={updatingQuantity}
-                                                                                            className="h-7 px-2 text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90 gap-1"
-                                                                                        >
-                                                                                            {updatingQuantity ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Save
-                                                                                        </Button>
-                                                                                        <Button
-                                                                                            size="sm"
-                                                                                            variant="ghost"
-                                                                                            onClick={() => setIsEditingQuantity(false)}
-                                                                                            className="h-7 px-1.5 text-xs text-muted-foreground hover:text-foreground"
-                                                                                        >
-                                                                                            <X className="h-3.5 w-3.5" />
-                                                                                        </Button>
-                                                                                    </div>
-                                                                                ) : (
-                                                                                    <button
-                                                                                        onClick={() => {
-                                                                                            setEditQuantityValue(String(selectedUnreleasedJo?.quantity || ""));
-                                                                                            setIsEditingQuantity(true);
-                                                                                        }}
-                                                                                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:text-primary/80 bg-primary/10 hover:bg-primary/20 px-2 py-0.5 rounded-md transition-colors border border-primary/20 ml-1"
-                                                                                        title="Edit Job Order Quantity"
-                                                                                    >
-                                                                                        <Pencil className="h-3 w-3" /> Edit Qty
-                                                                                    </button>
-                                                                                )
-                                                                            )}
                                                                         </div>
                                                                     </td>
                                                                     <td className="px-4 py-3.5 text-right font-black text-primary text-sm">
@@ -1896,7 +1979,7 @@ export default function PlanningEngineeringModule() {
                                                                     <td colSpan={4} className="px-4 py-6 text-center text-muted-foreground font-medium">
                                                                         <div className="flex flex-col items-center justify-center space-y-1">
                                                                             <Loader2 className="h-5 w-5 animate-spin text-sky-500" />
-                                                                            <span>Loading ingredient materials...</span>
+                                                                            <span>{waitingForInventory ? "Waiting for inventory movements..." : "Loading ingredient materials..."}</span>
                                                                         </div>
                                                                     </td>
                                                                 </tr>
@@ -1984,7 +2067,9 @@ export default function PlanningEngineeringModule() {
                                     {materialLoadState.status === "loading" ? (
                                         <div className="flex flex-col items-center justify-center py-12 space-y-2">
                                             <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                                            <span className="text-sm text-muted-foreground font-medium">Resolving raw material stock levels...</span>
+                                            <span className="text-sm text-muted-foreground font-medium">
+                                                {waitingForInventory ? "Waiting for inventory movements..." : "Resolving raw material stock levels..."}
+                                            </span>
                                         </div>
                                     ) : materialLoadState.status === "error" ? (
                                         <MaterialLoadErrorState message={materialLoadState.message} onRetry={retryCurrentMaterials} />
@@ -2023,47 +2108,6 @@ export default function PlanningEngineeringModule() {
                                                                 <td className="px-4 py-4 text-right font-semibold">
                                                                     <div className="flex items-center justify-end gap-2">
                                                                         <span>{needed.toLocaleString()} {mat.unit_shortcut}</span>
-                                                                        {!isReadOnlyDetails && String(activeFamilyJo?.status || "").toLowerCase() === "draft" && (
-                                                                            isEditingQuantity ? (
-                                                                                <div className="flex items-center gap-1 ml-1">
-                                                                                    <input
-                                                                                        type="number"
-                                                                                        min="1"
-                                                                                        value={editQuantityValue}
-                                                                                        onChange={(e) => setEditQuantityValue(e.target.value)}
-                                                                                        className="w-20 h-7 px-2 border border-primary rounded-md text-xs font-bold bg-background text-foreground focus:outline-none"
-                                                                                        autoFocus
-                                                                                    />
-                                                                                    <Button
-                                                                                        size="sm"
-                                                                                        onClick={handleSaveQuantity}
-                                                                                        disabled={updatingQuantity}
-                                                                                        className="h-7 px-2 text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90 gap-1"
-                                                                                    >
-                                                                                        {updatingQuantity ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Save
-                                                                                    </Button>
-                                                                                    <Button
-                                                                                        size="sm"
-                                                                                        variant="ghost"
-                                                                                        onClick={() => setIsEditingQuantity(false)}
-                                                                                        className="h-7 px-1.5 text-xs text-muted-foreground hover:text-foreground"
-                                                                                    >
-                                                                                        <X className="h-3.5 w-3.5" />
-                                                                                    </Button>
-                                                                                </div>
-                                                                            ) : (
-                                                                                <button
-                                                                                    onClick={() => {
-                                                                                        setEditQuantityValue(String(activeFamilyJo?.quantity || ""));
-                                                                                        setIsEditingQuantity(true);
-                                                                                    }}
-                                                                                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:text-primary/80 bg-primary/10 hover:bg-primary/20 px-2 py-0.5 rounded-md transition-colors border border-primary/20 ml-1"
-                                                                                    title="Edit Job Order Quantity"
-                                                                                >
-                                                                                    <Pencil className="h-3 w-3" /> Edit Qty
-                                                                                </button>
-                                                                            )
-                                                                        )}
                                                                     </div>
                                                                 </td>
                                                                 <td className="px-4 py-4 text-right font-semibold text-primary">

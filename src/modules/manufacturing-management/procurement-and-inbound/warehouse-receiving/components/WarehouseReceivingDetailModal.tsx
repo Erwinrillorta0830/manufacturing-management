@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import type { WarehouseReceivingLine, WarehouseReceivingOrder } from "../types";
+import type { WarehouseReceiptTypeOption, WarehouseReceivingLine, WarehouseReceivingOrder } from "../types";
 import { isReceiptQuantityOverRemaining } from "../quantity-validation";
 
 function formatAmount(value: number | null, currency: string) {
@@ -76,13 +76,16 @@ export interface WarehouseReceivingDetailModalProps {
     selectedLines: WarehouseReceivingLine[];
     quantities: Record<number, string>;
     receiptNumber: string;
+    supplierDocumentTypeId: number | null;
     receiptDate: string;
+    receiptTypeOptions: WarehouseReceiptTypeOption[];
     loading: boolean;
     error: string | null;
     submitting: string | null;
     printing: boolean;
     updateQuantity: (lineId: number, value: string) => void;
     setReceiptNumber: (value: string) => void;
+    setSupplierDocumentTypeId: (value: number | null) => void;
     setReceiptDate: (value: string) => void;
     start: () => Promise<unknown>;
     saveDraft: () => Promise<unknown>;
@@ -97,13 +100,16 @@ export default function WarehouseReceivingDetailModal({
     selectedLines,
     quantities,
     receiptNumber,
+    supplierDocumentTypeId,
     receiptDate,
+    receiptTypeOptions,
     loading,
     error,
     submitting,
     printing,
     updateQuantity,
     setReceiptNumber,
+    setSupplierDocumentTypeId,
     setReceiptDate,
     start,
     saveDraft,
@@ -123,6 +129,9 @@ export default function WarehouseReceivingDetailModal({
     const totalOrdered = selectedLines.reduce((sum, line) => sum + Math.max(0, line.orderedQuantity), 0);
     const totalReceivedToDate = selectedLines.reduce((sum, line) => sum + Math.max(0, line.previouslyReceivedQuantity), 0);
     const totalRemaining = selectedLines.reduce((sum, line) => sum + Math.max(0, line.remainingQuantity), 0);
+
+    const selectedDocTypeOption = receiptTypeOptions.find(opt => opt.id === supplierDocumentTypeId) || null;
+    const maxReceiptNumberLength = selectedDocTypeOption?.maxLength || 40;
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/60 p-3 sm:p-6 backdrop-blur-xs">
@@ -276,19 +285,46 @@ export default function WarehouseReceivingDetailModal({
                             </div>
 
                             {/* Receipt Details Form */}
-                            <div className="grid gap-4 sm:grid-cols-2">
+                            <div className="grid gap-4 sm:grid-cols-3">
                                 <div className="space-y-1.5">
-                                    <Label htmlFor="modal-receipt-number" className="text-xs font-medium">Receipt Number</Label>
+                                    <Label htmlFor="modal-receipt-type" className="text-xs font-medium">
+                                        Receipt Type <span className="text-destructive">*</span>
+                                    </Label>
+                                    <select
+                                        id="modal-receipt-type"
+                                        value={supplierDocumentTypeId ?? ""}
+                                        onChange={event => {
+                                            const val = event.target.value ? Number(event.target.value) : null;
+                                            setSupplierDocumentTypeId(val);
+                                        }}
+                                        disabled={!isStarted || actionBusy}
+                                        className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                        <option value="">Select Receipt Type...</option>
+                                        {receiptTypeOptions.map(option => (
+                                            <option key={option.id} value={option.id}>
+                                                {option.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="space-y-1.5">
+                                    <Label htmlFor="modal-receipt-number" className="text-xs font-medium">
+                                        Receipt Number <span className="text-destructive">*</span>
+                                    </Label>
                                     <Input
                                         id="modal-receipt-number"
                                         value={receiptNumber}
+                                        maxLength={maxReceiptNumberLength}
                                         onChange={event => setReceiptNumber(event.target.value)}
                                         disabled={!isStarted || actionBusy}
-                                        placeholder="Enter receipt number"
+                                        placeholder={`Enter receipt number (max ${maxReceiptNumberLength})`}
                                     />
                                 </div>
                                 <div className="space-y-1.5">
-                                    <Label htmlFor="modal-receipt-date" className="text-xs font-medium">Date of Receipt</Label>
+                                    <Label htmlFor="modal-receipt-date" className="text-xs font-medium">
+                                        Date of Receipt <span className="text-destructive">*</span>
+                                    </Label>
                                     <Input
                                         id="modal-receipt-date"
                                         type="date"
@@ -393,7 +429,14 @@ export default function WarehouseReceivingDetailModal({
                                             <div key={`${receipt.id ?? receipt.receiptNumber}-${receipt.receiptDate ?? "undated"}`} className="rounded-md border bg-muted/10 p-3">
                                                 <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                                                     <div>
-                                                        <p className="font-semibold text-sm">Receipt {receipt.receiptNumber}</p>
+                                                        <div className="flex flex-wrap items-center gap-2">
+                                                            <p className="font-semibold text-sm">Receipt {receipt.receiptNumber}</p>
+                                                            {(receipt.supplierDocumentTypeCode || receipt.receiptType) && (
+                                                                <Badge variant="secondary" className="text-[11px] font-medium">
+                                                                    {receipt.supplierDocumentTypeCode || receipt.receiptType}
+                                                                </Badge>
+                                                            )}
+                                                        </div>
                                                         <p className="text-xs text-muted-foreground">{formatDate(receipt.receiptDate)}</p>
                                                     </div>
                                                     <div className="flex items-center gap-3 sm:text-right">
@@ -404,7 +447,7 @@ export default function WarehouseReceivingDetailModal({
                                                         </div>
                                                     </div>
                                                 </div>
-                                                {receipt.lines.length > 0 && (
+                                                {receipt.lines.filter(line => line.receivedQuantity > 1e-9).length > 0 && (
                                                     <div className="mt-3 overflow-x-auto rounded-md border bg-background">
                                                         <table className="w-full min-w-[500px] text-xs">
                                                             <thead className="bg-muted/40 text-left uppercase tracking-wide text-muted-foreground">
@@ -415,13 +458,15 @@ export default function WarehouseReceivingDetailModal({
                                                                 </tr>
                                                             </thead>
                                                             <tbody className="divide-y">
-                                                                {receipt.lines.map(line => (
-                                                                    <tr key={`${receipt.id ?? receipt.receiptNumber}-${line.lineId}`}>
-                                                                        <td className="px-3 py-2 font-medium">{line.productName}</td>
-                                                                        <td className="px-3 py-2 text-muted-foreground">{line.productCode || `Line ${line.lineId}`}</td>
-                                                                        <td className="px-3 py-2 text-right font-semibold">{formatQuantity(line.receivedQuantity)}</td>
-                                                                    </tr>
-                                                                ))}
+                                                                {receipt.lines
+                                                                    .filter(line => line.receivedQuantity > 1e-9)
+                                                                    .map(line => (
+                                                                        <tr key={`${receipt.id ?? receipt.receiptNumber}-${line.lineId}`}>
+                                                                            <td className="px-3 py-2 font-medium">{line.productName}</td>
+                                                                            <td className="px-3 py-2 text-muted-foreground">{line.productCode || `Line ${line.lineId}`}</td>
+                                                                            <td className="px-3 py-2 text-right font-semibold">{formatQuantity(line.receivedQuantity)}</td>
+                                                                        </tr>
+                                                                    ))}
                                                             </tbody>
                                                         </table>
                                                     </div>
@@ -437,40 +482,74 @@ export default function WarehouseReceivingDetailModal({
 
                 {/* Modal Footer Actions */}
                 {!loading && !error && selectedOrder && (
-                    <div className="border-t bg-muted/20 px-6 py-4 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
-                        <Button variant="outline" onClick={onClose} disabled={actionBusy}>
-                            Close
-                        </Button>
-                        <div className="flex flex-wrap items-center gap-2">
-                            {isReceived || !hasRemainingQuantity ? (
-                                <span className="text-xs font-medium text-emerald-700">
-                                    Warehouse receiving is complete for this PO.
-                                </span>
-                            ) : !isStarted ? (
-                                <Button
-                                    onClick={() => void start()}
-                                    disabled={actionBusy || !hasRemainingQuantity}
-                                    title={!hasRemainingQuantity ? "No remaining quantity is available for another warehouse receipt." : undefined}
-                                >
-                                    {submitting === "start" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                    <PackageCheck className="mr-2 h-4 w-4" /> {selectedOrder.receiptHistory.length > 0 ? "Start Next Warehouse Receipt" : "Start Warehouse Receiving"}
-                                </Button>
-                            ) : (
-                                <>
-                                    {selectedOrder.draft && (
-                                        <Button variant="outline" onClick={() => void printSummary()} disabled={actionBusy}>
-                                            {printing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />} Print Summary
+                    <div className="border-t bg-muted/20 px-6 py-4 flex flex-col gap-3">
+                        {isStarted && !isReceived && hasRemainingQuantity && (
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                                {totalEntered <= 0 ? (
+                                    <span className="flex items-center gap-1.5 text-amber-700 dark:text-amber-400 font-medium">
+                                        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                                        Please enter a receiving quantity greater than 0 to save or complete this receipt.
+                                    </span>
+                                ) : (!supplierDocumentTypeId || !receiptNumber.trim()) ? (
+                                    <span className="flex items-center gap-1.5 text-amber-700 dark:text-amber-400 font-medium">
+                                        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                                        To send to QA, please select a Receipt Type and enter a Receipt Number.
+                                    </span>
+                                ) : null}
+                            </div>
+                        )}
+                        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <Button variant="outline" onClick={onClose} disabled={actionBusy}>
+                                Close
+                            </Button>
+                            <div className="flex flex-wrap items-center gap-2">
+                                {isReceived || !hasRemainingQuantity ? (
+                                    <span className="text-xs font-medium text-emerald-700">
+                                        Warehouse receiving is complete for this PO.
+                                    </span>
+                                ) : !isStarted ? (
+                                    <Button
+                                        onClick={() => void start()}
+                                        disabled={actionBusy || !hasRemainingQuantity}
+                                        title={!hasRemainingQuantity ? "No remaining quantity is available for another warehouse receipt." : undefined}
+                                    >
+                                        {submitting === "start" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                        <PackageCheck className="mr-2 h-4 w-4" /> {selectedOrder.receiptHistory.length > 0 ? "Start Next Warehouse Receipt" : "Start Warehouse Receiving"}
+                                    </Button>
+                                ) : (
+                                    <>
+                                        {selectedOrder.draft && (
+                                            <Button variant="outline" onClick={() => void printSummary()} disabled={actionBusy}>
+                                                {printing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />} Print Summary
+                                            </Button>
+                                        )}
+                                        <Button
+                                            variant="outline"
+                                            onClick={() => void saveDraft()}
+                                            disabled={actionBusy || totalEntered <= 0}
+                                            title={totalEntered <= 0 ? "Enter at least one received quantity before saving a draft." : undefined}
+                                        >
+                                            {submitting === "save_draft" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Save Draft
                                         </Button>
-                                    )}
-                                    <Button variant="outline" onClick={() => void saveDraft()} disabled={actionBusy}>
-                                        {submitting === "save_draft" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Save Draft
-                                    </Button>
-                                    <Button onClick={() => void submitToQa()} disabled={actionBusy}>
-                                        {submitting === "submit_to_qa" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                        <ClipboardCheck className="mr-2 h-4 w-4" /> Complete &amp; Send to QA
-                                    </Button>
-                                </>
-                            )}
+                                        <Button
+                                            onClick={() => void submitToQa()}
+                                            disabled={actionBusy || totalEntered <= 0 || !supplierDocumentTypeId || !receiptNumber.trim()}
+                                            title={
+                                                totalEntered <= 0
+                                                    ? "Enter at least one received quantity before submitting to QA."
+                                                    : !supplierDocumentTypeId
+                                                    ? "Select a Receipt Type before submitting to QA."
+                                                    : !receiptNumber.trim()
+                                                    ? "Enter a Receipt Number before submitting to QA."
+                                                    : undefined
+                                            }
+                                        >
+                                            {submitting === "submit_to_qa" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                            <ClipboardCheck className="mr-2 h-4 w-4" /> Complete &amp; Send to QA
+                                        </Button>
+                                    </>
+                                )}
+                            </div>
                         </div>
                     </div>
                 )}

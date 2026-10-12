@@ -51,13 +51,14 @@ import { isManufacturingEvidenceVideo } from "./services/production-yield-image"
 export default function ProductionWorkflowModule() {
     const router = useRouter();
     const {
-        jobOrders,
         users,
         selectedJobOrderId,
         setSelectedJobOrderId,
         selectedTaskId,
         setSelectedTaskId,
         routeOperators,
+        clockedInCount,
+        refreshOperators,
         loadingJobs,
         loadingOperators,
         pendingTimerKey,
@@ -71,6 +72,9 @@ export default function ProductionWorkflowModule() {
         activeManualUserId,
         setActiveManualUserId,
         selectedJobOrder,
+        loadingSelectedJobOrder,
+        selectedJobOrderError,
+        retrySelectedJobOrderDetails,
         sortedTasks,
         jobOrderMaterials,
         jobOrderMaterialsJobOrderId,
@@ -145,7 +149,6 @@ export default function ProductionWorkflowModule() {
     }, []);
 
     // UI state
-    const [clockedInCount, setClockedInCount] = React.useState(0);
     const [isShiftLogOpen, setIsShiftLogOpen] = useState(false);
     const [isRouteAssignmentOpen, setIsRouteAssignmentOpen] = useState(false);
     const [isGenealogyOpen, setIsGenealogyOpen] = useState(false);
@@ -181,32 +184,6 @@ export default function ProductionWorkflowModule() {
     }, [fetchJobs, selectedJobOrderId]);
 
     const dailyYieldAuditState = useDailyYieldAudit({ onSaved: handleAuditSaved });
-
-    const isMountedRef = React.useRef(true);
-
-    const fetchClockedIn = React.useCallback(async () => {
-        try {
-            const res = await fetch("/api/manufacturing/production/route-operators?activeOnly=true");
-            if (res.ok && isMountedRef.current) {
-                const json = await res.json();
-                const active = (json.data || []).filter((r: any) => r.started_at !== null && r.stopped_at === null);
-                const uniqueUsers = new Set(active.map((r: any) => r.user_id));
-                setClockedInCount(uniqueUsers.size);
-            }
-        } catch (err) {
-            console.error("Error loading active operators count:", err);
-        }
-    }, []);
-
-    React.useEffect(() => {
-        isMountedRef.current = true;
-        fetchClockedIn();
-        const interval = setInterval(fetchClockedIn, 10000);
-        return () => {
-            isMountedRef.current = false;
-            clearInterval(interval);
-        };
-    }, [fetchClockedIn]);
 
     const activeRuns = React.useMemo(() => {
         return inProductionJobOrders.length;
@@ -283,8 +260,7 @@ export default function ProductionWorkflowModule() {
         return count;
     }, [inProductionJobOrders]);
 
-    const parentJo = selectedJobOrder?.parentJobOrderId ? jobOrders.find((j) => Number(j.order_id) === Number(selectedJobOrder.parentJobOrderId)) : null;
-    const parentJoNo = parentJo?.jo_id || null;
+    const parentJoNo = selectedJobOrder?.parent_job_order_no || null;
 
     return (
         <div className={`flex flex-col space-y-6 max-w-7xl mx-auto p-1 sm:p-2 transition-all ${isKioskMode ? "fixed inset-0 z-50 bg-background p-4 overflow-y-auto max-w-none" : ""}`}>
@@ -320,7 +296,7 @@ export default function ProductionWorkflowModule() {
                             size="default" 
                             onClick={() => {
                                 fetchJobs(selectedJobOrderId);
-                                fetchClockedIn();
+                                refreshOperators();
                             }}
                             className="h-10 text-xs font-bold shadow-sm bg-background border-input hover:bg-accent"
                         >
@@ -356,7 +332,7 @@ export default function ProductionWorkflowModule() {
                 </div>
 
                 {/* Clocked-in Operators Card */}
-                <div className="flex items-center justify-between p-5 bg-gradient-to-br from-card to-muted/20 border rounded-2xl shadow-sm hover:shadow-md transition-all duration-200" title="Operators with a running shift timer anywhere on the floor (refreshes every 10 seconds).">
+                <div className="flex items-center justify-between p-5 bg-gradient-to-br from-card to-muted/20 border rounded-2xl shadow-sm hover:shadow-md transition-all duration-200" title="Operators with a running shift timer anywhere on the floor (refreshes every 10 seconds while this page is visible).">
                     <div className="space-y-1">
                         <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Clocked-in Operators</span>
                         <div className="flex items-baseline gap-2">
@@ -388,7 +364,6 @@ export default function ProductionWorkflowModule() {
             <div className="w-full">
                 <ReleasedJobQueue
                     filteredJobOrders={filteredJobOrders}
-                    jobOrders={jobOrders}
                     selectedJobOrderId={selectedJobOrderId}
                     setSelectedJobOrderId={setSelectedJobOrderId}
                     searchQuery={searchQuery}
@@ -413,7 +388,7 @@ export default function ProductionWorkflowModule() {
 
             {/* Focused Full-Featured Job Order Details Modal */}
             <Dialog 
-                open={selectedJobOrderId !== "" && selectedJobOrder !== null} 
+                open={selectedJobOrderId !== ""}
                 onOpenChange={(open) => {
                     if (!open && !jobOrderActionLocked) {
                         setSelectedJobOrderId("");
@@ -422,6 +397,23 @@ export default function ProductionWorkflowModule() {
                 }}
             >
                 <DialogContent className="w-[calc(100vw-1rem)] !max-w-[calc(100vw-1rem)] max-h-[96vh] h-[95vh] flex flex-col bg-background border border-border/80 shadow-2xl rounded-2xl p-0 overflow-hidden">
+                    {!selectedJobOrder ? (
+                        <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center" role={selectedJobOrderError ? "alert" : "status"} aria-live="polite">
+                            <DialogHeader className="items-center">
+                                <DialogTitle>{selectedJobOrderError ? "Job Order unavailable" : "Loading Job Order"}</DialogTitle>
+                                <DialogDescription>
+                                    {selectedJobOrderError || "Loading the selected Job Order details..."}
+                                </DialogDescription>
+                            </DialogHeader>
+                            {loadingSelectedJobOrder && <RefreshCw className="h-6 w-6 animate-spin text-primary" aria-hidden="true" />}
+                            {selectedJobOrderError && (
+                                <Button type="button" onClick={retrySelectedJobOrderDetails}>
+                                    Retry
+                                </Button>
+                            )}
+                        </div>
+                    ) : (
+                    <>
                     {/* Header */}
                     <div className="bg-gradient-to-r from-primary/10 via-primary/5 to-background p-4 sm:p-5 border-b border-border/50 shrink-0">
                         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -444,7 +436,7 @@ export default function ProductionWorkflowModule() {
                                     {selectedJobOrder?.order_no || `JO #${selectedJobOrder?.jo_id}`}
                                 </DialogTitle>
                                 <DialogDescription className="text-muted-foreground text-xs sm:text-sm font-medium truncate sm:whitespace-normal">
-                                    Product: <strong className="text-foreground">{selectedJobOrder?.product_name}</strong> • Target: {formatProductionQuantity(selectedJobOrderTarget)} {selectedJobOrder?.uom_shortcut || "pcs"} • Produced: <span className="font-mono font-bold text-emerald-600">{formatProductionQuantity(selectedProductionOutput)} {selectedJobOrder?.uom_shortcut || "pcs"}</span> • Workstation: <strong className={selectedJobOrder?.primary_work_center_id ? "text-foreground" : "text-amber-600 dark:text-amber-400"}>{selectedJobOrder?.primary_work_center_name || (selectedJobOrder?.primary_work_center_id ? `WC #${selectedJobOrder.primary_work_center_id}` : "Unassigned")}</strong>
+                                    Product: <strong className="text-foreground">{selectedJobOrder?.product_name}</strong> • Target: {formatProductionQuantity(selectedJobOrderTarget)} {selectedJobOrder?.uom_shortcut || "pcs"} • Produced: <span className="font-mono font-bold text-emerald-600">{formatProductionQuantity(selectedProductionOutput)} {selectedJobOrder?.uom_shortcut || "pcs"}</span>
                                 </DialogDescription>
                                 {selectedJobOrderJourney && (
                                     <JobOrderJourneyBar journey={selectedJobOrderJourney} compact className="pt-2" />
@@ -710,6 +702,8 @@ export default function ProductionWorkflowModule() {
                             />
                         )}
                     </div>
+                    </>
+                    )}
                 </DialogContent>
             </Dialog>
 
@@ -726,7 +720,7 @@ export default function ProductionWorkflowModule() {
                             Complete route step?
                         </DialogTitle>
                         <DialogDescription>
-                            Confirm that this route is finished. QA-required routes use the same completion confirmation and do not open a separate QA Gate.
+                            Confirm that this route is finished. Active operator timers on this step will be stopped automatically. QA-required routes use the same completion confirmation and do not open a separate QA Gate.
                         </DialogDescription>
                     </DialogHeader>
                     {completionTask && (

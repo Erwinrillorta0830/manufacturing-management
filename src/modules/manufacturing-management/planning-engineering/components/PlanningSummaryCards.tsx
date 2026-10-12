@@ -3,7 +3,7 @@ import { ClipboardList, Database, Layers, AlertTriangle } from "lucide-react";
 
 export interface PlanningSummaryCardsProps {
     demandLinesCount: number;
-    shortfallItemsCount: number;
+    shortfallItemsCount: number | null;
     unreleasedJobsCount: number;
     familyGroupsCount: number;
     onSelectTab?: (tab: "demand" | "inventory" | "queue") => void;
@@ -16,6 +16,9 @@ export function PlanningSummaryCards({
     familyGroupsCount,
     onSelectTab
 }: PlanningSummaryCardsProps) {
+    const hasShortfallCount = shortfallItemsCount !== null;
+    const hasShortfalls = hasShortfallCount && shortfallItemsCount > 0;
+
     return (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Card 1: Residual planning demand */}
@@ -45,22 +48,22 @@ export function PlanningSummaryCards({
             <div 
                 onClick={() => onSelectTab?.("inventory")}
                 className={`bg-card border rounded-xl p-4 shadow-sm flex items-center justify-between transition-all ${
-                    shortfallItemsCount > 0 ? "border-amber-500/30 bg-amber-500/5" : ""
+                    hasShortfalls ? "border-amber-500/30 bg-amber-500/5" : ""
                 } ${onSelectTab ? "cursor-pointer hover:border-amber-500/50 hover:shadow-md" : ""}`}
             >
                 <div className="space-y-1" title="Net requirement items that need purchasing or replenishment.">
                     <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                         Material Shortfalls
                     </p>
-                    <div className={`text-2xl font-black ${shortfallItemsCount > 0 ? "text-amber-600 dark:text-amber-400" : "text-foreground"}`}>
-                        {shortfallItemsCount.toLocaleString()}
+                    <div className={`text-2xl font-black ${hasShortfalls ? "text-amber-600 dark:text-amber-400" : "text-foreground"}`}>
+                        {hasShortfallCount ? shortfallItemsCount.toLocaleString() : "—"}
                     </div>
                     <p className="text-[10px] text-muted-foreground">
-                        Items needing PR or replenishment
+                        {hasShortfallCount ? "Items needing PR or replenishment" : "Requirements calculation unavailable"}
                     </p>
                 </div>
-                <div className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${shortfallItemsCount > 0 ? "bg-amber-500/10 border border-amber-500/20 text-amber-500" : "bg-muted border text-muted-foreground"}`}>
-                    {shortfallItemsCount > 0 ? <AlertTriangle className="h-5 w-5" /> : <Database className="h-5 w-5" />}
+                <div className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${hasShortfalls ? "bg-amber-500/10 border border-amber-500/20 text-amber-500" : "bg-muted border text-muted-foreground"}`}>
+                    {hasShortfalls ? <AlertTriangle className="h-5 w-5" /> : <Database className="h-5 w-5" />}
                 </div>
             </div>
 

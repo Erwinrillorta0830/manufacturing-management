@@ -170,7 +170,14 @@ export default function InboundShipmentsList({
                 {loadingShipments ? (
                     <ShipmentListSkeleton />
                 ) : filteredShipments.length === 0 ? (
-                    <div className="p-8 text-center text-xs text-muted-foreground italic">No matching shipments found</div>
+                    <div className="p-8 text-center text-xs text-muted-foreground space-y-1">
+                        <p className="font-semibold italic">No matching shipments found</p>
+                        {searchPO.trim() && (
+                            <p className="text-[10px]">
+                                If this PO was received at the gate, verify that warehouse staff have completed &quot;Submit to QA&quot;.
+                            </p>
+                        )}
+                    </div>
                 ) : (
                     visibleShipments.map(s => (
                         <button
@@ -188,9 +195,17 @@ export default function InboundShipmentsList({
                                         ? "bg-violet-500/10 text-violet-600 border-violet-500/20"
                                         : s.status === "QA Receiving" || s.status === "Receiving (QA)" || s.status === "For Pickup"
                                         ? "bg-amber-500/10 text-amber-500 border-amber-500/20"
+                                        : s.status === "Partially Received"
+                                        ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
                                         : "bg-blue-500/10 text-blue-500 border-blue-500/20"
                                 }`}>
-                                    {s.isForceReceived ? "Force Received" : s.status === "For Pickup" || s.status === "Receiving (QA)" ? "QA Receiving" : s.status}
+                                    {s.isForceReceived
+                                        ? "Force Received"
+                                        : s.status === "For Pickup" || s.status === "Receiving (QA)"
+                                        ? "QA Receiving"
+                                        : s.status === "Partially Received"
+                                        ? "Partially Received (Awaiting QA)"
+                                        : s.status}
                                 </span>
                             </div>
                             <div className="flex justify-between text-[10px] text-muted-foreground">

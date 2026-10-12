@@ -4,6 +4,7 @@ import { Loader2, Package, Layers, Clock, CheckCircle, ShieldAlert } from "lucid
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SearchableVersionSelect } from "../SearchableVersionSelect";
+import { CONTAINER_METRIC_DEFINITIONS, ContainerMetricLabel } from "../ContainerMetricLabel";
 import { formatHoursToHMS, formatInventoryQuantity } from "../../utils/containerization-helper";
 import {
     getFactoryOverheadBasisLabel
@@ -70,6 +71,32 @@ export function Step2BOMReview({
     hasShortfalls,
     handlePrintProcurementRequest
 }: Step2BOMReviewProps) {
+    const renderAvailableLots = (productId: number | undefined, uom: string, kilogramsPerUnit?: number | null) => {
+        const lots = productId ? inventories[Number(productId)]?.available_lots : [];
+        if (!Array.isArray(lots) || lots.length === 0) {
+            return <div className="text-[9px] text-muted-foreground">No available lots</div>;
+        }
+
+        return (
+            <div className="space-y-1.5">
+                {lots.map((lot: any) => {
+                    const quantity = formatInventoryQuantity(Number(lot.available || 0), uom, kilogramsPerUnit);
+                    const lotName = lot.lot_name || (lot.lot_id ? `Lot #${lot.lot_id}` : "Unassigned lot");
+                    const batchNo = lot.batch_no && lot.batch_no !== "LOT-N/A" ? lot.batch_no : "Unidentified batch";
+                    const rowKey = `${lot.lot_id ?? "no-lot"}:${lot.inventory_lot_id ?? "no-inventory-lot"}:${lot.batch_no}`;
+
+                    return (
+                        <div key={rowKey} className="leading-tight">
+                            <div className="text-[8px] font-medium text-foreground">{lotName} · {batchNo}</div>
+                            <div>{quantity.quantity}</div>
+                            {quantity.kilograms && <div className="text-[8px]">{quantity.kilograms}</div>}
+                        </div>
+                    );
+                })}
+            </div>
+        );
+    };
+
     if (loadingDetails) {
         return (
             <div className="flex flex-col items-center justify-center py-10 space-y-3">
@@ -163,7 +190,7 @@ export function Step2BOMReview({
                         <div className="flex items-center gap-2">
                             <Package className="h-4 w-4 text-emerald-500" />
                             <span className="text-xs font-bold text-foreground uppercase tracking-wider text-[11px]">
-                                📦 Plant Production & Pallet Containerization
+                                📦 Finished Goods Packaging & Palletization
                             </span>
                         </div>
                         <Badge variant="outline" className="text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
@@ -172,7 +199,7 @@ export function Step2BOMReview({
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-[11px]">
                         <div className="bg-background border border-border/60 rounded-lg p-2">
-                            <span className="text-[10px] font-medium text-muted-foreground block">🌾 Batch Mix & Sacks</span>
+                            <ContainerMetricLabel icon="🌾" label="Primary Mix Allocations" />
                             <span className="font-extrabold text-foreground text-xs">{containerMetrics.mixCount} Full Mixes</span>
                             <span className="text-[10px] text-muted-foreground block">
                                 Demand: {containerMetrics.requestedMixCount.toFixed(2)} mixes
@@ -186,19 +213,31 @@ export function Step2BOMReview({
                             </span>
                         </div>
                         <div className="bg-background border border-border/60 rounded-lg p-2">
-                            <span className="text-[10px] font-medium text-muted-foreground block">🏭 Expected Net Pcs</span>
+                            <ContainerMetricLabel
+                                icon="🏭"
+                                label="Net Yield Output"
+                                definition={CONTAINER_METRIC_DEFINITIONS.netYieldOutput}
+                            />
                             <span className="font-extrabold text-foreground text-xs">{`${Math.round(containerMetrics.netPieces).toLocaleString()} Pcs`}</span>
-                            {containerMetrics.hasOutputEstimate && containerMetrics.expectedYieldPercentage < 100 && <span className="text-[10px] text-muted-foreground block">({containerMetrics.expectedYieldPercentage.toFixed(1)}% Expected Yield)</span>}
+                            {containerMetrics.hasNetPieceEstimate && containerMetrics.expectedYieldPercentage < 100 && <span className="text-[10px] text-muted-foreground block">({containerMetrics.expectedYieldPercentage.toFixed(1)}% Expected Yield)</span>}
                         </div>
                         <div className="bg-background border border-border/60 rounded-lg p-2">
-                            <span className="text-[10px] font-medium text-muted-foreground block">📦 Cases / Bundles</span>
-                            <span className="font-extrabold text-foreground text-xs">{`${containerMetrics.totalCasesBundlesFull} Full`}</span>
-                            <span className="text-[10px] text-muted-foreground block">(+{containerMetrics.remainingPcs} pcs remaining)</span>
+                            <ContainerMetricLabel
+                                icon="📦"
+                                label="Case Count & Remainder"
+                                definition={CONTAINER_METRIC_DEFINITIONS.caseCountAndRemainder}
+                            />
+                            <span className="font-extrabold text-foreground text-xs">{containerMetrics.hasCaseBundleEstimate ? `${containerMetrics.totalCasesBundlesFull} Full` : "Not configured"}</span>
+                            {containerMetrics.hasCaseBundleEstimate && <span className="text-[10px] text-muted-foreground block">(+{containerMetrics.remainingPcs} pcs remaining)</span>}
                         </div>
                         <div className="bg-background border border-border/60 rounded-lg p-2">
-                            <span className="text-[10px] font-medium text-muted-foreground block">🚛 Pallet Allocation</span>
-                            <span className="font-extrabold text-emerald-600 dark:text-emerald-400 text-xs">{!containerMetrics.hasOutputEstimate ? "0 Pallets" : containerMetrics.hasPalletEstimate ? `${containerMetrics.totalPalletsFull} Pallets` : "Not configured"}</span>
-                            {(containerMetrics.hasPalletEstimate || !containerMetrics.hasOutputEstimate) && <span className="text-[10px] text-muted-foreground block">(+{containerMetrics.remainingCasesBundles} cases/bundles)</span>}
+                            <ContainerMetricLabel
+                                icon="🚛"
+                                label="Unit Load Count"
+                                definition={CONTAINER_METRIC_DEFINITIONS.unitLoadCount}
+                            />
+                            <span className="font-extrabold text-emerald-600 dark:text-emerald-400 text-xs">{containerMetrics.hasPalletEstimate ? `${containerMetrics.totalPalletsFull} Pallets` : "Not configured"}</span>
+                            {containerMetrics.hasPalletEstimate && <span className="text-[10px] text-muted-foreground block">(+{containerMetrics.remainingCasesBundles} cases/bundles)</span>}
                         </div>
                     </div>
                 </div>
@@ -284,7 +323,7 @@ export function Step2BOMReview({
                                     <th className="p-2.5 w-8 text-center">PR</th>
                                     <th className="p-2.5">Raw Material / Component</th>
                                     <th className="p-2.5 text-center">Planned / Demand</th>
-                                    <th className="p-2.5 text-center">On Hand</th>
+                                    <th className="p-2.5 text-center">Available</th>
                                     <th className="p-2.5 text-center">Shortfall</th>
                                     <th className="p-2.5 text-right">Status</th>
                                 </tr>
@@ -306,7 +345,6 @@ export function Step2BOMReview({
                                     const kilogramsPerUnit = comp.component_product_id?.kilograms_per_inventory_unit;
                                     const neededDisplay = formatInventoryQuantity(needed, uom, kilogramsPerUnit);
                                     const demandDisplay = formatInventoryQuantity(materialPlan.demandRequired, uom, kilogramsPerUnit);
-                                    const availableDisplay = formatInventoryQuantity(available, uom, kilogramsPerUnit);
                                     const shortfallDisplay = formatInventoryQuantity(shortfall, uom, kilogramsPerUnit);
                                     const children = subAssemblyBoms[Number(compProductId)] || [];
                                     const isSubAssembly = children.length > 0 || comp.component_product_id?.product_type === 388 || comp.component_product_id?.is_finished_good;
@@ -388,23 +426,6 @@ export function Step2BOMReview({
                                                         </div>
                                                     )}
 
-                                                    {inventories[Number(compProductId)]?.recommended_lots?.length > 0 && (
-                                                        <div className="mt-1 space-y-0.5">
-                                                            <div className="text-[7.5px] text-primary/80 font-bold uppercase tracking-wider">Recommended Lots:</div>
-                                                            <div className="flex flex-wrap gap-1">
-                                                                {inventories[Number(compProductId)].recommended_lots.slice(0, 3).map((lot: any, lIdx: number) => (
-                                                                    <span key={lIdx} className="text-[8px] bg-primary/10 text-primary border border-primary/20 px-1 py-0.5 rounded font-mono font-medium">
-                                                                        {lot.lot_no} ({Number(lot.available).toFixed(0)})
-                                                                    </span>
-                                                                ))}
-                                                                {inventories[Number(compProductId)].recommended_lots.length > 3 && (
-                                                                    <span className="text-[8px] text-muted-foreground self-center">
-                                                                        +{inventories[Number(compProductId)].recommended_lots.length - 3} more
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    )}
                                                 </td>
                                                 <td className="p-2.5 text-center font-semibold text-foreground">
                                                     <div>{neededDisplay.quantity}</div>
@@ -413,8 +434,7 @@ export function Step2BOMReview({
                                                     {demandDisplay.kilograms && <div className="text-[9px] font-normal text-muted-foreground">{demandDisplay.kilograms}</div>}
                                                 </td>
                                                 <td className="p-2.5 text-center text-muted-foreground">
-                                                    <div>{availableDisplay.quantity}</div>
-                                                    {availableDisplay.kilograms && <div className="text-[9px]">{availableDisplay.kilograms}</div>}
+                                                    {renderAvailableLots(compProductId ? Number(compProductId) : undefined, uom, kilogramsPerUnit)}
                                                 </td>
                                                 <td className={`p-2.5 text-center font-bold ${shortfall > 0 ? (isSubAssembly ? "text-sky-600 dark:text-sky-400" : "text-red-600 dark:text-red-400") : "text-muted-foreground/60"}`}>
                                                     {shortfall > 0 ? (
@@ -454,7 +474,6 @@ export function Step2BOMReview({
                                                 const ccUom = cc.unit_of_measurement || "pcs";
                                                 const ccKilogramsPerUnit = cc.component_product_id?.kilograms_per_inventory_unit;
                                                 const ccNeededDisplay = formatInventoryQuantity(ccNeeded, ccUom, ccKilogramsPerUnit);
-                                                const ccAvailableDisplay = formatInventoryQuantity(ccAvailable, ccUom, ccKilogramsPerUnit);
                                                 const ccShortfallDisplay = formatInventoryQuantity(ccShortfall, ccUom, ccKilogramsPerUnit);
                                                 const ccSufficient = ccShortfall === 0;
 
@@ -475,23 +494,13 @@ export function Step2BOMReview({
                                                         </td>
                                                         <td className="p-2.5 pl-6 text-muted-foreground">
                                                             ↳ {cc.component_product_id?.product_name || `Product #${ccId}`}
-                                                            {inventories[Number(ccId)]?.recommended_lots?.length > 0 && (
-                                                                <div className="mt-1 pl-3 flex flex-wrap gap-1">
-                                                                    {inventories[Number(ccId)].recommended_lots.slice(0, 2).map((lot: any, lIdx: number) => (
-                                                                        <span key={lIdx} className="text-[7.5px] bg-primary/10 text-primary/90 border border-primary/15 px-1 py-0 rounded font-mono">
-                                                                            {lot.lot_no} ({Number(lot.available).toFixed(0)})
-                                                                        </span>
-                                                                    ))}
-                                                                </div>
-                                                            )}
                                                         </td>
                                                         <td className="p-2.5 text-center text-muted-foreground">
                                                             <div>{ccNeededDisplay.quantity}</div>
                                                             {ccNeededDisplay.kilograms && <div className="text-[8px] text-muted-foreground/60">{ccNeededDisplay.kilograms}</div>}
                                                         </td>
                                                         <td className="p-2.5 text-center text-muted-foreground">
-                                                            <div>{ccAvailableDisplay.quantity}</div>
-                                                            {ccAvailableDisplay.kilograms && <div className="text-[8px] text-muted-foreground/60">{ccAvailableDisplay.kilograms}</div>}
+                                                            {renderAvailableLots(ccId ? Number(ccId) : undefined, ccUom, ccKilogramsPerUnit)}
                                                         </td>
                                                         <td className={`p-2.5 text-center font-bold ${ccShortfall > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground/60"}`}>
                                                             {ccShortfall > 0 ? <>

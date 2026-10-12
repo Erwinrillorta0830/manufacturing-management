@@ -39,7 +39,7 @@ const unconfiguredAtFullYield = calculateContainerizationMetrics(
     null
 );
 assert.equal(unconfiguredAtFullYield.expectedYieldPercentage, 100);
-assert.equal(unconfiguredAtFullYield.hasOutputEstimate, false);
+assert.equal(unconfiguredAtFullYield.hasWeightBasedOutputEstimate, false);
 assert.equal(unconfiguredAtFullYield.netPieces, 0);
 assert.equal(unconfiguredAtFullYield.totalCasesBundlesFull, 0);
 assert.equal(unconfiguredAtFullYield.remainingPcs, 0);
@@ -66,7 +66,7 @@ const noCuttingWeight = calculateContainerizationMetrics(
 );
 assert.equal(noCuttingWeight.expectedYieldPercentage, 100);
 assert.equal(noCuttingWeight.hasFlourWeightEstimate, true);
-assert.equal(noCuttingWeight.hasOutputEstimate, false);
+assert.equal(noCuttingWeight.hasWeightBasedOutputEstimate, false);
 assert.equal(noCuttingWeight.netPieces, 0);
 assert.equal(noCuttingWeight.totalCasesBundlesFull, 0);
 
@@ -86,7 +86,7 @@ const configuredAtFullYield = calculateContainerizationMetrics(
     12001,
     null
 );
-assert.equal(configuredAtFullYield.hasOutputEstimate, true);
+assert.equal(configuredAtFullYield.hasWeightBasedOutputEstimate, true);
 assert.ok(configuredAtFullYield.grossPieces > 0);
 assert.equal(configuredAtFullYield.netPieces, configuredAtFullYield.grossPieces);
 assert.equal(
@@ -94,5 +94,71 @@ assert.equal(
     Math.floor(configuredAtFullYield.netPieces / 12)
 );
 assert.equal(configuredAtFullYield.hasPalletEstimate, true);
+
+// Piece-based production uses the effective JO target even when physical
+// weight and packaging conversion masters are not configured.
+const piecesWithoutPackaging = calculateContainerizationMetrics(
+    "Piece Product",
+    14185,
+    undefined,
+    100,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    [],
+    1,
+    14185,
+    null,
+    "PCS"
+);
+assert.equal(piecesWithoutPackaging.hasNetPieceEstimate, true);
+assert.equal(piecesWithoutPackaging.hasWeightBasedOutputEstimate, false);
+assert.equal(piecesWithoutPackaging.grossPieces, 14185);
+assert.equal(piecesWithoutPackaging.netPieces, 14185);
+assert.equal(piecesWithoutPackaging.hasCaseBundleEstimate, false);
+assert.equal(piecesWithoutPackaging.hasPalletEstimate, false);
+
+const piecesAtReducedYield = calculateContainerizationMetrics(
+    "Piece Product",
+    14185,
+    undefined,
+    85,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    [],
+    1,
+    14185,
+    null,
+    "PIECES"
+);
+assert.equal(piecesAtReducedYield.netPieces, 12057.25);
+
+const piecesWithPackaging = calculateContainerizationMetrics(
+    "Piece Product",
+    14185,
+    12,
+    100,
+    undefined,
+    undefined,
+    40,
+    undefined,
+    undefined,
+    [],
+    1,
+    14185,
+    null,
+    "PCS"
+);
+assert.equal(piecesWithPackaging.hasCaseBundleEstimate, true);
+assert.equal(piecesWithPackaging.totalCasesBundlesFull, 1182);
+assert.equal(piecesWithPackaging.remainingPcs, 1);
+assert.equal(piecesWithPackaging.hasPalletEstimate, true);
+assert.equal(piecesWithPackaging.totalPalletsFull, 29);
+assert.equal(piecesWithPackaging.remainingCasesBundles, 22);
 
 console.log("containerization-helper tests passed");

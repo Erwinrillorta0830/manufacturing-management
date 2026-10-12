@@ -97,6 +97,7 @@ export interface JobOrder {
     routingTasks?: RoutingTask[];
     parentJobOrderId?: number | null;
     parent_job_order_id?: number | null;
+    parent_job_order_no?: string | null;
     version_id?: number | null;
     version_name?: string;
     recipe_version_name?: string;
@@ -121,6 +122,50 @@ export interface JobOrder {
     salesOrders?: SalesOrderLink[];
     assigned_personnel?: Record<string, number[]> | null;
     assignedPersonnel?: Record<string, number[]> | null;
+}
+
+export interface TerminalQueueJobOrder {
+    jo_id: string;
+    order_id: number;
+    job_order_id: number;
+    order_no: string;
+    job_order_no: string;
+    product_id: number;
+    product_name: string;
+    quantity: number;
+    target_quantity: number;
+    completed_quantity: number;
+    producedQty: number;
+    production_output_quantity?: number;
+    productionOutputQuantity?: number;
+    due_date: string | null;
+    status: CanonicalJobOrderStatus | string;
+    branch_id: number | null;
+    version_id?: number | null;
+    version_name?: string;
+    primary_work_center_id?: number | null;
+    primary_work_center_name?: string | null;
+    parent_job_order_id?: number | null;
+    parent_job_order_no?: string | null;
+    routing_tasks: Array<{
+        id: number;
+        jo_route_id: number;
+        jo_id: string;
+        routing_id: number | null;
+        name: string;
+        sequence_order: number;
+        status: string;
+        planned_setup_hours: number;
+        planned_run_hours: number;
+        duration_hours: number;
+        step_batch_size: number;
+        work_center_id: number | null;
+        work_center_name: string | null;
+        work_center: { work_center_id: number; work_center_name: string } | null;
+    }>;
+    routingTasks: TerminalQueueJobOrder["routing_tasks"];
+    sales_orders: SalesOrderLink[];
+    salesOrders: SalesOrderLink[];
 }
 
 export interface JobOrderMaterialReturnLine {
@@ -274,6 +319,14 @@ export interface JobOrderStatusHistoryRecord {
     evidence_file_name?: string | null;
     evidence_mime_type?: string | null;
     evidence_file_size?: number | null;
+    evidence_files?: Array<{
+        evidence_id?: number | null;
+        directus_file_id: string;
+        file_name?: string | null;
+        mime_type?: string | null;
+        file_size?: number | null;
+        sort_order?: number;
+    }>;
     job_order_no?: string;
     work_center_id?: number | null;
     work_center_name?: string | null;

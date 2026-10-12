@@ -20,7 +20,10 @@ registerHooks({
     }
 });
 
-const { canCreateReplacementJobOrder } = await import("./demand-groups.ts");
+const { canCreateReplacementJobOrder, isPlanningDemandSalesOrder } = await import("./demand-groups.ts");
+
+assert.equal(isPlanningDemandSalesOrder({ order_status: "For Production" }), true);
+assert.equal(isPlanningDemandSalesOrder({ order_status: "In Production" }), false);
 
 const eligibleTerminatedLine = {
     parent_order_status: "In Production",

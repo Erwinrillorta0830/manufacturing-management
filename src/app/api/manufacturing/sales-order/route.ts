@@ -26,7 +26,7 @@ import {
 } from "./_status";
 import { areSalesOrderDetailsFullyFulfilled } from "./_fulfillment";
 import { loadSalesOrderQACoverage } from "../production/_qa-accepted-output";
-import { fetchMmInventoryMovements } from "../services/mm-inventory-movements.service";
+import { fetchMmInventoryMovements, MmInventoryMovementError } from "../services/mm-inventory-movements.service";
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "";
@@ -683,7 +683,7 @@ export async function GET(request: Request) {
         const filters = {
             search,
             status: planningQueue
-                ? "For Production,In Production"
+                ? "For Production"
                 : forProductionQueue
                 ? "For Production"
                 : inProductionQueue
@@ -751,9 +751,7 @@ export async function GET(request: Request) {
                         const remaining = detailRemainingQuantity(detail, plannedQuantity, replacementCreditQuantity);
                         const isScheduled = remaining <= 0;
                         if (planningQueue) {
-                            const isSchedulableStatus = candidate.order_status === "For Production"
-                                || candidate.order_status === "In Production";
-                            return isSchedulableStatus
+                            return candidate.order_status === "For Production"
                                 && remaining > 0
                                 && !activeJobOrderDetailIds.has(detailId);
                         }
@@ -838,7 +836,7 @@ export async function GET(request: Request) {
                     const replacementCreditQuantity = replacementCreditData.byDetail.get(detailId) || 0;
                     const remaining = detailRemainingQuantity(detail, plannedQuantity, replacementCreditQuantity);
                     if (planningQueue) {
-                        return (order?.order_status === "For Production" || order?.order_status === "In Production")
+                        return order?.order_status === "For Production"
                             && remaining > 0
                             && !activeJobOrderDetailIds.has(detailId);
                     }
@@ -881,6 +879,20 @@ export async function GET(request: Request) {
         });
     } catch (e) {
         console.error("API Error in sales-order GET:", e);
+        if (e instanceof MmInventoryMovementError && e.status === 429) {
+            const retryAfterSeconds = e.retryAfterSeconds;
+            return NextResponse.json(
+                {
+                    error: e.message,
+                    code: e.code,
+                    ...(retryAfterSeconds ? { retryAfterSeconds } : {})
+                },
+                {
+                    status: 429,
+                    ...(retryAfterSeconds ? { headers: { "Retry-After": String(retryAfterSeconds) } } : {})
+                }
+            );
+        }
         return NextResponse.json({ error: (e as { message?: string }).message || "Failed to fetch sales orders" }, { status: 500 });
     }
 }

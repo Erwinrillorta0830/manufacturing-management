@@ -7,11 +7,12 @@ import { executeJobOrderWorkflow } from "../../job-orders/_workflow-service";
 import {
     deleteJobOrderWorkflowEvidence,
     JobOrderWorkflowEvidenceError,
-    uploadJobOrderWorkflowEvidence,
-    validateJobOrderWorkflowEvidence
+    uploadJobOrderWorkflowEvidence
 } from "../../job-orders/_workflow-evidence";
 import { resolveApplicableRouteWorkCenters } from "../../production/_applicable-work-centers";
 import { committedGoodOutputOrAggregate, goodOutputAggregateFallback, hasReachedProductionTarget } from "@/modules/manufacturing-management/production-workflow/utils/production-output";
+import { accumulateHoursFromSeconds, elapsedSecondsBetween } from "@/modules/manufacturing-management/production-workflow/operator-time";
+import { MANUFACTURING_EVIDENCE_MAX_FILES, validateManufacturingEvidenceBatch } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
 import {
     JOB_ORDER_MODULE_PATHS,
     JobOrderModuleAccessError,
@@ -91,6 +92,59 @@ async function productionTargetResponse(jobOrderId: number | string): Promise<Ne
     return null;
 }
 
+async function stopRouteOperatorTimers(routeId: number): Promise<number | NextResponse> {
+    const params = new URLSearchParams({
+        "filter[jo_route_id][_eq]": String(routeId),
+        fields: "jo_route_operator_id,logged_hours,started_at,stopped_at",
+        limit: "-1"
+    });
+    const timersResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_route_operators?${params.toString()}`, {
+        headers,
+        cache: "no-store"
+    });
+    if (!timersResponse.ok) {
+        return NextResponse.json({ error: "Could not load operator timers for this route. Refresh and try again." }, { status: 502 });
+    }
+
+    const timersPayload = await timersResponse.json().catch(() => ({}));
+    if (!Array.isArray(timersPayload?.data)) {
+        return NextResponse.json({ error: "Could not verify operator timers for this route. Refresh and try again." }, { status: 502 });
+    }
+
+    let totalHours = 0;
+    for (const timer of timersPayload.data) {
+        let loggedHours = Number(timer.logged_hours || 0);
+        if (!Number.isFinite(loggedHours) || loggedHours < 0) loggedHours = 0;
+
+        if (timer.started_at && !timer.stopped_at) {
+            const stoppedAt = formatPhtDateTime();
+            const elapsedSeconds = elapsedSecondsBetween(timer.started_at, stoppedAt);
+            if (elapsedSeconds === null) {
+                return NextResponse.json({
+                    error: `Operator timer ${timer.jo_route_operator_id} has an invalid start time and could not be stopped.`
+                }, { status: 409 });
+            }
+
+            loggedHours = accumulateHoursFromSeconds(loggedHours, elapsedSeconds);
+            const stopResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_route_operators/${encodeURIComponent(String(timer.jo_route_operator_id))}`, {
+                method: "PATCH",
+                headers,
+                cache: "no-store",
+                body: JSON.stringify({ logged_hours: loggedHours, stopped_at: stoppedAt, logged_at: stoppedAt })
+            });
+            if (!stopResponse.ok) {
+                return NextResponse.json({
+                    error: `Could not save the stopped timer for operator session ${timer.jo_route_operator_id}. The route remains open.`
+                }, { status: 502 });
+            }
+        }
+
+        totalHours += loggedHours;
+    }
+
+    return totalHours;
+}
+
 async function cancelledJobOrderResponseForTask(taskId: number): Promise<NextResponse | null> {
     const routeRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes/${taskId}?fields=jo_route_id,job_order_id`, { headers, cache: "no-store" });
     if (!routeRes.ok) return null;
@@ -103,6 +157,120 @@ async function cancelledJobOrderResponseForTask(taskId: number): Promise<NextRes
 function positiveInteger(value: unknown): number {
     const parsed = Number(value);
     return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function canonicalVersionMap(value: unknown): string {
+    let parsed = value;
+    if (typeof parsed === "string") {
+        try { parsed = JSON.parse(parsed); } catch { parsed = {}; }
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return "{}";
+    const entries = Object.entries(parsed as Record<string, unknown>)
+        .map(([key, version]): [string, number] => [String(key), Number(version)])
+        .filter(([key, version]) => Number.isSafeInteger(Number(key)) && Number(key) > 0 && Number.isSafeInteger(version) && version > 0)
+        .sort(([left], [right]) => Number(left) - Number(right));
+    return JSON.stringify(Object.fromEntries(entries));
+}
+
+async function handleSaveDraft(body: any): Promise<NextResponse> {
+    const jobOrderId = positiveInteger(body.joId ?? body.jobOrderId);
+    const draft = body.draft;
+    if (!jobOrderId || !draft || typeof draft !== "object" || Array.isArray(draft)) {
+        return NextResponse.json({ error: "A valid Draft Job Order and draft payload are required." }, { status: 400 });
+    }
+
+    const jobOrderResponse = await fetch(
+        `${DIRECTUS_URL}/items/manufacturing_job_orders/${jobOrderId}?fields=job_order_id,job_order_no,status,product_id,version_id,branch_id,target_quantity,uom_id,start_date,end_date,sub_assembly_version_map`,
+        { headers, cache: "no-store" }
+    );
+    if (jobOrderResponse.status === 404) {
+        return NextResponse.json({ error: `Job Order ${jobOrderId} was not found.` }, { status: 404 });
+    }
+    if (!jobOrderResponse.ok) {
+        return NextResponse.json({ error: "The Job Order could not be verified for Draft editing." }, { status: 502 });
+    }
+    const jobOrder = (await jobOrderResponse.json().catch(() => ({}))).data;
+    if (String(jobOrder?.status || "").trim().toLowerCase() !== "draft") {
+        return NextResponse.json({ error: "Only Draft Job Orders can be edited in planning." }, { status: 409 });
+    }
+
+    const allocationsResponse = await fetch(
+        `${DIRECTUS_URL}/items/manufacturing_job_order_allocations?filter[job_order_id][_eq]=${jobOrderId}&fields=allocated_quantity,sales_order_detail_id&limit=-1`,
+        { headers, cache: "no-store" }
+    );
+    if (!allocationsResponse.ok) {
+        return NextResponse.json({ error: "Sales Order allocations could not be verified before saving this Draft." }, { status: 502 });
+    }
+    const allocations = (await allocationsResponse.json().catch(() => ({}))).data;
+    if (!Array.isArray(allocations)) {
+        return NextResponse.json({ error: "Sales Order allocation data is invalid." }, { status: 502 });
+    }
+    const linkedAllocationQuantity = allocations.reduce((sum: number, allocation: any) => {
+        const quantity = Number(allocation.allocated_quantity || 0);
+        return sum + (Number.isFinite(quantity) && quantity > 0 ? quantity : 0);
+    }, 0);
+    const nextProductId = draft.productId === undefined ? Number(jobOrder.product_id) : positiveInteger(draft.productId);
+    const nextVersionId = draft.versionId === undefined ? Number(jobOrder.version_id) : positiveInteger(draft.versionId);
+    const nextBranchId = draft.branchId === undefined ? Number(jobOrder.branch_id) : positiveInteger(draft.branchId);
+    if (!nextProductId || !nextVersionId || !nextBranchId) {
+        return NextResponse.json({ error: "Product, approved recipe version, and branch are required for a Draft Job Order." }, { status: 400 });
+    }
+    const changesSalesOrderIdentity = allocations.length > 0 && (
+        nextProductId !== Number(jobOrder.product_id)
+        || nextVersionId !== Number(jobOrder.version_id)
+        || nextBranchId !== Number(jobOrder.branch_id)
+        || (draft.subAssemblyVersionMap !== undefined
+            && canonicalVersionMap(draft.subAssemblyVersionMap) !== canonicalVersionMap(jobOrder.sub_assembly_version_map))
+    );
+    if (changesSalesOrderIdentity) {
+        return NextResponse.json({ error: "Sales Order-linked Drafts must keep their product, branch, and recipe unchanged." }, { status: 409 });
+    }
+
+    const targetQuantity = Number(draft.targetQuantity);
+    const priority = Number(draft.priority ?? 0);
+    const shiftOption = Number(draft.shiftOption);
+    if (!Number.isFinite(targetQuantity) || targetQuantity <= 0) {
+        return NextResponse.json({ error: "Target quantity must be greater than zero." }, { status: 400 });
+    }
+    if (allocations.length > 0 && targetQuantity + 0.000001 < linkedAllocationQuantity) {
+        return NextResponse.json({
+            error: `Target quantity cannot be less than the ${linkedAllocationQuantity.toLocaleString()} units already allocated to Sales Orders.`,
+            code: "DRAFT_TARGET_BELOW_SALES_ORDER_ALLOCATIONS"
+        }, { status: 400 });
+    }
+    if (!Number.isSafeInteger(priority) || priority < 0) {
+        return NextResponse.json({ error: "Priority must be a non-negative whole number." }, { status: 400 });
+    }
+    if (!Number.isFinite(shiftOption) || shiftOption <= 0 || shiftOption > 24) {
+        return NextResponse.json({ error: "Shift hours must be greater than zero and no more than 24." }, { status: 400 });
+    }
+
+    const dateValue = (value: unknown): string | null => {
+        const text = String(value || "").trim();
+        if (!text) return null;
+        return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "invalid";
+    };
+    const startDate = dateValue(draft.plannedDate);
+    const dueDate = dateValue(draft.dueDate);
+    if (startDate === "invalid" || dueDate === "invalid") {
+        return NextResponse.json({ error: "Planned start and due dates must use YYYY-MM-DD format." }, { status: 400 });
+    }
+
+    const result = await updateJobOrder(String(jobOrderId), {
+        quantity: targetQuantity,
+        start_date: startDate,
+        due_date: dueDate,
+        priority,
+        shift_option: shiftOption.toFixed(1),
+        remarks: String(draft.remarks || ""),
+        assigned_personnel: draft.assignedPersonnel ?? {},
+        product_id: nextProductId,
+        version_id: nextVersionId,
+        branch_id: nextBranchId,
+        uom_id: draft.uomId === undefined ? jobOrder.uom_id : positiveInteger(draft.uomId) || null,
+        sub_assembly_version_map: draft.subAssemblyVersionMap ?? undefined
+    });
+    return NextResponse.json({ success: true, data: result });
 }
 
 async function handleRouteWorkCenterAssignment(body: any): Promise<NextResponse> {
@@ -279,11 +447,11 @@ async function handleRouteWorkCenterAssignment(body: any): Promise<NextResponse>
 }
 
 export async function handlePATCH(request: Request) {
-    let uploadedBreakdownEvidenceImageId: string | null = null;
+    let uploadedBreakdownEvidenceImageIds: string[] = [];
     try {
         const contentType = request.headers.get("content-type")?.toLowerCase() || "";
         let body: any;
-        let breakdownEvidenceImage: File | null = null;
+        let breakdownEvidenceImages: File[] = [];
         if (contentType.includes("multipart/form-data")) {
             const formData = await request.formData();
             const payloadValue = formData.get("payload");
@@ -295,11 +463,11 @@ export async function handlePATCH(request: Request) {
             } catch {
                 return NextResponse.json({ error: "The planning-engineering payload is not valid JSON." }, { status: 400 });
             }
-            const imageValue = formData.get("image");
-            if (imageValue !== null && (typeof File === "undefined" || !(imageValue instanceof File))) {
+            const imageValues = formData.getAll("image");
+            if (imageValues.some((imageValue) => typeof File === "undefined" || !(imageValue instanceof File))) {
                 return NextResponse.json({ error: "The breakdown evidence file is invalid." }, { status: 422 });
             }
-            breakdownEvidenceImage = typeof File !== "undefined" && imageValue instanceof File ? imageValue : null;
+            breakdownEvidenceImages = imageValues.filter((imageValue): imageValue is File => typeof File !== "undefined" && imageValue instanceof File);
         } else {
             body = await request.json();
         }
@@ -309,6 +477,10 @@ export async function handlePATCH(request: Request) {
         const moduleUser = await requireJobOrderModuleAccess(
             isProductionMutation ? JOB_ORDER_MODULE_PATHS.production : JOB_ORDER_MODULE_PATHS.planning
         );
+
+        if (body.action === "save-draft") {
+            return handleSaveDraft(body);
+        }
 
         if (body.action === "assign-route-workcenters") {
             return handleRouteWorkCenterAssignment(body);
@@ -335,36 +507,44 @@ export async function handlePATCH(request: Request) {
             if (!Number.isFinite(parsedReportedYield) || parsedReportedYield < 0) {
                 return NextResponse.json({ error: "Reported yield must be a non-negative number." }, { status: 400 });
             }
-            if (!breakdownEvidenceImage) {
-                return NextResponse.json({ error: "A breakdown evidence image or video is required.", code: "WORKFLOW_EVIDENCE_REQUIRED" }, { status: 422 });
+            if (breakdownEvidenceImages.length === 0) {
+                return NextResponse.json({ error: "At least one breakdown evidence image or video is required.", code: "WORKFLOW_EVIDENCE_REQUIRED" }, { status: 422 });
             }
-            const evidenceError = validateJobOrderWorkflowEvidence(breakdownEvidenceImage);
-            if (evidenceError) {
-                return NextResponse.json({ error: evidenceError, code: "WORKFLOW_EVIDENCE_INVALID" }, { status: 422 });
+            const evidenceBatchError = validateManufacturingEvidenceBatch(breakdownEvidenceImages, "Breakdown evidence");
+            if (evidenceBatchError) {
+                return NextResponse.json({
+                    error: evidenceBatchError,
+                    code: breakdownEvidenceImages.length > MANUFACTURING_EVIDENCE_MAX_FILES
+                        ? "WORKFLOW_EVIDENCE_LIMIT_EXCEEDED"
+                        : "WORKFLOW_EVIDENCE_INVALID"
+                }, { status: 422 });
             }
 
             const productionResponse = await productionMutationResponse(parsedJobOrderId);
             if (productionResponse) return productionResponse;
 
-            uploadedBreakdownEvidenceImageId = await uploadJobOrderWorkflowEvidence(
-                breakdownEvidenceImage,
-                String(parsedJobOrderId),
-                "breakdown"
-            );
+            for (const evidenceImage of breakdownEvidenceImages) {
+                uploadedBreakdownEvidenceImageIds.push(await uploadJobOrderWorkflowEvidence(
+                    evidenceImage,
+                    String(parsedJobOrderId),
+                    "breakdown"
+                ));
+            }
 
             const result = await executeJobOrderWorkflow(parsedJobOrderId, {
                 action: "place-on-hold",
                 actorUserId: moduleUser.userId,
                 idempotencyKey: String(body.idempotencyKey || `breakdown:${parsedJobOrderId}:${haltedStepId}:${Number(yieldQty || 0)}`).trim(),
                 remarks: `Halted at step ${haltedStepId}. Reported yield: ${parsedReportedYield}. Reason: ${trimmedHaltReason}`,
-                evidenceImageId: uploadedBreakdownEvidenceImageId,
+                evidenceImageId: uploadedBreakdownEvidenceImageIds[0],
+                evidenceImageIds: uploadedBreakdownEvidenceImageIds,
                 joRouteId: parsedRouteId,
                 reportedYieldQuantity: parsedReportedYield
             });
 
-            if (result.idempotent && uploadedBreakdownEvidenceImageId) {
-                await deleteJobOrderWorkflowEvidence(uploadedBreakdownEvidenceImageId);
-                uploadedBreakdownEvidenceImageId = null;
+            if (result.idempotent && uploadedBreakdownEvidenceImageIds.length > 0) {
+                await Promise.all(uploadedBreakdownEvidenceImageIds.map(deleteJobOrderWorkflowEvidence));
+                uploadedBreakdownEvidenceImageIds = [];
             }
 
             return NextResponse.json({ success: true, message: "Workstation breakdown reported successfully." });
@@ -389,10 +569,20 @@ export async function handlePATCH(request: Request) {
             const allowedTargetRouteCompletion = normalizedTaskPatch?.status === "Completed"
                 && Object.keys(normalizedTaskPatch || {}).every((key) => ["status", "completed_at", "actual_run_hours"].includes(key));
             if (targetResponse && !allowedTargetRouteCompletion) return targetResponse;
+            let effectiveTaskPatch = normalizedTaskPatch;
+            if (taskPatch?.status === "Completed") {
+                const actualRunHours = await stopRouteOperatorTimers(Number(taskId));
+                if (actualRunHours instanceof NextResponse) return actualRunHours;
+                effectiveTaskPatch = {
+                    ...normalizedTaskPatch,
+                    actual_run_hours: Math.round(actualRunHours * 1_000_000) / 1_000_000
+                };
+            }
+
             const res = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes/${taskId}?fields=jo_route_id,job_order_id,sequence_order,work_center_id,operation_id,planned_setup_hours,planned_run_hours,actual_setup_hours,actual_run_hours,step_batch_size,run_time_hours_factor`, {
                 method: "PATCH",
                 headers,
-                body: JSON.stringify(normalizedTaskPatch)
+                body: JSON.stringify(effectiveTaskPatch)
             });
             if (!res.ok) throw new Error(`Failed to patch routing task: ${res.status}`);
             const result = await res.json();
@@ -718,8 +908,8 @@ export async function handlePATCH(request: Request) {
         const result = await updateJobOrder(joId, dbPatch);
         return NextResponse.json({ success: true, data: result });
     } catch (e) {
-        if (uploadedBreakdownEvidenceImageId) {
-            await deleteJobOrderWorkflowEvidence(uploadedBreakdownEvidenceImageId);
+        if (uploadedBreakdownEvidenceImageIds.length > 0) {
+            await Promise.all(uploadedBreakdownEvidenceImageIds.map(deleteJobOrderWorkflowEvidence));
         }
         console.error("API Error in planning-engineering PATCH:", e);
         if (e instanceof JobOrderModuleAccessError) {

@@ -301,6 +301,59 @@ function normalizeSessionInput(body: any): SessionInput {
     };
 }
 
+function sessionPayload(input: SessionInput): Record<string, unknown> {
+    return {
+        sessionScope: input.sessionScope,
+        sessionKey: input.sessionKey,
+        taskId: input.taskId,
+        joId: input.joId,
+        workCenterId: input.workCenterId,
+        shiftName: input.shiftName,
+        productionDate: input.productionDate,
+        yieldQty: input.goodQty,
+        rejectedQty: input.rejectedQty,
+        scrapQty: input.scrapQty,
+        batchNo: input.batchNo,
+        manufacturingDate: input.manufacturingDate,
+        expiryDate: input.expiryDate,
+        targetLotId: input.targetLotId,
+        remarks: input.remarks,
+        varianceReason: input.varianceReason,
+        varianceApprovalRequested: input.varianceApprovalRequested,
+        completeProductionAfterLog: input.completeProductionAfterLog,
+        materialsConsumed: input.materials.map((line) => ({
+            joMaterialId: line.joMaterialId,
+            reservationId: line.reservationId,
+            productId: line.productId,
+            mmLotId: line.mmLotId,
+            inventoryLotId: line.inventoryLotId,
+            batchNo: line.batchNo,
+            uomId: line.uomId,
+            actualQty: line.actualQty
+        }))
+    };
+}
+
+function storedSessionPayload(value: unknown): Record<string, unknown> | null {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+        return value as Record<string, unknown>;
+    }
+    if (typeof value !== "string") return null;
+    try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+            ? parsed as Record<string, unknown>
+            : null;
+    } catch {
+        return null;
+    }
+}
+
+function isCommittedLedger(row: any): boolean {
+    const status = textValue(row?.commit_status).toUpperCase();
+    return !status || status === "COMMITTED";
+}
+
 interface ShiftRunRequestData {
     body: Record<string, unknown>;
     image: File | null;
@@ -780,7 +833,15 @@ async function applyReservationUpdate(plan: MaterialPlan, consumptionRow: any) {
         && sameNumber(currentSnapshot.remaining, plan.remainingWipBefore);
 
     if (!alreadyApplied && !stillAtBaseline) {
-        throw new ProductionSessionError(409, "MATERIAL_RESERVATION_CHANGED", `Reservation ${reservationId} changed while this production session was being recorded. Reconcile the WIP balance before retrying.`);
+        throw new ProductionSessionError(409, "MATERIAL_RESERVATION_CHANGED", `Reservation ${reservationId} changed while this production session was being recorded. Reconcile the WIP balance before retrying.`, {
+            reservationId,
+            expectedActualBefore: plan.reservationActualBefore,
+            expectedActualAfter: plan.reservationActualAfter,
+            expectedRemainingBefore: plan.remainingWipBefore,
+            expectedRemainingAfter: plan.remainingWipAfter,
+            liveActual: currentSnapshot.actual,
+            liveRemaining: currentSnapshot.remaining
+        });
     }
 
     if (stillAtBaseline) {
@@ -821,7 +882,15 @@ async function applyMaterialAggregate(plan: MaterialPlan, consumptionRow: any) {
         && sameNumber(currentSnapshot.reserved, plan.materialReservedBefore);
 
     if (!alreadyApplied && !stillAtBaseline) {
-        throw new ProductionSessionError(409, "MATERIAL_AGGREGATE_CHANGED", `JO material ${materialId} changed while this production session was being recorded. Retry after reconciling the material balance.`);
+        throw new ProductionSessionError(409, "MATERIAL_AGGREGATE_CHANGED", `JO material ${materialId} changed while this production session was being recorded. Retry after reconciling the material balance.`, {
+            joMaterialId: materialId,
+            expectedActualBefore: plan.materialActualBefore,
+            expectedActualAfter: plan.materialActualAfter,
+            expectedReservedBefore: plan.materialReservedBefore,
+            expectedReservedAfter: plan.materialReservedAfter,
+            liveActual: currentSnapshot.actual,
+            liveReserved: currentSnapshot.reserved
+        });
     }
 
     if (stillAtBaseline) {
@@ -945,13 +1014,14 @@ async function updateJobOrderAggregates(joId: number, ledgerId: number, actorId:
             `Reload Job Order ${joId} before aggregate update`
         ),
         directusRows<any>(
-            `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(joId))}&fields=yield_quantity,rejected_quantity,scrap_quantity&limit=-1`,
+            `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(joId))}&fields=ledger_id,yield_quantity,rejected_quantity,scrap_quantity,commit_status&limit=-1`,
             `Reload yield ledger for Job Order ${joId}`
         )
     ]);
 
-    const completedQuantity = roundedQuantity(yieldRows.reduce((sum, row) => sum + Math.max(0, finiteNumber(row.yield_quantity)), 0));
-    const rejectedQuantity = roundedQuantity(yieldRows.reduce((sum, row) => sum + Math.max(0, finiteNumber(row.rejected_quantity)) + Math.max(0, finiteNumber(row.scrap_quantity)), 0));
+    const completedRows = yieldRows.filter((row) => isCommittedLedger(row) || numberId(row.ledger_id) === ledgerId);
+    const completedQuantity = roundedQuantity(completedRows.reduce((sum, row) => sum + Math.max(0, finiteNumber(row.yield_quantity)), 0));
+    const rejectedQuantity = roundedQuantity(completedRows.reduce((sum, row) => sum + Math.max(0, finiteNumber(row.rejected_quantity)) + Math.max(0, finiteNumber(row.scrap_quantity)), 0));
     const currentCompleted = Math.max(0, finiteNumber(jobOrder.completed_quantity));
     const currentRejected = Math.max(0, finiteNumber(jobOrder.rejected_quantity));
 
@@ -1039,17 +1109,68 @@ function responsePayload(input: SessionInput, ledger: any, consumptionRows: any[
 export async function recordShiftRunSession(request: Request): Promise<NextResponse> {
     let uploadedImageId: string | null = null;
     let imageAttached = false;
+    let sessionLedgerId = 0;
     try {
-        const { body, image } = await readShiftRunRequest(request);
-        if (!image) {
+        const requestData = await readShiftRunRequest(request);
+        let body = requestData.body;
+        const image = requestData.image;
+        const actor = await getSessionActor();
+        let resumedLedger: any | null = null;
+
+        if (body.resumeExisting === true) {
+            const resumeJobOrderId = requiredInteger(body.joId ?? body.jobOrderId, "Job Order ID");
+            const resumeSessionKey = textValue(body.sessionKey);
+            if (!resumeSessionKey || resumeSessionKey.length > 128) {
+                throw new ProductionSessionError(422, "SESSION_KEY_REQUIRED", "A production session key is required and must be at most 128 characters.");
+            }
+            const pendingRows = await directusRows<any>(
+                `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(resumeJobOrderId))}&filter[session_key][_eq]=${encodeURIComponent(resumeSessionKey)}&limit=1`,
+                `Load pending production session ${resumeSessionKey}`
+            );
+            resumedLedger = pendingRows[0] || null;
+            if (!resumedLedger) {
+                throw new ProductionSessionError(404, "PENDING_SESSION_NOT_FOUND", "The pending production session could not be found. Refresh the Job Order and check for a completed session.");
+            }
+            if (textValue(resumedLedger.commit_status).toUpperCase() === "COMMITTED") {
+                throw new ProductionSessionError(409, "SESSION_ALREADY_COMMITTED", "This production session is already committed. Refresh the Job Order to load its saved output.");
+            }
+            if (textValue(resumedLedger.commit_status).toUpperCase() !== "PENDING") {
+                throw new ProductionSessionError(409, "SESSION_NOT_RECOVERABLE", "This production session is not in a recoverable pending state.");
+            }
+            if (numberId(resumedLedger.jo_route_id)) {
+                throw new ProductionSessionError(409, "SESSION_SCOPE_CONFLICT", "Only a Job Order shift session can be resumed from this recovery screen.");
+            }
+            const persistedPayload = storedSessionPayload(resumedLedger.session_payload);
+            if (!persistedPayload) {
+                throw new ProductionSessionError(409, "SESSION_PAYLOAD_UNAVAILABLE", "This older pending session has no saved recovery payload and needs supervisor reconciliation before another shift can be started.", {
+                    ledgerId: numberId(resumedLedger.ledger_id ?? resumedLedger.id),
+                    sessionKey: resumeSessionKey
+                });
+            }
+            if (numberId(persistedPayload.joId) !== resumeJobOrderId
+                || textValue(persistedPayload.sessionKey) !== resumeSessionKey
+                || textValue(persistedPayload.sessionScope).toUpperCase() !== "JOB_ORDER") {
+                throw new ProductionSessionError(409, "SESSION_PAYLOAD_INVALID", "The saved production session does not match its Job Order and cannot be resumed safely.", {
+                    ledgerId: numberId(resumedLedger.ledger_id ?? resumedLedger.id),
+                    sessionKey: resumeSessionKey
+                });
+            }
+            body = persistedPayload;
+        }
+
+        if (!image && !resumedLedger) {
             throw new ProductionSessionError(400, "SHIFT_RUN_IMAGE_REQUIRED", "A shift evidence image or video is required.");
         }
-        const imageError = validateProductionYieldImage(image);
+        if (resumedLedger && !directusFileId(resumedLedger.daily_qa_image_id)) {
+            throw new ProductionSessionError(409, "SESSION_EVIDENCE_UNAVAILABLE", "This pending session has no saved evidence attachment and needs supervisor reconciliation before it can be resumed.", {
+                ledgerId: numberId(resumedLedger.ledger_id ?? resumedLedger.id)
+            });
+        }
+        const imageError = image ? validateProductionYieldImage(image) : null;
         if (imageError) {
             throw new ProductionSessionError(422, "SHIFT_RUN_IMAGE_INVALID", imageError);
         }
         const input = normalizeSessionInput(body);
-        const actor = await getSessionActor();
         const actorId = actor.actorId;
         const now = formatPhtDateTime();
         const createdAt = formatPhtDateTime();
@@ -1060,11 +1181,14 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
             `${DIRECTUS_URL}/items/manufacturing_job_orders/${encodeURIComponent(String(input.joId))}?fields=*`,
             `Load Job Order ${input.joId}`
         );
-        const existingLedgerRows = await directusRows<any>(
-            `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(input.joId))}&filter[session_key][_eq]=${encodeURIComponent(input.sessionKey)}&limit=1`,
-            `Look up production session ${input.sessionKey}`
-        );
+        const existingLedgerRows = resumedLedger
+            ? [resumedLedger]
+            : await directusRows<any>(
+                `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(input.joId))}&filter[session_key][_eq]=${encodeURIComponent(input.sessionKey)}&limit=1`,
+                `Look up production session ${input.sessionKey}`
+            );
         const existingLedger = existingLedgerRows[0] || null;
+        sessionLedgerId = numberId(existingLedger?.ledger_id ?? existingLedger?.id);
         const persistedOutputHash = existingLedger
             ? {
                 batchNo: textValue(existingLedger.lot_number) || null,
@@ -1084,10 +1208,21 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
             throw new ProductionSessionError(409, "SESSION_CONFLICT", `Production session ${input.sessionKey} already exists with a different payload.`);
         }
         if (existingLedger) {
-            const persistedScope = textValue(existingLedger.session_scope).toUpperCase()
-                || (numberId(existingLedger.jo_route_id) ? "ROUTE" : "JOB_ORDER");
+            const persistedScope = numberId(existingLedger.jo_route_id) ? "ROUTE" : "JOB_ORDER";
             if (persistedScope !== input.sessionScope) {
                 throw new ProductionSessionError(409, "SESSION_SCOPE_CONFLICT", `Production session ${input.sessionKey} already exists with scope ${persistedScope}.`);
+            }
+        }
+
+        if (existingLedger && !storedSessionPayload(existingLedger.session_payload)) {
+            try {
+                await directusRequest(
+                    `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(sessionLedgerId))}`,
+                    `Save recovery payload for production session ${input.sessionKey}`,
+                    { method: "PATCH", body: JSON.stringify({ session_payload: sessionPayload(input) }) }
+                );
+            } catch (error) {
+                if (!(error instanceof DirectusSessionPersistenceError) || error.status !== 403) throw error;
             }
         }
         const status = normalizeJobOrderStatus(jobOrder.status || JOB_ORDER_STATUS.DRAFT);
@@ -1364,42 +1499,54 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
             uploadedImageId = await uploadProductionYieldImage(image, input.joId, input.sessionKey);
         }
 
-        let ledger = existingLedger || await directusRequest<any>(
-            `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger`,
-            `Create production session for Job Order ${input.joId}`,
-            {
-                method: "POST",
-                body: JSON.stringify({
-                    job_order_id: input.joId,
-                    shift_name: input.shiftName,
-                    yield_quantity: input.goodQty,
-                    rejected_quantity: input.rejectedQty,
-                    scrap_quantity: input.scrapQty,
-                    // Finished-goods traceability is assigned by the
-                    // In-Process QA audit, not by the shop-floor operator.
-                    lot_number: null,
-                    mm_lot_id: null,
-                    qa_status: "Pending",
-                    logged_at: createdAt,
-                    logged_by: actorId,
-                    session_key: input.sessionKey,
-                    source_event_key: sourceEventKey,
-                    request_hash: hash,
-                    commit_status: "PENDING",
-                    job_order_updated: false,
-                    session_scope: input.sessionScope,
-                    jo_route_id: input.taskId,
-                    work_center_id: workCenterId,
-                    production_date: input.productionDate,
-                    manufacturing_date: null,
-                    expiry_date: null,
-                    remarks: input.remarks,
-                    daily_qa_image_id: uploadedImageId
-                })
+        let ledger = existingLedger;
+        if (!ledger) {
+            const ledgerUrl = `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger`;
+            const ledgerData = {
+                job_order_id: input.joId,
+                shift_name: input.shiftName,
+                yield_quantity: input.goodQty,
+                rejected_quantity: input.rejectedQty,
+                scrap_quantity: input.scrapQty,
+                // Finished-goods traceability is assigned by the
+                // In-Process QA audit, not by the shop-floor operator.
+                lot_number: null,
+                mm_lot_id: null,
+                qa_status: "Pending",
+                logged_at: createdAt,
+                logged_by: actorId,
+                session_key: input.sessionKey,
+                source_event_key: sourceEventKey,
+                request_hash: hash,
+                commit_status: "PENDING",
+                job_order_updated: false,
+                jo_route_id: input.taskId,
+                work_center_id: workCenterId,
+                production_date: input.productionDate,
+                manufacturing_date: null,
+                expiry_date: null,
+                remarks: input.remarks,
+                daily_qa_image_id: uploadedImageId
+            };
+
+            try {
+                ledger = await directusRequest<any>(
+                    ledgerUrl,
+                    `Create production session for Job Order ${input.joId}`,
+                    { method: "POST", body: JSON.stringify({ ...ledgerData, session_payload: sessionPayload(input) }) }
+                );
+            } catch (error) {
+                if (!(error instanceof DirectusSessionPersistenceError) || error.status !== 403) throw error;
+                ledger = await directusRequest<any>(
+                    ledgerUrl,
+                    `Create production session for Job Order ${input.joId}`,
+                    { method: "POST", body: JSON.stringify(ledgerData) }
+                );
             }
-        );
+        }
         const ledgerId = numberId(ledger.ledger_id ?? ledger.id);
         if (!ledgerId) throw new DirectusSessionPersistenceError("Production session insert returned no ledger identifier.");
+        sessionLedgerId = ledgerId;
         if (uploadedImageId && !existingLedger) {
             imageAttached = true;
         }
@@ -1481,16 +1628,99 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
             });
         }
     } catch (error) {
+        if (sessionLedgerId > 0 && error instanceof ProductionSessionError
+            && ["MATERIAL_AGGREGATE_CHANGED", "MATERIAL_RESERVATION_CHANGED"].includes(error.code)) {
+            try {
+                await directusRequest(
+                    `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(sessionLedgerId))}`,
+                    `Save recovery state for production session ${sessionLedgerId}`,
+                    {
+                        method: "PATCH",
+                        body: JSON.stringify({
+                            recovery_error: {
+                                code: error.code,
+                                message: error.message,
+                                details: error.details || null,
+                                recorded_at: formatPhtDateTime()
+                            }
+                        })
+                    }
+                );
+            } catch (persistError) {
+                console.error(`Unable to save recovery state for production session ${sessionLedgerId}:`, persistError);
+            }
+        }
         if (uploadedImageId && !imageAttached) {
             await deleteProductionYieldImage(uploadedImageId);
         }
         console.error("Error in production shift-run session:", error);
         if (error instanceof ProductionSessionError) {
-            return NextResponse.json({ success: false, error: error.message, code: error.code, details: error.details }, { status: error.status });
+            return NextResponse.json({ success: false, error: error.message, code: error.code, details: { ...(error.details || {}), ledgerId: sessionLedgerId || undefined } }, { status: error.status });
         }
         if (error instanceof DirectusSessionPersistenceError) {
             return NextResponse.json({ success: false, error: error.message, code: "PRODUCTION_SESSION_PERSISTENCE_FAILED" }, { status: error.status });
         }
         return NextResponse.json({ success: false, error: (error as Error)?.message || "Failed to record production session.", code: "PRODUCTION_SESSION_FAILED" }, { status: 500 });
     }
+}
+
+export async function listRecoverableShiftRunSessions(jobOrderId: number) {
+    const filters = `filter[job_order_id][_eq]=${encodeURIComponent(String(jobOrderId))}&filter[jo_route_id][_null]=true&filter[commit_status][_eq]=PENDING&limit=-1&sort=-logged_at`;
+    let rows: any[];
+    let canReadRecoveryFields = true;
+
+    try {
+        rows = await directusRows<any>(
+            `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?${filters}&fields=ledger_id,job_order_id,jo_route_id,session_key,shift_name,production_date,yield_quantity,rejected_quantity,scrap_quantity,logged_at,daily_qa_image_id,session_payload,recovery_error`,
+            `Load recoverable production sessions for Job Order ${jobOrderId}`
+        );
+    } catch (error) {
+        if (!(error instanceof DirectusSessionPersistenceError) || error.status !== 403) throw error;
+        canReadRecoveryFields = false;
+        rows = await directusRows<any>(
+            `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?${filters}&fields=ledger_id,job_order_id,jo_route_id,session_key,shift_name,production_date,yield_quantity,rejected_quantity,scrap_quantity,logged_at,daily_qa_image_id`,
+            `Load recoverable production sessions for Job Order ${jobOrderId}`
+        );
+    }
+
+    return rows.map((row) => {
+        const payload = canReadRecoveryFields ? storedSessionPayload(row.session_payload) : null;
+        const jobOrderId = numberId(row.job_order_id);
+        const sessionKey = textValue(row.session_key);
+        const hasValidPayload = Boolean(payload
+                && numberId(payload.joId) === jobOrderId
+                && textValue(payload.sessionKey) === sessionKey
+                && textValue(payload.sessionScope).toUpperCase() === "JOB_ORDER"
+                && !numberId(row.jo_route_id));
+        const hasEvidence = Boolean(directusFileId(row.daily_qa_image_id));
+
+        return {
+            ledgerId: numberId(row.ledger_id ?? row.id),
+            jobOrderId,
+            sessionKey,
+            shiftName: textValue(row.shift_name),
+            productionDate: textValue(row.production_date),
+            goodQuantity: finiteNumber(row.yield_quantity),
+            rejectedQuantity: finiteNumber(row.rejected_quantity),
+            scrapQuantity: finiteNumber(row.scrap_quantity),
+            loggedAt: textValue(row.logged_at) || null,
+            canResume: canReadRecoveryFields && hasValidPayload && hasEvidence,
+            recoveryError: row.recovery_error || (!canReadRecoveryFields
+                ? { code: "SESSION_RECOVERY_FIELDS_UNAVAILABLE", message: "This connection can see the saved shift but cannot read its recovery details. Ask a supervisor to reconcile it before recording another shift." }
+                : !hasValidPayload
+                    ? { code: "SESSION_PAYLOAD_UNAVAILABLE", message: "The saved session details are incomplete and need supervisor reconciliation." }
+                    : !hasEvidence
+                        ? { code: "SESSION_EVIDENCE_UNAVAILABLE", message: "The session has no saved evidence attachment and needs supervisor reconciliation." }
+                        : null)
+        };
+    });
+}
+
+export async function resumePendingShiftRunSession(jobOrderId: number, sessionKey: string): Promise<NextResponse> {
+    const request = new Request("http://localhost/api/manufacturing/production/shift-run-log/recovery", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resumeExisting: true, joId: jobOrderId, sessionKey })
+    });
+    return recordShiftRunSession(request);
 }

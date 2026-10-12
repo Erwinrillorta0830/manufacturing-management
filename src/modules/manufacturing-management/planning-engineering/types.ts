@@ -36,6 +36,8 @@ export interface SalesOrderDetail {
     unit_price: number;
     ordered_quantity: number;
     net_amount: number;
+    uom_id?: number | null;
+    unit_of_measurement?: string | null;
     bom_version_id?: number | null;
     bom_version_name?: string | null;
     order_no?: string;       // joined client-side from sales order parent

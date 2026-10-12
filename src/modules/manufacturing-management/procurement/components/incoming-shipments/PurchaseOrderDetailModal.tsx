@@ -99,7 +99,6 @@ export default function PurchaseOrderDetailModal({
                         detailError={detailError}
                         referenceError={referenceError}
                         onRetryDetail={onRetryDetail}
-                        onBack={onClose}
                     />
                 </div>
             </div>

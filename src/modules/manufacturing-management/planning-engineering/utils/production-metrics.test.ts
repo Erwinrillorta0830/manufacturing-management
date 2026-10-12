@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { calculateProductionMetrics } from "./production-metrics";
-import { calculateMaterialsCostPerUnit, calculateRouteBreakdown } from "../../finished-goods-master/costing";
+import { calculateDisplayUnitCOGS, calculateMaterialsCostPerUnit, calculateRouteBreakdown } from "../../finished-goods-master/costing";
 import {
     calculateContainerizationMetrics,
     formatInventoryQuantity,
@@ -544,6 +544,23 @@ assert.equal(formatProductionValue(configuredOverhead.cogsBreakdown.directLaborC
 assert.equal(formatProductionValue(configuredOverhead.cogsBreakdown.baseUnitCOGS), "25.8189");
 assert.equal(formatProductionValue(configuredOverhead.cogsBreakdown.adjustedUnitCOGS), "26.2120");
 
+const displayRoundedQAComponents = calculateDisplayUnitCOGS(
+    [18.452, 1.44375, 1.03707, 4.85],
+    1
+);
+assert.equal(formatManufacturingUnitCostForDisplay(displayRoundedQAComponents.baseUnitCost), "25.7829");
+assert.equal(formatManufacturingUnitCostForDisplay(displayRoundedQAComponents.yieldAdjustedUnitCost), "25.7829");
+assert.equal(
+    formatManufacturingUnitCostForDisplay(18.452 + 1.44375 + 1.03707 + 4.85),
+    "25.7828"
+);
+assert.equal(
+    formatManufacturingUnitCostForDisplay(
+        calculateDisplayUnitCOGS([18.452, 1.44375, 1.03707, 4.85], 0.985).yieldAdjustedUnitCost
+    ),
+    "26.1755"
+);
+
 const configuredOverheadAtFullBatch = calculateProductionMetrics({
     targetQuantity: 13972.38,
     baseQuantity: 6986.19,
@@ -719,7 +736,7 @@ const bagWithoutWeight = calculateContainerizationMetrics(
 );
 assert.equal(bagWithoutWeight.sackCount, 400);
 assert.equal(bagWithoutWeight.hasFlourWeightEstimate, false);
-assert.equal(bagWithoutWeight.hasOutputEstimate, false);
+assert.equal(bagWithoutWeight.hasWeightBasedOutputEstimate, false);
 
 assert.equal(getKilogramsPerInventoryUnit({ unit_of_measurement: { unit_shortcut: "kg" } }), 1);
 assert.equal(getKilogramsPerInventoryUnit({

@@ -2,7 +2,8 @@
 import { NextResponse } from "next/server";
 import { 
     fetchJobOrders, 
-    getProductInventoryAndSafetyStock
+    getProductInventoryAndSafetyStock,
+    InventoryReservationError
 } from "../planning-helper";
 import {
     DIRECTUS_URL,
@@ -46,6 +47,8 @@ import {
     JOB_ORDER_MODULE_PATHS,
     type JobOrderModulePath
 } from "@/app/api/manufacturing/job-orders/_module-access";
+import { loadSubassemblyBOMComponents, parseSubassemblyProductIds } from "../helpers/subassembly-bom-components";
+import { fetchTerminalJobOrderDetails, fetchTerminalJobOrderQueue } from "../helpers/terminal-job-orders";
 
 const WIZARD_STEP_TIMEOUT_MS = 20000;
 
@@ -185,6 +188,8 @@ export async function handleGET(request: Request) {
 
         const readModulePaths: readonly JobOrderModulePath[] | null = action === "users"
             ? null
+            : action === "terminal-queue" || action === "terminal-job-order"
+                ? [JOB_ORDER_MODULE_PATHS.production]
             : action === "qa-job-orders" || action === "qa-logs" || action === "job-order-materials"
                 ? [JOB_ORDER_MODULE_PATHS.qualityAssurance]
                 : action === "job-materials"
@@ -195,6 +200,7 @@ export async function handleGET(request: Request) {
                             || action === "version-stock"
                             || action === "wizard-step-2"
                             || action === "sub-assembly-version-details"
+                            || action === "sub-assembly-bom-components"
                             || action === "lots"
                             ? [JOB_ORDER_MODULE_PATHS.planning]
                             : productId || bomId
@@ -223,6 +229,31 @@ export async function handleGET(request: Request) {
             const branchId = Number(branchIdStr);
             const data = await getProductInventoryAndSafetyStock(productIds, branchId);
             return NextResponse.json(data);
+        }
+
+        if (action === "sub-assembly-bom-components") {
+            const productIds = parseSubassemblyProductIds(searchParams.get("productIds"));
+            if (!productIds || productIds.length === 0) {
+                return NextResponse.json({ error: "Provide one or more valid productIds" }, { status: 400 });
+            }
+            return NextResponse.json(await loadSubassemblyBOMComponents(productIds));
+        }
+
+        if (action === "terminal-queue") {
+            return NextResponse.json(await fetchTerminalJobOrderQueue());
+        }
+
+        if (action === "terminal-job-order") {
+            const rawJoId = searchParams.get("joId");
+            const jobOrderId = Number(rawJoId);
+            if (!rawJoId || !Number.isSafeInteger(jobOrderId) || jobOrderId <= 0) {
+                return NextResponse.json({ error: "A valid Job Order ID is required." }, { status: 400 });
+            }
+            const jobOrder = await fetchTerminalJobOrderDetails(jobOrderId);
+            if (!jobOrder) {
+                return NextResponse.json({ error: "This Job Order is no longer available in the Shop Floor Execution Terminal." }, { status: 404 });
+            }
+            return NextResponse.json(jobOrder);
         }
 
         if (action === "version-stock") {
@@ -1404,6 +1435,7 @@ export async function handleGET(request: Request) {
             const branchId = Number(searchParams.get("branchId") || "0");
             const isBuffer = searchParams.get("isBuffer") === "true";
             const usePhysicalOnHand = searchParams.get("usePhysicalOnHand") === "true";
+            const reservationAware = searchParams.get("reservationAware") === "true";
             const requestedPreviewRaw = Number(searchParams.get("requestedQuantity") || "");
             const plannedPreviewRaw = Number(searchParams.get("plannedQuantity") || "");
 
@@ -1771,7 +1803,8 @@ export async function handleGET(request: Request) {
 
             // Run getProductInventoryAndSafetyStock for all collected product IDs
             const inventories = await getProductInventoryAndSafetyStock(allProductIds, branchId, {
-                includeReservations: !(isBuffer || usePhysicalOnHand)
+                includeReservations: reservationAware || !(isBuffer || usePhysicalOnHand),
+                reservationAware
             });
 
             // 2e: Surface version drift so a stale pinned base quantity (e.g. a
@@ -2069,6 +2102,7 @@ export async function handleGET(request: Request) {
                 return ({
                 jo_id: item.jo_id,
                 order_id: item.job_order_id || item.order_id || item.id,
+                job_order_id: item.job_order_id || item.order_id || item.id,
                 order_no: item.order_no,
                 product_id: item.product_id,
                 product_name: item.product_name,
@@ -2076,17 +2110,24 @@ export async function handleGET(request: Request) {
                 uom_shortcut: item.uom_shortcut,
                 unit_of_measurement: item.unit_of_measurement,
                 quantity: Number(item.quantity || 0),
+                target_quantity: Number(item.quantity || 0),
                 due_date: item.due_date,
+                start_date: item.start_date || null,
+                end_date: item.end_date || item.due_date || null,
                 status: item.status,
                 is_batched: !!item.is_batched,
                 bom: item.bom,
                 version_id: item.version_id,
                 recipe_version_name: item.recipe_version_name,
+                version_name: item.version_name || item.recipe_version_name,
                 components: item.components,
                 routings: item.routings,
                 allocationResults: item.allocation_results,
                 procurementStatus: item.procurement_status,
                 branch_id: item.branch_id,
+                uom_id: item.uom_id ?? null,
+                priority: Number(item.priority ?? 0),
+                shift_option: String(resolveProductionShiftHours(item.shift_option)),
                 primary_work_center_id: item.primary_work_center_id ?? null,
                 primary_work_center_name: item.primary_work_center_id
                     ? workCenterNameById.get(Number(item.primary_work_center_id)) || null
@@ -2095,6 +2136,10 @@ export async function handleGET(request: Request) {
                 routing_tasks: item.routing_tasks || [],
                 routingTasks: item.routing_tasks || [],
                 salesOrders: item.sales_orders || [],
+                assignedPersonnel: item.assigned_personnel || {},
+                assigned_personnel: item.assigned_personnel || {},
+                subAssemblyVersionMap: item.sub_assembly_version_map || {},
+                sub_assembly_version_map: item.sub_assembly_version_map || {},
                 replacementCredits: item.replacement_credits || [],
                 shiftOption: String(resolveProductionShiftHours(item.shift_option)),
                 dailyBreakdown: item.daily_breakdown || null,
@@ -2134,15 +2179,17 @@ export async function handleGET(request: Request) {
     } catch (e) {
         console.error("API Error in planning-engineering GET:", e);
         const movementError = e instanceof MmInventoryMovementError ? e : null;
+        const reservationError = e instanceof InventoryReservationError ? e : null;
         return NextResponse.json(
             {
                 error: (e as { message?: string }).message || "Failed to process planning request",
                 ...(movementError?.code ? { code: movementError.code } : {}),
+                ...(reservationError?.code ? { code: reservationError.code } : {}),
                 ...(movementError?.retryAfterSeconds
                     ? { retryAfterSeconds: movementError.retryAfterSeconds }
                     : {})
             },
-            { status: e instanceof MmLotError ? e.status : movementErrorStatus(e) }
+            { status: reservationError?.status || (e instanceof MmLotError ? e.status : movementErrorStatus(e)) }
         );
     }
 }

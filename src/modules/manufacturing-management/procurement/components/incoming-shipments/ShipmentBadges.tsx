@@ -34,13 +34,16 @@ export function formatAmount(value: number | string | null | undefined) {
     }
 }
 
-export function MaterialTypeBadge({ typeId, short = false }: { typeId?: number | string | null; short?: boolean }) {
+export function MaterialTypeBadge({ typeId, materialType, short = false }: { typeId?: number | string | null; materialType?: string | null; short?: boolean }) {
     const normalizedTypeId = Number(typeId);
-    const type = normalizedTypeId === 389
+    const normalizedType = String(materialType || "").toLowerCase().trim();
+    const type = normalizedTypeId === 389 || normalizedType === "raw_material" || normalizedType === "raw_materials"
         ? { label: "Raw Material", shortLabel: "RM", className: "bg-blue-500/10 text-blue-600 border-blue-500/20" }
-        : normalizedTypeId === 390
+        : normalizedTypeId === 390 || normalizedType === "packaging"
             ? { label: "Packaging Item", shortLabel: "PKG", className: "bg-amber-500/10 text-amber-600 border-amber-500/20" }
-            : { label: "Unclassified", shortLabel: "N/A", className: "bg-muted text-muted-foreground border-border" };
+            : normalizedTypeId === 388 || normalizedType === "finished_goods"
+                ? { label: "Finished Goods", shortLabel: "FG", className: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" }
+                : { label: "Unclassified", shortLabel: "N/A", className: "bg-muted text-muted-foreground border-border" };
 
     return (
         <span
