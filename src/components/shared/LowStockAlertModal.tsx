@@ -36,14 +36,24 @@ export interface NearExpiryBatch {
 
 export interface LowStockItem {
     product_id: number;
+    parent_id?: number | null;
     product_name: string;
     product_code: string | null;
     description: string | null;
     unit: string | null;
-    on_hand: number; // Usable unexpired on-hand
+    unit_multiplier: number;
+    is_child: boolean;
+    family_root_id: number;
+    family_members_count: number;
+    physical_on_hand: number; // Actual physical on-hand in this SKU's UOM
+    family_equivalent_on_hand: number; // Converted total family stock in this SKU's UOM
+    family_total_base_pieces: number; // Total physical pieces pooled across all family variants
+    base_unit_name: string; // e.g. "PCS"
+    on_hand: number; // Backwards-compatible alias for physical_on_hand
     expired_quantity: number;
     total_physical_on_hand: number;
     maintaining_quantity: number;
+    stock_status: "CRITICAL_DEFICIT" | "PACKAGING_DEFICIT" | "SAFE";
     near_expiry_batches: NearExpiryBatch[];
 }
 
@@ -138,30 +148,49 @@ const rowVariants = {
 };
 
 function StockStatusBadge({
-    onHand,
+    status,
+    physicalOnHand,
+    equivalentOnHand,
     maintaining,
 }: {
-    onHand: number;
+    status?: "CRITICAL_DEFICIT" | "PACKAGING_DEFICIT" | "SAFE";
+    physicalOnHand: number;
+    equivalentOnHand: number;
     maintaining: number;
 }) {
-    if (onHand === 0) {
+    if (status === "CRITICAL_DEFICIT" || (physicalOnHand === 0 && equivalentOnHand === 0)) {
+        if (physicalOnHand === 0 && equivalentOnHand === 0) {
+            return (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-red-500/10 px-2.5 py-1 text-[11px] font-bold tracking-wide uppercase text-red-600 ring-1 ring-red-500/20 dark:text-red-400 whitespace-nowrap">
+                    <PackageX className="h-3 w-3 shrink-0" />
+                    Out of Stock
+                </span>
+            );
+        }
         return (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-red-500/10 px-2.5 py-1 text-[11px] font-bold tracking-wide uppercase text-red-600 ring-1 ring-red-500/20 dark:text-red-400 whitespace-nowrap">
-                <PackageX className="h-3 w-3 shrink-0" />
-                Out of Stock
+            <span
+                className="inline-flex items-center gap-1.5 rounded-full bg-rose-500/10 px-2.5 py-1 text-[11px] font-bold tracking-wide uppercase text-rose-600 ring-1 ring-rose-500/25 dark:text-rose-400 whitespace-nowrap"
+                title="Overall warehouse inventory across all variants is below maintaining target"
+            >
+                <AlertTriangle className="h-3 w-3 shrink-0" />
+                Critical Deficit
             </span>
         );
     }
-    if (onHand <= maintaining) {
+    if (status === "PACKAGING_DEFICIT" || (physicalOnHand <= maintaining && equivalentOnHand >= maintaining)) {
         return (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-1 text-[11px] font-bold tracking-wide uppercase text-amber-600 ring-1 ring-amber-500/20 dark:text-amber-400 whitespace-nowrap">
-                <Package className="h-3 w-3 shrink-0" />
-                Low Stock
+            <span
+                className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-1 text-[11px] font-bold tracking-wide uppercase text-amber-600 ring-1 ring-amber-500/25 dark:text-amber-400 whitespace-nowrap"
+                title="Low in this specific packaging, but stock exists in other variants (can unbox/repack)"
+            >
+                <Boxes className="h-3 w-3 shrink-0" />
+                Packaging Shortage
             </span>
         );
     }
     return (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold tracking-wide uppercase text-emerald-600 ring-1 ring-emerald-500/20 dark:text-emerald-400 whitespace-nowrap">
+            <ShieldCheck className="h-3 w-3 shrink-0" />
             Adequate
         </span>
     );
@@ -200,21 +229,31 @@ function ExpiryStatusBadge({ status }: { status: NearExpiryBatch["status"] }) {
     );
 }
 
-function StockProgressBar({ onHand, maintaining }: { onHand: number; maintaining: number }) {
-    const percent = maintaining > 0 ? Math.min(100, Math.round((onHand / maintaining) * 100)) : 0;
-    const isOut = onHand === 0;
+function StockProgressBar({
+    equivalentOnHand,
+    maintaining,
+    isCritical,
+}: {
+    equivalentOnHand: number;
+    maintaining: number;
+    isCritical?: boolean;
+}) {
+    const percent = maintaining > 0 ? Math.min(100, Math.round((equivalentOnHand / maintaining) * 100)) : 0;
+    const isOut = equivalentOnHand === 0;
 
     return (
         <div className="flex items-center gap-2.5 min-w-[120px] whitespace-nowrap">
             <div className="h-1.5 w-20 overflow-hidden rounded-full bg-muted/60 dark:bg-muted/40">
                 <div
-                    className={`h-full rounded-full transition-all duration-500 ${isOut ? "bg-red-500" : "bg-amber-500"}`}
+                    className={`h-full rounded-full transition-all duration-500 ${
+                        isOut || isCritical ? "bg-rose-500" : "bg-amber-500"
+                    }`}
                     style={{ width: `${Math.max(percent, isOut ? 0 : 8)}%` }}
                 />
             </div>
             <span
                 className={`text-[11px] font-mono tabular-nums font-semibold ${
-                    isOut ? "text-red-600 dark:text-red-400" : "text-amber-600 dark:text-amber-400"
+                    isOut || isCritical ? "text-rose-600 dark:text-rose-400" : "text-amber-600 dark:text-amber-400"
                 }`}
             >
                 {percent}%
@@ -303,17 +342,34 @@ export function LowStockAlertModal() {
         setOpen(false);
     }
 
-    // Stock tab items: products with actual deficit (on_hand <= maintaining_quantity)
+    // Stock tab items: products with actual deficit (critical deficit or packaging shortage)
     const stockItems = React.useMemo(() => {
-        return items.filter((item) => item.on_hand <= item.maintaining_quantity);
+        return items.filter(
+            (item) =>
+                item.stock_status === "CRITICAL_DEFICIT" ||
+                item.stock_status === "PACKAGING_DEFICIT" ||
+                (item.maintaining_quantity > 0 && item.physical_on_hand <= item.maintaining_quantity)
+        );
     }, [items]);
 
-    const outOfStockCount = React.useMemo(
-        () => stockItems.filter((i) => i.on_hand === 0).length,
+    const criticalDeficitCount = React.useMemo(
+        () =>
+            stockItems.filter(
+                (i) =>
+                    i.stock_status === "CRITICAL_DEFICIT" ||
+                    (i.maintaining_quantity > 0 && i.family_equivalent_on_hand < i.maintaining_quantity)
+            ).length,
         [stockItems]
     );
-    const lowStockCount = React.useMemo(
-        () => stockItems.filter((i) => i.on_hand > 0 && i.on_hand <= i.maintaining_quantity).length,
+    const packagingShortageCount = React.useMemo(
+        () =>
+            stockItems.filter(
+                (i) =>
+                    i.stock_status === "PACKAGING_DEFICIT" ||
+                    (i.maintaining_quantity > 0 &&
+                        i.physical_on_hand <= i.maintaining_quantity &&
+                        i.family_equivalent_on_hand >= i.maintaining_quantity)
+            ).length,
         [stockItems]
     );
     const totalNearExpiryBatches = expiryBatches.length;
@@ -417,21 +473,21 @@ export function LowStockAlertModal() {
                             {/* Summary Chips & Search Input */}
                             <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
                                 <div className="flex flex-wrap items-center gap-2">
-                                    {outOfStockCount > 0 && (
+                                    {criticalDeficitCount > 0 && (
                                         <button
                                             type="button"
                                             onClick={() => setActiveTab("stock")}
                                             className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold ring-1 transition-all ${
                                                 activeTab === "stock"
-                                                    ? "bg-red-500/15 text-red-600 ring-red-500/30 shadow-xs dark:text-red-400"
-                                                    : "bg-red-500/5 text-red-600/80 ring-red-500/20 hover:bg-red-500/10 dark:text-red-400/80"
+                                                    ? "bg-rose-500/15 text-rose-600 ring-rose-500/30 shadow-xs dark:text-rose-400"
+                                                    : "bg-rose-500/5 text-rose-600/80 ring-rose-500/20 hover:bg-rose-500/10 dark:text-rose-400/80"
                                             }`}
                                         >
                                             <PackageX className="h-3.5 w-3.5 shrink-0" />
-                                            <span>{outOfStockCount} Out of Stock</span>
+                                            <span>{criticalDeficitCount} Critical Deficits</span>
                                         </button>
                                     )}
-                                    {lowStockCount > 0 && (
+                                    {packagingShortageCount > 0 && (
                                         <button
                                             type="button"
                                             onClick={() => setActiveTab("stock")}
@@ -441,8 +497,8 @@ export function LowStockAlertModal() {
                                                     : "bg-amber-500/5 text-amber-600/80 ring-amber-500/20 hover:bg-amber-500/10 dark:text-amber-400/80"
                                             }`}
                                         >
-                                            <Package className="h-3.5 w-3.5 shrink-0" />
-                                            <span>{lowStockCount} Low Stock</span>
+                                            <Boxes className="h-3.5 w-3.5 shrink-0" />
+                                            <span>{packagingShortageCount} Packaging Shortages</span>
                                         </button>
                                     )}
                                     {totalNearExpiryBatches > 0 && (
@@ -542,33 +598,36 @@ export function LowStockAlertModal() {
                         <div className="flex-1 overflow-y-auto overflow-x-auto overscroll-contain">
                             {activeTab === "stock" ? (
                                 /* STOCK TAB TABLE */
-                                <table className="w-full text-xs min-w-[960px] border-collapse">
+                                <table className="w-full text-xs min-w-[1040px] border-collapse">
                                     <thead className="sticky top-0 z-10 border-b border-border/60 bg-muted/75 backdrop-blur-md">
                                         <tr>
                                             <th className="px-4 py-3 text-left font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap w-12">
                                                 #
                                             </th>
-                                            <th className="px-4 py-3 text-left font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap min-w-[320px]">
-                                                Product Name
-                                            </th>
-                                            <th className="px-4 py-3 text-left font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap min-w-[140px]">
-                                                Stock Level
+                                            <th className="px-4 py-3 text-left font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap min-w-[280px]">
+                                                Product & Packaging
                                             </th>
                                             <th className="px-4 py-3 text-right font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap min-w-[130px]">
-                                                Usable on Hand
+                                                Physical Stock
                                             </th>
-                                            <th className="px-4 py-3 text-right font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap min-w-[120px]">
+                                            <th className="px-4 py-3 text-right font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap min-w-[180px]">
+                                                Family-Equivalent Stock
+                                            </th>
+                                            <th className="px-4 py-3 text-right font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap min-w-[110px]">
                                                 Target Qty
                                             </th>
-                                            <th className="px-4 py-3 text-center font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap min-w-[130px]">
-                                                Status
+                                            <th className="px-4 py-3 text-left font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap min-w-[130px]">
+                                                Stock Level
+                                            </th>
+                                            <th className="px-4 py-3 text-center font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap min-w-[160px]">
+                                                Status & Insight
                                             </th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-border/30">
                                         {filteredStockItems.length === 0 ? (
                                             <tr>
-                                                <td colSpan={6} className="px-4 py-12 text-center text-muted-foreground">
+                                                <td colSpan={7} className="px-4 py-12 text-center text-muted-foreground">
                                                     No stock deficits found. All active monitored products meet maintaining inventory targets.
                                                 </td>
                                             </tr>
@@ -590,15 +649,24 @@ export function LowStockAlertModal() {
                                                             {i + 1}
                                                         </td>
 
-                                                        {/* Product Name (shows product.description and under product code) */}
+                                                        {/* Product & Packaging */}
                                                         <td className="px-4 py-3.5 align-middle">
                                                             <div className="font-semibold text-foreground whitespace-nowrap text-xs">
                                                                 {displayName}
                                                             </div>
-                                                            <div className="mt-1 flex items-center gap-1.5 whitespace-nowrap">
+                                                            <div className="mt-1 flex flex-wrap items-center gap-1.5 whitespace-nowrap">
                                                                 <span className="font-mono text-[11px] font-medium px-2 py-0.5 rounded-md bg-muted/70 text-muted-foreground border border-border/40 whitespace-nowrap inline-block">
                                                                     {item.product_code ?? "-"}
                                                                 </span>
+                                                                {item.is_child ? (
+                                                                    <span className="text-[9px] font-bold uppercase tracking-wider text-blue-600 bg-blue-500/10 border border-blue-500/25 px-1.5 py-0.5 rounded whitespace-nowrap">
+                                                                        Variant (1:{item.unit_multiplier} {item.base_unit_name || "PCS"})
+                                                                    </span>
+                                                                ) : item.family_members_count > 1 ? (
+                                                                    <span className="text-[9px] font-black uppercase tracking-wider text-primary bg-primary/15 border border-primary/25 px-1.5 py-0.5 rounded whitespace-nowrap">
+                                                                        Family Master ({item.family_members_count} SKUs)
+                                                                    </span>
+                                                                ) : null}
                                                                 {item.description && item.description !== item.product_name && (
                                                                     <span className="text-[10px] text-muted-foreground/60 whitespace-nowrap">
                                                                         ({item.product_name})
@@ -607,42 +675,64 @@ export function LowStockAlertModal() {
                                                             </div>
                                                         </td>
 
-                                                        {/* Stock Level */}
-                                                        <td className="px-4 py-3.5 whitespace-nowrap align-middle">
-                                                            <StockProgressBar
-                                                                onHand={item.on_hand}
-                                                                maintaining={item.maintaining_quantity}
-                                                            />
-                                                        </td>
-
-                                                        {/* Usable on Hand */}
+                                                        {/* Physical Stock */}
                                                         <td className="px-4 py-3.5 text-right font-bold tabular-nums whitespace-nowrap align-middle">
                                                             <div>
                                                                 <span
                                                                     className={
-                                                                        item.on_hand === 0
-                                                                            ? "text-red-600 dark:text-red-400 font-extrabold text-xs"
-                                                                            : "text-amber-600 dark:text-amber-400 text-xs"
+                                                                        item.physical_on_hand === 0
+                                                                            ? "text-rose-600 dark:text-rose-400 font-extrabold text-xs"
+                                                                            : "text-foreground text-xs font-bold"
                                                                     }
                                                                 >
-                                                                    {item.on_hand.toLocaleString(undefined, {
+                                                                    {item.physical_on_hand.toLocaleString(undefined, {
                                                                         minimumFractionDigits: 0,
+                                                                        maximumFractionDigits: 2,
                                                                     })}
                                                                 </span>
                                                                 {item.unit && (
-                                                                    <span className="ml-1.5 text-[10px] text-muted-foreground/70 font-normal">
+                                                                    <span className="ml-1 text-[10px] text-muted-foreground/70 font-normal">
                                                                         {item.unit}
                                                                     </span>
                                                                 )}
                                                             </div>
                                                             {item.expired_quantity > 0 && (
                                                                 <div
-                                                                    className="text-[10px] text-muted-foreground/60 font-normal mt-0.5 whitespace-nowrap"
+                                                                    className="text-[10px] text-rose-500/70 font-normal mt-0.5 whitespace-nowrap"
                                                                     title="Expired stock excluded from usable inventory under FEFO"
                                                                 >
                                                                     +{item.expired_quantity.toLocaleString()} expired
                                                                 </div>
                                                             )}
+                                                        </td>
+
+                                                        {/* Family-Equivalent Stock */}
+                                                        <td className="px-4 py-3.5 text-right tabular-nums whitespace-nowrap align-middle">
+                                                            <div>
+                                                                <span
+                                                                    className={
+                                                                        item.family_equivalent_on_hand < item.maintaining_quantity
+                                                                            ? "text-rose-600 dark:text-rose-400 font-extrabold text-xs"
+                                                                            : "text-foreground font-bold text-xs"
+                                                                    }
+                                                                >
+                                                                    {item.family_equivalent_on_hand.toLocaleString(undefined, {
+                                                                        minimumFractionDigits: 0,
+                                                                        maximumFractionDigits: 2,
+                                                                    })}
+                                                                </span>
+                                                                {item.unit && (
+                                                                    <span className="ml-1 text-[10px] text-muted-foreground font-semibold">
+                                                                        {item.unit} eq.
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            <div
+                                                                className="text-[10px] text-muted-foreground/60 font-mono mt-0.5 whitespace-nowrap"
+                                                                title="Total usable pieces pooled across all related packaging variants in the warehouse"
+                                                            >
+                                                                {item.family_total_base_pieces.toLocaleString()} {item.base_unit_name || "PCS"} in family
+                                                            </div>
                                                         </td>
 
                                                         {/* Target Qty */}
@@ -659,10 +749,21 @@ export function LowStockAlertModal() {
                                                             )}
                                                         </td>
 
-                                                        {/* Status */}
+                                                        {/* Stock Level */}
+                                                        <td className="px-4 py-3.5 whitespace-nowrap align-middle">
+                                                            <StockProgressBar
+                                                                equivalentOnHand={item.family_equivalent_on_hand}
+                                                                maintaining={item.maintaining_quantity}
+                                                                isCritical={item.stock_status === "CRITICAL_DEFICIT"}
+                                                            />
+                                                        </td>
+
+                                                        {/* Status & Insight */}
                                                         <td className="px-4 py-3.5 text-center whitespace-nowrap align-middle">
                                                             <StockStatusBadge
-                                                                onHand={item.on_hand}
+                                                                status={item.stock_status}
+                                                                physicalOnHand={item.physical_on_hand}
+                                                                equivalentOnHand={item.family_equivalent_on_hand}
                                                                 maintaining={item.maintaining_quantity}
                                                             />
                                                         </td>

@@ -31,8 +31,28 @@ interface RawBranch {
     isActive?: number | boolean | string;
 }
 
+function parseParentId(raw: unknown): number | null {
+    if (!raw) return null;
+    if (typeof raw === "number") return raw > 0 ? raw : null;
+    if (typeof raw === "string") {
+        const n = parseInt(raw, 10);
+        return isNaN(n) || n <= 0 ? null : n;
+    }
+    if (typeof raw === "object") {
+        const obj = raw as Record<string, unknown>;
+        const idVal = obj.product_id ?? obj.id;
+        if (typeof idVal === "number") return idVal > 0 ? idVal : null;
+        if (typeof idVal === "string") {
+            const n = parseInt(idVal, 10);
+            return isNaN(n) || n <= 0 ? null : n;
+        }
+    }
+    return null;
+}
+
 interface RawProduct {
     product_id: number;
+    parent_id?: number | { product_id?: number; id?: number } | null;
     product_name: string;
     product_code: string | null;
     description?: string | null;
@@ -41,7 +61,8 @@ interface RawProduct {
     price_per_unit?: number | string | null;
     maintaining_quantity: number;
     product_type?: number | { id?: number; name?: string } | null;
-    unit_of_measurement: { unit_shortcut: string | null } | null;
+    unit_of_measurement: { unit_shortcut: string | null; unit_name?: string | null } | null;
+    unit_of_measurement_count?: number | string | null;
 }
 
 interface SpringProductOnhand {
@@ -97,14 +118,24 @@ export interface NearExpiryBatch {
 
 export interface LowStockItem {
     product_id: number;
+    parent_id: number | null;
     product_name: string;
     product_code: string | null;
     description: string | null;
     unit: string | null;
-    on_hand: number; // Usable unexpired on-hand (FEFO)
+    unit_multiplier: number;
+    is_child: boolean;
+    family_root_id: number;
+    family_members_count: number;
+    physical_on_hand: number; // Actual physical on-hand in this SKU's UOM
+    family_equivalent_on_hand: number; // Converted total family stock in this SKU's UOM
+    family_total_base_pieces: number; // Total physical pieces pooled across all family variants
+    base_unit_name: string; // e.g. "PCS"
+    on_hand: number; // Backwards-compatible alias for physical_on_hand
     expired_quantity: number;
     total_physical_on_hand: number;
     maintaining_quantity: number;
+    stock_status: "CRITICAL_DEFICIT" | "PACKAGING_DEFICIT" | "SAFE";
     near_expiry_batches: NearExpiryBatch[];
 }
 
@@ -159,8 +190,8 @@ export async function GET() {
                 { headers, cache: "no-store" }
             ),
             fetch(
-                `${DIRECTUS_URL}/items/products?filter[isActive][_eq]=1&filter[maintaining_quantity][_gt]=0` +
-                `&fields=product_id,product_name,product_code,description,cost_per_unit,estimated_unit_cost,price_per_unit,maintaining_quantity,product_type,unit_of_measurement.unit_shortcut&limit=-1`,
+                `${DIRECTUS_URL}/items/products?filter[isActive][_eq]=1` +
+                `&fields=product_id,parent_id,product_name,product_code,description,cost_per_unit,estimated_unit_cost,price_per_unit,maintaining_quantity,product_type,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count&limit=-1`,
                 { headers, cache: "no-store" }
             ),
             fetch(
@@ -464,14 +495,83 @@ export async function GET() {
             }
         }
 
-        // 5. Evaluate Usable On-Hand (FEFO: Usable = Total - Expired) and Filter
+        // 5. Build Product Family Groups & Calculate Family Base Stock Pool
+        // Group all products by Family Root (parent_id or self)
+        const familyMembersMap = new Map<number, RawProduct[]>();
+        for (const p of productData) {
+            const rawParentId = parseParentId(p.parent_id);
+            const rootId = rawParentId && rawParentId > 0 && rawParentId !== p.product_id ? rawParentId : p.product_id;
+            const members = familyMembersMap.get(rootId) || [];
+            members.push(p);
+            familyMembersMap.set(rootId, members);
+        }
+
+        // Helper to retrieve usable on-hand (total physical minus expired)
+        const getUsableOnHand = (productId: number) => {
+            const totalPhysical = totalPhysicalMap.get(productId) ?? 0;
+            const expiredQty = expiredMap.get(productId) ?? 0;
+            return {
+                totalPhysical,
+                expiredQty,
+                usableOnHand: Math.max(0, totalPhysical - expiredQty),
+            };
+        };
+
+        // Calculate total physical pieces pooled across all family members
+        const familyTotalBasePiecesMap = new Map<number, number>();
+        const familyBaseUnitMap = new Map<number, string>();
+
+        for (const [rootId, members] of familyMembersMap.entries()) {
+            let totalPieces = 0;
+            let baseUnit = "PCS";
+
+            // Determine base unit: prioritize member with multiplier == 1 or the root product
+            const baseMember =
+                members.find((m) => {
+                    const cnt = Number(m.unit_of_measurement_count);
+                    return !isNaN(cnt) && cnt === 1;
+                }) ||
+                members.find((m) => m.product_id === rootId) ||
+                members[0];
+
+            if (baseMember?.unit_of_measurement?.unit_shortcut) {
+                baseUnit = baseMember.unit_of_measurement.unit_shortcut;
+            }
+
+            for (const m of members) {
+                const { usableOnHand } = getUsableOnHand(m.product_id);
+                const rawCount = Number(m.unit_of_measurement_count);
+                const mult = !isNaN(rawCount) && rawCount > 0 ? rawCount : 1;
+                totalPieces += usableOnHand * mult;
+            }
+
+            familyTotalBasePiecesMap.set(rootId, totalPieces);
+            familyBaseUnitMap.set(rootId, baseUnit);
+        }
+
+        // 6. Evaluate Usable On-Hand (Physical & Family-Equivalent) and Classify Deficits
         const lowStockItems: LowStockItem[] = productData
             .map((p): LowStockItem => {
-                const totalPhysical = totalPhysicalMap.get(p.product_id) ?? 0;
-                const expiredQty = expiredMap.get(p.product_id) ?? 0;
-                const usableOnHand = Math.max(0, totalPhysical - expiredQty);
-                const maintaining = Number(p.maintaining_quantity);
+                const { totalPhysical, expiredQty, usableOnHand } = getUsableOnHand(p.product_id);
+                const maintaining = Number(p.maintaining_quantity || 0);
                 const nearExpiry = nearExpiryMap.get(p.product_id) ?? [];
+
+                const rawParentId = parseParentId(p.parent_id);
+                const isChild = Boolean(rawParentId && rawParentId > 0 && rawParentId !== p.product_id);
+                const rootId = isChild ? rawParentId! : p.product_id;
+
+                const rawCount = Number(p.unit_of_measurement_count);
+                const multiplier = !isNaN(rawCount) && rawCount > 0 ? rawCount : 1;
+
+                const familyMembers = familyMembersMap.get(rootId) || [p];
+                const familyTotalPieces = familyTotalBasePiecesMap.get(rootId) ?? usableOnHand * multiplier;
+                const baseUnitName = familyBaseUnitMap.get(rootId) || p.unit_of_measurement?.unit_shortcut || "PCS";
+
+                // Equivalent on-hand converted to this variant's packaging unit
+                const familyEquivalentOnHand =
+                    multiplier > 0
+                        ? Number((familyTotalPieces / multiplier).toFixed(2))
+                        : familyTotalPieces;
 
                 // Sort near expiry batches with nearest expiry first (FEFO)
                 nearExpiry.sort((a, b) => {
@@ -480,24 +580,60 @@ export async function GET() {
                     return daysA - daysB;
                 });
 
+                // Status Classification:
+                // - CRITICAL_DEFICIT: Both physical on-hand and total family equivalent are below maintaining target (true shortage)
+                // - PACKAGING_DEFICIT: Physical on-hand is low, but total family equivalent meets or exceeds target (convertible stock exists)
+                // - SAFE: Physical stock meets or exceeds maintaining target
+                let stockStatus: "CRITICAL_DEFICIT" | "PACKAGING_DEFICIT" | "SAFE" = "SAFE";
+                if (usableOnHand <= maintaining && maintaining > 0) {
+                    if (familyEquivalentOnHand < maintaining) {
+                        stockStatus = "CRITICAL_DEFICIT";
+                    } else {
+                        stockStatus = "PACKAGING_DEFICIT";
+                    }
+                }
+
                 return {
                     product_id: p.product_id,
+                    parent_id: rawParentId,
                     product_name: p.product_name,
                     product_code: p.product_code ?? null,
                     description: p.description || null,
                     unit: p.unit_of_measurement?.unit_shortcut ?? null,
-                    on_hand: usableOnHand,
+                    unit_multiplier: multiplier,
+                    is_child: isChild,
+                    family_root_id: rootId,
+                    family_members_count: familyMembers.length,
+                    physical_on_hand: usableOnHand,
+                    family_equivalent_on_hand: familyEquivalentOnHand,
+                    family_total_base_pieces: familyTotalPieces,
+                    base_unit_name: baseUnitName,
+                    on_hand: usableOnHand, // Backwards-compatible alias
                     expired_quantity: expiredQty,
                     total_physical_on_hand: totalPhysical,
                     maintaining_quantity: maintaining,
+                    stock_status: stockStatus,
                     near_expiry_batches: nearExpiry,
                 };
             })
-            .filter((item) => item.on_hand <= item.maintaining_quantity || item.near_expiry_batches.length > 0)
-            // Sort: Products with lowest stock ratio first (0 on_hand = worst), then by name
+            // Filter: show items with deficits (critical or packaging) or items with near-expiry batches
+            .filter((item) => {
+                const hasDeficit = item.maintaining_quantity > 0 && (
+                    item.physical_on_hand <= item.maintaining_quantity ||
+                    item.family_equivalent_on_hand <= item.maintaining_quantity
+                );
+                return hasDeficit || item.near_expiry_batches.length > 0;
+            })
+            // Sort: Critical deficits first, then packaging deficits, then by ratio of equivalent stock ascending
             .sort((a, b) => {
-                const ratioA = a.maintaining_quantity > 0 ? a.on_hand / a.maintaining_quantity : 0;
-                const ratioB = b.maintaining_quantity > 0 ? b.on_hand / b.maintaining_quantity : 0;
+                if (a.stock_status !== b.stock_status) {
+                    if (a.stock_status === "CRITICAL_DEFICIT") return -1;
+                    if (b.stock_status === "CRITICAL_DEFICIT") return 1;
+                    if (a.stock_status === "PACKAGING_DEFICIT") return -1;
+                    if (b.stock_status === "PACKAGING_DEFICIT") return 1;
+                }
+                const ratioA = a.maintaining_quantity > 0 ? a.family_equivalent_on_hand / a.maintaining_quantity : 0;
+                const ratioB = b.maintaining_quantity > 0 ? b.family_equivalent_on_hand / b.maintaining_quantity : 0;
                 if (ratioA !== ratioB) return ratioA - ratioB;
                 return a.product_name.localeCompare(b.product_name);
             });
