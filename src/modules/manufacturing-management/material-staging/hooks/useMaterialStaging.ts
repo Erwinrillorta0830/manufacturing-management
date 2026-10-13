@@ -32,6 +32,7 @@ export function useMaterialStaging() {
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [hasSuccessfulLoad, setHasSuccessfulLoad] = useState(false);
+    const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
     const [selectedBranchId, setSelectedBranchId] = useState("all");
     const [selectedStatusFilter, setSelectedStatusFilter] = useState("FOR_PICKING");
@@ -102,6 +103,7 @@ export function useMaterialStaging() {
             setBranches(response.branches || []);
             if (response.stats) setStats(response.stats);
             setHasSuccessfulLoad(true);
+            setLastRefreshedAt(new Date());
             if (showToast) toast.success("Material staging data refreshed");
             return response.data;
         } catch (error) {
@@ -309,6 +311,7 @@ export function useMaterialStaging() {
         loading,
         loadError,
         hasSuccessfulLoad,
+        lastRefreshedAt,
         searchQuery,
         setSearchQuery,
         selectedBranchId,
