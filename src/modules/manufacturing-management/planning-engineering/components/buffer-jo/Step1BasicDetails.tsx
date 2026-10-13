@@ -1,6 +1,6 @@
 /* eslint-disable */
 import React from "react";
-import { Loader2, ShieldAlert, Check } from "lucide-react";
+import { ShieldAlert, Check } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
     Select,
@@ -12,6 +12,7 @@ import {
 import { Branch } from "../../types";
 import { SearchableSelect } from "../SearchableSelect";
 import { DEFAULT_PRODUCTION_SHIFT_HOURS } from "../../utils/production-timing";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export interface Step1BasicDetailsProps {
     branches: Branch[];
@@ -126,9 +127,8 @@ export function Step1BasicDetails({
                     Product Name
                 </label>
                 {loadingProducts ? (
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                        Loading finished goods...
+                    <div role="status" aria-busy="true" aria-label="Loading finished goods">
+                        <Skeleton className="h-9 w-full rounded-md" />
                     </div>
                 ) : (
                     <SearchableSelect
@@ -206,9 +206,8 @@ export function Step1BasicDetails({
                         Recipe Version
                     </label>
                     {loadingVersions ? (
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground h-9">
-                            <Loader2 className="h-3 w-3 animate-spin text-primary" />
-                            Loading recipes...
+                        <div role="status" aria-busy="true" aria-label="Loading recipe versions">
+                            <Skeleton className="h-9 w-full rounded-md" />
                         </div>
                     ) : (
                         <>

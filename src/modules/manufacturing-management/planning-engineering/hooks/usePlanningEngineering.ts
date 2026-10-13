@@ -102,7 +102,7 @@ export function usePlanningEngineering() {
 
     const [rawUnreleasedJobs, setRawUnreleasedJobs] = useState<any[]>([]);
     const [rawCancelledJobs, setRawCancelledJobs] = useState<any[]>([]);
-    const [loadingJobs, setLoadingJobs] = useState(false);
+    const [loadingJobs, setLoadingJobs] = useState(true);
     const [releasingDraftId, setReleasingDraftId] = useState<string | null>(null);
     const [pendingDeepLinkJo, setPendingDeepLinkJo] = useState<string | null>(null);
     const [deepLinkJo, setDeepLinkJo] = useState<any | null>(null);

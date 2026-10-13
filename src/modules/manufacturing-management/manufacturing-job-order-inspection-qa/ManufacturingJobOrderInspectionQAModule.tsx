@@ -193,8 +193,8 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                             <p className="text-xs text-muted-foreground">Review daily production yields and complete in-process QA for each Job Order.</p>
                         </div>
                     </div>
-                    <Button type="button" variant="outline" onClick={() => void jobOrderState.refresh()} disabled={jobOrderState.loading} className="min-h-10 gap-2 self-start sm:self-auto">
-                        <RefreshCw className={`h-4 w-4 ${jobOrderState.loading ? "animate-spin" : ""}`} /> Refresh
+                    <Button type="button" variant="outline" onClick={() => void jobOrderState.refresh()} disabled={jobOrderState.loading} aria-busy={jobOrderState.loading} className="min-h-10 gap-2 self-start sm:self-auto">
+                        {jobOrderState.loading ? <Skeleton aria-hidden="true" className="h-4 w-4 rounded-sm" /> : <RefreshCw className="h-4 w-4" />} Refresh
                     </Button>
                 </div>
 

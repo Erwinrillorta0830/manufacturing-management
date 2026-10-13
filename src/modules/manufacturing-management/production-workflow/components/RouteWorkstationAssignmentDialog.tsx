@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
     Select,
     SelectContent,
@@ -210,8 +211,26 @@ export function RouteWorkstationAssignmentDialog({
                     )}
 
                     {loading ? (
-                        <div className="flex min-h-40 items-center justify-center text-sm text-muted-foreground">
-                            <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading route workstations...
+                        <div role="status" aria-label="Loading route workstations" aria-busy="true" className="overflow-hidden rounded-xl border">
+                            <span className="sr-only">Loading route workstations...</span>
+                            <div aria-hidden="true" className="grid grid-cols-[80px_minmax(0,1fr)_120px_minmax(220px,0.9fr)] gap-3 border-b bg-muted/40 px-4 py-3">
+                                {Array.from({ length: 4 }).map((_, index) => (
+                                    <Skeleton key={`workstation-heading-${index}`} className="h-3 w-full" />
+                                ))}
+                            </div>
+                            <div aria-hidden="true" className="divide-y">
+                                {Array.from({ length: 4 }).map((_, rowIndex) => (
+                                    <div key={`workstation-row-${rowIndex}`} className="grid grid-cols-[80px_minmax(0,1fr)_120px_minmax(220px,0.9fr)] items-center gap-3 px-4 py-3">
+                                        <Skeleton className="h-4 w-12" />
+                                        <div className="space-y-2">
+                                            <Skeleton className="h-4 w-3/4" />
+                                            <Skeleton className="h-3 w-1/2" />
+                                        </div>
+                                        <Skeleton className="h-5 w-20 rounded-full" />
+                                        <Skeleton className="h-9 w-full" />
+                                    </div>
+                                ))}
+                            </div>
                         </div>
                     ) : tasks.length === 0 ? (
                         <div className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">

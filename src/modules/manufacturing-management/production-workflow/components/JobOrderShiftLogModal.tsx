@@ -23,6 +23,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { RoutingTask, JobOrder, User as UserType, RouteOperatorRecord, RejectionReason, ProductionMaterialReservation } from "../types";
 import {
     fetchRecoverableShiftRunSessions,
@@ -1075,8 +1076,19 @@ export function JobOrderShiftLogModal({
                                     </div>
 
                                     {loadingShiftMaterials ? (
-                                        <div className="p-6 bg-background/50 rounded-lg text-muted-foreground text-center italic border border-border/40 flex-1 flex items-center justify-center">
-                                            Loading required raw materials...
+                                        <div role="status" aria-label="Loading required raw materials" aria-busy="true" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                                            <span className="sr-only">Loading required raw materials...</span>
+                                            {Array.from({ length: 3 }).map((_, index) => (
+                                                <div key={`shift-material-skeleton-${index}`} aria-hidden="true" className="space-y-3 rounded-lg border border-border/40 bg-background/50 p-4">
+                                                    <div className="flex items-center justify-between gap-3">
+                                                        <Skeleton className="h-4 w-2/3" />
+                                                        <Skeleton className="h-4 w-16" />
+                                                    </div>
+                                                    <Skeleton className="h-3 w-1/2" />
+                                                    <Skeleton className="h-9 w-full" />
+                                                    <Skeleton className="h-8 w-full" />
+                                                </div>
+                                            ))}
                                         </div>
                                     ) : materialsLoadError ? (
                                         <div className="p-6 bg-red-500/5 rounded-lg text-red-700 text-center border border-red-500/20 flex-1 flex flex-col items-center justify-center gap-3" role="alert">

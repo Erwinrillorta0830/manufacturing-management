@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Loader2, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import {
     Card,
     CardContent,
@@ -21,6 +21,7 @@ import { displayJobOrderStatus } from "../../job-order-status";
 import { isSchedulableSalesOrderLine, remainingQuantity } from "../utils/demand-groups";
 import { PlanningPaginationControls, type PlanningPaginationState } from "./PlanningPaginationControls";
 import { PlanningTableSearchBar } from "./PlanningTableSearchBar";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface DemandLinesTableProps {
     loadingOrders: boolean;
@@ -112,9 +113,29 @@ export function DemandLinesTable({
             </div>
             <CardContent className="p-0">
                 {loadingOrders ? (
-                    <div className="flex flex-col items-center justify-center py-16 gap-2">
-                        <Loader2 className="h-6 w-6 text-primary animate-spin" />
-                        <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest animate-pulse">Loading demand...</span>
+                    <div role="status" aria-busy="true" aria-label="Loading Sales Order demand" className="overflow-x-auto max-h-[50vh] overflow-y-hidden">
+                        <Table>
+                            <TableHeader className="bg-muted/5">
+                                <TableRow>
+                                    {Array.from({ length: 9 }, (_, index) => (
+                                        <TableHead key={index}>
+                                            <Skeleton className={`h-4 ${index === 0 ? "w-5" : index < 5 ? "w-24" : "w-16 ml-auto"}`} />
+                                        </TableHead>
+                                    ))}
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {Array.from({ length: 5 }, (_, row) => (
+                                    <TableRow key={row}>
+                                        {Array.from({ length: 9 }, (_, column) => (
+                                            <TableCell key={column} className="py-4">
+                                                <Skeleton className={`h-4 ${column === 0 ? "w-5 mx-auto" : column >= 5 ? "w-14 ml-auto" : "w-3/4"}`} />
+                                            </TableCell>
+                                        ))}
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
                     </div>
                 ) : filteredLines.length === 0 ? (
                     <div className="p-12 text-center text-xs text-muted-foreground font-semibold">No matching Sales Order demand found.</div>
