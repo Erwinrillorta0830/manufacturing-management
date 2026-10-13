@@ -1270,7 +1270,7 @@ export function useQAReceiving({
         }
 
         return issues;
-    }, [inspectionRows, lineItems, overDeliveryLines, processOverDelivery, qaReadings, qaSpecificationStates, receiptDate, receivingIsReadOnly, receivingTicketNumber, replacementDisposition, selectedBranchId, supplierDocumentTypeId]);
+    }, [inspectionRows, lineItems, overDeliveryLines, processOverDelivery, qaReadings, qaSpecificationStates, receiptDate, receivingIsReadOnly, receivingTicketNumber, replacementDisposition, selectedBranchId, selectedReceipt?.readOnly, supplierDocumentTypeId]);
 
     const handleSubmitInspection = async (e?: React.FormEvent) => {
         if (e) e.preventDefault();
@@ -1481,7 +1481,7 @@ export function useQAReceiving({
             if (isDetailMode) {
                 await loadDetail(true);
             } else {
-                const refreshedShipments = await loadShipments({
+                await loadShipments({
                     search: searchPO.trim() || undefined,
                     status: searchStatus || undefined,
                     startDate: startDate || undefined,
@@ -1522,7 +1522,7 @@ export function useQAReceiving({
         } finally {
             setPostingInspection(false);
         }
-    }, [postingInspection, receivingCommitContext, isDetailMode, loadDetail, loadShipments, loadQuarantine, searchPO, searchStatus, startDate, endDate, showReceived]);
+    }, [branches, endDate, handleSelectShipment, isDetailMode, loadDetail, loadQuarantine, loadShipments, postingInspection, receivingCommitContext, replacementDisposition?.id, searchPO, searchStatus, selectedShipment, startDate]);
 
     const handleForceReceived = useCallback(async (reason: string) => {
         if (forceReceivedSubmitting || !selectedShipment) return;
