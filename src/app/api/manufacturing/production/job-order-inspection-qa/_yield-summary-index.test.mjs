@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildYieldSummaryIndex } from "./_yield-summary-index.ts";
+import { buildYieldQAStatusCountIndex, buildYieldSummaryIndex } from "./_yield-summary-index.ts";
 
 function summarize(rows) {
     return buildYieldSummaryIndex(
@@ -50,4 +50,43 @@ test("keeps the first invalid timestamp until a parseable newer timestamp appear
     assert.equal(summaries.get(10)?.count, 2);
     assert.equal(summaries.get(10)?.latestYieldAt, "invalid");
     assert.equal(summaries.get(20)?.latestYieldAt, "2026-10-12");
+});
+
+test("counts pending audits, discrepancies, and unresolved yields by Job Order", () => {
+    const counts = buildYieldQAStatusCountIndex(
+        [
+            { jobOrderId: 10, qaStatus: "Pending" },
+            { jobOrderId: 20, qaStatus: "Passed" },
+            { jobOrderId: 10, qaStatus: "QA Hold" },
+            { jobOrderId: 10, qaStatus: "Passed" },
+            { jobOrderId: 20, qaStatus: "Pending" },
+        ],
+        (row) => row.jobOrderId,
+        (row) => row.qaStatus
+    );
+
+    assert.deepEqual(counts.get(10), {
+        pendingYieldCount: 1,
+        discrepancyYieldCount: 1,
+        unresolvedYieldCount: 2,
+    });
+    assert.deepEqual(counts.get(20), {
+        pendingYieldCount: 1,
+        discrepancyYieldCount: 0,
+        unresolvedYieldCount: 1,
+    });
+});
+
+test("returns zero audit workload counts for Job Orders with only passed yields", () => {
+    const counts = buildYieldQAStatusCountIndex(
+        [{ jobOrderId: 10, qaStatus: "Passed" }],
+        (row) => row.jobOrderId,
+        (row) => row.qaStatus
+    );
+
+    assert.deepEqual(counts.get(10), {
+        pendingYieldCount: 0,
+        discrepancyYieldCount: 0,
+        unresolvedYieldCount: 0,
+    });
 });
