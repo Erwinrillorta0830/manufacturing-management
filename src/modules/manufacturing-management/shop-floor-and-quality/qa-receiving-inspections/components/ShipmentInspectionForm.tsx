@@ -195,13 +195,28 @@ export default function ShipmentInspectionForm({
     const forceReceivedStamp = selectedShipment.forceReceivedAt
         ? formatPhtTimestamp(selectedShipment.forceReceivedAt)
         : null;
-
     React.useEffect(() => {
         setAllocationValidity({});
     }, [isReplacement, selectedReceipt?.key, selectedShipment.shipment_id]);
 
+    const activeReceiptLines = React.useMemo(() => {
+        if (isReplacement) return lineItems;
+        return lineItems.filter(line => {
+            const row = inspectionRows[line.line_id];
+            const received = Number(row?.receivedQty || 0);
+            if (selectedReceipt?.readOnly) {
+                const historicalQty = Number(line.latest_receipt?.received_quantity ?? line.warehouse_receipt?.received_quantity ?? 0);
+                return historicalQty > 0 || received > 0;
+            }
+            const currentQty = line.current_receipt_quantity !== null && line.current_receipt_quantity !== undefined
+                ? Number(line.current_receipt_quantity)
+                : null;
+            return (currentQty !== null && Number.isFinite(currentQty) && currentQty > 0) || received > 0;
+        });
+    }, [lineItems, isReplacement, selectedReceipt, inspectionRows]);
+
     const siblingFormAllocations = React.useMemo<FormSiblingAllocation[]>(() => {
-        return lineItems.flatMap(line => {
+        return activeReceiptLines.flatMap(line => {
             const product = line.product_id;
             const productId = Number(product?.product_id);
             const row = inspectionRows[line.line_id];
@@ -227,7 +242,7 @@ export default function ShipmentInspectionForm({
                 lot_allocations: lotAllocations,
             }];
         });
-    }, [inspectionRows, lineItems, rejectedStorageLotsByProductId, storageLotsByProductId]);
+    }, [activeReceiptLines, inspectionRows, rejectedStorageLotsByProductId, storageLotsByProductId]);
 
     const handleAllocationValidationChange = React.useCallback((lineId: number, disposition: "accepted" | "rejected", isValid: boolean) => {
         const key = `${lineId}:${disposition}`;
@@ -328,15 +343,15 @@ export default function ShipmentInspectionForm({
     }, []);
 
     const filteredLines = React.useMemo(() => {
-        if (!dropdownSearch.trim()) return lineItems;
+        if (!dropdownSearch.trim()) return activeReceiptLines;
         const q = dropdownSearch.toLowerCase();
-        return lineItems.filter(l =>
+        return activeReceiptLines.filter(l =>
             l.product_id?.product_name?.toLowerCase().includes(q) ||
             l.product_id?.product_code?.toLowerCase().includes(q)
         );
-    }, [lineItems, dropdownSearch]);
+    }, [activeReceiptLines, dropdownSearch]);
 
-    const hasQuantityMismatch = React.useMemo(() => lineItems.some(line => {
+    const hasQuantityMismatch = React.useMemo(() => activeReceiptLines.some(line => {
         const row = inspectionRows[line.line_id];
         const received = Number(row?.receivedQty || 0);
         if (row?.acceptedQty === "" && row?.rejectedQty === "") return true;
@@ -346,23 +361,23 @@ export default function ShipmentInspectionForm({
         if (received <= 0) return false;
         if (accepted < 0 || rejected < 0) return true;
         return (accepted + rejected) !== received;
-    }), [inspectionRows, lineItems]);
+    }), [inspectionRows, activeReceiptLines]);
 
-    const hasAllocationMismatch = React.useMemo(() => lineItems.some(line => {
+    const hasAllocationMismatch = React.useMemo(() => activeReceiptLines.some(line => {
         const row = inspectionRows[line.line_id];
         const accepted = Number(row?.acceptedQty || 0);
         const allocations = row?.acceptedLotAllocations || [];
         if (accepted <= 0) return allocations.length > 0;
         return allocationValidity[`${line.line_id}:accepted`] !== true;
-    }), [allocationValidity, inspectionRows, lineItems]);
+    }), [allocationValidity, inspectionRows, activeReceiptLines]);
 
-    const hasRejectedAllocationMismatch = React.useMemo(() => lineItems.some(line => {
+    const hasRejectedAllocationMismatch = React.useMemo(() => activeReceiptLines.some(line => {
         const row = inspectionRows[line.line_id];
         const rejected = Number(row?.rejectedQty || 0);
         const allocations = row?.rejectedLotAllocations || [];
         if (rejected <= 0) return allocations.length > 0;
         return allocationValidity[`${line.line_id}:rejected`] !== true;
-    }), [allocationValidity, inspectionRows, lineItems]);
+    }), [allocationValidity, inspectionRows, activeReceiptLines]);
 
     const handleSelectProduct = (lineId: number) => {
         setDropdownOpen(false);
@@ -432,42 +447,42 @@ export default function ShipmentInspectionForm({
                         <ArrowLeft className="h-5 w-5" />
                     </button>
                     <div className="min-w-0">
-                        <h3 className="text-xs font-bold text-foreground truncate">
+                        <h3 className="text-sm font-bold text-foreground truncate">
                             Cargo Manifest Inspection: {selectedShipment.purchase_order_no || `PO #${selectedShipment.shipment_id}`}
                         </h3>
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
-                            <p className="text-[10px] text-muted-foreground">Verify physical quantities, tag batch IDs, and set Expiration limits.</p>
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1">
+                            <p className="text-xs text-muted-foreground">Verify physical quantities, tag batch IDs, and set Expiration limits.</p>
                             {readOnly && (
-                                <span className="text-[9px] bg-emerald-500/10 text-emerald-700 px-1.5 py-0.5 rounded font-extrabold whitespace-nowrap">
+                                <span className="text-[11px] bg-emerald-500/10 text-emerald-700 px-2 py-0.5 rounded-md font-semibold whitespace-nowrap">
                                     {historicalReceiptOnly ? "Receipt - View Only" : "Received - View Only"}
                                 </span>
                             )}
                             {forceClosed && (
-                                <span className="text-[9px] bg-violet-500/10 text-violet-700 px-1.5 py-0.5 rounded font-extrabold whitespace-nowrap">
+                                <span className="text-[11px] bg-violet-500/10 text-violet-700 px-2 py-0.5 rounded-md font-semibold whitespace-nowrap">
                                     Force Received
                                 </span>
                             )}
                             {forceClosed && selectedShipment.forceReceivedReason && (
-                                <span className="text-[9px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded font-extrabold max-w-[280px] truncate" title={selectedShipment.forceReceivedReason}>
+                                <span className="text-[11px] bg-muted text-muted-foreground px-2 py-0.5 rounded-md font-semibold max-w-[280px] truncate" title={selectedShipment.forceReceivedReason}>
                                     Reason: {selectedShipment.forceReceivedReason}
                                     {selectedShipment.forceReceivedByName ? ` · ${selectedShipment.forceReceivedByName}` : selectedShipment.forceReceivedBy ? ` · User ${selectedShipment.forceReceivedBy}` : ""}
                                     {forceReceivedStamp ? ` · ${forceReceivedStamp}` : ""}
                                 </span>
                             )}
                             {(readOnly || selectedShipment.status === "Received") && Number(selectedShipment.payment_status) === 2 && (
-                                <span className="text-[9px] bg-blue-500/10 text-blue-700 px-1.5 py-0.5 rounded font-extrabold whitespace-nowrap">
+                                <span className="text-[11px] bg-blue-500/10 text-blue-700 px-2 py-0.5 rounded-md font-semibold whitespace-nowrap">
                                     Payment Status: Awaiting Payment
                                 </span>
                             )}
                             {!readOnly && selectedShipment.status === "Partially Received" && (
-                                <span className="text-[9px] bg-amber-500/10 text-amber-700 px-1.5 py-0.5 rounded font-extrabold whitespace-nowrap">
+                                <span className="text-[11px] bg-amber-500/10 text-amber-700 px-2 py-0.5 rounded-md font-semibold whitespace-nowrap">
                                     Partially Received - Receiving Remaining Goods
                                 </span>
                             )}
-                            <span className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-extrabold whitespace-nowrap">
+                            <span className="text-[11px] bg-primary/10 text-primary px-2 py-0.5 rounded-md font-semibold whitespace-nowrap">
                                 Original PO Branch: {originalBranchName}
                             </span>
-                            <span className="text-[9px] bg-blue-500/10 text-blue-600 px-1.5 py-0.5 rounded font-extrabold whitespace-nowrap">
+                            <span className="text-[11px] bg-blue-500/10 text-blue-600 px-2 py-0.5 rounded-md font-semibold whitespace-nowrap">
                                 PO Qty: {totalOrderedQty.toLocaleString()} units
                             </span>
                         </div>
@@ -500,17 +515,17 @@ export default function ShipmentInspectionForm({
                                 />
                                 <div className="max-h-[220px] overflow-y-auto space-y-0.5 pr-1">
                                     {filteredLines.length === 0 ? (
-                                        <div className="text-[10px] text-muted-foreground text-center py-2">No products found</div>
+                                        <div className="text-xs text-muted-foreground text-center py-2">No products found</div>
                                     ) : (
                                         filteredLines.map(l => (
                                             <button
                                                 key={l.line_id}
                                                 type="button"
                                                 onClick={() => handleSelectProduct(l.line_id)}
-                                                className="w-full text-left px-2 py-2 rounded-lg text-[11px] font-medium hover:bg-accent hover:text-accent-foreground transition-all truncate block"
+                                                className="w-full text-left px-2 py-2 rounded-lg text-xs font-medium hover:bg-accent hover:text-accent-foreground transition-all truncate block"
                                             >
                                                 <span className="font-bold block truncate">{l.product_id?.product_name}</span>
-                                                <span className="text-[9px] text-muted-foreground font-mono">SKU: {l.product_id?.product_code || `ID-${l.product_id?.product_id}`}</span>
+                                                <span className="text-[11px] text-muted-foreground font-mono">SKU: {l.product_id?.product_code || `ID-${l.product_id?.product_id}`}</span>
                                             </button>
                                         ))
                                     )}
@@ -527,7 +542,7 @@ export default function ShipmentInspectionForm({
                 className="grid grid-cols-1 gap-3 border-b bg-background p-4 sm:grid-cols-2 2xl:grid-cols-4"
             >
                 <div className="min-w-0 space-y-1">
-                    <label htmlFor="receiving-receipt-number" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                    <label htmlFor="receiving-receipt-number" className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block">
                         Receipt Number {!readOnly && <span className="text-red-500">*</span>}
                     </label>
                     <div className="relative">
@@ -564,8 +579,8 @@ export default function ShipmentInspectionForm({
                             />
                         )}
                     </div>
-                    {issueFor(undefined, "receiptNumber") && <p id="receiving-receipt-number-error" className="text-[9px] font-semibold text-red-600" role="alert">{issueFor(undefined, "receiptNumber")?.message}</p>}
-                    <p className="text-[9px] text-muted-foreground">
+                    {issueFor(undefined, "receiptNumber") && <p id="receiving-receipt-number-error" className="text-xs font-semibold text-red-600" role="alert">{issueFor(undefined, "receiptNumber")?.message}</p>}
+                    <p className="text-xs text-muted-foreground">
                         {isReplacement
                             ? "Enter the new replacement delivery receipt number."
                             : selectedReceipt?.readOnly
@@ -575,7 +590,7 @@ export default function ShipmentInspectionForm({
                 </div>
 
                 <div className="min-w-0 space-y-1">
-                    <label htmlFor="receiving-receipt-date" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                    <label htmlFor="receiving-receipt-date" className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block">
                         Date of Receipt <span className="text-red-500">*</span>
                     </label>
                     <div className="relative">
@@ -593,12 +608,12 @@ export default function ShipmentInspectionForm({
                             className={`w-full h-10 rounded-xl border bg-background text-foreground text-xs font-semibold pl-9 pr-3 py-2 outline-none focus:ring-1 focus:ring-primary ${issueFor(undefined, "receiptDate") ? "border-red-500" : ""} ${readOnly ? "bg-muted/30 cursor-default" : ""}`}
                         />
                     </div>
-                    {issueFor(undefined, "receiptDate") && <p id="receiving-receipt-date-error" className="text-[9px] font-semibold text-red-600" role="alert">{issueFor(undefined, "receiptDate")?.message}</p>}
-                    <p className="text-[9px] text-muted-foreground">Enter the date shown on the physical delivery receipt.</p>
+                    {issueFor(undefined, "receiptDate") && <p id="receiving-receipt-date-error" className="text-xs font-semibold text-red-600" role="alert">{issueFor(undefined, "receiptDate")?.message}</p>}
+                    <p className="text-xs text-muted-foreground">Enter the date shown on the physical delivery receipt.</p>
                 </div>
 
                 <div className="min-w-0 space-y-1">
-                    <label htmlFor="receiving-branch" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                    <label htmlFor="receiving-branch" className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block">
                         Receiving Branch <span className="text-muted-foreground">(from PO)</span>
                     </label>
                     <div className="relative">
@@ -614,12 +629,12 @@ export default function ShipmentInspectionForm({
                             className={`w-full h-10 rounded-xl border bg-muted/30 text-foreground text-xs font-semibold pl-9 pr-3 py-2 outline-none cursor-default select-none ${issueFor(undefined, "branchId") ? "border-red-500" : ""}`}
                         />
                     </div>
-                    {issueFor(undefined, "branchId") && <p id="receiving-branch-error" className="text-[9px] font-semibold text-red-600" role="alert">{issueFor(undefined, "branchId")?.message}</p>}
-                    {!issueFor(undefined, "branchId") && <p className="text-[9px] text-muted-foreground">Locked to the Purchase Order branch for inventory routing.</p>}
+                    {issueFor(undefined, "branchId") && <p id="receiving-branch-error" className="text-xs font-semibold text-red-600" role="alert">{issueFor(undefined, "branchId")?.message}</p>}
+                    {!issueFor(undefined, "branchId") && <p className="text-xs text-muted-foreground">Locked to the Purchase Order branch for inventory routing.</p>}
                 </div>
 
                 <div className="min-w-0 space-y-1">
-                    <label htmlFor="receiving-document-type" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                    <label htmlFor="receiving-document-type" className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block">
                         Supplier Document Type
                     </label>
                     <div className="relative">
@@ -636,9 +651,9 @@ export default function ShipmentInspectionForm({
                             className={`w-full h-10 rounded-xl border bg-muted/30 text-foreground text-xs font-semibold pl-9 pr-3 py-2 outline-none cursor-default select-none ${issueFor(undefined, "supplierDocumentTypeId") ? "border-red-500" : ""}`}
                         />
                     </div>
-                    {issueFor(undefined, "supplierDocumentTypeId") && <p id="receiving-document-type-error" className="text-[9px] font-semibold text-red-600" role="alert">{issueFor(undefined, "supplierDocumentTypeId")?.message}</p>}
-                    {!issueFor(undefined, "supplierDocumentTypeId") && supplierDocumentTypeError && !readOnly && <p className="text-[9px] font-semibold text-red-600" role="alert">{supplierDocumentTypeError}</p>}
-                    {!issueFor(undefined, "supplierDocumentTypeId") && !supplierDocumentTypeError && <p className="text-[9px] text-muted-foreground">Document type encoded during Warehouse Receiving.</p>}
+                    {issueFor(undefined, "supplierDocumentTypeId") && <p id="receiving-document-type-error" className="text-xs font-semibold text-red-600" role="alert">{issueFor(undefined, "supplierDocumentTypeId")?.message}</p>}
+                    {!issueFor(undefined, "supplierDocumentTypeId") && supplierDocumentTypeError && !readOnly && <p className="text-xs font-semibold text-red-600" role="alert">{supplierDocumentTypeError}</p>}
+                    {!issueFor(undefined, "supplierDocumentTypeId") && !supplierDocumentTypeError && <p className="text-xs text-muted-foreground">Document type encoded during Warehouse Receiving.</p>}
                 </div>
             </div>
 
@@ -646,12 +661,12 @@ export default function ShipmentInspectionForm({
                 <div data-testid="qa-receiving-progress" className="mx-4 mt-4 rounded-xl border border-primary/20 bg-primary/5 p-3.5 space-y-3">
                     <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                         <div className="flex items-center gap-2">
-                            <p className="text-[10px] font-extrabold uppercase tracking-wider text-primary">PO Receiving Progress</p>
-                            <span className="text-[9px] font-bold bg-primary/10 text-primary px-2 py-0.5 rounded-full">
+                            <p className="text-xs font-bold uppercase tracking-wider text-primary">PO Receiving Progress</p>
+                            <span className="text-[11px] font-semibold bg-primary/10 text-primary px-2 py-0.5 rounded-full">
                                 {receiptProgress.progressPercent}% Processed
                             </span>
                         </div>
-                        <span className="text-[9px] font-bold text-muted-foreground">
+                        <span className="text-xs font-semibold text-muted-foreground">
                             {receiptOptions.length} receipt{receiptOptions.length === 1 ? "" : "s"} on this PO
                         </span>
                     </div>
@@ -667,15 +682,15 @@ export default function ShipmentInspectionForm({
                     <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
                         {receiptProgressMetrics.map(metric => (
                             <div key={metric.label} className="rounded-lg border border-border/70 bg-background/90 px-3 py-2">
-                                <p className="text-[8px] font-bold uppercase tracking-wide text-muted-foreground">{metric.label}</p>
-                                <p className={`mt-0.5 text-sm font-extrabold ${metric.className}`}>{metric.value}</p>
-                                <p className="text-[8px] text-muted-foreground/80 truncate mt-0.5">{metric.subtext}</p>
+                                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{metric.label}</p>
+                                <p className={`mt-0.5 text-sm font-bold ${metric.className}`}>{metric.value}</p>
+                                <p className="text-[11px] text-muted-foreground/80 truncate mt-0.5">{metric.subtext}</p>
                             </div>
                         ))}
                     </div>
 
                     {selectedReceipt && receiptProgress.selectedRejected !== null && receiptProgress.selectedRejected > 0 && (
-                        <p className="text-[9px] font-semibold text-amber-700 bg-amber-500/10 rounded-md px-2.5 py-1">
+                        <p className="text-xs font-semibold text-amber-700 bg-amber-500/10 rounded-md px-2.5 py-1">
                             Selected receipt rejected: {formatQuantity(receiptProgress.selectedRejected)} units
                         </p>
                     )}
@@ -686,11 +701,11 @@ export default function ShipmentInspectionForm({
                 <div data-testid="qa-receipt-history" className="mx-4 mt-3 overflow-hidden rounded-xl border bg-background">
                     <div className="flex flex-col gap-1 border-b bg-muted/20 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
                         <div>
-                            <p className="text-[10px] font-extrabold uppercase tracking-wider text-foreground">Receipt history</p>
-                            <p className="text-[9px] text-muted-foreground">Select a row to inspect its quantities. Posted receipts are view-only.</p>
+                            <p className="text-xs font-bold uppercase tracking-wider text-foreground">Receipt history</p>
+                            <p className="text-xs text-muted-foreground">Select a row to inspect its quantities. Posted receipts are view-only.</p>
                         </div>
                     </div>
-                    <div className="grid w-full grid-cols-[minmax(0,1.5fr)_80px_repeat(3,minmax(72px,0.5fr))] items-center gap-2 border-b bg-muted/40 px-3 py-1.5 text-[9px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                    <div className="grid w-full grid-cols-[minmax(0,1.5fr)_80px_repeat(3,minmax(72px,0.5fr))] items-center gap-2 border-b bg-muted/40 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                         <span>Receipt / Date</span>
                         <span>Status</span>
                         <span className="text-right">Received</span>
@@ -709,22 +724,22 @@ export default function ShipmentInspectionForm({
                                     className={`grid w-full grid-cols-[minmax(0,1.5fr)_80px_repeat(3,minmax(72px,0.5fr))] items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-muted/40 ${isSelected ? "bg-primary/5 ring-1 ring-inset ring-primary/30" : ""}`}
                                 >
                                     <span className="min-w-0">
-                                        <span className="block truncate text-[10px] font-bold text-foreground">{option.receiptNumber}</span>
-                                        <span className="block truncate text-[9px] text-muted-foreground">
+                                        <span className="block truncate text-xs font-bold text-foreground">{option.receiptNumber}</span>
+                                        <span className="block truncate text-[11px] text-muted-foreground">
                                             {option.receiptDate || "No date"} · {option.receiptType || "Receipt"}
                                         </span>
                                     </span>
                                     <span className="min-w-0">
-                                        <span className={`inline-block rounded-md px-1.5 py-0.5 text-[8px] font-extrabold uppercase ${option.isCurrent
+                                        <span className={`inline-block rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase ${option.isCurrent
                                             ? "bg-primary/10 text-primary"
                                             : "bg-emerald-500/10 text-emerald-700"
                                             }`}>
                                             {option.isCurrent ? "Awaiting QA" : option.postingStatus || "Posted"}
                                         </span>
                                     </span>
-                                    <span className="text-right text-[10px] font-semibold text-foreground">{formatQuantity(option.receivedQuantity)}</span>
-                                    <span className="text-right text-[10px] font-semibold text-emerald-700">{formatQuantity(option.acceptedQuantity)}</span>
-                                    <span className="text-right text-[10px] font-semibold text-amber-700">{formatQuantity(option.rejectedQuantity)}</span>
+                                    <span className="text-right text-xs font-semibold text-foreground">{formatQuantity(option.receivedQuantity)}</span>
+                                    <span className="text-right text-xs font-semibold text-emerald-700">{formatQuantity(option.acceptedQuantity)}</span>
+                                    <span className="text-right text-xs font-semibold text-amber-700">{formatQuantity(option.rejectedQuantity)}</span>
                                 </button>
                             );
                         })}
@@ -774,8 +789,16 @@ export default function ShipmentInspectionForm({
             <div className="space-y-4 p-4">
                 {loadingLines ? (
                     <QaInspectionSkeleton />
+                ) : activeReceiptLines.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-border/80 bg-muted/20 p-8 text-center">
+                        <AlertTriangle className="mx-auto h-8 w-8 text-muted-foreground/60 mb-2" />
+                        <h4 className="text-sm font-semibold text-foreground">No Items in Receipt</h4>
+                        <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
+                            No items received under this warehouse receipt handoff. Select another receipt or verify warehouse intake.
+                        </p>
+                    </div>
                 ) : (
-                    lineItems.map((line, lineIndex) => {
+                    activeReceiptLines.map((line, lineIndex) => {
                         const row = inspectionRows[line.line_id] || {
                             receivedQty: "",
                             acceptedQty: "",
@@ -860,19 +883,19 @@ export default function ShipmentInspectionForm({
                                     ) : null}
 
                                     <div className="flex-1 min-w-0">
-                                        <span className="font-bold text-xs sm:text-sm text-foreground block truncate">{prod.product_name}</span>
-                                        <span className="text-[10px] text-muted-foreground font-mono">SKU: {prod.product_code || `ID-${prod.product_id}`}</span>
-                                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[9px] font-semibold text-muted-foreground">
+                                        <span className="font-bold text-sm sm:text-base text-foreground block truncate">{prod.product_name}</span>
+                                        <span className="text-xs text-muted-foreground font-mono">SKU: {prod.product_code || `ID-${prod.product_id}`}</span>
+                                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs font-semibold text-muted-foreground">
                                             {selectedShipment.status === "Partially Received" && line.latest_receipt?.receipt_number && (
                                                 <span>Previous receipt: <strong className="text-foreground">{line.latest_receipt.receipt_number}</strong></span>
                                             )}
                                             {(line.rfid_tagged_count || 0) > 0 && (
                                                 <span
-                                                    className="inline-flex max-w-full items-center gap-1 rounded-md border border-sky-500/25 bg-sky-500/10 px-1.5 py-0.5 text-sky-700"
+                                                    className="inline-flex max-w-full items-center gap-1 rounded-md border border-sky-500/25 bg-sky-500/10 px-2 py-0.5 text-xs text-sky-700"
                                                     data-testid={`rfid-tagged-${line.line_id}`}
                                                     title={line.rfid_tags?.join(", ") || "RFID tags captured before QA"}
                                                 >
-                                                    <Radio className="h-3 w-3 shrink-0" />
+                                                    <Radio className="h-3.5 w-3.5 shrink-0" />
                                                     RFID pre-QA: {line.rfid_tagged_count}
                                                 </span>
                                             )}
@@ -882,7 +905,7 @@ export default function ShipmentInspectionForm({
                                     <div className="flex flex-col items-end gap-1.5 shrink-0">
                                         <div
                                             aria-label="Product Category Type"
-                                            className={`px-2.5 py-1 rounded-lg text-[8px] uppercase font-extrabold border transition-all ${row.isPackaging
+                                            className={`px-2.5 py-1 rounded-lg text-[10px] uppercase font-bold border transition-all ${row.isPackaging
                                                 ? "bg-purple-500/10 text-purple-600 border-purple-500/20"
                                                 : "bg-amber-500/10 text-amber-600 border-amber-500/20"
                                                 }`}
@@ -893,7 +916,7 @@ export default function ShipmentInspectionForm({
                                 </div>
 
                                 {readOnly ? (
-                                    <div className="border-t pt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-[10px] text-muted-foreground">
+                                    <div className="border-t pt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-muted-foreground">
                                         <span><strong className="text-foreground">Recorded QA status:</strong> {line.qa_status || "Received"}</span>
                                     </div>
                                 ) : (
@@ -906,7 +929,7 @@ export default function ShipmentInspectionForm({
                                     />
                                 )}
                                 {lineIssue("qaReading") && (
-                                    <p className="border-t pt-2 text-[9px] font-semibold text-red-600" role="alert">
+                                    <p className="border-t pt-2 text-xs font-semibold text-red-600" role="alert">
                                         {receivingValidationIssues
                                             .filter(issue => issue.lineId === line.line_id && issue.field === "qaReading")
                                             .map(issue => issue.message)
@@ -915,28 +938,28 @@ export default function ShipmentInspectionForm({
                                 )}
 
                                 {!readOnly && !isReplacement && !hasCurrentReceipt && (
-                                    <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[10px] text-amber-700" role="alert">
+                                    <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700" role="alert">
                                         <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                                         <span>{line.current_receipt_error || "No positive Warehouse Receiving handoff is available for this line. Complete Warehouse Receiving before entering QA quantities."}</span>
                                     </div>
                                 )}
 
-                                <div className="grid grid-cols-2 gap-2 border-y py-3 text-[10px] font-semibold text-muted-foreground sm:grid-cols-4">
+                                <div className="grid grid-cols-2 gap-2 border-y py-3 text-xs font-semibold text-muted-foreground sm:grid-cols-4">
                                     <div>
-                                        <span className="block text-[8px] font-bold uppercase tracking-wide">PO Ordered</span>
-                                        <strong className="mt-0.5 block text-foreground">{formatQuantity(line.quantity_ordered)}</strong>
+                                        <span className="block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">PO Ordered</span>
+                                        <strong className="mt-0.5 block text-sm font-bold text-foreground">{formatQuantity(line.quantity_ordered)}</strong>
                                     </div>
                                     <div>
-                                        <span className="block text-[8px] font-bold uppercase tracking-wide">Previously Stored</span>
-                                        <strong className="mt-0.5 block text-emerald-700">{formatQuantity(previouslyAcceptedVal)}</strong>
+                                        <span className="block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Previously Stored</span>
+                                        <strong className="mt-0.5 block text-sm font-bold text-emerald-700">{formatQuantity(previouslyAcceptedVal)}</strong>
                                     </div>
                                     <div>
-                                        <span className="block text-[8px] font-bold uppercase tracking-wide">{selectedReceipt?.readOnly ? "Inspected Receipt" : "Current Receipt (QA)"}</span>
-                                        <strong className="mt-0.5 block text-primary">{currentReceiptAcceptedVal === null ? (currentReceiptPhysicalVal !== null ? formatQuantity(currentReceiptPhysicalVal) : "—") : formatQuantity(currentReceiptAcceptedVal)}</strong>
+                                        <span className="block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{selectedReceipt?.readOnly ? "Inspected Receipt" : "Current Receipt (QA)"}</span>
+                                        <strong className="mt-0.5 block text-sm font-bold text-primary">{currentReceiptAcceptedVal === null ? (currentReceiptPhysicalVal !== null ? formatQuantity(currentReceiptPhysicalVal) : "—") : formatQuantity(currentReceiptAcceptedVal)}</strong>
                                     </div>
                                     <div>
-                                        <span className="block text-[8px] font-bold uppercase tracking-wide">Remaining to Receive</span>
-                                        <strong className="mt-0.5 block text-amber-700">{formatQuantity(remainingAcceptedVal)}</strong>
+                                        <span className="block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Remaining to Receive</span>
+                                        <strong className="mt-0.5 block text-sm font-bold text-amber-700">{formatQuantity(remainingAcceptedVal)}</strong>
                                     </div>
                                 </div>
 
@@ -959,17 +982,17 @@ export default function ShipmentInspectionForm({
                                             <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
                                                 {/* Received Quantity - Read Only Display */}
                                                 <div className="space-y-1">
-                                                    <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                                        This Receipt - Received Quantity <span className="text-[8px] normal-case font-semibold text-muted-foreground">(Warehouse Intake)</span>
+                                                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block">
+                                                        This Receipt - Received Quantity <span className="text-[11px] normal-case font-normal text-muted-foreground">(Warehouse Intake)</span>
                                                     </label>
                                                     <div
                                                         data-testid={`received-quantity-display-${line.line_id}`}
-                                                        className="flex h-10 items-center justify-center rounded-xl border border-border bg-muted/40 px-3 text-center text-xs font-extrabold text-foreground select-none"
+                                                        className="flex h-10 items-center justify-center rounded-xl border border-border bg-muted/40 px-3 text-center text-xs font-bold text-foreground select-none"
                                                     >
                                                         {Number.isFinite(receivedVal) ? receivedVal.toLocaleString() : "—"}
                                                     </div>
                                                     {receivedEquiv > 0 && convFactor !== 1 && (
-                                                        <span className="text-[9px] text-primary font-bold block mt-1 bg-primary/5 px-2 py-0.5 rounded border border-primary/10 w-fit select-none">
+                                                        <span className="text-[11px] text-primary font-semibold block mt-1 bg-primary/5 px-2 py-0.5 rounded border border-primary/10 w-fit select-none">
                                                             = {receivedEquiv.toLocaleString()} {baseUom}
                                                         </span>
                                                     )}
@@ -977,7 +1000,7 @@ export default function ShipmentInspectionForm({
 
                                                 {/* Accepted Quantity Stepper */}
                                                 <div className="space-y-1">
-                                                    <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block">
                                                         This Receipt - Accepted Quantity {!readOnly && receivedVal > 0 && <span className="text-red-500">*</span>}
                                                     </label>
                                                     <div className="flex items-center">
@@ -1011,7 +1034,7 @@ export default function ShipmentInspectionForm({
                                                         </button>
                                                     </div>
                                                     {acceptedEquiv > 0 && convFactor !== 1 && (
-                                                        <span className="text-[9px] text-emerald-600 font-bold block mt-1 bg-emerald-500/5 px-2 py-0.5 rounded border border-emerald-500/10 w-fit select-none">
+                                                        <span className="text-[11px] text-emerald-600 font-semibold block mt-1 bg-emerald-500/5 px-2 py-0.5 rounded border border-emerald-500/10 w-fit select-none">
                                                             = {acceptedEquiv.toLocaleString()} {baseUom}
                                                         </span>
                                                     )}
@@ -1019,8 +1042,8 @@ export default function ShipmentInspectionForm({
 
                                                 {/* Rejected Quantity Stepper */}
                                                 <div className="space-y-1">
-                                                    <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                                        This Receipt - Rejected Quantity {!readOnly && <span className="text-[8px] normal-case font-semibold text-muted-foreground">(Manual count)</span>}
+                                                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block">
+                                                        This Receipt - Rejected Quantity {!readOnly && <span className="text-[11px] normal-case font-normal text-muted-foreground">(Manual count)</span>}
                                                     </label>
                                                     <div className="flex items-center">
                                                         <button
@@ -1053,7 +1076,7 @@ export default function ShipmentInspectionForm({
                                                         </button>
                                                     </div>
                                                     {rejectedEquiv > 0 && convFactor !== 1 && (
-                                                        <span className="text-[9px] text-red-600 font-bold block mt-1 bg-red-500/5 px-2 py-0.5 rounded border border-red-500/10 w-fit select-none">
+                                                        <span className="text-[11px] text-red-600 font-semibold block mt-1 bg-red-500/5 px-2 py-0.5 rounded border border-red-500/10 w-fit select-none">
                                                             = {rejectedEquiv.toLocaleString()} {baseUom}
                                                         </span>
                                                     )}
@@ -1063,7 +1086,7 @@ export default function ShipmentInspectionForm({
                                             {/* Quantity Excess Guard Alert */}
                                             {!readOnly && receivedVal > 0 && isExceeded && (
                                                 <div className="pt-1">
-                                                    <div className="flex items-center gap-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-[10px] font-bold text-red-700" role="alert">
+                                                    <div className="flex items-center gap-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs font-bold text-red-700" role="alert">
                                                         <AlertTriangle className="h-4 w-4 shrink-0 text-red-600" />
                                                         <span>
                                                             Total inspected ({totalInspectedVal.toLocaleString()}) exceeds received quantity ({receivedVal.toLocaleString()}) by {(totalInspectedVal - receivedVal).toLocaleString()}.
@@ -1072,7 +1095,7 @@ export default function ShipmentInspectionForm({
                                                 </div>
                                             )}
 
-                                            {quantityIssue && <p className="text-[9px] font-semibold text-red-600" role="alert">{quantityIssue.message}</p>}
+                                            {quantityIssue && <p className="text-xs font-semibold text-red-600" role="alert">{quantityIssue.message}</p>}
                                         </div>
                                     );
                                 })()}
@@ -1085,18 +1108,18 @@ export default function ShipmentInspectionForm({
                                     >
                                         <div className="flex items-center justify-between gap-2">
                                             <div>
-                                                <p className="text-[9px] font-extrabold uppercase tracking-wider text-emerald-700">Product Items</p>
-                                                <p className="text-[10px] text-muted-foreground">Select Lot → Batch Number → Manufacturing/Expiry Dates → Quantity. Lots are filtered by Product Type, UOM, and remaining capacity; allocations that would exceed a lot&apos;s maximum occupancy are blocked.</p>
+                                                <p className="text-xs font-bold uppercase tracking-wider text-emerald-700">Product Items</p>
+                                                <p className="text-xs text-muted-foreground">Select Lot → Batch Number → Manufacturing/Expiry Dates → Quantity. Lots are filtered by Product Type, UOM, and remaining capacity; allocations that would exceed a lot&apos;s maximum occupancy are blocked.</p>
                                                 {(lineIssue("acceptedStorageLot") || lineIssue("rejectedStorageLot")) && (
-                                                    <p className="text-[9px] font-semibold text-red-600" role="alert">
+                                                    <p className="text-xs font-semibold text-red-600" role="alert">
                                                         {lineIssue("acceptedStorageLot")?.message || lineIssue("rejectedStorageLot")?.message}
                                                     </p>
                                                 )}
                                             </div>
                                         </div>
                                         {acceptedVal > 0 && lineStorageLotLookup.status === "loading" && (
-                                            <p className="flex items-center gap-1.5 text-[9px] font-semibold text-muted-foreground" role="status">
-                                                <Loader2 className="h-3 w-3 animate-spin" /> Loading active storage lots for {lotBranchLabel}...
+                                            <p className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground" role="status">
+                                                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading active storage lots for {lotBranchLabel}...
                                             </p>
                                         )}
                                         {acceptedVal > 0 && lineStorageLotLookup.status === "error" && (
@@ -1258,7 +1281,7 @@ export default function ShipmentInspectionForm({
 
                                 {/* Remarks field */}
                                 <div className="space-y-1 pt-1">
-                                    <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block">
                                         Remarks / Rejection Notes {!readOnly && isRemarksMandatory && <span className="text-red-500">*</span>}
                                     </label>
                                     <input
@@ -1272,18 +1295,18 @@ export default function ShipmentInspectionForm({
                                         aria-describedby={lineIssue("remarks") ? `remarks-error-${line.line_id}` : undefined}
                                         className={`w-full h-10 bg-background border text-foreground rounded-lg px-3 py-1.5 text-xs font-semibold focus:ring-1 focus:ring-primary ${lineIssue("remarks") ? "border-red-500" : ""}`}
                                     />
-                                    {lineIssue("remarks") && <p id={`remarks-error-${line.line_id}`} className="text-[9px] font-semibold text-red-600" role="alert">{lineIssue("remarks")?.message}</p>}
+                                    {lineIssue("remarks") && <p id={`remarks-error-${line.line_id}`} className="text-xs font-semibold text-red-600" role="alert">{lineIssue("remarks")?.message}</p>}
                                 </div>
 
                                 {/* Over-delivery & reconciliation warnings */}
                                 {!readOnly && overDeliveryQuantity > 1e-9 && (
-                                    <div className="bg-amber-500/5 border border-amber-500/10 rounded-lg p-2.5 flex items-center gap-2 text-[10px] text-amber-600 animate-in fade-in duration-200">
+                                    <div className="bg-amber-500/5 border border-amber-500/10 rounded-lg p-2.5 flex items-center gap-2 text-xs text-amber-700 animate-in fade-in duration-200">
                                         <AlertTriangle className="h-4 w-4 shrink-0" />
                                         <span>Over-delivery warning: received {receivedVal.toLocaleString()} vs expected {remainingVal.toLocaleString()} (excess {overDeliveryQuantity.toLocaleString()}).</span>
                                     </div>
                                 )}
                                 {!readOnly && !quantitiesReconcile && (receivedVal > 0 || acceptedVal > 0 || rejectedVal > 0) && (
-                                    <div className="bg-red-500/5 border border-red-500/10 rounded-lg p-2.5 flex items-center gap-2 text-[10px] text-red-600 animate-in fade-in duration-200">
+                                    <div className="bg-red-500/5 border border-red-500/10 rounded-lg p-2.5 flex items-center gap-2 text-xs text-red-600 animate-in fade-in duration-200">
                                         <AlertTriangle className="h-4 w-4 shrink-0" />
                                         <span>{acceptedVal > receivedVal
                                             ? "Accepted quantity cannot exceed received quantity."
@@ -1291,13 +1314,13 @@ export default function ShipmentInspectionForm({
                                     </div>
                                 )}
                                 {!readOnly && rejectedVal > 0 && (
-                                    <div className="bg-red-500/5 border border-red-500/10 rounded-lg p-2.5 flex items-center gap-2 text-[10px] text-red-500 animate-in fade-in duration-200">
+                                    <div className="bg-red-500/5 border border-red-500/10 rounded-lg p-2.5 flex items-center gap-2 text-xs text-red-600 animate-in fade-in duration-200">
                                         <AlertTriangle className="h-4 w-4 shrink-0" />
                                         <span>Warning: {rejectedVal} unit(s) are marked rejected. Rejection reason is mandatory.</span>
                                     </div>
                                 )}
                                 {evaluation?.forceRejected && (
-                                    <div className="bg-red-500/5 border border-red-500/20 rounded-lg p-2.5 flex items-center gap-2 text-[10px] text-red-700">
+                                    <div className="bg-red-500/5 border border-red-500/20 rounded-lg p-2.5 flex items-center gap-2 text-xs text-red-700">
                                         <AlertTriangle className="h-4 w-4 shrink-0" />
                                         <span>{evaluation.rejectionReason || "A critical QA failure forced the entire received quantity to Rejected."}</span>
                                     </div>
@@ -1310,7 +1333,7 @@ export default function ShipmentInspectionForm({
 
             <div className="p-4 border-t bg-muted/15 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shrink-0">
                 {readOnly ? (
-                    <div className="flex items-start gap-2 text-[10px] text-emerald-700 max-w-xl" role="status">
+                    <div className="flex items-start gap-2 text-xs text-emerald-700 max-w-xl" role="status">
                         <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
                         <span>
                             {historicalReceiptOnly
@@ -1319,12 +1342,12 @@ export default function ShipmentInspectionForm({
                         </span>
                     </div>
                 ) : qaSubmissionBlockReason ? (
-                    <div className="flex items-start gap-2 text-[10px] text-amber-700 max-w-xl" role="alert">
+                    <div className="flex items-start gap-2 text-xs text-amber-700 max-w-xl" role="alert">
                         <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                         <span>{qaSubmissionBlockReason}</span>
                     </div>
                 ) : previewError ? (
-                    <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2 text-[10px] text-red-700 max-w-xl" role="alert" aria-live="assertive">
+                    <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-700 max-w-xl" role="alert" aria-live="assertive">
                         <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                         <div>
                             <strong>Preview could not be generated.</strong>
@@ -1333,15 +1356,15 @@ export default function ShipmentInspectionForm({
                                 type="button"
                                 onClick={onRetryPreview}
                                 disabled={validatingInspection || loadingLines || receivingValidationIssues.length > 0}
-                                className="mt-2 inline-flex min-h-8 items-center gap-1.5 rounded-md border border-red-700/40 px-2.5 text-[10px] font-bold text-red-700 hover:bg-red-500/10 disabled:cursor-wait disabled:opacity-60"
+                                className="mt-2 inline-flex min-h-8 items-center gap-1.5 rounded-md border border-red-700/40 px-2.5 text-xs font-semibold text-red-700 hover:bg-red-500/10 disabled:cursor-wait disabled:opacity-60"
                             >
-                                <RefreshCw className="h-3 w-3" aria-hidden="true" />
+                                <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
                                 Retry preview
                             </button>
                         </div>
                     </div>
                 ) : receivingValidationIssues.length > 0 ? (
-                    <div className="flex items-start gap-2 text-[10px] text-red-700 max-w-xl" role="alert" aria-live="polite">
+                    <div className="flex items-start gap-2 text-xs text-red-700 max-w-xl" role="alert" aria-live="polite">
                         <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                         <div>
                             <strong>Complete the required fields before previewing:</strong>
@@ -1352,22 +1375,22 @@ export default function ShipmentInspectionForm({
                         </div>
                     </div>
                 ) : hasQuantityMismatch ? (
-                    <div className="flex items-start gap-2 text-[10px] text-red-700 max-w-xl" role="alert">
+                    <div className="flex items-start gap-2 text-xs text-red-700 max-w-xl" role="alert">
                         <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                         <span>Reconcile every line before generating the movement preview: received quantity must equal accepted plus rejected.</span>
                     </div>
                 ) : hasAllocationMismatch ? (
-                    <div className="flex items-start gap-2 text-[10px] text-red-700 max-w-xl" role="alert">
+                    <div className="flex items-start gap-2 text-xs text-red-700 max-w-xl" role="alert">
                         <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                         <span>Allocate every accepted unit to storage lots before generating the movement preview.</span>
                     </div>
                 ) : hasRejectedAllocationMismatch ? (
-                    <div className="flex items-start gap-2 text-[10px] text-red-700 max-w-xl" role="alert">
+                    <div className="flex items-start gap-2 text-xs text-red-700 max-w-xl" role="alert">
                         <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                         <span>Assign every rejected unit to a quarantine / Bad Order storage lot before generating the movement preview.</span>
                     </div>
                 ) : (
-                    <div className="flex items-start gap-2 text-[10px] text-muted-foreground max-w-xl">
+                    <div className="flex items-start gap-2 text-xs text-muted-foreground max-w-xl">
                         <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
                         <span>{previewAcknowledged ? "Receiving was completed." : "Review the movement preview, then use Confirm & Receive to create the records."}</span>
                     </div>

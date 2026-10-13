@@ -6,7 +6,7 @@ export const RECEIVING_DOCUMENT_TYPE_DEFINITIONS = [
     { code: "DR", label: "Delivery Receipt (DR)" }
 ] as const;
 
-export type ReceivingDocumentTypeCode = typeof RECEIVING_DOCUMENT_TYPE_DEFINITIONS[number]["code"];
+export type ReceivingDocumentTypeCode = string;
 
 export interface ReceivingDocumentTypeOption {
     id: number;
@@ -34,31 +34,40 @@ function positiveId(value: unknown): number | null {
 export async function fetchReceivingDocumentTypes(): Promise<ReceivingDocumentTypeOption[]> {
     const params = new URLSearchParams({
         fields: "id,type,shortcut",
+        sort: "id",
         limit: "-1"
     });
     const response = await procurementDirectusFetch(`/items/sales_invoice_type?${params.toString()}`);
     if (!response.ok) throw new ReceivingDocumentTypeError("Unable to load supplier document types.");
 
-    const byCode = new Map<ReceivingDocumentTypeCode, ReceivingDocumentTypeOption>();
+    const result: ReceivingDocumentTypeOption[] = [];
+    const seenIds = new Set<number>();
+
     for (const row of rows(await response.json())) {
         const id = positiveId(row.id);
-        const code = String(row.shortcut || "").trim().toUpperCase() as ReceivingDocumentTypeCode;
-        if (!id || !RECEIVING_DOCUMENT_TYPE_DEFINITIONS.some(definition => definition.code === code) || byCode.has(code)) continue;
-        const definition = RECEIVING_DOCUMENT_TYPE_DEFINITIONS.find(item => item.code === code)!;
-        byCode.set(code, { id, code, label: definition.label });
+        if (!id || seenIds.has(id)) continue;
+
+        const type = String(row.type || "").trim();
+        const shortcut = String(row.shortcut || "").trim();
+        if (!type && !shortcut) continue;
+
+        const code = (shortcut || type).toUpperCase();
+        const label = shortcut && type
+            ? `${type} (${shortcut})`
+            : (type || shortcut);
+
+        seenIds.add(id);
+        result.push({ id, code, label });
     }
 
-    const missing = RECEIVING_DOCUMENT_TYPE_DEFINITIONS
-        .map(definition => definition.code)
-        .filter(code => !byCode.has(code));
-    if (missing.length > 0) {
+    if (result.length === 0) {
         throw new ReceivingDocumentTypeError(
-            `Supplier document types are not configured: ${missing.join(", ")}.`,
+            "No supplier document types are configured.",
             503
         );
     }
 
-    return RECEIVING_DOCUMENT_TYPE_DEFINITIONS.map(definition => byCode.get(definition.code)!);
+    return result;
 }
 
 export async function validateReceivingDocumentType(
