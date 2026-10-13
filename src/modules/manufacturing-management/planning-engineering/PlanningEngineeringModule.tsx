@@ -37,6 +37,7 @@ import { formatPhtTimestamp, formatPhtTimestamp12Hour } from "../shared/pht-date
 import { isManufacturingEvidenceVideo } from "../production-workflow/services/production-yield-image";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { isCancelledJobOrderStatus, isJobOrderStatus, isTerminatedJobOrder, JOB_ORDER_STATUS, normalizeJobOrderStatus, displayJobOrderStatus } from "../job-order-status";
 import { calculateCumulativeRouteWorkloadHours, calculatePipelinedLineDurationHours, resolveProductionShiftHours } from "./utils/production-timing";
 import JsBarcode from "jsbarcode";
@@ -58,6 +59,16 @@ type MaterialLoadState = {
 };
 
 type PlanningTabKey = "demand" | "production" | "inventory" | "queue" | "cancelled";
+type PlanningTabItem = {
+    value: PlanningTabKey;
+    fullLabel: string;
+    compactLabel: string;
+    countDescription: string;
+    icon: React.ReactNode;
+    badgeText?: string;
+    badgeVariant?: "secondary" | "destructive";
+    badgeClassName?: string;
+};
 type PlanningPageValues = Pick<PlanningPaginationState, "page" | "pageSize">;
 
 function MaterialLoadErrorState({ message, onRetry }: { message?: string; onRetry: () => void }) {
@@ -200,6 +211,17 @@ export default function PlanningEngineeringModule() {
         setSelectedBranchId(Number.isSafeInteger(branchId) && branchId > 0 ? branchId : null);
     };
     const hasValidTargetBranch = selectedBranchId !== null && Number.isSafeInteger(selectedBranchId) && selectedBranchId > 0;
+    const releaseBlockReason = loadingBranches
+        ? "Loading target branches..."
+        : branches.length === 0
+            ? "No active target branch is available. Contact an administrator before releasing a Job Order."
+            : !hasValidTargetBranch
+                ? "Select a target branch to enable Job Order release."
+                : selectedLines.length === 0
+                    ? "Select at least one eligible Sales Order line."
+                    : !mergeValidation.isValid
+                        ? mergeValidation.reason || "Selected demand cannot be grouped into a valid Job Order."
+                        : null;
 
     const [activeMainTab, setActiveMainTab] = useState<PlanningTabKey>("demand");
     const [tabPagination, setTabPagination] = useState<Record<PlanningTabKey, PlanningPageValues>>({
@@ -1251,6 +1273,60 @@ export default function PlanningEngineeringModule() {
     const shortfallCount = subAssemblyLookupStatus === "ready" && !loadingRequirements && selectedBranchId !== null
         ? netRequirements.filter((n: any) => n.net_shortfall > 0).length
         : null;
+    const schedulableDemandLineCount = salesOrderGroups.reduce(
+        (count, group) => count + group.selectableLines.length,
+        0
+    );
+    const planningTabItems: PlanningTabItem[] = [
+        {
+            value: "demand",
+            fullLabel: "Schedulable SO Demand",
+            compactLabel: "SO Demand",
+            countDescription: `${schedulableDemandLineCount} schedulable demand ${schedulableDemandLineCount === 1 ? "line" : "lines"}`,
+            icon: <ClipboardList className="h-4 w-4 text-primary" />,
+            badgeText: `${schedulableDemandLineCount} ${schedulableDemandLineCount === 1 ? "line" : "lines"}`,
+        },
+        {
+            value: "production",
+            fullLabel: "In Production SOs",
+            compactLabel: "Production",
+            countDescription: `${productionSalesOrderGroups.length} sales ${productionSalesOrderGroups.length === 1 ? "order" : "orders"} in production`,
+            icon: <Factory className="h-4 w-4 text-sky-600" />,
+            badgeText: `${productionSalesOrderGroups.length} ${productionSalesOrderGroups.length === 1 ? "SO" : "SOs"}`,
+            badgeClassName: "bg-sky-500/10 text-sky-600 dark:text-sky-400 font-bold",
+        },
+        {
+            value: "inventory",
+            fullLabel: "Net Requirements",
+            compactLabel: "Net Req.",
+            countDescription: shortfallCount === null
+                ? "material shortfall count is not available yet"
+                : `${shortfallCount} material shortfall ${shortfallCount === 1 ? "item" : "items"}`,
+            icon: <Database className="h-4 w-4 text-indigo-500" />,
+            badgeText: shortfallCount !== null && shortfallCount > 0
+                ? `${shortfallCount} ${shortfallCount === 1 ? "shortfall" : "shortfalls"}`
+                : undefined,
+            badgeVariant: "destructive",
+        },
+        {
+            value: "queue",
+            fullLabel: "Job Order Queue",
+            compactLabel: "JO Queue",
+            countDescription: `${unreleasedJobs.length} ${unreleasedJobs.length === 1 ? "job order" : "job orders"} in the queue`,
+            icon: <Layers className="h-4 w-4 text-sky-500" />,
+            badgeText: `${unreleasedJobs.length} ${unreleasedJobs.length === 1 ? "JO" : "JOs"}`,
+            badgeClassName: "bg-sky-500/10 text-sky-600 dark:text-sky-400 font-bold",
+        },
+        {
+            value: "cancelled",
+            fullLabel: "Cancelled JOs",
+            compactLabel: "Cancelled",
+            countDescription: `${cancelledJobs.length} cancelled ${cancelledJobs.length === 1 ? "job order" : "job orders"}`,
+            icon: <XCircle className="h-4 w-4 text-rose-500" />,
+            badgeText: `${cancelledJobs.length} ${cancelledJobs.length === 1 ? "JO" : "JOs"}`,
+            badgeClassName: "bg-rose-500/10 text-rose-600 dark:text-rose-400 font-bold",
+        },
+    ];
 
     return (
         <div className="space-y-6 p-1 sm:p-2">
@@ -1364,75 +1440,61 @@ export default function PlanningEngineeringModule() {
                         </div>
                     </div>
                 )}
-                <TabsList className="grid w-full max-w-6xl grid-cols-2 rounded-xl bg-muted/60 p-1 lg:grid-cols-5">
-                    <TabsTrigger value="demand" className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs">
-                        <ClipboardList className="h-4 w-4 text-primary" />
-                        <span>Schedulable SO Demand</span>
-                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4.5 min-w-4.5 flex items-center justify-center font-mono">
-                            {salesOrderGroups.length}
-                        </Badge>
-                    </TabsTrigger>
-                    <TabsTrigger value="production" className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs">
-                        <Factory className="h-4 w-4 text-sky-600" />
-                        <span>In Production SOs</span>
-                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4.5 min-w-4.5 flex items-center justify-center font-mono bg-sky-500/10 text-sky-600 dark:text-sky-400 font-bold">
-                            {productionSalesOrderGroups.length}
-                        </Badge>
-                    </TabsTrigger>
-                    <TabsTrigger value="inventory" className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs">
-                        <Database className="h-4 w-4 text-indigo-500" />
-                        <span>Net Requirements</span>
-                        {shortfallCount !== null && shortfallCount > 0 && (
-                            <Badge variant="destructive" className="text-[10px] px-1.5 py-0 h-4.5 min-w-4.5 flex items-center justify-center font-mono">
-                                {shortfallCount}
-                            </Badge>
-                        )}
-                    </TabsTrigger>
-                    <TabsTrigger value="queue" className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs">
-                        <Layers className="h-4 w-4 text-sky-500" />
-                        <span>Job Order Queue</span>
-                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4.5 min-w-4.5 flex items-center justify-center font-mono bg-sky-500/10 text-sky-600 dark:text-sky-400 font-bold">
-                            {unreleasedJobs.length}
-                        </Badge>
-                    </TabsTrigger>
-                    <TabsTrigger value="cancelled" className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs">
-                        <XCircle className="h-4 w-4 text-rose-500" />
-                        <span>Cancelled JOs</span>
-                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4.5 min-w-4.5 flex items-center justify-center font-mono bg-rose-500/10 text-rose-600 dark:text-rose-400 font-bold">
-                            {cancelledJobs.length}
-                        </Badge>
-                    </TabsTrigger>
+                <TabsList className="flex w-full max-w-6xl flex-nowrap justify-start gap-1 overflow-x-auto overscroll-x-contain rounded-xl bg-muted/60 p-1 lg:grid lg:grid-cols-5 lg:overflow-visible">
+                        {planningTabItems.map((tab) => (
+                            <Tooltip key={tab.value}>
+                                <TooltipTrigger asChild>
+                                    <TabsTrigger
+                                        value={tab.value}
+                                        aria-label={`${tab.fullLabel}, ${tab.countDescription}`}
+                                        className="w-max flex-none items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs lg:w-auto lg:flex-1"
+                                    >
+                                        {tab.icon}
+                                        <span className="hidden lg:inline">{tab.fullLabel}</span>
+                                        <span className="lg:hidden">{tab.compactLabel}</span>
+                                        {tab.badgeText && (
+                                            <Badge
+                                                variant={tab.badgeVariant || "secondary"}
+                                                className={`h-4.5 min-w-4.5 px-1.5 py-0 text-[10px] font-mono ${tab.badgeClassName || ""}`}
+                                            >
+                                                {tab.badgeText}
+                                            </Badge>
+                                        )}
+                                    </TabsTrigger>
+                                </TooltipTrigger>
+                                <TooltipContent side="bottom">
+                                    {`${tab.fullLabel} — ${tab.countDescription}`}
+                                </TooltipContent>
+                            </Tooltip>
+                        ))}
                 </TabsList>
 
 
                 {/* TAB 1: Demand Harvesting & Consolidation */}
                 <TabsContent value="demand" className="space-y-6 outline-none">
-                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-                        {/* Left Column: Demand Lines Table */}
-                        <div className="lg:col-span-8">
-                            <DemandLinesTable
-                                loadingOrders={loadingOrders}
-                                salesOrderGroups={salesOrderGroups}
-                                selectedDetailIds={selectedDetailIds}
-                                handleSelectLine={handleSelectLine}
-                                handleSelectLines={handleSelectLines}
-                                pagination={demandPagination}
-                            />
-                        </div>
-                        {/* Right Column: Consolidation Action Panel */}
-                        <div className="lg:col-span-4">
-                            <ConsolidationPanel
-                                selectedLines={selectedLines}
-                                releaseGroups={releaseGroups}
-                                mergeValidation={mergeValidation}
-                                hasValidTargetBranch={hasValidTargetBranch}
-                                handleInitiateRelease={() => handleInitiateRelease()}
-                                versionStock={versionStock}
-                                loadingVersionStock={loadingVersionStock}
-                                canDirectAllocate={releaseGroups.length === 1}
-                                handleInitiateDirectAllocate={() => setIsDirectAllocDialogOpen(true)}
-                            />
-                        </div>
+                    <div className="space-y-6">
+                        <ConsolidationPanel
+                            selectedLines={selectedLines}
+                            releaseGroups={releaseGroups}
+                            mergeValidation={mergeValidation}
+                            hasValidTargetBranch={hasValidTargetBranch}
+                            releaseBlockReason={releaseBlockReason}
+                            handleInitiateRelease={() => handleInitiateRelease()}
+                            versionStock={versionStock}
+                            loadingVersionStock={loadingVersionStock}
+                            canDirectAllocate={releaseGroups.length === 1}
+                            handleInitiateDirectAllocate={() => setIsDirectAllocDialogOpen(true)}
+                        />
+                        <DemandLinesTable
+                            loadingOrders={loadingOrders}
+                            salesOrderGroups={salesOrderGroups}
+                            selectedLines={selectedLines}
+                            releaseGroups={releaseGroups}
+                            selectedDetailIds={selectedDetailIds}
+                            handleSelectLine={handleSelectLine}
+                            handleSelectLines={handleSelectLines}
+                            pagination={demandPagination}
+                        />
                     </div>
                 </TabsContent>
 

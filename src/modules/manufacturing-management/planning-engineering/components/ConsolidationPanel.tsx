@@ -12,6 +12,7 @@ interface ConsolidationPanelProps {
     releaseGroups: SalesOrderReleaseGroup[];
     mergeValidation: { isValid: boolean; reason: string };
     hasValidTargetBranch: boolean;
+    releaseBlockReason: string | null;
     handleInitiateRelease: () => void;
     versionStock: number | null;
     loadingVersionStock: boolean;
@@ -24,6 +25,7 @@ export function ConsolidationPanel({
     releaseGroups,
     mergeValidation,
     hasValidTargetBranch,
+    releaseBlockReason,
     handleInitiateRelease,
     versionStock,
     loadingVersionStock,
@@ -48,13 +50,7 @@ export function ConsolidationPanel({
                     </div>
                 ) : (
                     <div className="space-y-4">
-                        {!mergeValidation.isValid ? (
-                            <Alert variant="destructive">
-                                <AlertTriangle className="h-4 w-4" />
-                                <AlertTitle className="text-xs font-bold uppercase">Release Blocked</AlertTitle>
-                                <AlertDescription className="text-xs font-medium mt-1">{mergeValidation.reason}</AlertDescription>
-                            </Alert>
-                        ) : (
+                        {!releaseBlockReason && (
                             <Alert className="border-green-200 bg-green-50/10">
                                 <Check className="h-4 w-4 text-green-600" />
                                 <AlertTitle className="text-xs font-bold text-green-700 uppercase">Valid Multi-JO Release</AlertTitle>
@@ -91,27 +87,32 @@ export function ConsolidationPanel({
                                 </div>
                             ))}
                         </div>
-
-                        <div className="space-y-2">
-                            <Button className="w-full font-bold text-xs uppercase" disabled={!hasValidTargetBranch || !mergeValidation.isValid} onClick={() => handleInitiateRelease()}>
-                                {releaseGroups.length > 1 ? `Release ${releaseGroups.length} Job Orders` : "Release Job Order"}
-                            </Button>
-
-                            {canDirectAllocate && hasValidTargetBranch && mergeValidation.isValid && versionStock !== null && versionStock >= (releaseGroups[0]?.totalRemainingQuantity || 0) && (
-                                <Button type="button" variant="outline" className="w-full font-bold text-xs uppercase border-emerald-600/50 text-emerald-600 dark:text-emerald-400 bg-emerald-50/20 dark:bg-emerald-950/20 hover:bg-emerald-600 hover:text-white transition-all duration-200" onClick={handleInitiateDirectAllocate}>
-                                    Direct Allocate &amp; Invoice
-                                </Button>
-                            )}
-
-                            {canDirectAllocate && hasValidTargetBranch && mergeValidation.isValid && versionStock !== null && versionStock < (releaseGroups[0]?.totalRemainingQuantity || 0) && (
-                                <p className="text-[10px] text-muted-foreground leading-snug">Direct Allocate &amp; Invoice becomes available when version stock ({versionStock.toLocaleString()}) covers the remaining quantity ({(releaseGroups[0]?.totalRemainingQuantity || 0).toLocaleString()}).</p>
-                            )}
-                            {!canDirectAllocate && releaseGroups.length > 1 && (
-                                <p className="text-[10px] text-muted-foreground leading-snug">Direct allocation is limited to one product/BOM group because it posts one inventory allocation at a time.</p>
-                            )}
-                        </div>
                     </div>
                 )}
+                <div className="space-y-2 shrink-0">
+                    <Button className="w-full font-bold text-xs uppercase" disabled={releaseBlockReason !== null} onClick={() => handleInitiateRelease()}>
+                        {releaseGroups.length > 1 ? `Release ${releaseGroups.length} Job Orders` : "Release Job Order"}
+                    </Button>
+                    {releaseBlockReason && (
+                        <div role="status" className="flex items-start gap-2 text-[11px] font-medium leading-snug text-amber-700 dark:text-amber-400">
+                            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                            <span>{releaseBlockReason}</span>
+                        </div>
+                    )}
+
+                    {selectedLines.length > 0 && canDirectAllocate && hasValidTargetBranch && mergeValidation.isValid && versionStock !== null && versionStock >= (releaseGroups[0]?.totalRemainingQuantity || 0) && (
+                        <Button type="button" variant="outline" className="w-full font-bold text-xs uppercase border-emerald-600/50 text-emerald-600 dark:text-emerald-400 bg-emerald-50/20 dark:bg-emerald-950/20 hover:bg-emerald-600 hover:text-white transition-all duration-200" onClick={handleInitiateDirectAllocate}>
+                            Direct Allocate &amp; Invoice
+                        </Button>
+                    )}
+
+                    {selectedLines.length > 0 && canDirectAllocate && hasValidTargetBranch && mergeValidation.isValid && versionStock !== null && versionStock < (releaseGroups[0]?.totalRemainingQuantity || 0) && (
+                        <p className="text-[10px] text-muted-foreground leading-snug">Direct Allocate &amp; Invoice becomes available when version stock ({versionStock.toLocaleString()}) covers the remaining quantity ({(releaseGroups[0]?.totalRemainingQuantity || 0).toLocaleString()}).</p>
+                    )}
+                    {selectedLines.length > 0 && !canDirectAllocate && releaseGroups.length > 1 && (
+                        <p className="text-[10px] text-muted-foreground leading-snug">Direct allocation is limited to one product/BOM group because it posts one inventory allocation at a time.</p>
+                    )}
+                </div>
             </CardContent>
         </Card>
     );
