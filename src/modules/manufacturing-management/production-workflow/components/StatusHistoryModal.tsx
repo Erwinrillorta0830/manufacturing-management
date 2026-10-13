@@ -7,11 +7,11 @@ import {
     Building2,
     CheckCircle2,
     ArrowRight,
-    Loader2,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { formatPhtTimestamp } from "../../shared/pht-date";
 import { JobOrder, JobOrderStatusHistoryRecord } from "../types";
 import { fetchJobOrderStatusHistory } from "../services/production-api";
@@ -85,8 +85,27 @@ export function StatusHistoryModal({
 
                 <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 min-h-0">
                     {loading ? (
-                        <div className="py-12 text-center text-xs text-muted-foreground">
-                            <Loader2 className="h-5 w-5 animate-spin mx-auto mb-2 text-primary" /> Loading status history...
+                        <div role="status" aria-label="Loading status history" aria-busy="true" className="relative ml-4 space-y-6 border-l-2 border-primary/30 pl-4">
+                            <span className="sr-only">Loading status history...</span>
+                            {Array.from({ length: 4 }).map((_, index) => (
+                                <div key={`history-skeleton-${index}`} aria-hidden="true" className="relative rounded-xl border border-border/80 bg-card p-3.5 shadow-sm">
+                                    <div className="absolute -left-[25px] top-1.5 h-4 w-4 rounded-full border-2 border-primary/30 bg-background" />
+                                    <div className="space-y-3">
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <div className="flex gap-2">
+                                                <Skeleton className="h-5 w-20 rounded-full" />
+                                                <Skeleton className="h-5 w-24 rounded-full" />
+                                            </div>
+                                            <Skeleton className="h-4 w-36" />
+                                        </div>
+                                        <Skeleton className="h-8 w-full" />
+                                        <div className="grid gap-2 sm:grid-cols-2">
+                                            <Skeleton className="h-4 w-3/4" />
+                                            <Skeleton className="h-4 w-2/3" />
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                     ) : history.length === 0 ? (
                         <div className="p-8 text-center bg-muted/10 border border-dashed rounded-2xl text-muted-foreground text-xs space-y-1">

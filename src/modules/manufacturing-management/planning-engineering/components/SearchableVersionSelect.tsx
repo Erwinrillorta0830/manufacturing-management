@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Check, ChevronsUpDown, Search, Layers, Loader2 } from "lucide-react";
+import { Check, ChevronsUpDown, Search, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -10,6 +10,7 @@ import {
     PopoverTrigger,
 } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export interface VersionOption {
     version_id: number;
@@ -75,9 +76,9 @@ export function SearchableVersionSelect({
                         <div className="flex items-center gap-1.5 truncate min-w-0">
                             <Layers className="h-3.5 w-3.5 text-sky-500 shrink-0" />
                             {loading ? (
-                                <span className="flex items-center gap-1.5 text-muted-foreground text-[10px] shrink-0">
-                                    <Loader2 className="h-3 w-3 animate-spin text-sky-500 shrink-0" /> Loading BOM...
-                                </span>
+                                <div role="status" aria-busy="true" aria-label="Loading BOM" className="flex-1">
+                                    <Skeleton className="h-4 w-28" />
+                                </div>
                             ) : currentVersion ? (
                                 <div className="flex items-center gap-1.5 truncate text-[11px] min-w-0">
                                     <span className="font-bold text-sky-700 dark:text-sky-300 truncate max-w-[200px]" title={String(currentVersion.version_name)}>

@@ -1274,9 +1274,11 @@ export default function PlanningEngineeringModule() {
                 <div className="flex items-center gap-3 shrink-0">
                     {/* Branch Dropdown */}
                     {loadingBranches ? (
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                            Loading branches...
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold uppercase text-muted-foreground tracking-wider">Target Branch:</span>
+                            <div role="status" aria-busy="true" aria-label="Loading branches">
+                                <Skeleton className="h-9 w-[200px] rounded-md" />
+                            </div>
                         </div>
                     ) : (
                         <div className="flex items-center gap-2">
@@ -1476,9 +1478,8 @@ export default function PlanningEngineeringModule() {
                                 </p>
                             </div>
                             {loadingJobs && (
-                                <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
-                                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                                    Updating queue...
+                                <div role="status" aria-busy="true" aria-label="Refreshing Job Order queue" className="shrink-0">
+                                    <Skeleton className="h-4 w-24 rounded-md" />
                                 </div>
                             )}
                         </div>
@@ -1524,9 +1525,8 @@ export default function PlanningEngineeringModule() {
                                 </p>
                             </div>
                             {loadingJobs && (
-                                <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
-                                    <Loader2 className="h-4 w-4 animate-spin text-rose-500" />
-                                    Updating cancelled orders...
+                                <div role="status" aria-busy="true" aria-label="Refreshing cancelled Job Orders" className="shrink-0">
+                                    <Skeleton className="h-4 w-32 rounded-md" />
                                 </div>
                             )}
                         </div>
@@ -1852,9 +1852,27 @@ export default function PlanningEngineeringModule() {
                                     <div className="space-y-3">
                                         <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Parent Packaging & Assembly Materials</h4>
                                         {materialLoadState.status === "loading" ? (
-                                            <div className="flex items-center justify-center py-6 gap-2 text-xs text-muted-foreground">
-                                                <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                                                {waitingForInventory ? "Waiting for inventory movements..." : "Loading materials..."}
+                                            <div role="status" aria-busy="true" aria-label={waitingForInventory ? "Waiting for inventory movements" : "Loading parent materials"} className="border rounded-xl overflow-hidden bg-card shadow-sm">
+                                                <table aria-hidden="true" className="w-full text-xs text-left text-muted-foreground border-collapse">
+                                                    <thead className="uppercase bg-muted/50 font-bold border-b text-foreground tracking-wider">
+                                                        <tr>
+                                                            <th className="px-4 py-3">Raw Material / Component</th>
+                                                            <th className="px-4 py-3 text-right">Required</th>
+                                                            <th className="px-4 py-3 text-right">On-Hand Stock</th>
+                                                            <th className="px-4 py-3">Status</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="divide-y">
+                                                        {Array.from({ length: 4 }, (_, index) => (
+                                                            <tr key={index}>
+                                                                <td className="px-4 py-3.5"><Skeleton className="h-4 w-3/4" /><Skeleton className="mt-2 h-3 w-1/3" /></td>
+                                                                <td className="px-4 py-3.5"><Skeleton className="ml-auto h-4 w-20" /></td>
+                                                                <td className="px-4 py-3.5"><Skeleton className="ml-auto h-4 w-24" /></td>
+                                                                <td className="px-4 py-3.5"><Skeleton className="h-6 w-28 rounded-full" /></td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
                                             </div>
                                         ) : materialLoadState.status === "error" ? (
                                             <MaterialLoadErrorState message={materialLoadState.message} onRetry={retryCurrentMaterials} />
@@ -1964,7 +1982,7 @@ export default function PlanningEngineeringModule() {
 
                                             <div className="space-y-3">
                                                 <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Ingredient Raw Materials Allocation Worksheet</h4>
-                                                <div className="border rounded-xl overflow-hidden bg-card shadow-sm">
+                                                <div role={cMaterialLoadState.status === "loading" ? "status" : undefined} aria-busy={cMaterialLoadState.status === "loading"} aria-label={cMaterialLoadState.status === "loading" ? (waitingForInventory ? "Waiting for inventory movements" : "Loading ingredient materials") : undefined} className="border rounded-xl overflow-hidden bg-card shadow-sm">
                                                     <table className="w-full text-xs text-left text-muted-foreground border-collapse">
                                                         <thead className="uppercase bg-muted/50 font-bold border-b text-foreground tracking-wider">
                                                             <tr>
@@ -1976,14 +1994,16 @@ export default function PlanningEngineeringModule() {
                                                         </thead>
                                                         <tbody className="divide-y text-foreground/90">
                                                             {cMaterialLoadState.status === "loading" ? (
-                                                                <tr>
-                                                                    <td colSpan={4} className="px-4 py-6 text-center text-muted-foreground font-medium">
-                                                                        <div className="flex flex-col items-center justify-center space-y-1">
-                                                                            <Loader2 className="h-5 w-5 animate-spin text-sky-500" />
-                                                                            <span>{waitingForInventory ? "Waiting for inventory movements..." : "Loading ingredient materials..."}</span>
-                                                                        </div>
-                                                                    </td>
-                                                                </tr>
+                                                                <>
+                                                                    {Array.from({ length: 4 }, (_, index) => (
+                                                                        <tr key={index} aria-hidden="true">
+                                                                            <td className="px-4 py-3.5"><Skeleton className="h-4 w-3/4" /></td>
+                                                                            <td className="px-4 py-3.5"><Skeleton className="ml-auto h-4 w-20" /></td>
+                                                                            <td className="px-4 py-3.5"><Skeleton className="ml-auto h-4 w-24" /></td>
+                                                                            <td className="px-4 py-3.5"><Skeleton className="h-6 w-28 rounded-full" /></td>
+                                                                        </tr>
+                                                                    ))}
+                                                                </>
                                                             ) : cMaterialLoadState.status === "error" ? (
                                                                 <tr>
                                                                     <td colSpan={4} className="px-4 py-4">

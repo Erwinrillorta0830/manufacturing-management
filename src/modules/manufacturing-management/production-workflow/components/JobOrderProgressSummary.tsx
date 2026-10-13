@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Activity, RefreshCw } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { JobOrder } from "../types";
 
@@ -180,9 +181,14 @@ export function JobOrderProgressSummary({
                     variant="outline"
                     onClick={() => void load()}
                     disabled={loading}
+                    aria-busy={loading}
                     className="h-8 shrink-0 text-xs font-bold"
                 >
-                    <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+                    {loading ? (
+                        <Skeleton aria-hidden="true" className="mr-1.5 h-3.5 w-3.5 rounded-sm" />
+                    ) : (
+                        <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                    )}
                     Refresh
                 </Button>
             </CardHeader>

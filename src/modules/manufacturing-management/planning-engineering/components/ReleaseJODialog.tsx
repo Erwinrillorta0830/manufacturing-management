@@ -4,6 +4,7 @@ import { Loader2, ArrowRight, ArrowLeft, Check, UserPlus, ShieldAlert, CheckCirc
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Step2BOMLoadingSkeleton } from "./Step2BOMLoadingSkeleton";
 import {
     Select,
@@ -1074,9 +1075,9 @@ export function ReleaseJODialog({
                                     <div className="flex justify-between pt-1 border-t border-border/50">
                                         <span className="text-muted-foreground">Recipe Batch Size (Gross Base Qty):</span>
                                         {loadingDetails ? (
-                                            <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono text-xs flex items-center gap-1">
-                                                <Loader2 className="h-3 w-3 animate-spin text-emerald-600" /> Loading...
-                                            </span>
+                                            <div role="status" aria-busy="true" aria-label="Loading recipe batch size">
+                                                <Skeleton className="h-4 w-24" />
+                                            </div>
                                         ) : (
                                             <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">{bomBaseQty.toLocaleString()} {releaseSummaryUom}</span>
                                         )}
@@ -1084,9 +1085,9 @@ export function ReleaseJODialog({
                                     <div className="flex justify-between">
                                         <span className="text-muted-foreground">Expected Net Output{batchSizeDisplay ? ` (${batchSizeDisplay.expectedYieldPercentage}% Yield)` : ""}:</span>
                                         {loadingDetails || !batchSizeDisplay ? (
-                                            <span className="font-bold text-blue-600 dark:text-blue-400 font-mono text-xs flex items-center gap-1">
-                                                {loadingDetails ? <><Loader2 className="h-3 w-3 animate-spin text-blue-600" /> Loading...</> : "—"}
-                                            </span>
+                                            loadingDetails
+                                                ? <div role="status" aria-busy="true" aria-label="Loading expected net output"><Skeleton className="h-4 w-24" /></div>
+                                                : <span className="font-bold text-blue-600 dark:text-blue-400 font-mono text-xs">—</span>
                                         ) : (
                                             <span className="font-bold text-blue-600 dark:text-blue-400 font-mono">{batchSizeDisplay.expectedNetQuantity.toLocaleString()} {releaseSummaryUom}</span>
                                         )}
@@ -1146,15 +1147,16 @@ export function ReleaseJODialog({
                                         </div>
 
                                         <div className="space-y-1">
-                                            <label htmlFor="target-requested-input" className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide flex items-center justify-between">
-                                                <span>{isEditingDraft ? "Allocated Sales Order Quantity" : "Requested Quantity"}</span>
+                                            <div className="flex items-center justify-between">
+                                                <label htmlFor="target-requested-input" className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
+                                                    {isEditingDraft ? "Allocated Sales Order Quantity" : "Requested Quantity"}
+                                                </label>
                                                 {loadingDetails && (
-                                                    <span className="text-[9px] text-muted-foreground font-normal flex items-center gap-1 lowercase">
-                                                        <Loader2 className="h-2.5 w-2.5 animate-spin text-primary" />
-                                                        loading batch size...
-                                                    </span>
+                                                    <div role="status" aria-busy="true" aria-label="Loading batch size">
+                                                        <Skeleton className="h-3 w-20" />
+                                                    </div>
                                                 )}
-                                            </label>
+                                            </div>
                                             <div className="relative">
                                                 <Input
                                                     id="target-requested-input"
@@ -1191,7 +1193,7 @@ export function ReleaseJODialog({
                                                 />
                                                 {loadingDetails && (
                                                     <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center">
-                                                        <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                                                        <Skeleton className="h-3.5 w-10" />
                                                     </div>
                                                 )}
                                             </div>
@@ -1274,15 +1276,14 @@ export function ReleaseJODialog({
 
                                     <div>
                                         <div className="space-y-1">
-                                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide flex items-center justify-between">
-                                                <span>Hours per Shift</span>
+                                            <div className="flex items-center justify-between">
+                                                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">Hours per Shift</label>
                                                 {loadingDetails && (
-                                                    <span className="text-[9px] text-muted-foreground font-normal flex items-center gap-1 lowercase">
-                                                        <Loader2 className="h-2.5 w-2.5 animate-spin text-primary" />
-                                                        calculating...
-                                                    </span>
+                                                    <div role="status" aria-busy="true" aria-label="Calculating production schedule">
+                                                        <Skeleton className="h-3 w-16" />
+                                                    </div>
                                                 )}
-                                            </label>
+                                            </div>
                                             <div className="relative">
                                                 <Input
                                                     type="number"
@@ -1301,7 +1302,7 @@ export function ReleaseJODialog({
                                                 </p>
                                                 {loadingDetails && (
                                                     <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center">
-                                                        <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                                                        <Skeleton className="h-3.5 w-10" />
                                                     </div>
                                                 )}
                                             </div>

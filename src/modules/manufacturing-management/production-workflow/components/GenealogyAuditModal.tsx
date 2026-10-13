@@ -9,13 +9,13 @@ import {
     Calendar,
     User,
     CheckCircle2,
-    Loader2,
     Printer,
     Search
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { JobOrder, MaterialGenealogyRecord } from "../types";
 import { fetchGenealogyAndMovements } from "../services/production-api";
 import { toast } from "sonner";
@@ -178,9 +178,33 @@ export function GenealogyAuditModal({
                     </div>
 
                     {loading ? (
-                        <div className="py-16 text-center text-muted-foreground text-xs">
-                            <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2 text-primary" />
-                            Loading genealogy and backflushing movements...
+                        <div role="status" aria-label="Loading genealogy records" aria-busy="true" className="overflow-hidden rounded-2xl border border-border/80">
+                            <span className="sr-only">Loading genealogy and backflushing movements...</span>
+                            <div aria-hidden="true" className="overflow-x-auto">
+                                <table className="w-full text-left text-xs">
+                                    <thead className="border-b border-border/60 bg-muted/40 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                                        <tr>
+                                            <th className="p-3">Finished Batch No</th>
+                                            <th className="p-3">Raw Component Material</th>
+                                            <th className="p-3">Staging Source Lot / Batch</th>
+                                            <th className="p-3 text-right">Backflushed Qty</th>
+                                            <th className="p-3">Logged By</th>
+                                            <th className="p-3">Timestamp</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-border/40">
+                                        {Array.from({ length: 5 }).map((_, rowIndex) => (
+                                            <tr key={`genealogy-skeleton-${rowIndex}`}>
+                                                {Array.from({ length: 6 }).map((__, cellIndex) => (
+                                                    <td key={`genealogy-skeleton-${rowIndex}-${cellIndex}`} className="p-3">
+                                                        <Skeleton className={`h-4 ${cellIndex === 3 ? "ml-auto w-20" : "w-full max-w-40"}`} />
+                                                    </td>
+                                                ))}
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     ) : filteredGenealogy.length === 0 ? (
                         <div className="p-8 text-center bg-muted/10 border border-dashed rounded-2xl text-muted-foreground text-xs space-y-2">
