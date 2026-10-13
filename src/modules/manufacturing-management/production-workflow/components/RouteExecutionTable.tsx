@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { SearchableSelect } from "../../planning-engineering/components/SearchableSelect";
 import { formatProductionValue } from "../../planning-engineering/utils/production-timing";
 import { JobOrder, JobOrderMaterialBatch, JobOrderMaterialLine, RouteOperatorRecord, RoutingTask, User as UserType } from "../types";
@@ -384,7 +385,11 @@ function RouteExecutionRow({
                 </td>
                 <td className="px-3 py-3 align-top" onClick={(event) => event.stopPropagation()}>
                     {loadingOperators && groupedOperators.length === 0 ? (
-                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                        <div role="status" aria-label="Loading route operators" aria-busy="true" className="min-w-[280px] space-y-2">
+                            <span className="sr-only">Loading route operators...</span>
+                            <Skeleton aria-hidden="true" className="h-8 w-full max-w-56 rounded-lg" />
+                            <Skeleton aria-hidden="true" className="h-7 w-3/4 rounded-lg" />
+                        </div>
                     ) : groupedOperators.length === 0 ? (
                         <span className="text-[10px] italic text-muted-foreground">Assign personnel first</span>
                     ) : (
@@ -523,7 +528,10 @@ function RouteExecutionRow({
                                         <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
                                             <span className="font-semibold">Source batch:</span>
                                             {loadingJobOrderMaterials ? (
-                                                <span>Loading...</span>
+                                                <>
+                                                    <span className="sr-only">Loading source batches...</span>
+                                                    <Skeleton aria-hidden="true" className="h-4 w-24 rounded-full" />
+                                                </>
                                             ) : sourceBatches.length > 0 ? (
                                                 sourceBatches.map((batch, batchIndex) => (
                                                     <Badge key={`${batch.reservation_id || item.product_id}_${batchIndex}`} variant="secondary" className="font-mono text-[9px]">

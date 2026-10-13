@@ -1,5 +1,5 @@
 import React, { useEffect } from "react";
-import { Loader2, Layers, Info, AlertTriangle, RefreshCw } from "lucide-react";
+import { Layers, Info, AlertTriangle, RefreshCw } from "lucide-react";
 import {
     Card,
     CardContent,
@@ -19,6 +19,7 @@ import {
 import { Branch, NetRequirementItem } from "../types";
 import { PlanningPaginationControls, type PlanningPaginationState } from "./PlanningPaginationControls";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type SubAssemblyLookupStatus = "loading" | "ready" | "error";
 
@@ -77,11 +78,27 @@ export function NetRequirementsTable({
             </CardHeader>
             <CardContent className="p-0">
                 {loadingRequirements || subAssemblyLookupStatus === "loading" ? (
-                    <div className="flex flex-col items-center justify-center py-20 gap-3">
-                        <Loader2 className="h-8 w-8 text-primary animate-spin" />
-                        <span className="text-xs font-bold text-muted-foreground uppercase tracking-widest animate-pulse">
-                            {subAssemblyLookupStatus === "loading" ? "Loading sub-assembly BOMs..." : "Calculating requirements..."}
-                        </span>
+                    <div role="status" aria-busy="true" aria-label={subAssemblyLookupStatus === "loading" ? "Loading sub-assembly BOMs" : "Calculating net requirements"} className="overflow-x-auto">
+                        <Table>
+                            <TableHeader className="bg-muted/5">
+                                <TableRow>
+                                    <TableHead><Skeleton className="h-4 w-32" /></TableHead>
+                                    {Array.from({ length: 4 }, (_, index) => (
+                                        <TableHead key={index} className="text-right"><Skeleton className="ml-auto h-4 w-20" /></TableHead>
+                                    ))}
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {Array.from({ length: 5 }, (_, index) => (
+                                    <TableRow key={index}>
+                                        <TableCell className="py-3"><Skeleton className="mb-2 h-4 w-3/4" /><Skeleton className="h-3 w-1/3" /></TableCell>
+                                        {Array.from({ length: 4 }, (_, column) => (
+                                            <TableCell key={column} className="text-right"><Skeleton className="ml-auto h-4 w-20" /></TableCell>
+                                        ))}
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
                     </div>
                 ) : subAssemblyLookupStatus === "error" ? (
                     <div role="alert" className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center text-muted-foreground">

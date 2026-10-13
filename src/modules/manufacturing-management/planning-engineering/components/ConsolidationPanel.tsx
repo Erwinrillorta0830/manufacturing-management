@@ -5,6 +5,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SalesOrderDetail, SalesOrderReleaseGroup } from "../types";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface ConsolidationPanelProps {
     selectedLines: SalesOrderDetail[];
@@ -84,7 +85,7 @@ export function ConsolidationPanel({
                                     {releaseGroups.length === 1 && (
                                         <div className="flex justify-between items-center text-xs">
                                             <span className="font-semibold text-muted-foreground">Available version stock:</span>
-                                            {loadingVersionStock ? <span className="text-muted-foreground animate-pulse text-[10px] font-bold uppercase">Checking...</span> : <span className="font-bold text-foreground">{versionStock !== null ? versionStock.toLocaleString() : "N/A"}</span>}
+                                            {loadingVersionStock ? <div role="status" aria-busy="true" aria-label="Checking available version stock"><Skeleton className="h-4 w-16" /></div> : <span className="font-bold text-foreground">{versionStock !== null ? versionStock.toLocaleString() : "N/A"}</span>}
                                         </div>
                                     )}
                                 </div>

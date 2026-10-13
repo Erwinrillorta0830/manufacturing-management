@@ -5,6 +5,7 @@ import { AlertTriangle, Loader2, Undo2, XCircle } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { JobOrderCancellationPreview } from "../types";
@@ -113,8 +114,32 @@ export function JobOrderCancellationModal({
 
                 <div className="flex-1 overflow-y-auto p-5 space-y-4 min-h-0">
                     {loading && (
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground p-6 justify-center">
-                            <Loader2 className="h-4 w-4 animate-spin" /> Loading cancellation preview...
+                        <div role="status" aria-label="Loading cancellation preview" aria-busy="true" className="space-y-4">
+                            <span className="sr-only">Loading cancellation preview...</span>
+                            <div aria-hidden="true" className="flex flex-wrap items-center gap-x-6 gap-y-3 rounded-xl border p-3">
+                                {Array.from({ length: 4 }).map((_, index) => (
+                                    <div key={`preview-summary-${index}`} className="space-y-2">
+                                        <Skeleton className="h-3 w-16" />
+                                        <Skeleton className="h-4 w-24" />
+                                    </div>
+                                ))}
+                            </div>
+                            <div aria-hidden="true" className="overflow-hidden rounded-xl border">
+                                <div className="grid grid-cols-5 gap-3 border-b bg-muted/30 p-3">
+                                    {Array.from({ length: 5 }).map((_, index) => (
+                                        <Skeleton key={`preview-heading-${index}`} className="h-3 w-full" />
+                                    ))}
+                                </div>
+                                <div className="divide-y">
+                                    {Array.from({ length: 4 }).map((_, rowIndex) => (
+                                        <div key={`preview-line-${rowIndex}`} className="grid grid-cols-5 gap-3 p-3">
+                                            {Array.from({ length: 5 }).map((__, cellIndex) => (
+                                                <Skeleton key={`preview-line-${rowIndex}-${cellIndex}`} className="h-4 w-full" />
+                                            ))}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
                         </div>
                     )}
 

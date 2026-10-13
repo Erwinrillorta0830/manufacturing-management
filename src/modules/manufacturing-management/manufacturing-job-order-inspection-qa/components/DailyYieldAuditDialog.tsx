@@ -29,6 +29,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
     Select,
     SelectContent,
@@ -264,7 +265,17 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                     </div>
                                 </div>
                                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                                    {sortedAuditRoutes.length === 0 ? (
+                                    {controller.referenceLoading && sortedAuditRoutes.length > 0 ? (
+                                        <div role="status" aria-label="Loading assigned route operators" aria-busy="true" className="flex flex-wrap items-center gap-1.5">
+                                            <span className="sr-only">Loading assigned route operators...</span>
+                                            {sortedAuditRoutes.slice(0, 2).map((route) => (
+                                                <div key={route.id} aria-hidden="true" className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5">
+                                                    <Skeleton className="h-3 w-5" />
+                                                    <Skeleton className="h-3 w-24" />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : sortedAuditRoutes.length === 0 ? (
                                         <p className="text-muted-foreground text-xs italic">No route operators assigned.</p>
                                     ) : (
                                         <>
@@ -321,7 +332,21 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                         <span className="text-[10px] text-primary hidden group-open:inline font-semibold">Hide logs</span>
                                     </summary>
                                     <div className="mt-2 space-y-2">
-                                        {controller.matchingLogs.length === 0 ? (
+                                        {controller.referenceLoading ? (
+                                            <div role="status" aria-label="Loading operator checklist logs" aria-busy="true" className="space-y-1.5">
+                                                <span className="sr-only">Loading operator checklist logs...</span>
+                                                {Array.from({ length: 2 }).map((_, index) => (
+                                                    <div key={`checklist-log-skeleton-${index}`} aria-hidden="true" className="space-y-2 rounded-md border border-border bg-muted/50 p-2">
+                                                        <div className="flex items-center justify-between gap-2">
+                                                            <Skeleton className="h-3 w-36" />
+                                                            <Skeleton className="h-5 w-16 rounded-full" />
+                                                        </div>
+                                                        <Skeleton className="h-3 w-full" />
+                                                        <Skeleton className="h-3 w-4/5" />
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : controller.matchingLogs.length === 0 ? (
                                             <div className="text-[10px] text-muted-foreground italic p-2 bg-muted/45 rounded-md border border-border">
                                                 No matching operator checklist logs found for this shift.
                                             </div>
@@ -498,7 +523,25 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                 </div>
 
                                 <div className="grid grid-cols-1 gap-3 max-h-[360px] overflow-y-auto pr-1 scrollbar-thin">
-                                    {controller.routes.length > 0 ? controller.routes.map((route) => {
+                                    {controller.referenceLoading && controller.routes.length > 0 ? (
+                                        <div role="status" aria-label="Loading QA templates" aria-busy="true" className="space-y-2">
+                                            <span className="sr-only">Loading QA templates and checklist parameters...</span>
+                                            {controller.routes.slice(0, 3).map((route) => (
+                                                <div key={`qa-template-skeleton-${route.id}`} aria-hidden="true" className="space-y-2 rounded-xl border border-border bg-background/50 p-2.5">
+                                                    <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-1">
+                                                        <Skeleton className="h-4 w-40" />
+                                                        <Skeleton className="h-5 w-16 rounded-full" />
+                                                    </div>
+                                                    {Array.from({ length: 2 }).map((_, index) => (
+                                                        <div key={`qa-parameter-skeleton-${route.id}-${index}`} className="space-y-1.5 border-b border-border/40 py-1.5 last:border-b-0">
+                                                            <Skeleton className="h-3 w-2/3" />
+                                                            <Skeleton className="h-7 w-full" />
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : controller.routes.length > 0 ? controller.routes.map((route) => {
                                         const template = controller.qaTemplates.find((item) => Number(item.template_id ?? item.id) === Number(route.qaTemplateId));
                                         const parameters = Array.isArray(template?.parameters) ? template.parameters : [];
                                         const audited = controller.selectedYield?.audits.some((audit) => Number(audit.jo_route_id) === route.id);
@@ -580,8 +623,13 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                     </div>
                                 )}
                                 {controller.referenceLoading && (
-                                    <div className="p-3 bg-muted/40 border border-border rounded-lg text-muted-foreground text-xs" role="status" aria-live="polite">
-                                        Loading audit templates and operator checklist logs…
+                                    <div role="status" aria-label="Loading audit reference data" aria-busy="true" className="flex items-center gap-3 rounded-lg border border-border bg-muted/40 p-3">
+                                        <span className="sr-only">Loading audit templates and operator checklist logs...</span>
+                                        <Skeleton aria-hidden="true" className="h-4 w-4 shrink-0 rounded-full" />
+                                        <div aria-hidden="true" className="flex-1 space-y-2">
+                                            <Skeleton className="h-3 w-2/3" />
+                                            <Skeleton className="h-3 w-1/2" />
+                                        </div>
                                     </div>
                                 )}
 
@@ -627,16 +675,23 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                         <Label htmlFor="daily-yield-storage-lot" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
                                             <MapPin className="h-3.5 w-3.5 text-emerald-500" /> Storage Lot <span className="text-destructive">*</span>
                                         </Label>
-                                        <FinishedGoodsLotSelect
-                                            lots={controller.dailyOutputEligibleLots}
-                                            value={controller.dailyOutputMmLotId}
-                                            onValueChange={controller.setDailyOutputMmLotId}
-                                            loading={controller.dailyOutputLotsLoading}
-                                            disabled={controller.actionLoading || !requiresOutputTraceability || isVerified}
-                                            placeholder="Select storage lot..."
-                                            className="h-9 w-full justify-between rounded-lg border-border/80 text-xs font-semibold"
-                                            showBatchSummary
-                                        />
+                                        {controller.dailyOutputLotsLoading ? (
+                                            <div role="status" aria-label="Loading finished-goods storage lots" aria-busy="true" className="space-y-1">
+                                                <span className="sr-only">Loading finished-goods storage lots...</span>
+                                                <Skeleton aria-hidden="true" className="h-9 w-full rounded-lg" />
+                                                <Skeleton aria-hidden="true" className="h-3 w-3/4" />
+                                            </div>
+                                        ) : (
+                                            <FinishedGoodsLotSelect
+                                                lots={controller.dailyOutputEligibleLots}
+                                                value={controller.dailyOutputMmLotId}
+                                                onValueChange={controller.setDailyOutputMmLotId}
+                                                disabled={controller.actionLoading || !requiresOutputTraceability || isVerified}
+                                                placeholder="Select storage lot..."
+                                                className="h-9 w-full justify-between rounded-lg border-border/80 text-xs font-semibold"
+                                                showBatchSummary
+                                            />
+                                        )}
                                     </div>
 
                                     <div className="space-y-1">
@@ -736,16 +791,23 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                             <Label htmlFor="daily-yield-rejected-storage-lot" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
                                                 <MapPin className="h-3.5 w-3.5 text-rose-500" /> Bad-stock Storage Lot <span className="text-destructive">*</span>
                                             </Label>
-                                            <FinishedGoodsLotSelect
-                                                lots={controller.dailyRejectedOutputEligibleLots}
-                                                value={controller.dailyRejectedOutputMmLotId}
-                                                onValueChange={controller.setDailyRejectedOutputMmLotId}
-                                                loading={controller.dailyRejectedOutputLotsLoading}
-                                                disabled={rejectedOutputLocked || !requiresRejectedOutputTraceability}
-                                                placeholder="Select bad-stock storage lot..."
-                                                className="h-9 w-full justify-between rounded-lg border-rose-500/30 text-xs font-semibold"
-                                                showBatchSummary
-                                            />
+                                            {controller.dailyRejectedOutputLotsLoading ? (
+                                                <div role="status" aria-label="Loading bad-stock storage lots" aria-busy="true" className="space-y-1">
+                                                    <span className="sr-only">Loading bad-stock storage lots...</span>
+                                                    <Skeleton aria-hidden="true" className="h-9 w-full rounded-lg" />
+                                                    <Skeleton aria-hidden="true" className="h-3 w-3/4" />
+                                                </div>
+                                            ) : (
+                                                <FinishedGoodsLotSelect
+                                                    lots={controller.dailyRejectedOutputEligibleLots}
+                                                    value={controller.dailyRejectedOutputMmLotId}
+                                                    onValueChange={controller.setDailyRejectedOutputMmLotId}
+                                                    disabled={rejectedOutputLocked || !requiresRejectedOutputTraceability}
+                                                    placeholder="Select bad-stock storage lot..."
+                                                    className="h-9 w-full justify-between rounded-lg border-rose-500/30 text-xs font-semibold"
+                                                    showBatchSummary
+                                                />
+                                            )}
                                         </div>
 
                                         <div className="space-y-1">

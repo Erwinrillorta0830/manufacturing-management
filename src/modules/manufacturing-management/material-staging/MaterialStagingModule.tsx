@@ -117,7 +117,7 @@ export default function MaterialStagingModule() {
                             disabled={loading}
                             className="text-xs h-10 shadow-sm"
                         >
-                            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+                            {loading ? <Skeleton aria-hidden="true" className="mr-2 h-4 w-4" /> : <RefreshCw className="mr-2 h-4 w-4" />}
                             Refresh Inventory
                         </Button>
                     </div>
@@ -138,7 +138,7 @@ export default function MaterialStagingModule() {
                             onClick={() => refreshData(true)}
                             disabled={loading}
                         >
-                            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+                            {loading ? <Skeleton aria-hidden="true" className="mr-2 h-4 w-4" /> : <RefreshCw className="mr-2 h-4 w-4" />}
                             Retry
                         </Button>
                     </div>
@@ -159,7 +159,7 @@ export default function MaterialStagingModule() {
                                     onClick={() => refreshData(true)}
                                     disabled={loading}
                                 >
-                                    <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+                                    {loading ? <Skeleton aria-hidden="true" className="mr-2 h-4 w-4" /> : <RefreshCw className="mr-2 h-4 w-4" />}
                                     Retry
                                 </Button>
                             </div>

@@ -1,6 +1,6 @@
 /* eslint-disable */
 import React from "react";
-import { Loader2, Layers } from "lucide-react";
+import { Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { resolveJobOrderJourney } from "../../shared/job-order-journey";
@@ -8,6 +8,7 @@ import { JobOrderJourneyBar } from "../../shared/components/JobOrderJourneyBar";
 import { JobOrderStatusBadge } from "../../shared/components/JobOrderStatusBadge";
 import { isCancelledJobOrderStatus, isJobOrderStatus, isTerminatedJobOrder, JOB_ORDER_STATUS } from "../../job-order-status";
 import { calculateCumulativeRouteWorkloadHours, calculatePipelinedLineDurationHours, resolveProductionShiftHours } from "../utils/production-timing";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export interface FamilyGroup {
     familyId: string;
@@ -56,6 +57,40 @@ export function JOTable({
     handleEditDraft,
     readOnly = false
 }: JOTableProps) {
+    if (loadingJobs && unreleasedJobs.length === 0) {
+        return (
+            <div role="status" aria-busy="true" aria-label="Loading Job Orders" className="w-full overflow-hidden border rounded-lg">
+                <table className="w-full table-fixed text-sm text-left text-muted-foreground border-collapse">
+                    <colgroup>
+                        <col style={{ width: "12%" }} />
+                        <col style={{ width: "13%" }} />
+                        <col style={{ width: "19%" }} />
+                        <col style={{ width: "9%" }} />
+                        <col style={{ width: "15%" }} />
+                        <col style={{ width: "17%" }} />
+                        <col style={{ width: "15%" }} />
+                    </colgroup>
+                    <thead className="text-xs uppercase bg-muted/40 font-bold border-b text-foreground">
+                        <tr>
+                            {["Job Order ID", "Connected SO", "Product Name", "Target Qty", "Duration / Lead Time", "Stage / Status", "Actions"].map((heading) => (
+                                <th key={heading} className="px-2 py-3"><Skeleton className="h-4 w-3/4" /></th>
+                            ))}
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                        {Array.from({ length: 5 }, (_, row) => (
+                            <tr key={row}>
+                                {Array.from({ length: 7 }, (_, column) => (
+                                    <td key={column} className="px-2 py-4"><Skeleton className={`h-4 ${column === 6 ? "w-16 mx-auto" : "w-3/4"}`} /></td>
+                                ))}
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        );
+    }
+
     if (unreleasedJobs.length === 0) {
         return (
             <div className="text-center py-12 text-sm text-muted-foreground border border-dashed rounded-lg bg-muted/20">
