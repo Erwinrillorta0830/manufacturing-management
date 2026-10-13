@@ -34,6 +34,7 @@ import { resolveJobOrderJourney, stagingStateInfo } from "../shared/job-order-jo
 import { JobOrderJourneyBar } from "../shared/components/JobOrderJourneyBar";
 import { JobOrderStatusBadge } from "../shared/components/JobOrderStatusBadge";
 import { StatusLegendPopover } from "../shared/components/StatusLegendPopover";
+import { formatPhtTimestamp12Hour } from "../shared/pht-date";
 
 export default function MaterialStagingModule() {
     const {
@@ -45,6 +46,7 @@ export default function MaterialStagingModule() {
         loading,
         loadError,
         hasSuccessfulLoad,
+        lastRefreshedAt,
         searchQuery,
         setSearchQuery,
         selectedBranchId,
@@ -70,6 +72,7 @@ export default function MaterialStagingModule() {
     } = useMaterialStaging();
 
     const showInitialLoadError = Boolean(loadError) && !hasSuccessfulLoad;
+    const isRefreshing = loading && hasSuccessfulLoad;
 
     // Left queue pagination: 5 active job orders per page.
     const QUEUE_PAGE_SIZE = 5;
@@ -81,6 +84,10 @@ export default function MaterialStagingModule() {
     const queuePageCount = Math.max(1, Math.ceil(filteredJobOrders.length / QUEUE_PAGE_SIZE));
     const safeQueuePage = Math.min(queuePage, queuePageCount - 1);
     const visibleJobOrders = filteredJobOrders.slice(safeQueuePage * QUEUE_PAGE_SIZE, safeQueuePage * QUEUE_PAGE_SIZE + QUEUE_PAGE_SIZE);
+    const hasActiveQueueFilters = Boolean(searchQuery.trim())
+        || selectedBranchId !== "all"
+        || selectedStatusFilter !== "FOR_PICKING"
+        || onlyShortages;
 
     return (
         <div className="flex flex-col space-y-6 max-w-[1600px] mx-auto p-1 sm:p-2">
@@ -108,18 +115,26 @@ export default function MaterialStagingModule() {
                         </p>
                     </div>
 
-                    <div className="flex items-center gap-2 w-full md:w-auto shrink-0">
-                        <StatusLegendPopover includeStaging />
-                        <Button
-                            variant="outline"
-                            size="default"
-                            onClick={() => refreshData(true)}
-                            disabled={loading}
-                            className="text-xs h-10 shadow-sm"
-                        >
-                            {loading ? <Skeleton aria-hidden="true" className="mr-2 h-4 w-4" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-                            Refresh Inventory
-                        </Button>
+                    <div className="flex w-full flex-col gap-1 md:w-auto md:items-end shrink-0">
+                        <div className="flex items-center gap-2">
+                            <StatusLegendPopover includeStaging />
+                            <Button
+                                variant="outline"
+                                size="default"
+                                onClick={() => refreshData(true)}
+                                disabled={loading}
+                                className="text-xs h-10 shadow-sm"
+                            >
+                                {loading ? <Skeleton aria-hidden="true" className="mr-2 h-4 w-4" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                                Refresh Inventory
+                            </Button>
+                        </div>
+                        <div aria-live="polite" aria-atomic="true" className="min-h-4 text-xs text-muted-foreground md:text-right">
+                            {isRefreshing && <span role="status">Updating inventory… </span>}
+                            {lastRefreshedAt && (
+                                <span>Last refreshed: {formatPhtTimestamp12Hour(lastRefreshedAt)}</span>
+                            )}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -218,7 +233,7 @@ export default function MaterialStagingModule() {
                     </div>
                     <div>
                         <div className="text-xs font-medium text-muted-foreground" title="Active Job Orders with a material shortage in the Main Store.">
-                            Floor Holds / Shortages
+                            Material Shortage JOs
                         </div>
                         <div className="text-xl sm:text-2xl font-extrabold text-red-500 font-mono">
                             {stats.shortageAlertJobs}
@@ -293,10 +308,11 @@ export default function MaterialStagingModule() {
                     variant={onlyShortages ? "destructive" : "outline"}
                     size="sm"
                     onClick={() => setOnlyShortages(!onlyShortages)}
+                    aria-pressed={onlyShortages}
                     className="text-xs h-9 shrink-0 gap-1.5"
                 >
                     <AlertTriangle className="h-3.5 w-3.5" />
-                    {onlyShortages ? "Showing Holds Only" : "Show Holds / Shortages Only"}
+                    {onlyShortages ? "Showing Material Shortage JOs" : "Shortage JOs only"}
                 </Button>
             </div>
 
@@ -312,7 +328,7 @@ export default function MaterialStagingModule() {
                             Active Job Orders ({filteredJobOrders.length})
                         </span>
                         <span className="text-xs text-muted-foreground">
-                            Click to select for staging
+                            Select a Job Order to view staging details
                         </span>
                     </div>
 
@@ -327,8 +343,24 @@ export default function MaterialStagingModule() {
                             <Boxes className="h-8 w-8 mb-2 opacity-50" />
                             <p className="text-sm font-semibold text-foreground">No matching Job Orders</p>
                             <p className="text-xs text-muted-foreground mt-1">
-                                Adjust your search or status filter to view active manufacturing orders.
+                                Try changing your search, status, branch, or shortage filters to view active manufacturing orders.
                             </p>
+                            {hasActiveQueueFilters && (
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="mt-3"
+                                    onClick={() => {
+                                        setSearchQuery("");
+                                        setSelectedBranchId("all");
+                                        setSelectedStatusFilter("FOR_PICKING");
+                                        setOnlyShortages(false);
+                                    }}
+                                >
+                                    Clear filters
+                                </Button>
+                            )}
                         </div>
                     ) : (
                         <div className="space-y-3 max-h-[750px] overflow-y-auto pr-1 lg:flex-1 lg:min-h-0 lg:max-h-none">
@@ -344,10 +376,12 @@ export default function MaterialStagingModule() {
                                 });
 
                                 return (
-                                    <div
+                                    <button
+                                        type="button"
                                         key={jo.job_order_id}
                                         onClick={() => setSelectedJobOrderId(jo.job_order_id)}
-                                        className={`p-4 rounded-xl border cursor-pointer transition-all duration-200 text-left space-y-3 ${
+                                        aria-pressed={isSelected}
+                                        className={`w-full p-4 rounded-xl border cursor-pointer transition-all duration-200 text-left space-y-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${
                                             isSelected
                                                 ? "bg-primary/[0.04] border-primary ring-1 ring-primary/20 shadow-sm"
                                                 : "bg-card border-border hover:border-border/80 hover:bg-muted/30"
@@ -430,7 +464,7 @@ export default function MaterialStagingModule() {
                                                 )}
                                             </>
                                         )}
-                                    </div>
+                                    </button>
                                 );
                             })}
                         </div>
