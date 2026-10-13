@@ -5,6 +5,7 @@ import {
     AlertCircle,
     Calendar as CalendarIcon,
     CheckCircle2,
+    ChevronDown,
     ChevronLeft,
     ChevronRight,
     ClipboardCheck,
@@ -13,6 +14,7 @@ import {
     PackageCheck,
     RefreshCw,
     Search,
+    SlidersHorizontal,
     X,
 } from "lucide-react";
 import { format } from "date-fns";
@@ -37,6 +39,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Calendar } from "@/components/ui/calendar";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SearchableSelect } from "@/components/ui/searchable-select";
@@ -47,13 +50,41 @@ import { formatPhtDate, formatPhtTime12Hour, formatPhtTimestamp12Hour } from "..
 import { useDailyYieldAudit } from "./hooks/useDailyYieldAudit";
 import { useJobOrderInspectionQA } from "./hooks/useJobOrderInspectionQA";
 import { DailyYieldAuditDialog } from "./components/DailyYieldAuditDialog";
-import type { JobOrderDailyYieldRecord } from "./types";
+import type { JobOrderDailyYieldRecord, JobOrderDailyYieldSummary } from "./types";
 import { getYieldOutputTotals } from "./utils/yield-output-quantities";
 
 type AuditActionMode = "edit" | "view";
 
 function quantity(value: number): string {
     return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 6 });
+}
+
+function AcceptedTargetProgress({ accepted, target }: { accepted: number; target: number }) {
+    const hasTarget = target > 0;
+    const progress = hasTarget ? Math.min(100, Math.max(0, (accepted / target) * 100)) : 0;
+
+    return (
+        <div className="min-w-0" aria-label={`Accepted ${quantity(accepted)} of ${quantity(target)} target units`}>
+            <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                <span>Accepted / target</span>
+                <span className="shrink-0 font-mono">{quantity(accepted)} / {quantity(target)}</span>
+            </div>
+            {hasTarget ? (
+                <div
+                    className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted"
+                    role="progressbar"
+                    aria-label="Accepted quantity versus target"
+                    aria-valuemin={0}
+                    aria-valuemax={target}
+                    aria-valuenow={Math.min(target, Math.max(0, accepted))}
+                >
+                    <div className="h-full rounded-full bg-emerald-600 transition-[width]" style={{ width: `${progress}%` }} />
+                </div>
+            ) : (
+                <div className="mt-1 text-[11px] text-muted-foreground">No target quantity</div>
+            )}
+        </div>
+    );
 }
 
 function dateRangeLabel(range: DateRange | undefined): string {
@@ -102,6 +133,160 @@ function discrepancyNote(record: JobOrderDailyYieldRecord): string | null {
     return "QA discrepancy requires resolution before this Job Order can be closed.";
 }
 
+function DailyYieldActionButton({
+    record,
+    onAction,
+    fullWidth = false,
+}: {
+    record: JobOrderDailyYieldRecord;
+    onAction: (record: JobOrderDailyYieldRecord, mode: AuditActionMode) => void;
+    fullWidth?: boolean;
+}) {
+    const isVerified = record.qaStatus === "Passed";
+    const isDiscrepancy = record.qaStatus === "QA Hold";
+    const actionMode: AuditActionMode = isVerified ? "view" : "edit";
+    const actionLabel = isVerified ? "View Audit" : isDiscrepancy ? "Resolve" : "Perform Audit";
+
+    return (
+        <Button
+            type="button"
+            size="sm"
+            variant={isVerified ? "outline" : "default"}
+            onClick={() => onAction(record, actionMode)}
+            title={isVerified ? "View the completed QA audit." : isDiscrepancy ? "Resolve the QA discrepancy." : "Record the daily yield QA audit."}
+            className={`min-h-10 gap-1.5 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 [@media(pointer:coarse)]:gap-2 [@media(pointer:coarse)]:px-4 ${fullWidth ? "w-full" : ""} ${isDiscrepancy ? "border-red-500/30 bg-red-500/5 text-red-700 hover:bg-red-500/10 dark:text-red-300" : ""}`}
+        >
+            <ClipboardCheck className="h-4 w-4" /> {actionLabel}
+        </Button>
+    );
+}
+
+function JobOrderSummaryCard({
+    jobOrder,
+    onViewDetails,
+}: {
+    jobOrder: JobOrderDailyYieldSummary;
+    onViewDetails: (jobOrder: JobOrderDailyYieldSummary) => void;
+}) {
+    return (
+        <article className="min-w-0 rounded-xl border bg-card p-3 shadow-sm">
+            <div className="flex min-w-0 items-start justify-between gap-3">
+                <div className="min-w-0">
+                    <h2 className="break-words font-mono text-sm font-bold text-primary">{jobOrder.jobOrderNo}</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                        {jobOrder.yieldCount} daily yield{jobOrder.yieldCount === 1 ? "" : "s"}
+                    </p>
+                </div>
+                <Badge variant="outline" className={`shrink-0 ${statusClass(jobOrder.status)}`}>{jobOrder.status}</Badge>
+            </div>
+
+            <div className="mt-3 min-w-0 border-t pt-3">
+                <p className="break-words text-sm font-semibold">{jobOrder.productName}</p>
+                {jobOrder.productCode && <p className="mt-0.5 break-all font-mono text-xs text-muted-foreground">{jobOrder.productCode}</p>}
+                <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-3 text-xs">
+                    <div className="min-w-0">
+                        <dt className="text-muted-foreground">Latest Yield</dt>
+                        <dd className="mt-1 font-medium">{jobOrder.latestYieldAt ? formatPhtDate(jobOrder.latestYieldAt) : "—"}</dd>
+                        {jobOrder.latestYieldAt && <dd className="mt-0.5 text-muted-foreground">{formatPhtTime12Hour(jobOrder.latestYieldAt)}</dd>}
+                    </div>
+                    <div className="min-w-0 text-right">
+                        <dt className="text-muted-foreground">Target Qty</dt>
+                        <dd className="mt-1 font-mono font-semibold">{quantity(jobOrder.targetQuantity)}</dd>
+                    </div>
+                    <div className="min-w-0">
+                        <dt className="text-muted-foreground">Accepted Qty</dt>
+                        <dd className="mt-1 font-mono font-semibold">{quantity(jobOrder.producedQuantity)}</dd>
+                    </div>
+                    <div className="min-w-0 text-right">
+                        <dt className="text-muted-foreground">Pending Audits</dt>
+                        <dd className={`mt-1 font-semibold ${jobOrder.pendingYieldCount > 0 ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground"}`}>
+                            {jobOrder.pendingYieldCount}
+                        </dd>
+                    </div>
+                    <div className="min-w-0">
+                        <dt className="text-muted-foreground">Discrepancies</dt>
+                        <dd className={`mt-1 font-semibold ${jobOrder.discrepancyYieldCount > 0 ? "text-red-600 dark:text-red-300" : "text-muted-foreground"}`}>
+                            {jobOrder.discrepancyYieldCount}
+                        </dd>
+                    </div>
+                </dl>
+                <div className="mt-3 border-t pt-3">
+                    <AcceptedTargetProgress accepted={jobOrder.producedQuantity} target={jobOrder.targetQuantity} />
+                </div>
+            </div>
+
+            <Button type="button" variant="outline" onClick={() => onViewDetails(jobOrder)} className="mt-3 min-h-10 w-full gap-2">
+                <Eye className="h-4 w-4" /> View Details
+            </Button>
+        </article>
+    );
+}
+
+function DailyYieldCard({
+    record,
+    onAction,
+}: {
+    record: JobOrderDailyYieldRecord;
+    onAction: (record: JobOrderDailyYieldRecord, mode: AuditActionMode) => void;
+}) {
+    const isDiscrepancy = record.qaStatus === "QA Hold";
+    const note = discrepancyNote(record);
+    const { rejectedQuantity: displayedRejectedQuantity } = getYieldOutputTotals(
+        record.goodQuantity,
+        record.rejectedQuantity,
+        record.scrapQuantity
+    );
+
+    return (
+        <article className={`min-w-0 rounded-xl border p-3 ${isDiscrepancy ? "border-red-500/30 bg-red-500/5" : "bg-card"}`}>
+            <div className="flex min-w-0 items-start justify-between gap-3">
+                <div className="min-w-0">
+                    <h4 className="break-words text-sm font-semibold">{record.shiftName}</h4>
+                    <p className="mt-1 font-mono text-xs text-muted-foreground">Ledger #{record.ledgerId}</p>
+                    {record.sessionKey && <p className="mt-0.5 break-all font-mono text-[10px] text-muted-foreground">{record.sessionKey}</p>}
+                </div>
+                <Badge variant="outline" className={`shrink-0 ${qaStatusClass(record.qaStatus)}`}>
+                    {qaStatusLabel(record.qaStatus)}
+                </Badge>
+            </div>
+
+            <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-3 border-t pt-3 text-xs sm:grid-cols-3">
+                <div className="min-w-0">
+                    <dt className="text-muted-foreground">Production Date</dt>
+                    <dd className="mt-1 font-medium">{formatPhtDate(record.productionDate)}</dd>
+                    {record.loggedAt && <dd className="mt-0.5 text-muted-foreground">Logged {formatPhtTimestamp12Hour(record.loggedAt)}</dd>}
+                </div>
+                <div className="min-w-0">
+                    <dt className="text-muted-foreground">Accepted</dt>
+                    <dd className="mt-1 break-words font-mono font-semibold text-emerald-700 dark:text-emerald-300">{quantity(record.goodQuantity)}</dd>
+                </div>
+                <div className="min-w-0">
+                    <dt className="text-muted-foreground">Rejected Qty</dt>
+                    <dd className="mt-1 break-words font-mono font-semibold text-red-600 dark:text-red-300">{quantity(displayedRejectedQuantity)}</dd>
+                </div>
+                <div className="min-w-0">
+                    <dt className="text-muted-foreground">Lot</dt>
+                    <dd className="mt-1 break-words font-semibold">{record.lotName || "—"}</dd>
+                    {record.mmLotId && <dd className="mt-0.5 font-mono text-[10px] text-muted-foreground">#{record.mmLotId}</dd>}
+                </div>
+                <div className="min-w-0">
+                    <dt className="text-muted-foreground">Batch</dt>
+                    <dd className="mt-1 break-all font-mono">{record.batchNo || "—"}</dd>
+                </div>
+                <div className="min-w-0">
+                    <dt className="text-muted-foreground">Total Qty</dt>
+                    <dd className="mt-1 break-words font-mono font-semibold">{quantity(record.totalQuantity)}</dd>
+                </div>
+            </dl>
+
+            {note && <p className="mt-3 rounded-md border border-red-500/20 bg-red-500/5 p-2 text-xs leading-5 text-red-700 dark:text-red-300">{note}</p>}
+            <div className="mt-3 border-t pt-3">
+                <DailyYieldActionButton record={record} onAction={onAction} fullWidth />
+            </div>
+        </article>
+    );
+}
+
 function DailyYieldRow({
     record,
     onAction,
@@ -111,8 +296,6 @@ function DailyYieldRow({
 }) {
     const isVerified = record.qaStatus === "Passed";
     const isDiscrepancy = record.qaStatus === "QA Hold";
-    const actionMode: AuditActionMode = isVerified ? "view" : "edit";
-    const actionLabel = isVerified ? "View Audit" : isDiscrepancy ? "Resolve" : "Perform Audit";
     const note = discrepancyNote(record);
     const { rejectedQuantity: displayedRejectedQuantity } = getYieldOutputTotals(
         record.goodQuantity,
@@ -150,16 +333,7 @@ function DailyYieldRow({
             </TableCell>
             <TableCell className="sticky right-0 z-10 min-w-[170px] align-top bg-card text-right shadow-[-8px_0_12px_-12px_hsl(var(--foreground)/0.45)]">
                 <div className="flex flex-col items-end gap-2">
-                    <Button
-                        type="button"
-                        size="sm"
-                        variant={isVerified ? "outline" : "default"}
-                        onClick={() => onAction(record, actionMode)}
-                        title={isVerified ? "View the completed QA audit." : isDiscrepancy ? "Resolve the QA discrepancy." : "Record the daily yield QA audit."}
-                        className={`min-h-9 gap-1.5 ${isDiscrepancy ? "border-red-500/30 bg-red-500/5 text-red-700 hover:bg-red-500/10 dark:text-red-300" : ""}`}
-                    >
-                        <ClipboardCheck className="h-4 w-4" /> {actionLabel}
-                    </Button>
+                    <DailyYieldActionButton record={record} onAction={onAction} />
                 </div>
             </TableCell>
         </TableRow>
@@ -170,6 +344,7 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
     const jobOrderState = useJobOrderInspectionQA();
     const auditState = useDailyYieldAudit({ onSaved: jobOrderState.refresh, inspectorName });
     const [closeConfirmOpen, setCloseConfirmOpen] = React.useState(false);
+    const [additionalFiltersOpen, setAdditionalFiltersOpen] = React.useState(false);
     const details = jobOrderState.selectedDetails;
     const canClose = details?.status === "For QA and Reconciliation";
     const isClosed = details?.status === "Closed";
@@ -181,6 +356,52 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
     const acceptedQuantity = verifiedYields.reduce((sum, record) => sum + record.goodQuantity, 0);
     const pendingYieldCount = details?.dailyYields.filter((record) => record.qaStatus === "Pending").length || 0;
     const discrepancyYieldCount = details?.dailyYields.filter((record) => record.qaStatus === "QA Hold").length || 0;
+    const dailyYieldTotals = details?.dailyYields.reduce((totals, record) => {
+        totals.accepted += record.goodQuantity;
+        totals.rejected += getYieldOutputTotals(record.goodQuantity, record.rejectedQuantity, record.scrapQuantity).rejectedQuantity;
+        totals.total += record.totalQuantity;
+        return totals;
+    }, { accepted: 0, rejected: 0, total: 0 });
+    const activeAdditionalFilterCount = Number(Boolean(jobOrderState.dateRange?.from || jobOrderState.dateRange?.to))
+        + Number(Boolean(jobOrderState.productFilter));
+
+    const renderDateFilter = () => (
+        <Popover>
+            <PopoverTrigger asChild>
+                <Button type="button" variant="outline" className="h-10 w-full justify-start gap-2 font-normal">
+                    <CalendarIcon className="h-4 w-4 text-muted-foreground" />
+                    <span className="truncate">{dateRangeLabel(jobOrderState.dateRange)}</span>
+                </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+                <Calendar
+                    mode="range"
+                    selected={jobOrderState.dateRange}
+                    onSelect={jobOrderState.setDateRange}
+                    numberOfMonths={2}
+                    captionLayout="dropdown"
+                />
+                {jobOrderState.dateRange?.from && (
+                    <div className="flex items-center justify-between border-t bg-muted/20 p-2">
+                        <span className="text-xs text-muted-foreground">Range active</span>
+                        <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => jobOrderState.setDateRange(undefined)}>
+                            <X className="mr-1 h-3.5 w-3.5" /> Clear
+                        </Button>
+                    </div>
+                )}
+            </PopoverContent>
+        </Popover>
+    );
+
+    const renderProductFilter = () => (
+        <SearchableSelect
+            options={jobOrderState.productOptions}
+            value={jobOrderState.productFilter || undefined}
+            onValueChange={jobOrderState.setProductFilter}
+            placeholder="Product: All"
+            className="h-10 w-full"
+        />
+    );
 
     return (
         <div className="space-y-5">
@@ -193,13 +414,14 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                             <p className="text-xs text-muted-foreground">Review daily production yields and complete in-process QA for each Job Order.</p>
                         </div>
                     </div>
-                    <Button type="button" variant="outline" onClick={() => void jobOrderState.refresh()} disabled={jobOrderState.loading} aria-busy={jobOrderState.loading} className="min-h-10 gap-2 self-start sm:self-auto">
-                        {jobOrderState.loading ? <Skeleton aria-hidden="true" className="h-4 w-4 rounded-sm" /> : <RefreshCw className="h-4 w-4" />} Refresh
+                    <Button type="button" variant="outline" onClick={() => void jobOrderState.refresh()} disabled={jobOrderState.loading || jobOrderState.refreshing} aria-busy={jobOrderState.loading || jobOrderState.refreshing} className="min-h-10 gap-2 self-start sm:self-auto">
+                        {jobOrderState.loading || jobOrderState.refreshing ? <Skeleton aria-hidden="true" className="h-4 w-4 rounded-sm" /> : <RefreshCw className="h-4 w-4" />}
+                        {jobOrderState.refreshing ? "Updating..." : "Refresh"}
                     </Button>
                 </div>
 
                 <div className="space-y-3 border-b px-4 py-3">
-                    <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
+                    <div className="grid gap-2 xl:grid-cols-[minmax(0,1fr)_155px_220px_190px] xl:items-center">
                         <div className="relative min-w-0 flex-1">
                             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                             <Input
@@ -214,7 +436,7 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                             value={jobOrderState.statusFilter || "all"}
                             onValueChange={(value) => jobOrderState.setStatusFilter(value === "all" ? "" : value)}
                         >
-                            <SelectTrigger className="h-10 w-full shrink-0 sm:w-[155px]" aria-label="Filter by status">
+                            <SelectTrigger className="h-10 w-full xl:w-[155px]" aria-label="Filter by status">
                                 <SelectValue placeholder="Status: All" />
                             </SelectTrigger>
                             <SelectContent>
@@ -224,76 +446,70 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                 ))}
                             </SelectContent>
                         </Select>
-                        <Popover>
-                            <PopoverTrigger asChild>
-                                <Button type="button" variant="outline" className="h-10 w-full shrink-0 justify-start gap-2 font-normal sm:w-[220px]">
-                                    <CalendarIcon className="h-4 w-4 text-muted-foreground" />
-                                    <span className="truncate">{dateRangeLabel(jobOrderState.dateRange)}</span>
-                                </Button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-auto p-0" align="start">
-                                <Calendar
-                                    mode="range"
-                                    selected={jobOrderState.dateRange}
-                                    onSelect={jobOrderState.setDateRange}
-                                    numberOfMonths={2}
-                                    captionLayout="dropdown"
-                                />
-                                {jobOrderState.dateRange?.from && (
-                                    <div className="flex items-center justify-between border-t bg-muted/20 p-2">
-                                        <span className="text-xs text-muted-foreground">Range active</span>
-                                        <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => jobOrderState.setDateRange(undefined)}>
-                                            <X className="mr-1 h-3.5 w-3.5" /> Clear
-                                        </Button>
-                                    </div>
-                                )}
-                            </PopoverContent>
-                        </Popover>
-                        <SearchableSelect
-                            options={jobOrderState.productOptions}
-                            value={jobOrderState.productFilter || undefined}
-                            onValueChange={jobOrderState.setProductFilter}
-                            placeholder="Product: All"
-                            className="h-10 w-full shrink-0 sm:w-[190px]"
-                        />
+                        <div className="xl:hidden">
+                            <Collapsible open={additionalFiltersOpen} onOpenChange={setAdditionalFiltersOpen}>
+                                <CollapsibleTrigger asChild>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-10 w-full justify-between"
+                                        aria-label={`More filters, ${activeAdditionalFilterCount} active ${activeAdditionalFilterCount === 1 ? "filter" : "filters"}`}
+                                    >
+                                        <span className="inline-flex items-center gap-2">
+                                            <SlidersHorizontal className="h-4 w-4" /> More filters
+                                        </span>
+                                        <span className="inline-flex items-center gap-2">
+                                            <Badge variant="secondary" aria-hidden="true">{activeAdditionalFilterCount}</Badge>
+                                            <ChevronDown className={`h-4 w-4 transition-transform ${additionalFiltersOpen ? "rotate-180" : ""}`} />
+                                        </span>
+                                    </Button>
+                                </CollapsibleTrigger>
+                                <CollapsibleContent className="grid gap-2 pt-2">
+                                    {renderDateFilter()}
+                                    {renderProductFilter()}
+                                </CollapsibleContent>
+                            </Collapsible>
+                        </div>
+                        <div className="hidden xl:block">{renderDateFilter()}</div>
+                        <div className="hidden xl:block">{renderProductFilter()}</div>
                     </div>
 
                     {jobOrderState.hasActiveFilters && (
-                        <div className="flex flex-wrap items-center gap-2" aria-label="Active filters">
+                        <div className="flex flex-wrap items-center gap-2 [@media(pointer:coarse)]:gap-3" aria-label="Active filters">
                             <span className="text-xs font-medium text-muted-foreground">Active filters:</span>
                             {jobOrderState.statusFilter && (
                                 <Badge variant="outline" className="gap-1 rounded-full border-primary/30 bg-primary/5 pr-1 text-xs font-normal">
                                     Status: {jobOrderState.statusFilter}
-                                    <button type="button" className="rounded-full p-0.5 hover:bg-primary/10" onClick={() => jobOrderState.setStatusFilter("")} aria-label="Clear status filter">
-                                        <X className="h-3 w-3" />
+                                    <button type="button" className="rounded-full p-0.5 hover:bg-primary/10 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:shrink-0 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center" onClick={() => jobOrderState.setStatusFilter("")} aria-label="Clear status filter">
+                                        <X className="h-3 w-3 [@media(pointer:coarse)]:size-4" />
                                     </button>
                                 </Badge>
                             )}
                             {(jobOrderState.dateRange?.from || jobOrderState.dateRange?.to) && (
                                 <Badge variant="outline" className="gap-1 rounded-full border-primary/30 bg-primary/5 pr-1 text-xs font-normal">
                                     {dateRangeLabel(jobOrderState.dateRange)}
-                                    <button type="button" className="rounded-full p-0.5 hover:bg-primary/10" onClick={() => jobOrderState.setDateRange(undefined)} aria-label="Clear date filter">
-                                        <X className="h-3 w-3" />
+                                    <button type="button" className="rounded-full p-0.5 hover:bg-primary/10 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:shrink-0 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center" onClick={() => jobOrderState.setDateRange(undefined)} aria-label="Clear date filter">
+                                        <X className="h-3 w-3 [@media(pointer:coarse)]:size-4" />
                                     </button>
                                 </Badge>
                             )}
                             {jobOrderState.productFilter && (
                                 <Badge variant="outline" className="gap-1 rounded-full border-primary/30 bg-primary/5 pr-1 text-xs font-normal">
                                     Product: {jobOrderState.productOptions.find((option) => option.value === jobOrderState.productFilter)?.label || jobOrderState.productFilter}
-                                    <button type="button" className="rounded-full p-0.5 hover:bg-primary/10" onClick={() => jobOrderState.setProductFilter("")} aria-label="Clear product filter">
-                                        <X className="h-3 w-3" />
+                                    <button type="button" className="rounded-full p-0.5 hover:bg-primary/10 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:shrink-0 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center" onClick={() => jobOrderState.setProductFilter("")} aria-label="Clear product filter">
+                                        <X className="h-3 w-3 [@media(pointer:coarse)]:size-4" />
                                     </button>
                                 </Badge>
                             )}
                             {jobOrderState.flaggedOnly && (
                                 <Badge variant="outline" className="gap-1 rounded-full border-red-500/30 bg-red-500/5 pr-1 text-xs font-normal text-red-700 dark:text-red-300">
                                     Needs review
-                                    <button type="button" className="rounded-full p-0.5 hover:bg-red-500/10" onClick={() => jobOrderState.setFlaggedOnly(false)} aria-label="Clear flagged filter">
-                                        <X className="h-3 w-3" />
+                                    <button type="button" className="rounded-full p-0.5 hover:bg-red-500/10 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:shrink-0 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center" onClick={() => jobOrderState.setFlaggedOnly(false)} aria-label="Clear flagged filter">
+                                        <X className="h-3 w-3 [@media(pointer:coarse)]:size-4" />
                                     </button>
                                 </Badge>
                             )}
-                            <button type="button" className="text-xs font-medium text-primary underline-offset-2 hover:underline" onClick={jobOrderState.clearFilters}>
+                            <button type="button" className="text-xs font-medium text-primary underline-offset-2 hover:underline [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:px-3" onClick={jobOrderState.clearFilters}>
                                 Clear all
                             </button>
                         </div>
@@ -312,10 +528,29 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                     </div>
                 )}
 
+                {jobOrderState.refreshing && (
+                    <div className="mx-4 mt-3 flex items-center gap-2 rounded-lg border bg-muted/20 px-3 py-2 text-sm text-muted-foreground" role="status" aria-live="polite">
+                        <Skeleton aria-hidden="true" className="h-4 w-4 shrink-0 rounded-sm" />
+                        <span>Updating Job Order results...</span>
+                    </div>
+                )}
+
+                {jobOrderState.refreshError && !jobOrderState.refreshing && (
+                    <div className="mx-4 mt-3 flex flex-col gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive sm:flex-row sm:items-center sm:justify-between" role="alert">
+                        <div className="flex items-center gap-2">
+                            <AlertCircle className="h-4 w-4 shrink-0" />
+                            <span>Could not refresh the results. The last loaded results are still shown. {jobOrderState.refreshError}</span>
+                        </div>
+                        <Button type="button" size="sm" variant="outline" className="min-h-9 shrink-0" onClick={() => void jobOrderState.refresh()}>
+                            Retry
+                        </Button>
+                    </div>
+                )}
+
                 {jobOrderState.loading ? (
                     <div role="status" aria-label="Loading Job Orders">
                         <span className="sr-only">Loading Job Orders…</span>
-                        <div className="overflow-x-auto" aria-hidden="true">
+                        <div className="hidden 2xl:block overflow-x-auto" aria-hidden="true">
                             <Table>
                                 <TableHeader>
                                     <TableRow>
@@ -323,7 +558,7 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                         <TableHead className="min-w-[170px]">Product</TableHead>
                                         <TableHead className="min-w-[145px]">Latest Yield</TableHead>
                                         <TableHead className="text-right">Target Qty</TableHead>
-                                        <TableHead className="min-w-[145px] text-right">Produced Qty</TableHead>
+                                        <TableHead className="min-w-[175px] text-right">Accepted Qty</TableHead>
                                         <TableHead className="min-w-[165px]">Status</TableHead>
                                         <TableHead className="min-w-[135px] text-right">Action</TableHead>
                                     </TableRow>
@@ -368,6 +603,30 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                 </TableBody>
                             </Table>
                         </div>
+                        <div className="space-y-3 px-4 pb-4 2xl:hidden" aria-hidden="true">
+                            {Array.from({ length: 4 }, (_, index) => (
+                                <div key={`job-order-card-skeleton-${index}`} className="space-y-3 rounded-xl border p-3">
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div className="space-y-2">
+                                            <Skeleton className="h-4 w-32" />
+                                            <Skeleton className="h-3 w-20" />
+                                        </div>
+                                        <Skeleton className="h-6 w-24 rounded-full" />
+                                    </div>
+                                    <Skeleton className="h-4 w-40 max-w-full" />
+                                    <div className="grid grid-cols-2 gap-3 border-t pt-3">
+                                        {Array.from({ length: 5 }, (_, metricIndex) => (
+                                            <div key={`job-order-card-metric-${metricIndex}`} className="space-y-2">
+                                                <Skeleton className="h-3 w-20" />
+                                                <Skeleton className="h-4 w-24 max-w-full" />
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <Skeleton className="h-1.5 w-full" />
+                                    <Skeleton className="h-10 w-full" />
+                                </div>
+                            ))}
+                        </div>
                     </div>
                 ) : jobOrderState.error ? (
                     <div className="flex flex-col items-center justify-center gap-3 py-16 text-center" role="alert">
@@ -392,7 +651,16 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                     </div>
                 ) : (
                     <>
-                        <div className="overflow-x-auto">
+                        <div className="space-y-3 px-4 pb-4 2xl:hidden">
+                            {jobOrderState.jobOrders.map((jobOrder) => (
+                                <JobOrderSummaryCard
+                                    key={jobOrder.jobOrderId}
+                                    jobOrder={jobOrder}
+                                    onViewDetails={jobOrderState.openDetails}
+                                />
+                            ))}
+                        </div>
+                        <div className="hidden 2xl:block overflow-x-auto">
                             <Table>
                                 <TableHeader>
                                     <TableRow>
@@ -423,19 +691,20 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                             <TableCell className="text-right font-mono">{quantity(jobOrder.targetQuantity)}</TableCell>
                                             <TableCell className="text-right">
                                                 <div className="font-mono font-semibold">{quantity(jobOrder.producedQuantity)}</div>
-                                                <div className="mt-1 inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-                                                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-600" />
-                                                    {quantity(jobOrder.producedQuantity)} accepted
+                                                <div className="mt-2 text-left">
+                                                    <AcceptedTargetProgress accepted={jobOrder.producedQuantity} target={jobOrder.targetQuantity} />
                                                 </div>
                                             </TableCell>
                                             <TableCell>
                                                 <Badge variant="outline" className={statusClass(jobOrder.status)}>{jobOrder.status}</Badge>
-                                                {jobOrder.unresolvedYieldCount > 0 && (
-                                                    <div className="mt-1 flex items-center gap-1 text-[11px] text-red-600 dark:text-red-300">
-                                                        <AlertCircle className="h-3 w-3 shrink-0" />
-                                                        {jobOrder.unresolvedYieldCount} record{jobOrder.unresolvedYieldCount === 1 ? "" : "s"} needs review
+                                                <div className="mt-2 space-y-1 text-[11px]">
+                                                    <div className={jobOrder.pendingYieldCount > 0 ? "font-medium text-amber-700 dark:text-amber-300" : "text-muted-foreground"}>
+                                                        {jobOrder.pendingYieldCount} pending audit{jobOrder.pendingYieldCount === 1 ? "" : "s"}
                                                     </div>
-                                                )}
+                                                    <div className={jobOrder.discrepancyYieldCount > 0 ? "font-medium text-red-600 dark:text-red-300" : "text-muted-foreground"}>
+                                                        {jobOrder.discrepancyYieldCount} discrepanc{jobOrder.discrepancyYieldCount === 1 ? "y" : "ies"}
+                                                    </div>
+                                                </div>
                                             </TableCell>
                                             <TableCell className="text-right">
                                                 <Button type="button" size="sm" variant="outline" onClick={() => jobOrderState.openDetails(jobOrder)} className="min-h-9 gap-2">
@@ -540,7 +809,7 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                             </div>
                                         </div>
                                     </div>
-                                    <div className="overflow-x-auto">
+                                    <div className="hidden 2xl:block overflow-x-auto">
                                         <Table>
                                             <TableHeader>
                                                 <TableRow>
@@ -571,6 +840,28 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                                 ))}
                                             </TableBody>
                                         </Table>
+                                    </div>
+                                    <div className="space-y-3 p-3 2xl:hidden" aria-hidden="true">
+                                        {Array.from({ length: 3 }).map((_, cardIndex) => (
+                                            <div key={`yield-card-skeleton-${cardIndex}`} className="space-y-3 rounded-xl border p-3">
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <div className="space-y-2">
+                                                        <Skeleton className="h-4 w-32" />
+                                                        <Skeleton className="h-3 w-24" />
+                                                    </div>
+                                                    <Skeleton className="h-6 w-20 rounded-full" />
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-3 border-t pt-3 sm:grid-cols-3">
+                                                    {Array.from({ length: 6 }).map((__, fieldIndex) => (
+                                                        <div key={`yield-card-field-${cardIndex}-${fieldIndex}`} className="space-y-2">
+                                                            <Skeleton className="h-3 w-20" />
+                                                            <Skeleton className="h-4 w-24 max-w-full" />
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                <Skeleton className="h-10 w-full" />
+                                            </div>
+                                        ))}
                                     </div>
                                 </section>
 
@@ -632,7 +923,39 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                         </div>
                                     </div>
                                 </div>
-                                <div className="overflow-x-auto">
+                                <div className="space-y-3 p-3 2xl:hidden">
+                                    {details.dailyYields.length === 0 ? (
+                                        <div className="py-8 text-center text-sm text-muted-foreground">No daily yields recorded for this Job Order.</div>
+                                    ) : (
+                                        <>
+                                            {details.dailyYields.map((record) => (
+                                                <DailyYieldCard
+                                                    key={record.ledgerId}
+                                                    record={record}
+                                                    onAction={(yieldRecord) => auditState.openAudit(yieldRecord, details)}
+                                                />
+                                            ))}
+                                            {dailyYieldTotals && (
+                                                <dl className="grid grid-cols-3 gap-2 rounded-xl border bg-muted/20 p-3 text-xs">
+                                                    <div className="col-span-3 font-semibold text-foreground">Totals (all records)</div>
+                                                    <div className="min-w-0">
+                                                        <dt className="text-muted-foreground">Accepted</dt>
+                                                        <dd className="mt-1 break-words font-mono font-semibold text-emerald-700 dark:text-emerald-300">{quantity(dailyYieldTotals.accepted)}</dd>
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <dt className="text-muted-foreground">Rejected</dt>
+                                                        <dd className="mt-1 break-words font-mono font-semibold text-red-600 dark:text-red-300">{quantity(dailyYieldTotals.rejected)}</dd>
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <dt className="text-muted-foreground">Total Qty</dt>
+                                                        <dd className="mt-1 break-words font-mono font-semibold">{quantity(dailyYieldTotals.total)}</dd>
+                                                    </div>
+                                                </dl>
+                                            )}
+                                        </>
+                                    )}
+                                </div>
+                                <div className="hidden 2xl:block overflow-x-auto">
                                     <Table>
                                         <TableHeader>
                                             <TableRow>
@@ -656,10 +979,10 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                             {details.dailyYields.length > 0 && (
                                                 <TableRow className="font-semibold">
                                                     <TableCell colSpan={2}>Totals (all records)</TableCell>
-                                                    <TableCell className="text-right font-mono text-emerald-700 dark:text-emerald-300">{quantity(details.dailyYields.reduce((sum, record) => sum + record.goodQuantity, 0))}</TableCell>
-                                                    <TableCell className="text-right font-mono text-red-600 dark:text-red-300">{quantity(details.dailyYields.reduce((sum, record) => sum + getYieldOutputTotals(record.goodQuantity, record.rejectedQuantity, record.scrapQuantity).rejectedQuantity, 0))}</TableCell>
+                                                    <TableCell className="text-right font-mono text-emerald-700 dark:text-emerald-300">{quantity(dailyYieldTotals?.accepted || 0)}</TableCell>
+                                                    <TableCell className="text-right font-mono text-red-600 dark:text-red-300">{quantity(dailyYieldTotals?.rejected || 0)}</TableCell>
                                                     <TableCell colSpan={2} />
-                                                    <TableCell className="text-right font-mono">{quantity(details.dailyYields.reduce((sum, record) => sum + record.totalQuantity, 0))}</TableCell>
+                                                    <TableCell className="text-right font-mono">{quantity(dailyYieldTotals?.total || 0)}</TableCell>
                                                     <TableCell colSpan={2} />
                                                 </TableRow>
                                             )}
