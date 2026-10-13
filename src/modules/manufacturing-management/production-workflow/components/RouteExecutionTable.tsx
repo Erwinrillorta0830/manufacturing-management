@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
     AlertTriangle,
     ArrowLeftRight,
@@ -57,6 +57,7 @@ interface RouteExecutionTableProps {
 
 interface RouteExecutionRowProps {
     task: RoutingTask;
+    compact: boolean;
     isSelected: boolean;
     selectedJobOrder: JobOrder;
     jobOrderMaterials: JobOrderMaterialLine[];
@@ -139,6 +140,7 @@ function ElapsedTimer({ totalSeconds, isRunning }: { totalSeconds: number; isRun
 
 function RouteExecutionRow({
     task,
+    compact,
     isSelected,
     selectedJobOrder,
     jobOrderMaterials,
@@ -237,9 +239,9 @@ function RouteExecutionRow({
             size="xs"
             variant="outline"
             onClick={() => onRequestCompleteStep(task.id)}
-            className="h-7 border-primary/30 px-2 text-[10px] font-bold text-primary"
+            className="h-7 border-primary/30 px-2 text-[10px] font-bold text-primary pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:px-3 pointer-coarse:text-xs"
         >
-            <CheckCircle2 className="mr-1 h-3 w-3" /> Complete Step
+            <CheckCircle2 className="mr-1 h-3 w-3 pointer-coarse:h-4 pointer-coarse:w-4" /> Complete Step
         </Button>
     ) : (
         <span className="text-[10px] font-semibold text-muted-foreground">{isCompleted ? "Step completed" : "Read-only"}</span>
@@ -247,8 +249,13 @@ function RouteExecutionRow({
 
     return (
         <>
-            <tr className={`${rowClass} cursor-pointer transition-colors hover:bg-muted/20`} onClick={() => setSelectedTaskId(task.id)}>
-                <td className="px-3 py-3 align-top">
+            <tr
+                className={`${compact
+                    ? "mb-3 block overflow-hidden rounded-xl border border-border/70 shadow-sm"
+                    : "cursor-pointer transition-colors hover:bg-muted/20"} ${rowClass}`}
+                onClick={compact ? undefined : () => setSelectedTaskId(task.id)}
+            >
+                <td className={compact ? "block border-b border-border/50 px-3 py-3 align-top" : "px-3 py-3 align-top"}>
                     <div className="flex items-start gap-2">
                         <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-bold ${isCompleted
                             ? "border-emerald-500 bg-emerald-500 text-white"
@@ -259,14 +266,27 @@ function RouteExecutionRow({
                                     : "border-border bg-muted text-muted-foreground"}`}>
                             {isCompleted ? <CheckCircle2 className="h-4 w-4" /> : task.sequence_order}
                         </span>
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1">
                             <div className="font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Route {task.sequence_order}</div>
                             <div className="mt-1 font-extrabold text-sm text-foreground">{task.name}</div>
                             <Badge variant="outline" className="mt-2 text-[9px] font-bold">{task.status || "Pending"}</Badge>
                         </div>
+                        {compact && (
+                            <Button
+                                type="button"
+                                size="xs"
+                                variant={isSelected ? "default" : "outline"}
+                                aria-pressed={isSelected}
+                                onClick={() => setSelectedTaskId(task.id)}
+                                className="shrink-0 pointer-coarse:min-h-10 pointer-coarse:min-w-10 pointer-coarse:px-3 pointer-coarse:text-xs"
+                            >
+                                {isSelected ? "Selected" : "Select route"}
+                            </Button>
+                        )}
                     </div>
                 </td>
-                            <td className="px-3 py-3 align-top">
+                <td className={compact ? "block border-b border-border/50 px-3 py-3 align-top" : "px-3 py-3 align-top"}>
+                    {compact && <div className="mb-2 text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Workstation</div>}
                     <WorkstationAssetSummary
                         workCenter={task.work_center}
                         fallbackName={task.work_center_name || (task.work_center_id ? `Work Center #${task.work_center_id}` : "Unassigned")}
@@ -276,8 +296,8 @@ function RouteExecutionRow({
                         Planned: <span className="font-mono font-bold text-foreground">{(Number(task.planned_setup_hours || 0) + Number(task.planned_run_hours || 0)).toFixed(1)} hrs</span>
                     </div>
                 </td>
-                <td className="px-3 py-3 align-top" onClick={(event) => event.stopPropagation()}>
-                    <div className="min-w-[210px] space-y-2">
+                <td className={compact ? "block border-b border-border/50 px-3 py-3 align-top" : "px-3 py-3 align-top"} onClick={(event) => event.stopPropagation()}>
+                    <div className={`space-y-2 ${compact ? "min-w-0" : "min-w-[210px]"}`}>
                         <div>
                             <div className="mb-1 text-[9px] font-bold uppercase tracking-wider text-muted-foreground">
                                 Assigned Personnel
@@ -299,16 +319,16 @@ function RouteExecutionRow({
                                 <div className="mb-1 text-[9px] font-bold uppercase tracking-wider text-muted-foreground">
                                     Assign Additional Personnel
                                 </div>
-                                <div className="flex gap-1.5">
+                                        <div className="flex gap-1.5 pointer-coarse:gap-2">
                                     <SearchableSelect
                                         options={operatorOptions}
                                         value={assigneeId}
                                         onValueChange={setAssigneeId}
                                         placeholder="Select additional personnel..."
                                         disabled={loadingOperators || floorMutationsLocked}
-                                        className="h-8 min-w-0 flex-1 text-[10px]"
+                                                className="h-8 min-w-0 flex-1 text-[10px] pointer-coarse:min-h-10 pointer-coarse:text-xs"
                                     />
-                                    <div className="flex shrink-0 gap-1">
+                                            <div className="flex shrink-0 gap-1 pointer-coarse:gap-2">
                                         <Button
                                             type="button"
                                             size="xs"
@@ -318,7 +338,7 @@ function RouteExecutionRow({
                                                 handleAddOperator(false, task.id, assigneeId);
                                                 setAssigneeId("");
                                             }}
-                                            className="h-8 px-2 text-[10px] font-bold"
+                                                className="h-8 px-2 text-[10px] font-bold pointer-coarse:min-h-10 pointer-coarse:min-w-10 pointer-coarse:px-3 pointer-coarse:text-xs"
                                             title="Assign additional personnel without starting a timer"
                                         >
                                             Assign
@@ -331,14 +351,14 @@ function RouteExecutionRow({
                                                 handleAddOperator(true, task.id, assigneeId);
                                                 setAssigneeId("");
                                             }}
-                                            className="h-8 bg-primary px-2 text-[10px] font-bold text-primary-foreground"
+                                                className="h-8 bg-primary px-2 text-[10px] font-bold text-primary-foreground pointer-coarse:min-h-10 pointer-coarse:min-w-10 pointer-coarse:px-3 pointer-coarse:text-xs"
                                             title={isCompleted
                                                 ? "Cannot start a timer because this route is completed."
                                                 : !canStartTimer
                                                     ? "Start production before starting an operator timer."
                                                     : "Assign additional personnel and start timer"}
                                         >
-                                            <Play className="h-3 w-3" />
+                                            <Play className="h-3 w-3 pointer-coarse:h-4 pointer-coarse:w-4" />
                                         </Button>
                                     </div>
                                 </div>
@@ -346,18 +366,19 @@ function RouteExecutionRow({
                         )}
                     </div>
                 </td>
-                <td className="px-3 py-3 align-top" onClick={(event) => event.stopPropagation()}>
-                    <div className="flex min-w-[170px] flex-wrap items-center gap-1.5">
+                <td className={compact ? "block border-b border-border/50 px-3 py-3 align-top" : "px-3 py-3 align-top"} onClick={(event) => event.stopPropagation()}>
+                    {compact && <div className="mb-2 text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Route Actions</div>}
+                    <div className={`flex flex-wrap items-center gap-1.5 pointer-coarse:gap-2 ${compact ? "min-w-0" : "min-w-[170px]"}`}>
                         <Button
                             type="button"
                             size="xs"
                             variant="outline"
                             disabled={!hasMaterials}
                             onClick={() => setMaterialsOpen((open) => !open)}
-                            className="h-7 px-2 text-[10px] font-bold"
+                            className="h-7 px-2 text-[10px] font-bold pointer-coarse:min-h-10 pointer-coarse:min-w-10 pointer-coarse:px-3 pointer-coarse:text-xs"
                             title={hasMaterials ? "View raw materials for this route" : "No route-specific raw materials"}
                         >
-                            <Package className="mr-1 h-3 w-3" /> Materials ({(task.bom_items || []).length})
+                            <Package className="mr-1 h-3 w-3 pointer-coarse:h-4 pointer-coarse:w-4" /> Materials ({(task.bom_items || []).length})
                         </Button>
                         {!isCompleted && (
                             <Button
@@ -366,9 +387,9 @@ function RouteExecutionRow({
                                 variant="outline"
                                 disabled={floorMutationsLocked}
                                 onClick={() => onOpenBreakdown(task.id)}
-                                className="h-7 border-destructive/30 px-2 text-[10px] font-bold text-destructive hover:text-destructive"
+                                className="h-7 border-destructive/30 px-2 text-[10px] font-bold text-destructive hover:text-destructive pointer-coarse:min-h-10 pointer-coarse:min-w-10 pointer-coarse:px-3 pointer-coarse:text-xs"
                             >
-                                <AlertTriangle className="mr-1 h-3 w-3" /> Breakdown
+                                <AlertTriangle className="mr-1 h-3 w-3 pointer-coarse:h-4 pointer-coarse:w-4" /> Breakdown
                             </Button>
                         )}
                         {stepAction}
@@ -383,9 +404,10 @@ function RouteExecutionRow({
                                     : "Complete this route explicitly when finished"}
                     </div>
                 </td>
-                <td className="px-3 py-3 align-top" onClick={(event) => event.stopPropagation()}>
+                <td className={compact ? "block px-3 py-3 align-top" : "px-3 py-3 align-top"} onClick={(event) => event.stopPropagation()}>
+                    {compact && <div className="mb-2 text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Operators & Timers</div>}
                     {loadingOperators && groupedOperators.length === 0 ? (
-                        <div role="status" aria-label="Loading route operators" aria-busy="true" className="min-w-[280px] space-y-2">
+                        <div role="status" aria-label="Loading route operators" aria-busy="true" className={`space-y-2 ${compact ? "min-w-0" : "min-w-[280px]"}`}>
                             <span className="sr-only">Loading route operators...</span>
                             <Skeleton aria-hidden="true" className="h-8 w-full max-w-56 rounded-lg" />
                             <Skeleton aria-hidden="true" className="h-7 w-3/4 rounded-lg" />
@@ -393,7 +415,7 @@ function RouteExecutionRow({
                     ) : groupedOperators.length === 0 ? (
                         <span className="text-[10px] italic text-muted-foreground">Assign personnel first</span>
                     ) : (
-                        <div className="min-w-[280px] space-y-2">
+                        <div className={`space-y-2 ${compact ? "min-w-0" : "min-w-[280px]"}`}>
                             {groupedOperators.map((operator) => {
                                 const isRunning = Boolean(operator.activeSession);
                                 const isTimerPending = pendingTimerKey === `${task.id}:${operator.userId}`;
@@ -429,18 +451,18 @@ function RouteExecutionRow({
                                             <span>Out (PHT): <strong className="block truncate text-foreground">{formatDateTime(displayedSession.stopped_at)}</strong></span>
                                             <span>Consumed: <strong className="block font-mono text-foreground">{(operator.totalHours + (operator.activeSession ? elapsedSeconds / 3600 : 0)).toFixed(2)}h</strong></span>
                                         </div>
-                                        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                                        <div className="mt-1.5 flex flex-wrap items-center gap-1 pointer-coarse:gap-2">
                                             {isTimerPending ? (
                                                 <span className="inline-flex h-6 items-center gap-1 px-2 text-[9px] font-bold text-muted-foreground">
                                                     <Loader2 className="h-2.5 w-2.5 animate-spin" /> Saving…
                                                 </span>
                                             ) : isRunning ? (
-                                                <Button type="button" size="xs" variant="outline" className="h-6 border-amber-500/30 px-2 text-[9px] font-bold text-amber-700 dark:text-amber-400" onClick={() => handleStopTimer(task.id, operator.userId)}>
-                                                    <Square className="mr-1 h-2.5 w-2.5 fill-current" /> Stop
+                                                <Button type="button" size="xs" variant="outline" className="h-6 border-amber-500/30 px-2 text-[9px] font-bold text-amber-700 dark:text-amber-400 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:px-3 pointer-coarse:text-xs" onClick={() => handleStopTimer(task.id, operator.userId)}>
+                                                    <Square className="mr-1 h-2.5 w-2.5 fill-current pointer-coarse:h-4 pointer-coarse:w-4" /> Stop
                                                 </Button>
                                             ) : (
-                                                <Button type="button" size="xs" variant="outline" disabled={floorMutationsLocked || isCompleted || !canStartTimer} title={productionTargetReached ? "The Job Order output target has been reached." : isCompleted ? "Cannot start a timer because this route is completed." : !canStartTimer ? "Start production before starting an operator timer." : "Start shift timer"} className="h-6 border-emerald-500/30 px-2 text-[9px] font-bold text-emerald-700 dark:text-emerald-400" onClick={() => handleStartTimer(task.id, operator.userId)}>
-                                                    <Play className="mr-1 h-2.5 w-2.5 fill-current" /> Start
+                                                <Button type="button" size="xs" variant="outline" disabled={floorMutationsLocked || isCompleted || !canStartTimer} title={productionTargetReached ? "The Job Order output target has been reached." : isCompleted ? "Cannot start a timer because this route is completed." : !canStartTimer ? "Start production before starting an operator timer." : "Start shift timer"} className="h-6 border-emerald-500/30 px-2 text-[9px] font-bold text-emerald-700 dark:text-emerald-400 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:px-3 pointer-coarse:text-xs" onClick={() => handleStartTimer(task.id, operator.userId)}>
+                                                    <Play className="mr-1 h-2.5 w-2.5 fill-current pointer-coarse:h-4 pointer-coarse:w-4" /> Start
                                                 </Button>
                                             )}
                                             <Tooltip>
@@ -451,11 +473,11 @@ function RouteExecutionRow({
                                                             size="xs"
                                                             variant="ghost"
                                                             disabled={readOnly || !hasEditableSession}
-                                                            className="h-6 px-1.5 text-[9px]"
+                                                            className="h-6 px-1.5 text-[9px] pointer-coarse:min-h-10 pointer-coarse:min-w-10 pointer-coarse:px-2 pointer-coarse:text-xs"
                                                             onClick={() => onRequestEditOperator(task, operator)}
                                                             title={editTimeMessage}
                                                         >
-                                                            <Pencil className="mr-1 h-3 w-3" /> Edit
+                                                            <Pencil className="mr-1 h-3 w-3 pointer-coarse:h-4 pointer-coarse:w-4" /> Edit
                                                         </Button>
                                                     </span>
                                                 </TooltipTrigger>
@@ -470,11 +492,11 @@ function RouteExecutionRow({
                                                             variant="ghost"
                                                             disabled={floorMutationsLocked || isCompleted || hasProtectedLabor}
                                                             aria-label="Swap operator assignment"
-                                                            className="h-6 px-1.5 text-[9px] text-amber-700 hover:text-amber-800 dark:text-amber-400"
+                                                            className="h-6 px-1.5 text-[9px] text-amber-700 hover:text-amber-800 dark:text-amber-400 pointer-coarse:min-h-10 pointer-coarse:min-w-10 pointer-coarse:px-2 pointer-coarse:text-xs"
                                                             onClick={() => onRequestSwapOperator(task, operator, operatorOptions)}
                                                             title={hasProtectedLabor ? guardrailMessage : "Swap operator assignment"}
                                                         >
-                                                            <ArrowLeftRight className="mr-1 h-3 w-3" /> Swap
+                                                            <ArrowLeftRight className="mr-1 h-3 w-3 pointer-coarse:h-4 pointer-coarse:w-4" /> Swap
                                                         </Button>
                                                     </span>
                                                 </TooltipTrigger>
@@ -489,11 +511,11 @@ function RouteExecutionRow({
                                                             variant="ghost"
                                                             disabled={floorMutationsLocked || isCompleted || hasProtectedLabor}
                                                             aria-label="Remove personnel from route"
-                                                            className="h-6 px-1.5 text-[9px] text-destructive hover:text-destructive"
+                                                            className="h-6 px-1.5 text-[9px] text-destructive hover:text-destructive pointer-coarse:min-h-10 pointer-coarse:min-w-10 pointer-coarse:px-2 pointer-coarse:text-xs"
                                                             onClick={() => onRequestRemoveOperator(task, operator)}
                                                             title={hasProtectedLabor ? guardrailMessage : "Remove personnel from route"}
                                                         >
-                                                            <Trash2 className="h-3 w-3" />
+                                                            <Trash2 className="h-3 w-3 pointer-coarse:h-4 pointer-coarse:w-4" />
                                                         </Button>
                                                     </span>
                                                 </TooltipTrigger>
@@ -508,8 +530,8 @@ function RouteExecutionRow({
                 </td>
             </tr>
             {materialsOpen && hasMaterials && (
-                <tr className={rowClass}>
-                    <td colSpan={5} className="border-t border-border/40 px-4 py-3">
+                <tr className={compact ? "mb-3 block overflow-hidden rounded-xl border border-primary/20" : rowClass}>
+                    <td colSpan={5} className={compact ? "block px-3 py-3" : "border-t border-border/40 px-4 py-3"}>
                         <div className="rounded-lg border border-primary/20 bg-primary/[0.03] p-3">
                             <div className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-primary">
                                 <Layers className="h-3.5 w-3.5" /> Raw Materials for Route {task.sequence_order}
@@ -577,11 +599,32 @@ export function RouteExecutionTable({
     readOnly = false,
     productionTargetReached = false
 }: RouteExecutionTableProps) {
+    const layoutRef = useRef<HTMLDivElement>(null);
+    const [compact, setCompact] = useState(true);
     const [breakdownTaskId, setBreakdownTaskId] = useState<number | null>(null);
     const [pendingRosterChange, setPendingRosterChange] = useState<OperatorRosterChange | null>(null);
     const [savingRosterChange, setSavingRosterChange] = useState(false);
     const completedCount = sortedTasks.filter((task) => task.status === "Completed").length;
+    const hasRouteTasks = sortedTasks.length > 0;
     const breakdownTask = sortedTasks.find((task) => task.id === breakdownTaskId) || null;
+
+    useEffect(() => {
+        const container = layoutRef.current;
+        if (!container) return;
+
+        const updateLayout = (width: number) => setCompact(width < 1180);
+        updateLayout(container.getBoundingClientRect().width);
+
+        if (typeof ResizeObserver === "undefined") {
+            const handleResize = () => updateLayout(container.getBoundingClientRect().width);
+            window.addEventListener("resize", handleResize);
+            return () => window.removeEventListener("resize", handleResize);
+        }
+
+        const observer = new ResizeObserver(([entry]) => updateLayout(entry.contentRect.width));
+        observer.observe(container);
+        return () => observer.disconnect();
+    }, [hasRouteTasks]);
 
     const openRosterChange = (
         kind: OperatorRosterChange["kind"],
@@ -661,9 +704,14 @@ export function RouteExecutionTable({
                     No routing operations are configured for this Job Order.
                 </div>
             ) : (
-                <div className="overflow-x-auto rounded-xl border border-border/70 bg-card shadow-sm">
-                    <table className="w-full min-w-[1180px] border-collapse text-left">
-                        <thead className="bg-muted/30 text-[10px] uppercase tracking-wider text-muted-foreground">
+                <div
+                    ref={layoutRef}
+                    className={compact
+                        ? "w-full"
+                        : "overflow-x-auto rounded-xl border border-border/70 bg-card shadow-sm"}
+                >
+                    <table className={compact ? "block w-full border-collapse text-left" : "w-full min-w-[1180px] border-collapse text-left"}>
+                        <thead className={compact ? "sr-only" : "bg-muted/30 text-[10px] uppercase tracking-wider text-muted-foreground"}>
                             <tr>
                                 <th className="px-3 py-3 font-bold">Route</th>
                                 <th className="px-3 py-3 font-bold">Workstation</th>
@@ -672,11 +720,12 @@ export function RouteExecutionTable({
                                 <th className="px-3 py-3 font-bold">Timer · Time In (PHT) · Time Out (PHT) · Consumed Hours</th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-border/50">
+                        <tbody className={compact ? "block" : "divide-y divide-border/50"}>
                             {sortedTasks.map((task) => (
                                 <RouteExecutionRow
                                     key={task.id}
                                     task={task}
+                                    compact={compact}
                                     isSelected={selectedTaskId === task.id}
                                     selectedJobOrder={selectedJobOrder}
                                     jobOrderMaterials={jobOrderMaterials}
