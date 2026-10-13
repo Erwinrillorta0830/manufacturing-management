@@ -33,18 +33,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { BackToTopButton } from "./components/BackToTopButton";
 
 export const ProductTracingModule = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => {
     const [filters, setFilters] = React.useState<ProductTracingFiltersType>({
         branch_id: null,
         product_type_id: null,
         product_id: null,
-        lot_id: null,
-        batch_no: "",
-        transaction_type: "ALL",
-        movement_direction: "ALL",
-        inventory_condition: "ALL",
-        search_query: "",
         startDate: null,
         endDate: null,
         datePreset: "all"
@@ -59,8 +54,10 @@ export const ProductTracingModule = React.forwardRef<HTMLDivElement, React.HTMLA
     const [movements, setMovements] = React.useState<MMInventoryMovement[]>([]);
     const [isLoading, setIsLoading] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
+    const rootRef = React.useRef<HTMLDivElement>(null);
+    React.useImperativeHandle(ref, () => rootRef.current as HTMLDivElement);
 
-    // Load lookup data on mount
+    // Load lookup data on mount (parent products only)
     React.useEffect(() => {
         const loadInitialData = async () => {
             try {
@@ -78,6 +75,7 @@ export const ProductTracingModule = React.forwardRef<HTMLDivElement, React.HTMLA
                 setUsers(u || []);
             } catch (err) {
                 console.error("[ProductTracing] Failed to load initial lookup data:", err);
+                toast.error("Failed to load initial lookup lists for Product Tracing.");
             }
         };
         loadInitialData();
@@ -94,20 +92,20 @@ export const ProductTracingModule = React.forwardRef<HTMLDivElement, React.HTMLA
             const enriched = computeRunningBalances(rawMovements);
             setMovements(enriched);
         } catch (err) {
-            const message = (err as Error).message || "Failed to fetch inventory movements from Spring Boot API";
+            const message = (err as Error).message || "Failed to fetch inventory movements from BFF API";
             setError(message);
             setMovements([]);
             toast.error(message, {
-                description: "Ensure the Spring Boot backend service is running and accessible.",
+                description: "Ensure backend service and session are accessible.",
                 duration: 5000
             });
-            console.error("[ProductTracing] Spring Boot API Error:", err);
+            console.error("[ProductTracing] Movement API Error:", err);
         } finally {
             setIsLoading(false);
         }
     }, [filters]);
 
-    // Initial search on mount once
+    // Initial search on mount once (fetches overall movements across all products)
     React.useEffect(() => {
         handleSearch();
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -122,12 +120,6 @@ export const ProductTracingModule = React.forwardRef<HTMLDivElement, React.HTMLA
             branch_id: null,
             product_type_id: null,
             product_id: null,
-            lot_id: null,
-            batch_no: "",
-            transaction_type: "ALL",
-            movement_direction: "ALL",
-            inventory_condition: "ALL",
-            search_query: "",
             startDate: null,
             endDate: null,
             datePreset: "all"
@@ -136,7 +128,7 @@ export const ProductTracingModule = React.forwardRef<HTMLDivElement, React.HTMLA
         handleSearch(resetState);
     };
 
-    // Client-side date filtering & computed KPI summaries
+    // Client-side date boundary filtering
     const filteredMovements = React.useMemo(() => {
         let list = movements;
 
@@ -156,13 +148,8 @@ export const ProductTracingModule = React.forwardRef<HTMLDivElement, React.HTMLA
             });
         }
 
-        if (filters.inventory_condition && filters.inventory_condition !== "ALL") {
-            const cond = filters.inventory_condition.toUpperCase();
-            list = list.filter(m => (m.inventoryCondition || "GOOD").toUpperCase() === cond);
-        }
-
         return list;
-    }, [movements, filters.startDate, filters.endDate, filters.inventory_condition]);
+    }, [movements, filters.startDate, filters.endDate]);
 
     const stats: MovementSummaryStats = React.useMemo(() => {
         return computeMovementSummary(filteredMovements);
@@ -181,7 +168,7 @@ export const ProductTracingModule = React.forwardRef<HTMLDivElement, React.HTMLA
     }, [filters.product_type_id, productTypes]);
 
     return (
-        <div ref={ref} className={cn("space-y-6 max-w-[1600px] mx-auto pb-12", props.className)} {...props}>
+        <div ref={rootRef} className={cn("space-y-6 max-w-[1600px] mx-auto pb-12", props.className)} {...props}>
             {/* Page Header */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="flex items-center gap-3.5">
@@ -193,7 +180,7 @@ export const ProductTracingModule = React.forwardRef<HTMLDivElement, React.HTMLA
                             Product Movement & Tracing
                         </h1>
                         <p className="text-muted-foreground text-xs mt-0.5">
-                            Real-time audit trail, batch provenance, and inventory movements ledger.
+                            Overall audit trail, batch provenance, and inventory movements ledger across all products.
                         </p>
                     </div>
                 </div>
@@ -207,18 +194,18 @@ export const ProductTracingModule = React.forwardRef<HTMLDivElement, React.HTMLA
                         disabled={isLoading}
                     >
                         <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
-                        Refresh
+                        Refresh Ledger
                     </Button>
                 </div>
             </div>
 
-            {/* Error Banner when Spring Boot is down */}
+            {/* Error Banner when Backend is down */}
             {error && (
                 <div className="p-4 rounded-2xl border border-destructive/30 bg-destructive/5 text-destructive flex items-center justify-between gap-4 animate-in fade-in duration-300">
                     <div className="flex items-center gap-3">
                         <AlertTriangle className="h-5 w-5 shrink-0" />
                         <div>
-                            <p className="text-xs font-bold">Spring Boot Inventory Movement API Error</p>
+                            <p className="text-xs font-bold">Inventory Movement API Error</p>
                             <p className="text-xs opacity-90">{error}</p>
                         </div>
                     </div>
@@ -237,7 +224,7 @@ export const ProductTracingModule = React.forwardRef<HTMLDivElement, React.HTMLA
             {/* Top KPI Metrics Cards */}
             <ProductTracingSummaryCards stats={stats} />
 
-            {/* Filters Toolbar */}
+            {/* Filters Toolbar (Branch, Product Type, Parent Product, Date Range) */}
             <ProductTracingFilters
                 filters={filters}
                 branches={branches}
@@ -253,9 +240,20 @@ export const ProductTracingModule = React.forwardRef<HTMLDivElement, React.HTMLA
             {/* Movement Ledger Table */}
             <div className="space-y-3">
                 <div className="flex items-center justify-between px-1">
-                    <h2 className="text-base font-black tracking-tight text-foreground">
-                        Movement Ledger
-                    </h2>
+                    <div className="flex items-center gap-2">
+                        <h2 className="text-base font-black tracking-tight text-foreground">
+                            Overall Movement Ledger
+                        </h2>
+                        {filters.product_id ? (
+                            <span className="text-[11px] font-bold text-primary bg-primary/10 px-2.5 py-0.5 rounded-full">
+                                Filtered by Parent Product
+                            </span>
+                        ) : (
+                            <span className="text-[11px] font-semibold text-muted-foreground bg-muted px-2.5 py-0.5 rounded-full">
+                                All Products
+                            </span>
+                        )}
+                    </div>
                     <span className="text-xs text-muted-foreground px-2.5 py-1 bg-muted/60 rounded-full font-bold">
                         {filteredMovements.length} {filteredMovements.length === 1 ? "Record" : "Records"}
                     </span>
@@ -275,6 +273,9 @@ export const ProductTracingModule = React.forwardRef<HTMLDivElement, React.HTMLA
                     users={users}
                 />
             </div>
+
+            {/* Isolated Hardware-Accelerated Back to Top Button */}
+            <BackToTopButton targetRef={rootRef} threshold={400} />
         </div>
     );
 });

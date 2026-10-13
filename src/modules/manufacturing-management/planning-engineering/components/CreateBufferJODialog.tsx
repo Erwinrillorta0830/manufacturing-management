@@ -187,6 +187,7 @@ export function CreateBufferJODialog({
     useEffect(() => {
         if (isOpen) {
             setCurrentStep(1);
+            setLoadingDetails(false);
             setRoutings([]);
             setComponents([]);
             setInventories({});
@@ -402,6 +403,7 @@ export function CreateBufferJODialog({
     // Reset loaded details when selection changes or returning to Step 1
     useEffect(() => {
         if (currentStep === 1) {
+            setDetailsError(null);
             setRoutings([]);
             setComponents([]);
             setBomData(null);
@@ -1344,6 +1346,7 @@ export function CreateBufferJODialog({
                     {currentStep === 2 && (
                         <Step2BOMReview
                             loadingDetails={loadingDetails}
+                            hasLoadedDetails={hasLoadedDetails}
                             productionMetricsError={productionMetricsError}
                             parentUomLabel={parentUomLabel}
                             boxEstimatedHours={boxEstimatedHours}

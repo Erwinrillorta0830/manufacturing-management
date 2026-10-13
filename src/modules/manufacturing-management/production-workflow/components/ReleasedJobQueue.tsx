@@ -1,13 +1,13 @@
 /* eslint-disable */
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useWindowVirtualizer } from "@tanstack/react-virtual";
+import React, { useEffect, useMemo, useState } from "react";
 import { AlertCircle, Building2, CornerDownRight, ExternalLink, Play, RefreshCw, Search } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { TerminalQueueJobOrder } from "../types";
 import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 import { resolveJobOrderJourney } from "../../shared/job-order-journey";
@@ -16,10 +16,7 @@ import { JobOrderStatusBadge } from "../../shared/components/JobOrderStatusBadge
 import { SearchableSelect } from "../../planning-engineering/components/SearchableSelect";
 import { calculatePipelinedLineDurationHours } from "../../planning-engineering/utils/production-timing";
 import { formatPhtDate } from "../../shared/pht-date";
-
-const VIRTUALIZE_QUEUE_THRESHOLD = 100;
-const ESTIMATED_QUEUE_ROW_HEIGHT = 150;
-const estimateQueueRowHeight = () => ESTIMATED_QUEUE_ROW_HEIGHT;
+import { DataTablePagination } from "@/components/ui/data-table-pagination";
 
 interface ReleasedJobQueueProps {
     filteredJobOrders: TerminalQueueJobOrder[];
@@ -80,16 +77,12 @@ interface ReleasedJobQueueRowProps {
     jo: TerminalQueueJobOrder;
     isSelected: boolean;
     setSelectedJobOrderId: (id: string) => void;
-    virtualIndex?: number;
-    measureElement?: (element: HTMLTableRowElement | null) => void;
 }
 
 const ReleasedJobQueueRow = React.memo(function ReleasedJobQueueRow({
     jo,
     isSelected,
     setSelectedJobOrderId,
-    virtualIndex,
-    measureElement
 }: ReleasedJobQueueRowProps) {
     const isForPicking = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.FOR_PICKING);
     const isPicked = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.PICKED);
@@ -136,8 +129,6 @@ const ReleasedJobQueueRow = React.memo(function ReleasedJobQueueRow({
 
     return (
         <tr
-            ref={measureElement}
-            data-index={virtualIndex}
             className={isSelected ? "bg-primary/[0.06]" : "bg-card hover:bg-muted/20"}
         >
             <td className="px-3 py-3 align-top">
@@ -235,50 +226,26 @@ export const ReleasedJobQueue = React.memo(function ReleasedJobQueue({
     hasActiveFilters,
     onClearFilters
 }: ReleasedJobQueueProps) {
-    const isVirtualized = filteredJobOrders.length > VIRTUALIZE_QUEUE_THRESHOLD;
-    const tableRef = useRef<HTMLTableElement>(null);
-    const [scrollMargin, setScrollMargin] = useState(0);
+    const [pageIndex, setPageIndex] = useState(1);
+    const [pageSize, setPageSize] = useState(10);
 
     useEffect(() => {
-        if (!isVirtualized) return;
+        setPageIndex(1);
+    }, [searchQuery, selectedBranchFilter, productFilter, customerFilter, statusFilter, filteredJobOrders]);
 
-        const updateScrollMargin = () => {
-            const tableBody = tableRef.current?.tBodies[0];
-            if (!tableBody) return;
-            setScrollMargin(tableBody.getBoundingClientRect().top + window.scrollY);
-        };
+    const pageCount = Math.ceil(filteredJobOrders.length / pageSize);
+    const visiblePageIndex = Math.min(pageIndex, Math.max(pageCount, 1));
+    const pageJobOrders = filteredJobOrders.slice(
+        (visiblePageIndex - 1) * pageSize,
+        visiblePageIndex * pageSize
+    );
 
-        updateScrollMargin();
-        window.addEventListener("resize", updateScrollMargin);
-        return () => window.removeEventListener("resize", updateScrollMargin);
-    }, [isVirtualized, loadingJobs, filteredJobOrders.length]);
-
-    const getQueueItemKey = useCallback((index: number) => filteredJobOrders[index]?.jo_id || index, [filteredJobOrders]);
-    const virtualizer = useWindowVirtualizer<HTMLTableRowElement>({
-        count: isVirtualized ? filteredJobOrders.length : 0,
-        estimateSize: estimateQueueRowHeight,
-        getItemKey: getQueueItemKey,
-        overscan: 8,
-        scrollMargin,
-        enabled: isVirtualized
-    });
-    const virtualItems = isVirtualized ? virtualizer.getVirtualItems() : [];
-    const topSpacerHeight = virtualItems.length > 0
-        ? Math.max(0, virtualItems[0].start - scrollMargin)
-        : isVirtualized ? virtualizer.getTotalSize() : 0;
-    const lastVirtualItem = virtualItems[virtualItems.length - 1];
-    const bottomSpacerHeight = lastVirtualItem
-        ? Math.max(0, virtualizer.getTotalSize() - (lastVirtualItem.end - scrollMargin))
-        : 0;
-
-    const renderQueueRow = (jo: TerminalQueueJobOrder, virtualIndex?: number) => (
+    const renderQueueRow = (jo: TerminalQueueJobOrder) => (
         <ReleasedJobQueueRow
             key={jo.jo_id}
             jo={jo}
             isSelected={jo.jo_id === selectedJobOrderId}
             setSelectedJobOrderId={setSelectedJobOrderId}
-            virtualIndex={virtualIndex}
-            measureElement={virtualIndex === undefined ? undefined : virtualizer.measureElement}
         />
     );
 
@@ -371,8 +338,54 @@ export const ReleasedJobQueue = React.memo(function ReleasedJobQueue({
                 </div>
 
                 {loadingJobs ? (
-                    <div className="flex items-center justify-center py-12">
-                        <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+                    <div role="status" aria-label="Loading shop-floor Job Orders" className="overflow-hidden rounded-xl border border-border/60">
+                        <span className="sr-only">Loading shop-floor Job Orders…</span>
+                        <div className="overflow-x-auto" aria-hidden="true">
+                            <table className="w-full min-w-[1060px] border-collapse text-left">
+                                <thead className="bg-muted/30 text-[10px] uppercase tracking-wider text-muted-foreground">
+                                    <tr>
+                                        <th className="px-3 py-3 font-bold">Job Order</th>
+                                        <th className="px-3 py-3 font-bold">Product / Journey</th>
+                                        <th className="px-3 py-3 text-right font-bold">Target / Produced</th>
+                                        <th className="px-3 py-3 font-bold">Workstations</th>
+                                        <th className="px-3 py-3 font-bold">Due</th>
+                                        <th className="px-3 py-3 text-right font-bold">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-border/50">
+                                    {Array.from({ length: 5 }, (_, index) => (
+                                        <tr key={index}>
+                                            <td className="px-3 py-4">
+                                                <Skeleton className="h-4 w-32" />
+                                                <Skeleton className="mt-2 h-3 w-20" />
+                                            </td>
+                                            <td className="px-3 py-4">
+                                                <Skeleton className="h-4 w-40" />
+                                                <Skeleton className="mt-2 h-3 w-28" />
+                                            </td>
+                                            <td className="px-3 py-4">
+                                                <div className="flex flex-col items-end gap-2">
+                                                    <Skeleton className="h-4 w-16" />
+                                                    <Skeleton className="h-3 w-12" />
+                                                </div>
+                                            </td>
+                                            <td className="px-3 py-4">
+                                                <Skeleton className="h-5 w-24" />
+                                                <Skeleton className="mt-2 h-5 w-20" />
+                                            </td>
+                                            <td className="px-3 py-4">
+                                                <Skeleton className="h-4 w-24" />
+                                            </td>
+                                            <td className="px-3 py-4">
+                                                <div className="flex justify-end">
+                                                    <Skeleton className="h-8 w-24" />
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 ) : filteredJobOrders.length === 0 ? (
                     <div className="border-2 border-dashed rounded-lg py-12 text-center text-sm text-muted-foreground">
@@ -381,37 +394,36 @@ export const ReleasedJobQueue = React.memo(function ReleasedJobQueue({
                         <p className="mt-1 text-xs">Try different filters or reset them.</p>
                     </div>
                 ) : (
-                    <div className="overflow-x-auto rounded-xl border border-border/60">
-                        <table ref={tableRef} className="w-full min-w-[1060px] border-collapse text-left">
-                            <thead className="bg-muted/30 text-[10px] uppercase tracking-wider text-muted-foreground">
-                                <tr>
-                                    <th className="px-3 py-3 font-bold">Job Order</th>
-                                    <th className="px-3 py-3 font-bold">Product / Journey</th>
-                                    <th className="whitespace-nowrap px-3 py-3 text-right font-bold">Target / Produced</th>
-                                    <th className="px-3 py-3 font-bold">Workstations</th>
-                                    <th className="px-3 py-3 font-bold">Due</th>
-                                    <th className="px-3 py-3 text-right font-bold">Action</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-border/50">
-                                {isVirtualized && (
-                                    <tr aria-hidden="true" className="pointer-events-none">
-                                        <td colSpan={6} style={{ height: topSpacerHeight, padding: 0, border: 0, lineHeight: 0 }} />
+                    <div className="overflow-hidden rounded-xl border border-border/60">
+                        <div className="overflow-x-auto">
+                            <table className="w-full min-w-[1060px] border-collapse text-left">
+                                <thead className="bg-muted/30 text-[10px] uppercase tracking-wider text-muted-foreground">
+                                    <tr>
+                                        <th className="px-3 py-3 font-bold">Job Order</th>
+                                        <th className="px-3 py-3 font-bold">Product / Journey</th>
+                                        <th className="whitespace-nowrap px-3 py-3 text-right font-bold">Target / Produced</th>
+                                        <th className="px-3 py-3 font-bold">Workstations</th>
+                                        <th className="px-3 py-3 font-bold">Due</th>
+                                        <th className="px-3 py-3 text-right font-bold">Action</th>
                                     </tr>
-                                )}
-                                {isVirtualized
-                                    ? virtualItems.map((virtualItem) => renderQueueRow(
-                                        filteredJobOrders[virtualItem.index],
-                                        virtualItem.index
-                                    ))
-                                    : filteredJobOrders.map((jo) => renderQueueRow(jo))}
-                                {isVirtualized && bottomSpacerHeight > 0 && (
-                                    <tr aria-hidden="true" className="pointer-events-none">
-                                        <td colSpan={6} style={{ height: bottomSpacerHeight, padding: 0, border: 0, lineHeight: 0 }} />
-                                    </tr>
-                                )}
-                            </tbody>
-                        </table>
+                                </thead>
+                                <tbody className="divide-y divide-border/50">
+                                    {pageJobOrders.map((jo) => renderQueueRow(jo))}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div className="border-t border-border/60 p-3">
+                            <DataTablePagination
+                                pageIndex={visiblePageIndex}
+                                pageSize={pageSize}
+                                rowCount={filteredJobOrders.length}
+                                onPageChange={setPageIndex}
+                                onPageSizeChange={(size) => {
+                                    setPageSize(size);
+                                    setPageIndex(1);
+                                }}
+                            />
+                        </div>
                     </div>
                 )}
             </CardContent>

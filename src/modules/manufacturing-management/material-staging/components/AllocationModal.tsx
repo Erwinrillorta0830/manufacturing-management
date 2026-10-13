@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import { fetchAllocationPreview } from "../services/staging-api";
 import { createMaterialStagingOperationId } from "../utils/operation-id";
 import { hasStagingDelta } from "../utils/allocation-delta";
@@ -115,7 +116,7 @@ function AllocationForm({
     const [manualInputValues, setManualInputValues] = useState<Record<string, string>>({});
     const [manualInputErrors, setManualInputErrors] = useState<Record<string, string>>({});
     const [remarks, setRemarks] = useState(`Staging materials for JO #${jobOrder.job_order_no}`);
-    const [loadingPreview, setLoadingPreview] = useState(false);
+    const [loadingPreview, setLoadingPreview] = useState(isOpen);
     const [formError, setFormError] = useState<string | null>(null);
 
     const selectedMaterialPreviews = useMemo(
@@ -389,7 +390,36 @@ function AllocationForm({
                 </div>
 
                 {loadingPreview ? (
-                    <div className="flex items-center justify-center rounded-xl border border-dashed border-border p-10 text-sm text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" />Checking eligible inventory lots and batches…</div>
+                    <div role="status" aria-label="Checking eligible inventory lots and batches" aria-busy="true" className="min-w-0 max-w-full overflow-hidden rounded-xl border border-border">
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/30 p-3">
+                            <div>
+                                <div className="text-xs font-semibold uppercase tracking-wider">Eligible lots and batches</div>
+                                <div className="text-[11px] text-muted-foreground">Checking eligible inventory lots and batches…</div>
+                            </div>
+                            <Skeleton aria-hidden="true" className="h-5 w-48 rounded-full" />
+                        </div>
+                        <div className="w-full min-w-0 max-w-full overflow-x-auto overscroll-x-contain">
+                            <table className="w-full min-w-[680px] text-xs">
+                                <thead className="bg-muted/20 text-left text-[11px] uppercase tracking-wider text-muted-foreground">
+                                    <tr>
+                                        <th className="p-3">Lot</th><th className="p-3">Batch</th><th className="p-3">Expiry</th><th className="p-3">QA</th><th className="p-3 text-right">Available</th><th className="p-3 text-right">Allocate</th>
+                                    </tr>
+                                </thead>
+                                <tbody aria-hidden="true">
+                                    {[1, 2, 3].map(row => (
+                                        <tr key={row} className="border-t border-border/70">
+                                            <td className="space-y-2 p-3"><Skeleton className="h-3 w-28" /><Skeleton className="h-2.5 w-36" /></td>
+                                            <td className="p-3"><Skeleton className="h-3 w-24" /></td>
+                                            <td className="p-3"><Skeleton className="h-3 w-20" /></td>
+                                            <td className="p-3"><Skeleton className="h-5 w-14 rounded-full" /></td>
+                                            <td className="p-3"><Skeleton className="ml-auto h-3 w-16" /></td>
+                                            <td className="p-3"><Skeleton className="ml-auto h-8 w-28" /></td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 ) : selectedMaterialPreview ? (
                     <div className="min-w-0 max-w-full overflow-hidden rounded-xl border border-border">
                         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/30 p-3">

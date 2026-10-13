@@ -85,7 +85,8 @@ export function computeMovementSummary(movements: MMInventoryMovement[]): Moveme
 }
 
 /**
- * Computes running inventory balance for each movement chronologically
+ * Computes running inventory balance for each movement chronologically per product.
+ * In overall multi-product mode, each product maintains its own independent running balance.
  */
 export function computeRunningBalances(movements: MMInventoryMovement[]): MMInventoryMovement[] {
     // Sort chronologically ascending
@@ -95,22 +96,26 @@ export function computeRunningBalances(movements: MMInventoryMovement[]): MMInve
         return timeA - timeB;
     });
 
-    let currentBalance = 0;
-    let currentValuation = 0;
+    const productBalances = new Map<number, number>();
+    const productValuations = new Map<number, number>();
 
     return sorted.map((m) => {
+        const prodId = Number(m.productId || 0);
         const qIn = Number(m.quantityIn || 0);
         const qOut = Number(m.quantityOut || 0);
         const netDelta = qIn - qOut;
         const cost = Number(m.unitCost || 0);
 
-        currentBalance += netDelta;
-        currentValuation += netDelta * cost;
+        const currentBal = (productBalances.get(prodId) || 0) + netDelta;
+        const currentVal = (productValuations.get(prodId) || 0) + (netDelta * cost);
+
+        productBalances.set(prodId, currentBal);
+        productValuations.set(prodId, currentVal);
 
         return {
             ...m,
-            runningBalance: currentBalance,
-            runningValuation: currentValuation
+            runningBalance: currentBal,
+            runningValuation: currentVal
         };
     });
 }

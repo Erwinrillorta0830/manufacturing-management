@@ -41,8 +41,9 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { formatPhtDate, formatPhtTimestamp } from "../shared/pht-date";
+import { formatPhtDate, formatPhtTime12Hour, formatPhtTimestamp12Hour } from "../shared/pht-date";
 import { useDailyYieldAudit } from "./hooks/useDailyYieldAudit";
 import { useJobOrderInspectionQA } from "./hooks/useJobOrderInspectionQA";
 import { DailyYieldAuditDialog } from "./components/DailyYieldAuditDialog";
@@ -128,7 +129,7 @@ function DailyYieldRow({
             </TableCell>
             <TableCell className="min-w-[150px] align-top">
                 <div className="font-medium">{formatPhtDate(record.productionDate)}</div>
-                {record.loggedAt && <div className="mt-1 text-[11px] text-muted-foreground">Logged {formatPhtTimestamp(record.loggedAt)}</div>}
+                {record.loggedAt && <div className="mt-1 text-[11px] text-muted-foreground">Logged {formatPhtTimestamp12Hour(record.loggedAt)}</div>}
             </TableCell>
             <TableCell className="font-mono text-right align-top font-semibold text-emerald-700 dark:text-emerald-300">{quantity(record.goodQuantity)}</TableCell>
             <TableCell className="font-mono text-right align-top font-semibold text-red-600 dark:text-red-300">{quantity(displayedRejectedQuantity)}</TableCell>
@@ -312,7 +313,62 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                 )}
 
                 {jobOrderState.loading ? (
-                    <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" /> Loading Job Orders...</div>
+                    <div role="status" aria-label="Loading Job Orders">
+                        <span className="sr-only">Loading Job Orders…</span>
+                        <div className="overflow-x-auto" aria-hidden="true">
+                            <Table>
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead className="min-w-[170px]">Job Order</TableHead>
+                                        <TableHead className="min-w-[170px]">Product</TableHead>
+                                        <TableHead className="min-w-[145px]">Latest Yield</TableHead>
+                                        <TableHead className="text-right">Target Qty</TableHead>
+                                        <TableHead className="min-w-[145px] text-right">Produced Qty</TableHead>
+                                        <TableHead className="min-w-[165px]">Status</TableHead>
+                                        <TableHead className="min-w-[135px] text-right">Action</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {Array.from({ length: 8 }, (_, index) => (
+                                        <TableRow key={index}>
+                                            <TableCell>
+                                                <Skeleton className="h-4 w-28" />
+                                                <Skeleton className="mt-2 h-3 w-20" />
+                                            </TableCell>
+                                            <TableCell>
+                                                <Skeleton className="h-4 w-36" />
+                                                <Skeleton className="mt-2 h-3 w-24" />
+                                            </TableCell>
+                                            <TableCell>
+                                                <Skeleton className="h-4 w-24" />
+                                                <Skeleton className="mt-2 h-3 w-16" />
+                                            </TableCell>
+                                            <TableCell>
+                                                <div className="flex justify-end">
+                                                    <Skeleton className="h-4 w-16" />
+                                                </div>
+                                            </TableCell>
+                                            <TableCell>
+                                                <div className="flex flex-col items-end gap-2">
+                                                    <Skeleton className="h-4 w-16" />
+                                                    <Skeleton className="h-3 w-20" />
+                                                </div>
+                                            </TableCell>
+                                            <TableCell>
+                                                <Skeleton className="h-6 w-28" />
+                                                <Skeleton className="mt-2 h-3 w-24" />
+                                            </TableCell>
+                                            <TableCell>
+                                                <div className="flex justify-end">
+                                                    <Skeleton className="h-9 w-28" />
+                                                </div>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                        </div>
+                    </div>
                 ) : jobOrderState.error ? (
                     <div className="flex flex-col items-center justify-center gap-3 py-16 text-center" role="alert">
                         <AlertCircle className="h-7 w-7 text-destructive" />
@@ -362,7 +418,7 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                             </TableCell>
                                             <TableCell className="min-w-[145px] text-sm">
                                                 <div>{jobOrder.latestYieldAt ? formatPhtDate(jobOrder.latestYieldAt) : "-"}</div>
-                                                {jobOrder.latestYieldAt && <div className="mt-1 text-[11px] text-muted-foreground">{formatPhtTimestamp(jobOrder.latestYieldAt).split(", ").slice(-1)[0]}</div>}
+                                                {jobOrder.latestYieldAt && <div className="mt-1 text-[11px] text-muted-foreground">{formatPhtTime12Hour(jobOrder.latestYieldAt)}</div>}
                                             </TableCell>
                                             <TableCell className="text-right font-mono">{quantity(jobOrder.targetQuantity)}</TableCell>
                                             <TableCell className="text-right">
@@ -449,8 +505,84 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                         ) : null}
                     </DialogHeader>
 
-                    {jobOrderState.detailsLoading ? (
-                        <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" /> Loading JO details...</div>
+                    {jobOrderState.detailsLoading || (!details && !jobOrderState.detailsError) ? (
+                        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pr-1" role="status" aria-label="Loading Job Order details" aria-busy="true">
+                            <span className="sr-only">Loading JO details...</span>
+                            <div aria-hidden="true" className="space-y-5">
+                                <div className="grid grid-cols-2 gap-3 rounded-xl border bg-muted/20 p-3 sm:grid-cols-3 lg:grid-cols-6">
+                                    {Array.from({ length: 6 }).map((_, index) => (
+                                        <div key={`summary-${index}`} className="space-y-2 rounded-md p-1">
+                                            <Skeleton className="h-3 w-20" />
+                                            <Skeleton className="h-5 w-3/4" />
+                                            {index > 2 && <Skeleton className="h-3 w-4/5" />}
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <div className="space-y-2 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
+                                    <Skeleton className="h-4 w-52 max-w-full" />
+                                    <Skeleton className="h-3 w-full" />
+                                    <Skeleton className="h-3 w-2/3 max-w-full" />
+                                </div>
+
+                                <section className="rounded-xl border">
+                                    <div className="space-y-3 border-b p-4">
+                                        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+                                            <div className="w-full max-w-3xl space-y-2">
+                                                <Skeleton className="h-5 w-48" />
+                                                <Skeleton className="h-3 w-full" />
+                                                <Skeleton className="h-3 w-4/5" />
+                                            </div>
+                                            <div className="flex gap-3">
+                                                <Skeleton className="h-3 w-16" />
+                                                <Skeleton className="h-3 w-16" />
+                                                <Skeleton className="h-3 w-20" />
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="overflow-x-auto">
+                                        <Table>
+                                            <TableHeader>
+                                                <TableRow>
+                                                    <TableHead>Daily Yield Details</TableHead>
+                                                    <TableHead>Created for that day</TableHead>
+                                                    <TableHead className="text-right">Accepted</TableHead>
+                                                    <TableHead className="text-right">Rejected Qty</TableHead>
+                                                    <TableHead>Lot</TableHead>
+                                                    <TableHead>Batch</TableHead>
+                                                    <TableHead className="text-right">Total Qty</TableHead>
+                                                    <TableHead>Status</TableHead>
+                                                    <TableHead className="min-w-[170px] text-right">Action</TableHead>
+                                                </TableRow>
+                                            </TableHeader>
+                                            <TableBody>
+                                                {Array.from({ length: 4 }).map((_, rowIndex) => (
+                                                    <TableRow key={`yield-${rowIndex}`}>
+                                                        <TableCell><Skeleton className="h-4 w-32" /><Skeleton className="mt-2 h-3 w-24" /></TableCell>
+                                                        <TableCell><Skeleton className="h-4 w-24" /><Skeleton className="mt-2 h-3 w-20" /></TableCell>
+                                                        <TableCell><Skeleton className="ml-auto h-4 w-12" /></TableCell>
+                                                        <TableCell><Skeleton className="ml-auto h-4 w-12" /></TableCell>
+                                                        <TableCell><Skeleton className="h-4 w-20" /></TableCell>
+                                                        <TableCell><Skeleton className="h-4 w-20" /></TableCell>
+                                                        <TableCell><Skeleton className="ml-auto h-4 w-12" /></TableCell>
+                                                        <TableCell><Skeleton className="h-6 w-20 rounded-full" /></TableCell>
+                                                        <TableCell><Skeleton className="ml-auto h-9 w-28" /></TableCell>
+                                                    </TableRow>
+                                                ))}
+                                            </TableBody>
+                                        </Table>
+                                    </div>
+                                </section>
+
+                                <div className="flex items-start gap-2 rounded-lg bg-primary/5 p-3">
+                                    <Skeleton className="mt-0.5 h-4 w-4 shrink-0 rounded-full" />
+                                    <div className="flex-1 space-y-2">
+                                        <Skeleton className="h-3 w-full" />
+                                        <Skeleton className="h-3 w-4/5" />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     ) : jobOrderState.detailsError ? (
                         <div className="flex min-h-48 flex-col items-center justify-center gap-3 text-center" role="alert">
                             <AlertCircle className="h-7 w-7 text-destructive" />

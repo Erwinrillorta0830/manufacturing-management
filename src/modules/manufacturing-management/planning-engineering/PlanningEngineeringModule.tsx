@@ -6,6 +6,7 @@ import { Loader2, RefreshCw, ClipboardList, Layers, Database, Printer, Factory, 
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
     Select,
     SelectContent,
@@ -32,7 +33,7 @@ import { JobOrderJourneyBar } from "../shared/components/JobOrderJourneyBar";
 import { JobOrderStatusBadge } from "../shared/components/JobOrderStatusBadge";
 import { NextStepCallout } from "../shared/components/NextStepCallout";
 import { StatusLegendPopover } from "../shared/components/StatusLegendPopover";
-import { formatPhtTimestamp } from "../shared/pht-date";
+import { formatPhtTimestamp, formatPhtTimestamp12Hour } from "../shared/pht-date";
 import { isManufacturingEvidenceVideo } from "../production-workflow/services/production-yield-image";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -108,7 +109,7 @@ function JobOrderStatusHistoryPanel({ history }: { history?: any[] }) {
                 {rows.slice(0, 8).map((entry, index) => {
                     const previous = entry.old_status || entry.previous_status || "Created";
                     const next = entry.new_status || "Unknown";
-                    const changedAt = entry.changed_at ? formatPhtTimestamp(entry.changed_at) : "Time not recorded";
+                    const changedAt = entry.changed_at ? formatPhtTimestamp12Hour(entry.changed_at) : "Time not recorded";
                     return (
                         <div key={entry.history_id || entry.id || `${next}-${changedAt}-${index}`} className="flex flex-col gap-1 rounded-lg border border-border/50 bg-muted/20 px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                             <div className="min-w-0">
@@ -1733,7 +1734,7 @@ export default function PlanningEngineeringModule() {
                                     </div>
                                     {activeFamilyJo?.cancelled_at && (
                                         <time className="text-[10px] text-muted-foreground" dateTime={activeFamilyJo.cancelled_at}>
-                                            {formatPhtTimestamp(activeFamilyJo.cancelled_at)}
+                                            {formatPhtTimestamp12Hour(activeFamilyJo.cancelled_at)}
                                         </time>
                                     )}
                                 </div>
@@ -2065,9 +2066,30 @@ export default function PlanningEngineeringModule() {
                                     <h4 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">BOM Materials Allocation Worksheet</h4>
 
                                     {materialLoadState.status === "loading" ? (
-                                        <div className="flex flex-col items-center justify-center py-12 space-y-2">
-                                            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                                            <span className="text-sm text-muted-foreground font-medium">
+                                        <div role="status" aria-busy="true" className="space-y-3">
+                                            <div className="border rounded-xl overflow-hidden bg-card shadow-sm">
+                                                <table className="w-full text-sm text-left text-muted-foreground border-collapse">
+                                                    <thead className="text-xs uppercase bg-muted/40 font-bold border-b text-foreground">
+                                                        <tr>
+                                                            <th className="px-4 py-3">Raw Material</th>
+                                                            <th className="px-4 py-3 text-right">Required</th>
+                                                            <th className="px-4 py-3 text-right">On-Hand Stock</th>
+                                                            <th className="px-4 py-3">Status</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody aria-hidden="true" className="divide-y">
+                                                        {Array.from({ length: 5 }).map((_, index) => (
+                                                            <tr key={`material-skeleton-${index}`}>
+                                                                <td className="px-4 py-4"><Skeleton className="h-4 w-3/4" /></td>
+                                                                <td className="px-4 py-4"><Skeleton className="h-4 w-20 ml-auto" /></td>
+                                                                <td className="px-4 py-4"><Skeleton className="h-4 w-24 ml-auto" /></td>
+                                                                <td className="px-4 py-4"><Skeleton className="h-6 w-28 rounded-full" /></td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                            <span className="block text-center text-sm text-muted-foreground font-medium">
                                                 {waitingForInventory ? "Waiting for inventory movements..." : "Resolving raw material stock levels..."}
                                             </span>
                                         </div>

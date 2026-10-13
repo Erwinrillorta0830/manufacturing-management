@@ -1,8 +1,9 @@
 /* eslint-disable */
 import React from "react";
-import { Loader2, Package, Layers, Clock, CheckCircle, ShieldAlert } from "lucide-react";
+import { Package, Layers, Clock, CheckCircle, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Step2BOMLoadingSkeleton } from "../Step2BOMLoadingSkeleton";
 import { SearchableVersionSelect } from "../SearchableVersionSelect";
 import { CONTAINER_METRIC_DEFINITIONS, ContainerMetricLabel } from "../ContainerMetricLabel";
 import { formatHoursToHMS, formatInventoryQuantity } from "../../utils/containerization-helper";
@@ -13,6 +14,7 @@ import { calculateAggregateRunHours, calculateMaterialRequirementPlan, calculate
 
 export interface Step2BOMReviewProps {
     loadingDetails: boolean;
+    hasLoadedDetails: boolean;
     detailsError: string | null;
     productionMetricsError?: string | null;
     retryDetails: () => void;
@@ -44,6 +46,7 @@ export interface Step2BOMReviewProps {
 
 export function Step2BOMReview({
     loadingDetails,
+    hasLoadedDetails,
     detailsError,
     productionMetricsError,
     retryDetails,
@@ -97,15 +100,6 @@ export function Step2BOMReview({
         );
     };
 
-    if (loadingDetails) {
-        return (
-            <div className="flex flex-col items-center justify-center py-10 space-y-3">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                <p className="text-xs text-muted-foreground font-medium">Analyzing BOM and routes...</p>
-            </div>
-        );
-    }
-
     if (detailsError) {
         return (
             <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
@@ -119,6 +113,10 @@ export function Step2BOMReview({
                 </Button>
             </div>
         );
+    }
+
+    if (loadingDetails || !hasLoadedDetails) {
+        return <Step2BOMLoadingSkeleton />;
     }
 
     return (
@@ -323,7 +321,7 @@ export function Step2BOMReview({
                                     <th className="p-2.5 w-8 text-center">PR</th>
                                     <th className="p-2.5">Raw Material / Component</th>
                                     <th className="p-2.5 text-center">Planned / Demand</th>
-                                    <th className="p-2.5 text-center">Available</th>
+                                    <th className="p-2.5 text-center">Net Unreserved Stock</th>
                                     <th className="p-2.5 text-center">Shortfall</th>
                                     <th className="p-2.5 text-right">Status</th>
                                 </tr>

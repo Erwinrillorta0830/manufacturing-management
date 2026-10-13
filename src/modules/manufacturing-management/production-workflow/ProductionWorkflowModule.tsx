@@ -23,6 +23,7 @@ import {
     ImagePlus
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useProductionWorkflow } from "./hooks/useProductionWorkflow";
 import { ReleasedJobQueue } from "./components/ReleasedJobQueue";
 import { RouteExecutionTable } from "./components/RouteExecutionTable";
@@ -72,7 +73,6 @@ export default function ProductionWorkflowModule() {
         activeManualUserId,
         setActiveManualUserId,
         selectedJobOrder,
-        loadingSelectedJobOrder,
         selectedJobOrderError,
         retrySelectedJobOrderDetails,
         sortedTasks,
@@ -398,20 +398,88 @@ export default function ProductionWorkflowModule() {
             >
                 <DialogContent className="w-[calc(100vw-1rem)] !max-w-[calc(100vw-1rem)] max-h-[96vh] h-[95vh] flex flex-col bg-background border border-border/80 shadow-2xl rounded-2xl p-0 overflow-hidden">
                     {!selectedJobOrder ? (
-                        <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center" role={selectedJobOrderError ? "alert" : "status"} aria-live="polite">
-                            <DialogHeader className="items-center">
-                                <DialogTitle>{selectedJobOrderError ? "Job Order unavailable" : "Loading Job Order"}</DialogTitle>
-                                <DialogDescription>
-                                    {selectedJobOrderError || "Loading the selected Job Order details..."}
-                                </DialogDescription>
-                            </DialogHeader>
-                            {loadingSelectedJobOrder && <RefreshCw className="h-6 w-6 animate-spin text-primary" aria-hidden="true" />}
-                            {selectedJobOrderError && (
+                        selectedJobOrderError ? (
+                            <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center" role="alert" aria-live="polite">
+                                <DialogHeader className="items-center">
+                                    <DialogTitle>Job Order unavailable</DialogTitle>
+                                    <DialogDescription>{selectedJobOrderError}</DialogDescription>
+                                </DialogHeader>
                                 <Button type="button" onClick={retrySelectedJobOrderDetails}>
                                     Retry
                                 </Button>
-                            )}
-                        </div>
+                            </div>
+                        ) : (
+                            <div className="flex h-full min-h-0 flex-col" role="status" aria-label="Loading selected Job Order details" aria-busy="true">
+                                <DialogHeader className="sr-only">
+                                    <DialogTitle>Loading Job Order</DialogTitle>
+                                    <DialogDescription>Loading the selected Job Order details...</DialogDescription>
+                                </DialogHeader>
+                                <div aria-hidden="true" className="shrink-0 border-b border-border/50 bg-gradient-to-r from-primary/10 via-primary/5 to-background p-4 sm:p-5">
+                                    <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
+                                        <div className="min-w-0 flex-1 space-y-3">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <Skeleton className="h-5 w-48 rounded-full" />
+                                                <Skeleton className="h-5 w-20 rounded-full" />
+                                            </div>
+                                            <Skeleton className="h-8 w-56 max-w-full" />
+                                            <Skeleton className="h-4 w-3/4 max-w-full" />
+                                            <div className="flex items-center gap-2 pt-1">
+                                                {Array.from({ length: 7 }).map((_, index) => (
+                                                    <Skeleton key={`journey-${index}`} className="h-2.5 w-2.5 shrink-0 rounded-full" />
+                                                ))}
+                                                <Skeleton className="ml-2 h-3 w-28" />
+                                            </div>
+                                        </div>
+                                        <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+                                            {Array.from({ length: 3 }).map((_, index) => (
+                                                <Skeleton key={`action-${index}`} className="h-10 w-32 max-w-full" />
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div aria-hidden="true" className="min-h-0 flex-1 space-y-5 overflow-y-auto bg-muted/5 p-4 sm:p-5">
+                                    <Skeleton className="h-20 w-full rounded-xl" />
+                                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                                        {Array.from({ length: 3 }).map((_, index) => (
+                                            <div key={`summary-${index}`} className="space-y-3 rounded-xl border border-border bg-card p-4">
+                                                <Skeleton className="h-3 w-2/3" />
+                                                <Skeleton className="h-7 w-1/3" />
+                                                <Skeleton className="h-3 w-1/2" />
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="space-y-4 rounded-xl border border-border bg-card p-4">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <Skeleton className="h-5 w-48 max-w-full" />
+                                            <Skeleton className="h-5 w-24 rounded-full" />
+                                        </div>
+                                        {Array.from({ length: 3 }).map((_, index) => (
+                                            <div key={`progress-${index}`} className="grid grid-cols-2 gap-3 border-t border-border pt-3 sm:grid-cols-4">
+                                                {Array.from({ length: 4 }).map((__, cellIndex) => (
+                                                    <Skeleton key={`progress-${index}-${cellIndex}`} className="h-5 w-full" />
+                                                ))}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="space-y-3">
+                                        <Skeleton className="h-5 w-56 max-w-full" />
+                                        {Array.from({ length: 3 }).map((_, index) => (
+                                            <div key={`route-${index}`} className="space-y-4 rounded-xl border border-border bg-card p-4">
+                                                <div className="flex items-center justify-between gap-3">
+                                                    <Skeleton className="h-5 w-40 max-w-full" />
+                                                    <Skeleton className="h-5 w-28 rounded-full" />
+                                                </div>
+                                                <Skeleton className="h-4 w-2/3 max-w-full" />
+                                                <div className="grid gap-3 sm:grid-cols-2">
+                                                    <Skeleton className="h-16 w-full" />
+                                                    <Skeleton className="h-16 w-full" />
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        )
                     ) : (
                     <>
                     {/* Header */}
