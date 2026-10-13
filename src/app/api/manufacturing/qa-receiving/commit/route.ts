@@ -182,7 +182,8 @@ async function persistedResult(
     expectedAllocationLineIds: Set<number> = new Set(),
     receiptDate: string = input.receiptDate
 ): Promise<ReceivingCommitResult | null> {
-    const receiptNumbers = input.lines.map(line => receiptNumberForLine(receivingTicketNumber, line.lineId));
+    const receivedLines = input.lines.filter(line => line.receivedQuantity > 0);
+    const receiptNumbers = receivedLines.map(line => receiptNumberForLine(receivingTicketNumber, line.lineId));
     const receiptParams = new URLSearchParams({
         "filter[receipt_no][_in]": receiptNumbers.join(","),
         fields: "purchase_order_product_id,purchase_order_id,receipt_no,product_id,branch_id,mm_lot_id,batch_no,received_quantity,quantity_allocated,is_over_received,over_delivery_quantity,unit_price,final_landed_unit_cost,qa_status,expiry_date,received_date,is_replacement,quarantine_disposition_id,receipt_type",
@@ -229,7 +230,7 @@ async function persistedResult(
         existing.push(row);
         qaRowsByReceivingId.set(row.receiving_line_id, existing);
     }
-    for (const line of input.lines) {
+    for (const line of receivedLines) {
         const receiptNo = receiptNumberForLine(receivingTicketNumber, line.lineId);
         const lineReceivingRows = receivingRows.filter(row => String(row.receipt_no) === receiptNo);
         if (lineReceivingRows.length === 0) {
@@ -309,7 +310,7 @@ async function persistedResult(
     const finalMovements: FinalReceivingMovement[] = [];
     const finalAllocations: FinalReceivingAllocation[] = [];
     const receivingRecords: FinalReceivingRecord[] = [];
-    for (const line of input.lines) {
+    for (const line of receivedLines) {
         const acceptedLotAllocations = normalizeReceivingLotAllocations(line.acceptedQuantity, line.acceptedLotAllocations);
         const rejectedLotAllocations = normalizeRejectedLotAllocations(line.rejectedQuantity, line.rejectedLotAllocations);
         const primaryAllocation = acceptedLotAllocations[0] || rejectedLotAllocations[0];
@@ -684,7 +685,9 @@ export async function POST(request: Request) {
                 branchId: purchaseOrderBranchId,
                 branchName: preview.destinationBranch.name,
                 mrp_allocation_drafts: mrpAllocationDrafts,
-                lineItemUpdates: preview.lines.map(result => {
+                lineItemUpdates: preview.lines
+                    .filter(result => result.receivedQuantity > 0)
+                    .map(result => {
                     const line = requestLineById.get(result.lineId)!;
                     return {
                         line_id: result.lineId,

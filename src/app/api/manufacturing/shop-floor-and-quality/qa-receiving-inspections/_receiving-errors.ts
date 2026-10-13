@@ -47,19 +47,15 @@ export function discrepancyRemarkError(input: ReceivingDiscrepancyInput): {
     message: string;
     details: ReceivingValidationDetails;
 } | null {
-    const receivedQuantity = Number(input.receivedQuantity);
-    const remainingQuantity = Math.max(0, Number(input.remainingQuantity));
     const rejectedQuantity = Number(input.rejectedQuantity);
-    const hasReceivedQuantity = Number.isFinite(receivedQuantity) && receivedQuantity > RECEIVING_QUANTITY_EPSILON;
-    const hasQuantityDiscrepancy = hasReceivedQuantity && (
-        Math.abs(receivedQuantity - remainingQuantity) > RECEIVING_QUANTITY_EPSILON
-        || (Number.isFinite(rejectedQuantity) && rejectedQuantity > RECEIVING_QUANTITY_EPSILON)
-    );
+    const hasRejectedQuantity = Number.isFinite(rejectedQuantity) && rejectedQuantity > RECEIVING_QUANTITY_EPSILON;
 
-    if (!hasQuantityDiscrepancy || normalizeReceivingRemark(input.remarks)) return null;
+    // Remarks are optional if all received items are accepted / good quality.
+    // Remarks are only mandatory when items are rejected or damaged.
+    if (!hasRejectedQuantity || normalizeReceivingRemark(input.remarks)) return null;
 
     return {
-        message: `Remarks are required for the quantity discrepancy on product ${input.productId}.`,
+        message: `Remarks are required for rejected quantity on product ${input.productId}.`,
         details: {
             field: "remarks",
             lineId: input.lineId,

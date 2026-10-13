@@ -43,7 +43,7 @@ export default function QAProductItemsAllocationTable({
     return (
         <div className="overflow-x-auto rounded-lg border border-border/50 bg-card" data-testid="qa-product-items-table">
             <table className="w-full min-w-[900px] text-left">
-                <thead className="bg-muted/40 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                <thead className="bg-muted/40 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                     <tr>
                         <th scope="col" className="w-12 p-3 text-center">#</th>
                         <th scope="col" className="p-3">Brand</th>
@@ -57,20 +57,20 @@ export default function QAProductItemsAllocationTable({
                 </thead>
                 <tbody>
                     <tr className="border-t border-border/50 align-top transition-colors hover:bg-muted/10">
-                        <td className="p-3 text-center text-xs font-bold text-muted-foreground">{index}</td>
-                        <td className="p-3 text-xs font-bold text-foreground">{brandName || "—"}</td>
+                        <td className="p-3 text-center text-xs font-semibold text-muted-foreground">{index}</td>
+                        <td className="p-3 text-xs font-semibold text-foreground">{brandName || "—"}</td>
                         <td className="p-3">
                             <div className="flex min-w-0 flex-col">
                                 <span className="text-xs font-bold leading-tight text-foreground">{productName || "—"}</span>
-                                <span className="mt-1 text-[10px] text-muted-foreground font-mono">{productCode || "—"}</span>
+                                <span className="mt-1 text-xs text-muted-foreground font-mono">{productCode || "—"}</span>
                             </div>
                         </td>
                         <td className="p-3">
-                            <span className="whitespace-nowrap rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold uppercase text-primary dark:bg-blue-900/20">
+                            <span className="whitespace-nowrap rounded bg-blue-50 px-2 py-0.5 text-[11px] font-semibold uppercase text-primary dark:bg-blue-900/20">
                                 {uomName || "—"}
                             </span>
                         </td>
-                        <td className="whitespace-nowrap p-3 text-right text-xs font-bold text-foreground">
+                        <td className="whitespace-nowrap p-3 text-right text-xs font-semibold text-foreground">
                             {formatCurrency(unitPrice, currencyCode)}
                         </td>
                         <td className="whitespace-nowrap p-3 text-right text-xs font-bold text-primary dark:text-primary/70">
