@@ -1,11 +1,13 @@
 import React from "react";
-import { Settings, AlertTriangle, Check } from "lucide-react";
+import { ChevronDown, Settings, AlertTriangle, Check, Trash2 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { SalesOrderDetail, SalesOrderReleaseGroup } from "../types";
 import { Skeleton } from "@/components/ui/skeleton";
+import { remainingQuantity } from "../utils/demand-groups";
 
 interface ConsolidationPanelProps {
     selectedLines: SalesOrderDetail[];
@@ -14,6 +16,7 @@ interface ConsolidationPanelProps {
     hasValidTargetBranch: boolean;
     releaseBlockReason: string | null;
     handleInitiateRelease: () => void;
+    handleRemoveLine: (detailId: number) => void;
     versionStock: number | null;
     loadingVersionStock: boolean;
     canDirectAllocate: boolean;
@@ -27,6 +30,7 @@ export function ConsolidationPanel({
     hasValidTargetBranch,
     releaseBlockReason,
     handleInitiateRelease,
+    handleRemoveLine,
     versionStock,
     loadingVersionStock,
     canDirectAllocate,
@@ -62,29 +66,64 @@ export function ConsolidationPanel({
 
                         <div className="space-y-2">
                             {releaseGroups.map((group, index) => (
-                                <div key={group.key} className="bg-card border rounded-lg p-3 space-y-2">
-                                    <div className="flex items-start justify-between gap-3 text-xs">
-                                        <div className="min-w-0">
-                                            <div className="font-bold text-foreground truncate">{group.productName}</div>
-                                            <div className="text-[10px] text-muted-foreground">{group.bomVersionName} · {group.lines.length} detail line{group.lines.length === 1 ? "" : "s"}</div>
+                                <Collapsible key={group.key} className="bg-card border rounded-lg p-3">
+                                    <div className="space-y-2">
+                                        <div className="flex items-start justify-between gap-3 text-xs">
+                                            <div className="min-w-0">
+                                                <div className="font-bold text-foreground truncate">{group.productName}</div>
+                                                <div className="text-[10px] text-muted-foreground">{group.bomVersionName} · {group.lines.length} detail line{group.lines.length === 1 ? "" : "s"}</div>
+                                            </div>
+                                            <div className="flex shrink-0 items-center gap-2">
+                                                <Badge variant="outline" className="font-bold text-primary border-primary/20 bg-primary/5">JO {index + 1}</Badge>
+                                                <CollapsibleTrigger asChild>
+                                                    <Button type="button" variant="outline" size="sm" className="group h-8 px-2 text-xs">
+                                                        Review {group.lines.length} {group.lines.length === 1 ? "line" : "lines"}
+                                                        <ChevronDown className="h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-180" aria-hidden="true" />
+                                                        <span className="sr-only">for {group.productName}</span>
+                                                    </Button>
+                                                </CollapsibleTrigger>
+                                            </div>
                                         </div>
-                                        <Badge variant="outline" className="shrink-0 font-bold text-primary border-primary/20 bg-primary/5">JO {index + 1}</Badge>
-                                    </div>
-                                    <div className="flex justify-between items-center text-xs">
-                                        <span className="font-semibold text-muted-foreground">Sales Orders:</span>
-                                        <span className="font-bold text-foreground text-right">{group.lines.map((line) => line.order_no).filter(Boolean).filter((value, lineIndex, values) => values.indexOf(value) === lineIndex).join(", ")}</span>
-                                    </div>
-                                    <div className="flex justify-between items-center text-xs">
-                                        <span className="font-semibold text-muted-foreground">Full remaining quantity:</span>
-                                        <span className="font-bold text-emerald-700">{group.totalRemainingQuantity.toLocaleString()} {group.lines[0]?.product_id?.uom || "units"}</span>
-                                    </div>
-                                    {releaseGroups.length === 1 && (
                                         <div className="flex justify-between items-center text-xs">
-                                            <span className="font-semibold text-muted-foreground">Available version stock:</span>
-                                            {loadingVersionStock ? <div role="status" aria-busy="true" aria-label="Checking available version stock"><Skeleton className="h-4 w-16" /></div> : <span className="font-bold text-foreground">{versionStock !== null ? versionStock.toLocaleString() : "N/A"}</span>}
+                                            <span className="font-semibold text-muted-foreground">Sales Orders:</span>
+                                            <span className="font-bold text-foreground text-right">{group.lines.map((line) => line.order_no).filter(Boolean).filter((value, lineIndex, values) => values.indexOf(value) === lineIndex).join(", ")}</span>
                                         </div>
-                                    )}
-                                </div>
+                                        <div className="flex justify-between items-center text-xs">
+                                            <span className="font-semibold text-muted-foreground">Full remaining quantity:</span>
+                                            <span className="font-bold text-emerald-700">{group.totalRemainingQuantity.toLocaleString()} {group.lines[0]?.product_id?.uom || "units"}</span>
+                                        </div>
+                                        {releaseGroups.length === 1 && (
+                                            <div className="flex justify-between items-center text-xs">
+                                                <span className="font-semibold text-muted-foreground">Available version stock:</span>
+                                                {loadingVersionStock ? <div role="status" aria-busy="true" aria-label="Checking available version stock"><Skeleton className="h-4 w-16" /></div> : <span className="font-bold text-foreground">{versionStock !== null ? versionStock.toLocaleString() : "N/A"}</span>}
+                                            </div>
+                                        )}
+                                    </div>
+                                    <CollapsibleContent className="mt-3 space-y-2 border-t pt-3">
+                                        <h3 className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Selected Sales Order lines</h3>
+                                        {group.lines.map((line) => (
+                                            <div key={line.detail_id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/20 px-3 py-2">
+                                                <div className="min-w-0 text-xs">
+                                                    <div className="break-all font-semibold text-foreground">{line.order_no || `Sales Order ${line.order_id}`}</div>
+                                                    <div className="text-[10px] text-muted-foreground">
+                                                        Line #{line.detail_id} · {remainingQuantity(line).toLocaleString()} {line.product_id?.uom || "units"} remaining
+                                                    </div>
+                                                </div>
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="shrink-0 text-destructive hover:text-destructive"
+                                                    aria-label={`Remove ${line.order_no || `Sales Order ${line.order_id}`} line ${line.detail_id} from selection`}
+                                                    onClick={() => handleRemoveLine(line.detail_id)}
+                                                >
+                                                    <Trash2 className="h-4 w-4" aria-hidden="true" />
+                                                    Remove
+                                                </Button>
+                                            </div>
+                                        ))}
+                                    </CollapsibleContent>
+                                </Collapsible>
                             ))}
                         </div>
                     </div>

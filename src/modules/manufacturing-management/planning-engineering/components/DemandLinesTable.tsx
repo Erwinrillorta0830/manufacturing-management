@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useId, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import {
     Card,
@@ -61,6 +61,7 @@ export function DemandLinesTable({
     pagination
 }: DemandLinesTableProps) {
     const [searchQuery, setSearchQuery] = useState("");
+    const selectionScopeDescriptionId = useId();
 
     const allLines = useMemo(() => {
         return salesOrderGroups.flatMap((group) => group.lines);
@@ -118,6 +119,11 @@ export function DemandLinesTable({
                     totalCount={allLines.length}
                     itemLabel="Sales Order lines"
                 />
+                <p id={selectionScopeDescriptionId} className="mt-2 text-[11px] text-muted-foreground">
+                    {loadingOrders
+                        ? "Bulk selection scope will be shown when demand finishes loading."
+                        : `Select all applies to ${selectableFilteredLines.length.toLocaleString()} eligible lines matching this search across all pages.`}
+                </p>
             </div>
             <div className="2xl:hidden sticky top-0 z-20 border-y bg-card/95 px-4 py-2 shadow-sm backdrop-blur-sm">
                 <div className="flex items-center justify-between gap-3 text-xs">
@@ -203,6 +209,8 @@ export function DemandLinesTable({
                                             checked={selectableFilteredLines.length > 0 && selectableFilteredLines.every((line) => selectedIds.has(line.detail_id))}
                                             disabled={selectableFilteredLines.length === 0}
                                             onCheckedChange={(checked) => handleSelectLines(selectableFilteredLines.map((line) => line.detail_id), !!checked)}
+                                            aria-label={`Select all ${selectableFilteredLines.length.toLocaleString()} eligible filtered Sales Order lines across all pages`}
+                                            aria-describedby={selectionScopeDescriptionId}
                                         />
                                     </TableHead>
                                     <TableHead className="whitespace-normal break-words font-bold text-xs">Sales Order</TableHead>
@@ -278,14 +286,16 @@ export function DemandLinesTable({
                         </DemandHtmlTable>
                         </div>
                         <div className="2xl:hidden space-y-3 p-3">
-                            <div className="flex items-center gap-2 rounded-md border bg-muted/20 px-3 py-2 text-xs">
+                            <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/20 px-3 py-2 text-xs">
                                 <Checkbox
                                     checked={selectableFilteredLines.length > 0 && selectableFilteredLines.every((line) => selectedIds.has(line.detail_id))}
                                     disabled={selectableFilteredLines.length === 0}
                                     onCheckedChange={(checked) => handleSelectLines(selectableFilteredLines.map((line) => line.detail_id), !!checked)}
-                                    aria-label="Select all eligible Sales Order demand lines"
+                                    aria-label={`Select all ${selectableFilteredLines.length.toLocaleString()} eligible filtered Sales Order lines across all pages`}
+                                    aria-describedby={selectionScopeDescriptionId}
                                 />
-                                <span className="font-medium">Select all eligible lines</span>
+                                <span className="min-w-0 font-medium">Select all {selectableFilteredLines.length.toLocaleString()} eligible filtered lines</span>
+                                <span className="text-muted-foreground">(all pages)</span>
                             </div>
                             {visibleLines.map((line) => {
                                 const isSchedulable = isSchedulableSalesOrderLine(line);
