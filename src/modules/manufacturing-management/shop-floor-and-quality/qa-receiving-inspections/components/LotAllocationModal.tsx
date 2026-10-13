@@ -275,20 +275,20 @@ export function LotAllocationSection({
     return (
         <div className={compact ? "space-y-1" : "space-y-2"}>
             {!compact && (allocations.length === 0 ? (
-                <div className={`rounded-lg border px-3 py-3 text-center text-[10px] text-muted-foreground ${tone.border}`}>
+                <div className={`rounded-lg border px-3 py-3 text-center text-xs text-muted-foreground ${tone.border}`}>
                     No {tone.label.toLowerCase()} lot allocations yet.
                 </div>
             ) : (
                 <div className={`overflow-x-auto rounded-lg border ${tone.border}`}>
-                    <table className="w-full min-w-[560px] text-[10px]">
-                        <thead className="bg-muted/40 text-muted-foreground uppercase text-[9px] font-extrabold tracking-wider">
+                    <table className="w-full min-w-[560px] text-xs">
+                        <thead className="bg-muted/40 text-muted-foreground uppercase text-[11px] font-semibold tracking-wider">
                             <tr>
-                                <th scope="col" className="px-2 py-2 text-left">Storage lot</th>
-                                <th scope="col" className="px-2 py-2 text-left">Batch No.</th>
-                                <th scope="col" className="px-2 py-2 text-left">Mfg Date</th>
-                                <th scope="col" className="px-2 py-2 text-left">Expiry Date</th>
-                                <th scope="col" className="px-2 py-2 text-left">QA Status</th>
-                                <th scope="col" className="px-2 py-2 text-right">Qty</th>
+                                <th scope="col" className="px-2.5 py-2 text-left">Storage lot</th>
+                                <th scope="col" className="px-2.5 py-2 text-left">Batch No.</th>
+                                <th scope="col" className="px-2.5 py-2 text-left">Mfg Date</th>
+                                <th scope="col" className="px-2.5 py-2 text-left">Expiry Date</th>
+                                <th scope="col" className="px-2.5 py-2 text-left">QA Status</th>
+                                <th scope="col" className="px-2.5 py-2 text-right">Qty</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y">
@@ -296,12 +296,12 @@ export function LotAllocationSection({
                                 const lot = storageLots.find(candidate => String(candidate.lot_id) === String(allocation.storageLotId));
                                 return (
                                     <tr key={allocation.clientId}>
-                                        <td className="px-2 py-2 font-semibold">{lot?.lot_name || `Lot ${allocation.storageLotId}`}</td>
-                                        <td className="px-2 py-2">{allocation.batchNumber || "-"}</td>
-                                        <td className="px-2 py-2">{allocation.manufacturingDate || "-"}</td>
-                                        <td className="px-2 py-2">{allocation.expirationDate || "-"}</td>
-                                        <td className="px-2 py-2 font-semibold">{allocation.qaStatus || (disposition === "rejected" ? "DAMAGED" : "GOOD")}</td>
-                                        <td className="px-2 py-2 text-right font-semibold tabular-nums">{Number(allocation.quantity || 0).toLocaleString()}</td>
+                                        <td className="px-2.5 py-2 font-medium">{lot?.lot_name || `Lot ${allocation.storageLotId}`}</td>
+                                        <td className="px-2.5 py-2 font-mono text-[11px]">{allocation.batchNumber || "-"}</td>
+                                        <td className="px-2.5 py-2">{allocation.manufacturingDate || "-"}</td>
+                                        <td className="px-2.5 py-2">{allocation.expirationDate || "-"}</td>
+                                        <td className="px-2.5 py-2 font-medium">{allocation.qaStatus || (disposition === "rejected" ? "DAMAGED" : "GOOD")}</td>
+                                        <td className="px-2.5 py-2 text-right font-medium tabular-nums">{Number(allocation.quantity || 0).toLocaleString()}</td>
                                     </tr>
                                 );
                             })}
@@ -313,7 +313,7 @@ export function LotAllocationSection({
                 <button
                     type="button"
                     onClick={() => setOpen(true)}
-                    className={`h-8 whitespace-nowrap rounded-lg border bg-background px-2.5 text-[10px] font-extrabold hover:bg-muted ${storageLots.length === 0 && allocations.length === 0 ? "border-amber-500/50 text-amber-700 bg-amber-500/5 hover:bg-amber-500/10" : `${tone.text} ${tone.border}`}`}
+                    className={`h-8 whitespace-nowrap rounded-lg border bg-background px-3 text-xs font-semibold hover:bg-muted ${storageLots.length === 0 && allocations.length === 0 ? "border-amber-500/50 text-amber-700 bg-amber-500/5 hover:bg-amber-500/10" : `${tone.text} ${tone.border}`}`}
                 >
                     {readOnly
                         ? "View allocated lots"
@@ -323,7 +323,7 @@ export function LotAllocationSection({
                                 ? "* Assign Lot & Batch"
                                 : "Manage lot allocation"}
                 </button>
-                <div className={`text-[10px] font-bold ${Math.abs(total - expectedQuantity) > 1e-9 ? "text-red-600" : tone.text}`}>
+                <div className={`text-xs font-semibold ${Math.abs(total - expectedQuantity) > 1e-9 ? "text-red-600" : tone.text}`}>
                     {tone.label} allocated: {total.toLocaleString()} / {expectedQuantity.toLocaleString()}
                 </div>
             </div>

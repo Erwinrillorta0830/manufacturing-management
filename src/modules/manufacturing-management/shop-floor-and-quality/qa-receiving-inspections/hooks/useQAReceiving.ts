@@ -1071,14 +1071,29 @@ export function useQAReceiving({
 
     const qaSubmissionBlockReason = useMemo(() => {
         if (lineItems.length === 0) return null;
+        const activeLines = replacementDisposition
+            ? lineItems
+            : lineItems.filter(line => {
+                const row = inspectionRows[line.line_id];
+                const received = Number(row?.receivedQty || 0);
+                if (selectedReceipt?.readOnly) {
+                    const historicalQty = Number(line.latest_receipt?.received_quantity ?? line.warehouse_receipt?.received_quantity ?? 0);
+                    return historicalQty > 0 || received > 0;
+                }
+                const currentQty = line.current_receipt_quantity !== null && line.current_receipt_quantity !== undefined
+                    ? Number(line.current_receipt_quantity)
+                    : null;
+                return (currentQty !== null && Number.isFinite(currentQty) && currentQty > 0) || received > 0;
+            });
+
         if (!receivingIsReadOnly && !replacementDisposition) {
-            const ambiguousLine = lineItems.find(line => Boolean(line.current_receipt_error));
+            const ambiguousLine = activeLines.find(line => Boolean(line.current_receipt_error));
             if (ambiguousLine) {
                 const productName = ambiguousLine.product_id?.product_name || `line ${ambiguousLine.line_id}`;
                 return `${productName}: ${ambiguousLine.current_receipt_error}`;
             }
 
-            const hasPositiveWarehouseHandoff = lineItems.some(line => {
+            const hasPositiveWarehouseHandoff = activeLines.some(line => {
                 const quantity = line.current_receipt_quantity;
                 return quantity !== null
                     && quantity !== undefined
@@ -1090,34 +1105,48 @@ export function useQAReceiving({
             }
         }
 
-        const productIds = [...new Set(lineItems.map(line => Number(line.product_id?.product_id)))];
+        const targetLines = activeLines.length > 0 ? activeLines : lineItems;
+        const productIds = [...new Set(targetLines.map(line => Number(line.product_id?.product_id)))];
         for (const productId of productIds) {
             const state = qaSpecificationStates[productId];
             if (!state || state.status === "loading") return "Wait for all applicable QA checklists to finish loading.";
             if (state.status === "error") return "QA checklist configuration could not be verified. Receiving is blocked to protect inventory records.";
         }
         return null;
-    }, [lineItems, qaSpecificationStates, receivingIsReadOnly, replacementDisposition]);
+    }, [lineItems, inspectionRows, selectedReceipt, qaSpecificationStates, receivingIsReadOnly, replacementDisposition]);
 
     const overDeliveryLines = useMemo<OverDeliveryLine[]>(() => {
         if (replacementDisposition) return [];
-        return lineItems.flatMap(line => {
-        const row = inspectionRows[line.line_id];
-        const receivedQuantity = Number(row?.receivedQty || 0);
-        const orderedQuantity = Number(line.quantity_ordered || 0);
-        const remainingQuantity = Math.max(0, Number(line.remaining_quantity ?? (orderedQuantity - Number(line.quantity_received || 0))));
-        const evaluation = evaluateOverDelivery(receivedQuantity, remainingQuantity);
-        return evaluation.isOverReceived
-            ? [{
-                lineId: line.line_id,
-                productName: line.product_id?.product_name || `Item ${line.line_id}`,
-                receivedQuantity,
-                remainingQuantity,
-                overDeliveryQuantity: evaluation.overDeliveryQuantity
-            }]
-            : [];
+        const activeLines = lineItems.filter(line => {
+            const row = inspectionRows[line.line_id];
+            const received = Number(row?.receivedQty || 0);
+            if (selectedReceipt?.readOnly) {
+                const historicalQty = Number(line.latest_receipt?.received_quantity ?? line.warehouse_receipt?.received_quantity ?? 0);
+                return historicalQty > 0 || received > 0;
+            }
+            const currentQty = line.current_receipt_quantity !== null && line.current_receipt_quantity !== undefined
+                ? Number(line.current_receipt_quantity)
+                : null;
+            return (currentQty !== null && Number.isFinite(currentQty) && currentQty > 0) || received > 0;
         });
-    }, [inspectionRows, lineItems, replacementDisposition]);
+
+        return activeLines.flatMap(line => {
+            const row = inspectionRows[line.line_id];
+            const receivedQuantity = Number(row?.receivedQty || 0);
+            const orderedQuantity = Number(line.quantity_ordered || 0);
+            const remainingQuantity = Math.max(0, Number(line.remaining_quantity ?? (orderedQuantity - Number(line.quantity_received || 0))));
+            const evaluation = evaluateOverDelivery(receivedQuantity, remainingQuantity);
+            return evaluation.isOverReceived
+                ? [{
+                    lineId: line.line_id,
+                    productName: line.product_id?.product_name || `Item ${line.line_id}`,
+                    receivedQuantity,
+                    remainingQuantity,
+                    overDeliveryQuantity: evaluation.overDeliveryQuantity
+                }]
+                : [];
+        });
+    }, [inspectionRows, lineItems, selectedReceipt, replacementDisposition]);
 
     const quantityStatus = useMemo<ReceivingQuantityStatus>(() => {
         if (lineItems.length === 0) return "PARTIAL";
@@ -1165,13 +1194,28 @@ export function useQAReceiving({
         if (!replacementDisposition && !supplierDocumentTypeId) {
             addIssue({ field: "supplierDocumentTypeId", message: "Supplier Document Type is required." });
         }
-        const receivedLines = lineItems.filter(line => Number(inspectionRows[line.line_id]?.receivedQty || 0) > 0);
+        const activeLines = replacementDisposition
+            ? lineItems
+            : lineItems.filter(line => {
+                const row = inspectionRows[line.line_id];
+                const received = Number(row?.receivedQty || 0);
+                if (selectedReceipt?.readOnly) {
+                    const historicalQty = Number(line.latest_receipt?.received_quantity ?? line.warehouse_receipt?.received_quantity ?? 0);
+                    return historicalQty > 0 || received > 0;
+                }
+                const currentQty = line.current_receipt_quantity !== null && line.current_receipt_quantity !== undefined
+                    ? Number(line.current_receipt_quantity)
+                    : null;
+                return (currentQty !== null && Number.isFinite(currentQty) && currentQty > 0) || received > 0;
+            });
+
+        const receivedLines = activeLines.filter(line => Number(inspectionRows[line.line_id]?.receivedQty || 0) > 0);
 
         if (receivedLines.length === 0) {
             addIssue({ field: "receivedQuantity", message: "Enter a positive received quantity for at least one purchase-order line." });
         }
 
-        for (const line of lineItems) {
+        for (const line of activeLines) {
             const row = inspectionRows[line.line_id];
             const productName = line.product_id?.product_name || `Item ${line.line_id}`;
             const received = Number(row?.receivedQty || 0);
@@ -1293,44 +1337,56 @@ export function useQAReceiving({
         setValidatingInspection(true);
         try {
             const evaluationLines = lineItems.map(line => {
-                const row = inspectionRows[line.line_id]!;
+                const row = inspectionRows[line.line_id];
+                const receivedQty = Number(row?.receivedQty || 0);
+                const isNotReceived = receivedQty <= 0;
+
+                const acceptedQty = isNotReceived ? 0 : Number(row?.acceptedQty || 0);
+                const rejectedQty = isNotReceived ? 0 : Math.max(0, deriveRejectedQuantity(
+                    receivedQty,
+                    acceptedQty
+                ));
+
                 return {
                     lineId: line.line_id,
                     productId: line.product_id.product_id,
-                    receivedQuantity: Number(row.receivedQty || 0),
-                    acceptedQuantity: Number(row.acceptedQty || 0),
-                    rejectedQuantity: Math.max(0, deriveRejectedQuantity(
-                        Number(row.receivedQty || 0),
-                        Number(row.acceptedQty || 0)
-                    )),
-                    acceptedLotAllocations: row.acceptedLotAllocations
-                        .filter(allocation => Number(allocation.storageLotId) > 0 && Number(allocation.quantity) > 0)
-                        .map(allocation => ({
-                            storageLotId: Number(allocation.storageLotId),
-                            batchNumber: allocation.batchNumber.trim(),
-                            manufacturingDate: allocation.manufacturingDate || null,
-                            expirationDate: allocation.expirationDate || null,
-                            quantity: Number(allocation.quantity),
-                            qaStatus: "GOOD" as const
-                        })),
-                    rejectedLotAllocations: row.rejectedLotAllocations
-                        .filter(allocation => Number(allocation.storageLotId) > 0 && Number(allocation.quantity) > 0)
-                        .map(allocation => ({
-                            storageLotId: Number(allocation.storageLotId),
-                            batchNumber: allocation.batchNumber.trim(),
-                            manufacturingDate: allocation.manufacturingDate || null,
-                            expirationDate: allocation.expirationDate || null,
-                            quantity: Number(allocation.quantity),
-                            qaStatus: allocation.qaStatus === "QUARANTINED" || allocation.qaStatus === "EXPIRED" || allocation.qaStatus === "DAMAGED"
-                                ? allocation.qaStatus
-                                : "DAMAGED" as const
-                        })),
-                    remarks: row.rejectionReason.trim() || null,
-                    isPackaging: row.isPackaging,
-                    readings: Object.entries(qaReadings[line.line_id] || {}).map(([specId, actualReading]) => ({
-                        specId: Number(specId),
-                        actualReading
-                    }))
+                    receivedQuantity: receivedQty,
+                    acceptedQuantity: acceptedQty,
+                    rejectedQuantity: rejectedQty,
+                    acceptedLotAllocations: isNotReceived
+                        ? []
+                        : (row?.acceptedLotAllocations || [])
+                            .filter(allocation => Number(allocation.storageLotId) > 0 && Number(allocation.quantity) > 0)
+                            .map(allocation => ({
+                                storageLotId: Number(allocation.storageLotId),
+                                batchNumber: allocation.batchNumber.trim(),
+                                manufacturingDate: allocation.manufacturingDate || null,
+                                expirationDate: allocation.expirationDate || null,
+                                quantity: Number(allocation.quantity),
+                                qaStatus: "GOOD" as const
+                            })),
+                    rejectedLotAllocations: isNotReceived
+                        ? []
+                        : (row?.rejectedLotAllocations || [])
+                            .filter(allocation => Number(allocation.storageLotId) > 0 && Number(allocation.quantity) > 0)
+                            .map(allocation => ({
+                                storageLotId: Number(allocation.storageLotId),
+                                batchNumber: allocation.batchNumber.trim(),
+                                manufacturingDate: allocation.manufacturingDate || null,
+                                expirationDate: allocation.expirationDate || null,
+                                quantity: Number(allocation.quantity),
+                                qaStatus: allocation.qaStatus === "QUARANTINED" || allocation.qaStatus === "EXPIRED" || allocation.qaStatus === "DAMAGED"
+                                    ? allocation.qaStatus
+                                    : "DAMAGED" as const
+                            })),
+                    remarks: isNotReceived ? null : (row?.rejectionReason?.trim() || null),
+                    isPackaging: Boolean(row?.isPackaging ?? (line.category_type === "PACKAGING")),
+                    readings: isNotReceived
+                        ? []
+                        : Object.entries(qaReadings[line.line_id] || {}).map(([specId, actualReading]) => ({
+                            specId: Number(specId),
+                            actualReading
+                        }))
                 };
             });
 
@@ -1425,13 +1481,28 @@ export function useQAReceiving({
             if (isDetailMode) {
                 await loadDetail(true);
             } else {
-                await loadShipments({
+                const refreshedShipments = await loadShipments({
                     search: searchPO.trim() || undefined,
                     status: searchStatus || undefined,
                     startDate: startDate || undefined,
                     endDate: endDate || undefined,
-                    includeReceived: showReceived
+                    includeReceived: true
                 });
+                if (selectedShipment) {
+                    try {
+                        const detail = await fetchQaReceivingDetail(selectedShipment.shipment_id, replacementDisposition?.id);
+                        const matchingReceipt = detail.receiptOptions.find(o => o.receiptNumber === result.receivingTicketNumber || o.receiptNumber === result.commitReference) || detail.selectedReceipt;
+                        await handleSelectShipment(detail.shipment, detail.replacementDisposition, {
+                            preloadedLineItems: detail.lineItems,
+                            branchCatalog: branches,
+                            receiptOptions: detail.receiptOptions,
+                            selectedReceipt: matchingReceipt,
+                            preserveCommitState: true
+                        });
+                    } catch (error) {
+                        console.error("Failed to refresh shipment detail after commit", error);
+                    }
+                }
             }
             await loadQuarantine();
         } catch (error) {

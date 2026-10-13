@@ -554,7 +554,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         if (poLineIds.length !== poLines.length || unknownLineIds.length > 0) {
             throw new ReceivingError("One or more purchase-order lines do not exist.", 400);
         }
-        if (!replacementDispositionId && missingLineIds.length > 0) {
+        if (!replacementDispositionId && !options.receivingHeaderId && missingLineIds.length > 0) {
             throw new ReceivingError(`Every purchase-order line must be included. Missing line(s): ${missingLineIds.join(", ")}.`, 400);
         }
         if (lineItemUpdates.some((item) => item.accepted_lot_allocations.some((allocation) => !validLotIds.has(allocation.storage_lot_id)))) {
@@ -817,7 +817,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 uomByLot.set(allocation.storageLotId, productUomId);
             }
             const primaryAllocation = acceptedLotAllocations[0] || rejectedLotAllocations[0];
-            if (!primaryAllocation) throw new ReceivingError(`A storage lot is required for product ${productId}.`, 400);
+            if (received > 0 && !primaryAllocation) throw new ReceivingError(`A storage lot is required for product ${productId}.`, 400);
             return {
                 item,
                 poLine,
@@ -1053,6 +1053,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             const receivingByLine = new Map<number, number>();
 
             for (const line of prepared) {
+                if (line.received === 0) continue;
                 const allocation = allocations.get(line.item.line_id)!;
                 const discreteAllocations: Array<{
                     kind: "Passed" | "Rejected";

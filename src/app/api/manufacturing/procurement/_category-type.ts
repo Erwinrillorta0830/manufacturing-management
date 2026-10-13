@@ -61,7 +61,7 @@ export function purchaseOrderCategoryTypeFromProductType(
 ): PurchaseOrderCategoryType | null {
     const categoryId = categoryClassificationId(categoryValue);
     if (categoryId === BOTTLE_PRODUCT_CATEGORY) {
-        return "RAW_MATERIAL";
+        return "PACKAGING";
     }
 
     const id = classificationId(value);

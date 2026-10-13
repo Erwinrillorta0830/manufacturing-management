@@ -114,14 +114,14 @@ export default function MovementPayloadModal({
                             <col className="w-[15%]" />
                             <col className="w-[15%]" />
                         </colgroup>
-                        <thead className="bg-muted/60 text-muted-foreground uppercase text-[10px] font-extrabold tracking-wider border-b">
+                        <thead className="bg-muted/60 text-muted-foreground uppercase text-[11px] font-semibold tracking-wider border-b">
                             <tr>
-                                <th className="px-3 py-2.5 text-left">Product</th>
-                                <th className="px-3 py-2.5 text-left">Storage Lot / Batch</th>
-                                <th className="px-3 py-2.5 text-right">Quantity</th>
-                                <th className="px-3 py-2.5 text-left">Dates</th>
-                                <th className="px-3 py-2.5 text-left">Transaction</th>
-                                <th className="px-3 py-2.5 text-left">Remarks</th>
+                                <th className="px-3 py-2 text-left">Product</th>
+                                <th className="px-3 py-2 text-left">Storage Lot / Batch</th>
+                                <th className="px-3 py-2 text-right">Quantity</th>
+                                <th className="px-3 py-2 text-left">Dates</th>
+                                <th className="px-3 py-2 text-left">Transaction</th>
+                                <th className="px-3 py-2 text-left">Remarks</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y">
@@ -184,54 +184,54 @@ export default function MovementPayloadModal({
                                         data-testid="receiving-transaction-summary"
                                         className="overflow-hidden rounded-xl border border-border/80 bg-muted/10 shadow-sm"
                                     >
-                                        <div className="border-b bg-muted/30 px-4 py-3 sm:px-5 sm:py-4">
-                                            <h3 id="receiving-transaction-summary" className="text-base font-extrabold uppercase tracking-wider text-foreground">
+                                        <div className="border-b bg-muted/30 px-4 py-3 sm:px-5 sm:py-3.5">
+                                            <h3 id="receiving-transaction-summary" className="text-sm font-bold uppercase tracking-wider text-foreground">
                                                 Transaction Summary
                                             </h3>
-                                            <p className="mt-1 text-sm text-muted-foreground">Posted receiving metadata</p>
+                                            <p className="mt-0.5 text-xs text-muted-foreground">Posted receiving metadata</p>
                                         </div>
-                                        <dl className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 sm:gap-4 sm:p-5 lg:grid-cols-4">
-                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-3 sm:px-4 sm:py-4 lg:col-span-2">
-                                                <dt className="text-xs font-bold uppercase tracking-wider text-foreground/70">PO Number</dt>
-                                                <dd className="mt-1 break-words font-mono text-lg font-extrabold leading-tight text-foreground sm:text-xl">
+                                        <dl className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 sm:gap-4 sm:p-4 lg:grid-cols-4">
+                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-2.5 sm:px-4 sm:py-3 lg:col-span-2">
+                                                <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">PO Number</dt>
+                                                <dd className="mt-1 break-words font-mono text-base font-bold leading-tight text-foreground">
                                                     {purchaseOrderNumber || "Current purchase order"}
                                                 </dd>
                                             </div>
-                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-3 sm:px-4 sm:py-4 lg:col-span-2">
-                                                <dt className="text-xs font-bold uppercase tracking-wider text-foreground/70">Receipt Number</dt>
-                                                <dd className="mt-1 break-words font-mono text-lg font-extrabold leading-tight text-primary sm:text-xl">
+                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-2.5 sm:px-4 sm:py-3 lg:col-span-2">
+                                                <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Receipt Number</dt>
+                                                <dd className="mt-1 break-words font-mono text-base font-bold leading-tight text-primary">
                                                     {displayReceipt}
                                                 </dd>
                                             </div>
-                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-3 sm:px-4 sm:py-4">
-                                                <dt className="text-xs font-bold uppercase tracking-wider text-foreground/70">Date of Receipt</dt>
-                                                <dd className="mt-1 text-base font-bold tabular-nums text-foreground">{committedResult.receiptDate}</dd>
+                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-2.5 sm:px-4 sm:py-3">
+                                                <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Date of Receipt</dt>
+                                                <dd className="mt-1 text-sm font-semibold tabular-nums text-foreground">{committedResult.receiptDate}</dd>
                                             </div>
-                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-3 sm:px-4 sm:py-4">
-                                                <dt className="text-xs font-bold uppercase tracking-wider text-foreground/70">Status</dt>
+                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-2.5 sm:px-4 sm:py-3">
+                                                <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Status</dt>
                                                 <dd className="mt-1">
-                                                    <span className={`inline-flex rounded-full border px-2.5 py-1 text-base font-bold ${statusClass}`}>
+                                                    <span className={`inline-flex rounded-full border px-2.5 py-0.5 text-xs font-semibold ${statusClass}`}>
                                                         {committedResult.status}
                                                     </span>
                                                 </dd>
                                             </div>
                                             {committedResult.status === "Received" && (
                                                 <>
-                                                    <div className="min-w-0 rounded-lg border bg-background px-3 py-3 sm:px-4 sm:py-4">
-                                                        <dt className="text-xs font-bold uppercase tracking-wider text-foreground/70">Payment Status</dt>
-                                                        <dd className="mt-1 text-base font-bold text-blue-700 dark:text-blue-300">{paymentStatus}</dd>
+                                                    <div className="min-w-0 rounded-lg border bg-background px-3 py-2.5 sm:px-4 sm:py-3">
+                                                        <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Payment Status</dt>
+                                                        <dd className="mt-1 text-sm font-semibold text-blue-700 dark:text-blue-300">{paymentStatus}</dd>
                                                     </div>
                                                     {Number(committedResult.paymentStatus) === 2 && (
-                                                        <div className="min-w-0 rounded-lg border border-blue-500/30 bg-blue-500/5 px-3 py-3 sm:px-4 sm:py-4">
-                                                            <dt className="text-xs font-bold uppercase tracking-wider text-blue-700 dark:text-blue-300">Finance Queue</dt>
-                                                            <dd className="mt-1 text-base font-bold text-blue-700 dark:text-blue-300">Purchase Amount Posting</dd>
+                                                        <div className="min-w-0 rounded-lg border border-blue-500/30 bg-blue-500/5 px-3 py-2.5 sm:px-4 sm:py-3">
+                                                            <dt className="text-xs font-semibold uppercase tracking-wider text-blue-700 dark:text-blue-300">Finance Queue</dt>
+                                                            <dd className="mt-1 text-sm font-semibold text-blue-700 dark:text-blue-300">Purchase Amount Posting</dd>
                                                         </div>
                                                     )}
                                                 </>
                                             )}
-                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-3 sm:px-4 sm:py-4">
-                                                <dt className="text-xs font-bold uppercase tracking-wider text-foreground/70">Submission</dt>
-                                                <dd className="mt-1 text-base font-semibold text-foreground">
+                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-2.5 sm:px-4 sm:py-3">
+                                                <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Submission</dt>
+                                                <dd className="mt-1 text-sm font-semibold text-foreground">
                                                     {committedResult.idempotentReplay ? "Idempotent Replay" : "Fresh Posting"}
                                                 </dd>
                                             </div>
@@ -244,19 +244,19 @@ export default function MovementPayloadModal({
                                 <div className="flex items-center gap-2">
                                     <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                                     <h3 className="text-xs font-bold">Committed receiving records</h3>
-                                    <span className="text-[10px] text-muted-foreground">{committedResult.receivingRecords.length}</span>
+                                    <span className="text-xs text-muted-foreground">{committedResult.receivingRecords.length}</span>
                                 </div>
                                 <div className="overflow-x-auto border-y">
-                                    <table className="w-full min-w-[850px] text-[10px]">
-                                        <thead className="bg-muted/40 text-muted-foreground uppercase">
+                                    <table className="w-full min-w-[850px] text-xs">
+                                        <thead className="bg-muted/40 text-muted-foreground uppercase text-[11px] font-semibold">
                                             <tr>
-                                                <th className="px-2 py-2 text-left">Product</th>
-                                                <th className="px-2 py-2 text-left">Receipt / batch</th>
-                                                <th className="px-2 py-2 text-left">Storage lot</th>
-                                                <th className="px-2 py-2 text-right">Received</th>
-                                                <th className="px-2 py-2 text-right">Rejected</th>
-                                                <th className="px-2 py-2 text-right">Over-delivery</th>
-                                                <th className="px-2 py-2 text-left">QA status</th>
+                                                <th className="px-2.5 py-2 text-left">Product</th>
+                                                <th className="px-2.5 py-2 text-left">Receipt / batch</th>
+                                                <th className="px-2.5 py-2 text-left">Storage lot</th>
+                                                <th className="px-2.5 py-2 text-right">Received</th>
+                                                <th className="px-2.5 py-2 text-right">Rejected</th>
+                                                <th className="px-2.5 py-2 text-right">Over-delivery</th>
+                                                <th className="px-2.5 py-2 text-left">QA status</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y">
@@ -267,13 +267,13 @@ export default function MovementPayloadModal({
                                                         const route = getPreviewRoute(record.lineId, record.storageLotId);
                                                         return (
                                                             <>
-                                                                <td className="px-2 py-2 align-top"><strong>{product?.product_name || "Unknown product"}</strong><br /><span className="text-muted-foreground">{product?.product_code || "N/A"}</span></td>
-                                                                <td className="px-2 py-2 align-top font-mono"><strong>{record.receiptNumber}</strong><br /><span className="text-muted-foreground">Batch: {record.batchNumber}</span></td>
-                                                                <td className="px-2 py-2 align-top">{route?.storageLotName || "N/A"}</td>
-                                                                <td className="px-2 py-2 align-top text-right font-bold tabular-nums">{record.receivedQuantity.toLocaleString()}</td>
-                                                                <td className="px-2 py-2 align-top text-right font-bold tabular-nums">{record.rejectedQuantity.toLocaleString()}</td>
-                                                                <td className="px-2 py-2 align-top text-right font-bold tabular-nums">{record.isOverReceived ? record.overDeliveryQuantity.toLocaleString() : "—"}</td>
-                                                                <td className="px-2 py-2 align-top">{record.qaStatus || "N/A"}</td>
+                                                                <td className="px-2.5 py-2 align-top"><strong>{product?.product_name || "Unknown product"}</strong><br /><span className="text-muted-foreground text-[11px]">{product?.product_code || "N/A"}</span></td>
+                                                                <td className="px-2.5 py-2 align-top font-mono"><strong>{record.receiptNumber}</strong><br /><span className="text-muted-foreground text-[11px]">Batch: {record.batchNumber}</span></td>
+                                                                <td className="px-2.5 py-2 align-top">{route?.storageLotName || "N/A"}</td>
+                                                                <td className="px-2.5 py-2 align-top text-right font-bold tabular-nums">{record.receivedQuantity.toLocaleString()}</td>
+                                                                <td className="px-2.5 py-2 align-top text-right font-bold tabular-nums">{record.rejectedQuantity.toLocaleString()}</td>
+                                                                <td className="px-2.5 py-2 align-top text-right font-bold tabular-nums">{record.isOverReceived ? record.overDeliveryQuantity.toLocaleString() : "—"}</td>
+                                                                <td className="px-2.5 py-2 align-top">{record.qaStatus || "N/A"}</td>
                                                             </>
                                                         );
                                                     })()}
@@ -288,17 +288,17 @@ export default function MovementPayloadModal({
                                 <div className="flex items-center gap-2">
                                     <PackageCheck className="h-4 w-4 text-violet-600" />
                                     <h3 className="text-xs font-bold">Committed MRP allocations</h3>
-                                    <span className="text-[10px] text-muted-foreground">{committedResult.allocations.length}</span>
+                                    <span className="text-xs text-muted-foreground">{committedResult.allocations.length}</span>
                                 </div>
                                 <div className="overflow-x-auto border-y">
-                                    <table className="w-full min-w-[850px] text-[10px]">
-                                        <thead className="bg-muted/40 text-muted-foreground uppercase">
+                                    <table className="w-full min-w-[850px] text-xs">
+                                        <thead className="bg-muted/40 text-muted-foreground uppercase text-[11px] font-semibold">
                                             <tr>
-                                                <th className="px-2 py-2 text-left">Allocation ID</th>
-                                                <th className="px-2 py-2 text-left">Product</th>
-                                                <th className="px-2 py-2 text-left">Job order / material</th>
-                                                <th className="px-2 py-2 text-right">Quantity</th>
-                                                <th className="px-2 py-2 text-left">Inventory lots</th>
+                                                <th className="px-2.5 py-2 text-left">Allocation ID</th>
+                                                <th className="px-2.5 py-2 text-left">Product</th>
+                                                <th className="px-2.5 py-2 text-left">Job order / material</th>
+                                                <th className="px-2.5 py-2 text-right">Quantity</th>
+                                                <th className="px-2.5 py-2 text-left">Inventory lots</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y">
@@ -306,16 +306,16 @@ export default function MovementPayloadModal({
                                                 const product = getProduct(allocation.lineId);
                                                 return (
                                                     <tr key={allocation.allocationId}>
-                                                        <td className="px-2 py-2 font-bold tabular-nums">{allocation.allocationId}</td>
-                                                        <td className="px-2 py-2"><strong>{product?.product_name || `Product #${allocation.productId}`}</strong><br /><span className="text-muted-foreground">{product?.product_code || "N/A"}</span></td>
-                                                        <td className="px-2 py-2">JO #{allocation.jobOrderId}<br /><span className="text-muted-foreground">Material #{allocation.jobOrderMaterialId}</span></td>
-                                                        <td className="px-2 py-2 text-right font-bold tabular-nums">{allocation.quantity.toLocaleString()}</td>
-                                                        <td className="px-2 py-2">{allocation.inventoryLotIds.join(", ") || "N/A"}</td>
+                                                        <td className="px-2.5 py-2 font-bold tabular-nums">{allocation.allocationId}</td>
+                                                        <td className="px-2.5 py-2"><strong>{product?.product_name || `Product #${allocation.productId}`}</strong><br /><span className="text-muted-foreground text-[11px]">{product?.product_code || "N/A"}</span></td>
+                                                        <td className="px-2.5 py-2">JO #{allocation.jobOrderId}<br /><span className="text-muted-foreground text-[11px]">Material #{allocation.jobOrderMaterialId}</span></td>
+                                                        <td className="px-2.5 py-2 text-right font-bold tabular-nums">{allocation.quantity.toLocaleString()}</td>
+                                                        <td className="px-2.5 py-2">{allocation.inventoryLotIds.join(", ") || "N/A"}</td>
                                                     </tr>
                                                 );
                                             })}
                                             {committedResult.allocations.length === 0 && (
-                                                <tr><td colSpan={5} className="px-2 py-3 text-muted-foreground">No MRP allocation was created for this receipt.</td></tr>
+                                                <tr><td colSpan={5} className="px-2.5 py-3 text-muted-foreground">No MRP allocation was created for this receipt.</td></tr>
                                             )}
                                         </tbody>
                                     </table>
@@ -326,18 +326,18 @@ export default function MovementPayloadModal({
                                 <div className="flex items-center gap-2">
                                     <PackageCheck className="h-4 w-4 text-blue-600" />
                                     <h3 className="text-xs font-bold">Committed inventory movements</h3>
-                                    <span className="text-[10px] text-muted-foreground">{committedResult.movements.length}</span>
+                                    <span className="text-xs text-muted-foreground">{committedResult.movements.length}</span>
                                 </div>
                                 <div className="overflow-x-auto border-y">
-                                    <table className="w-full min-w-[850px] text-[10px]">
-                                        <thead className="bg-muted/40 text-muted-foreground uppercase">
+                                    <table className="w-full min-w-[850px] text-xs">
+                                        <thead className="bg-muted/40 text-muted-foreground uppercase text-[11px] font-semibold">
                                             <tr>
-                                                <th className="px-2 py-2 text-left">Kind</th>
-                                                <th className="px-2 py-2 text-left">Product</th>
-                                                <th className="px-2 py-2 text-left">Storage lot</th>
-                                                <th className="px-2 py-2 text-left">Branch</th>
-                                                <th className="px-2 py-2 text-right">Quantity</th>
-                                                <th className="px-2 py-2 text-left">Source / transaction</th>
+                                                <th className="px-2.5 py-2 text-left">Kind</th>
+                                                <th className="px-2.5 py-2 text-left">Product</th>
+                                                <th className="px-2.5 py-2 text-left">Storage lot</th>
+                                                <th className="px-2.5 py-2 text-left">Branch</th>
+                                                <th className="px-2.5 py-2 text-right">Quantity</th>
+                                                <th className="px-2.5 py-2 text-left">Source / transaction</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y">
@@ -348,14 +348,14 @@ export default function MovementPayloadModal({
                                                         const route = getPreviewRoute(movement.lineId, movement.storageLotId, movement.branchId);
                                                         return (
                                                             <>
-                                                    <td className="px-2 py-2">{movement.kind}</td>
-                                                    <td className="px-2 py-2"><strong>{product?.product_name || "Unknown product"}</strong><br /><span className="text-muted-foreground">{product?.product_code || "N/A"}</span></td>
-                                                    <td className="px-2 py-2">{route?.storageLotName || "N/A"}</td>
-                                                    <td className="px-2 py-2">{route?.branch.name || "N/A"}<br /><span className="text-muted-foreground">{route?.branch.code || ""}</span></td>
-                                                    <td className="px-2 py-2 text-right font-bold tabular-nums">{movement.quantity.toLocaleString()}</td>
-                                                    <td className="px-2 py-2">
+                                                    <td className="px-2.5 py-2">{movement.kind}</td>
+                                                    <td className="px-2.5 py-2"><strong>{product?.product_name || "Unknown product"}</strong><br /><span className="text-muted-foreground text-[11px]">{product?.product_code || "N/A"}</span></td>
+                                                    <td className="px-2.5 py-2">{route?.storageLotName || "N/A"}</td>
+                                                    <td className="px-2.5 py-2">{route?.branch.name || "N/A"}<br /><span className="text-muted-foreground text-[11px]">{route?.branch.code || ""}</span></td>
+                                                    <td className="px-2.5 py-2 text-right font-bold tabular-nums">{movement.quantity.toLocaleString()}</td>
+                                                    <td className="px-2.5 py-2">
                                                         {movement.sourceDocumentNo}<br />
-                                                        <span className="text-muted-foreground">{route?.transactionType.name || "N/A"}</span>
+                                                        <span className="text-muted-foreground text-[11px]">{route?.transactionType.name || "N/A"}</span>
                                                         {movement.capacityOverride && (
                                                             <span className="mt-1 block font-bold text-amber-700" role="status">
                                                                 Capacity override - audit review required ({movement.capacityOverrideQuantity.toLocaleString()} over)
@@ -381,42 +381,42 @@ export default function MovementPayloadModal({
                     >
                         <dl className="grid grid-cols-1 gap-px bg-border sm:grid-cols-3">
                             <div data-testid="ledger-preview-branch" className="min-w-0 bg-background px-4 py-3">
-                                <dt className="text-[10px] font-extrabold uppercase tracking-wider text-foreground/70">Branch</dt>
-                                <dd className="mt-1 break-words text-sm font-extrabold leading-tight text-foreground">
+                                <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Branch</dt>
+                                <dd className="mt-1 break-words text-sm font-bold leading-tight text-foreground">
                                     {preview!.destinationBranch.name}
-                                    <span className="ml-1 font-mono text-[10px] font-semibold text-muted-foreground">({preview!.destinationBranch.code})</span>
+                                    <span className="ml-1 font-mono text-xs font-normal text-muted-foreground">({preview!.destinationBranch.code})</span>
                                 </dd>
                             </div>
                             <div data-testid="ledger-preview-receipt-number" className="min-w-0 bg-background px-4 py-3">
-                                <dt className="text-[10px] font-extrabold uppercase tracking-wider text-foreground/70">Receipt Number</dt>
-                                <dd className="mt-1 break-words font-mono text-sm font-extrabold leading-tight text-primary">
+                                <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Receipt Number</dt>
+                                <dd className="mt-1 break-words font-mono text-sm font-bold leading-tight text-primary">
                                     {preview!.receivingTicketNumber || "N/A"}
                                 </dd>
                             </div>
                             <div data-testid="ledger-preview-inspector" className="min-w-0 bg-background px-4 py-3">
-                                <dt className="text-[10px] font-extrabold uppercase tracking-wider text-foreground/70">QA Inspector</dt>
-                                <dd className="mt-1 break-words text-sm font-extrabold leading-tight text-foreground">
+                                <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">QA Inspector</dt>
+                                <dd className="mt-1 break-words text-sm font-bold leading-tight text-foreground">
                                     {preview!.inspectorName || "N/A"}
                                 </dd>
                             </div>
                             <div data-testid="ledger-preview-receipt-type" className="min-w-0 bg-background px-4 py-3">
-                                <dt className="text-[10px] font-extrabold uppercase tracking-wider text-foreground/70">Receipt Type</dt>
+                                <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Receipt Type</dt>
                                 <dd className="mt-1 break-words text-sm font-semibold leading-tight text-foreground">
                                     {preview!.supplierDocumentType?.label || preview!.supplierDocumentType?.code || "N/A"}
                                 </dd>
                             </div>
                             <div data-testid="ledger-preview-status" className="min-w-0 bg-background px-4 py-3">
-                                <dt className="text-[10px] font-extrabold uppercase tracking-wider text-foreground/70">Status</dt>
+                                <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Status</dt>
                                 <dd className="mt-1">
-                                    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-extrabold text-emerald-700 dark:text-emerald-300">
+                                    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
                                         <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
                                         Ready to Post
                                     </span>
                                 </dd>
                             </div>
                             <div data-testid="ledger-preview-receipt-date" className="min-w-0 bg-background px-4 py-3">
-                                <dt className="text-[10px] font-extrabold uppercase tracking-wider text-foreground/70">Receipt Date</dt>
-                                <dd className="mt-1 font-mono text-sm font-extrabold leading-tight text-foreground">
+                                <dt className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Receipt Date</dt>
+                                <dd className="mt-1 font-mono text-sm font-semibold leading-tight text-foreground">
                                     {preview!.receiptDate || "N/A"}
                                 </dd>
                             </div>
@@ -447,24 +447,24 @@ export default function MovementPayloadModal({
                             <span className="text-[10px] text-muted-foreground">{allocations.length} draft{allocations.length === 1 ? "" : "s"}</span>
                         </div>
                         <div className="overflow-x-auto border-y">
-                            <table className="w-full min-w-[620px] text-[10px]">
-                                <thead className="bg-muted/40 text-muted-foreground uppercase">
+                            <table className="w-full min-w-[620px] text-xs">
+                                <thead className="bg-muted/40 text-muted-foreground uppercase text-[11px] font-semibold">
                                     <tr>
-                                        <th className="px-2 py-2 text-left">Product</th>
-                                        <th className="px-2 py-2 text-left">Job order</th>
-                                        <th className="px-2 py-2 text-right">Allocated</th>
+                                        <th className="px-2.5 py-2 text-left">Product</th>
+                                        <th className="px-2.5 py-2 text-left">Job order</th>
+                                        <th className="px-2.5 py-2 text-right">Allocated</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y">
                                     {allocations.map(({ lineId, productName, allocation }) => (
                                         <tr key={`${lineId}-${allocation.jobOrderMaterialId}`}>
-                                            <td className="px-2 py-2 font-bold">{productName}</td>
-                                            <td className="px-2 py-2"><strong>{allocation.jobOrder.number}</strong></td>
-                                            <td className="px-2 py-2 text-right font-bold tabular-nums">{allocation.quantity.toLocaleString()}</td>
+                                            <td className="px-2.5 py-2 font-bold">{productName}</td>
+                                            <td className="px-2.5 py-2"><strong>{allocation.jobOrder.number}</strong></td>
+                                            <td className="px-2.5 py-2 text-right font-bold tabular-nums">{allocation.quantity.toLocaleString()}</td>
                                         </tr>
                                     ))}
                                     {allocations.length === 0 && (
-                                        <tr><td colSpan={3} className="px-2 py-3 text-muted-foreground">No MRP allocation is required for this receipt.</td></tr>
+                                        <tr><td colSpan={3} className="px-2.5 py-3 text-muted-foreground">No MRP allocation is required for this receipt.</td></tr>
                                     )}
                                 </tbody>
                             </table>
