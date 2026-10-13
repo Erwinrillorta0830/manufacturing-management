@@ -6,6 +6,7 @@ import { Loader2, RefreshCw, ClipboardList, Layers, Database, Printer, Factory, 
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
     Select,
     SelectContent,
@@ -2065,9 +2066,30 @@ export default function PlanningEngineeringModule() {
                                     <h4 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">BOM Materials Allocation Worksheet</h4>
 
                                     {materialLoadState.status === "loading" ? (
-                                        <div className="flex flex-col items-center justify-center py-12 space-y-2">
-                                            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                                            <span className="text-sm text-muted-foreground font-medium">
+                                        <div role="status" aria-busy="true" className="space-y-3">
+                                            <div className="border rounded-xl overflow-hidden bg-card shadow-sm">
+                                                <table className="w-full text-sm text-left text-muted-foreground border-collapse">
+                                                    <thead className="text-xs uppercase bg-muted/40 font-bold border-b text-foreground">
+                                                        <tr>
+                                                            <th className="px-4 py-3">Raw Material</th>
+                                                            <th className="px-4 py-3 text-right">Required</th>
+                                                            <th className="px-4 py-3 text-right">On-Hand Stock</th>
+                                                            <th className="px-4 py-3">Status</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody aria-hidden="true" className="divide-y">
+                                                        {Array.from({ length: 5 }).map((_, index) => (
+                                                            <tr key={`material-skeleton-${index}`}>
+                                                                <td className="px-4 py-4"><Skeleton className="h-4 w-3/4" /></td>
+                                                                <td className="px-4 py-4"><Skeleton className="h-4 w-20 ml-auto" /></td>
+                                                                <td className="px-4 py-4"><Skeleton className="h-4 w-24 ml-auto" /></td>
+                                                                <td className="px-4 py-4"><Skeleton className="h-6 w-28 rounded-full" /></td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                            <span className="block text-center text-sm text-muted-foreground font-medium">
                                                 {waitingForInventory ? "Waiting for inventory movements..." : "Resolving raw material stock levels..."}
                                             </span>
                                         </div>

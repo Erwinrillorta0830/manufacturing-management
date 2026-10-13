@@ -4,6 +4,7 @@ import { Loader2, ArrowRight, ArrowLeft, Check, UserPlus, ShieldAlert, CheckCirc
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Step2BOMLoadingSkeleton } from "./Step2BOMLoadingSkeleton";
 import {
     Select,
     SelectContent,
@@ -109,6 +110,7 @@ export function ReleaseJODialog({
     const [groupBaseQuantities, setGroupBaseQuantities] = useState<Record<string, number>>({});
     const [groupDetailsByKey, setGroupDetailsByKey] = useState<Record<string, any>>({});
     const [detailsLoadError, setDetailsLoadError] = useState("");
+    const [detailsRetryNonce, setDetailsRetryNonce] = useState(0);
     const [searchQuery, setSearchQuery] = useState("");
     const [subAssemblyBoms, setSubAssemblyBoms] = useState<Record<number, any[]>>({});
     const [subAssemblyRoutings, setSubAssemblyRoutings] = useState<Record<number, { setup_time_hours: number; run_time_hours_per_unit: number; base_quantity: number }>>({});
@@ -295,9 +297,11 @@ export function ReleaseJODialog({
             setLoadingSubVersion({});
             setPrintSelection({});
             setRequestedDraft(null);
+            setLoadingDetails(false);
             setGroupBaseQuantities({});
             setGroupDetailsByKey({});
             setDetailsLoadError("");
+            setDetailsRetryNonce(0);
             setBomBaseQty(0);
             setHasLoadedDetails(false);
         }
@@ -406,7 +410,12 @@ export function ReleaseJODialog({
             void loadDetails();
             return () => { cancelled = true; };
         }
-    }, [isConfirmOpen, selectedLines, selectedBranchId, hasLoadedDetails, isMultiRelease, normalizedReleaseGroups, activeReleaseGroup, activeGroupKey, groupDetailsByKey, targetQuantityProp, requestedTargetQuantity, releaseSummaryUom, setTargetQuantity, isEditingDraft]);
+    }, [isConfirmOpen, selectedLines, selectedBranchId, hasLoadedDetails, isMultiRelease, normalizedReleaseGroups, activeReleaseGroup, activeGroupKey, groupDetailsByKey, targetQuantityProp, requestedTargetQuantity, releaseSummaryUom, setTargetQuantity, isEditingDraft, detailsRetryNonce]);
+
+    const retryDetails = () => {
+        setDetailsLoadError("");
+        setDetailsRetryNonce((value) => value + 1);
+    };
 
     const handleSubAssemblyVersionChange = async (subProdId: number, versionId: number) => {
         const branchId = parseValidBranchId(selectedBranchId);
@@ -1025,6 +1034,7 @@ export function ReleaseJODialog({
                                 onClick={() => {
                                     setActiveGroupIndex(index);
                                     setHasLoadedDetails(false);
+                                    setDetailsLoadError("");
                                     setRequestedDraft(null);
                                     setBomBaseQty(0);
                                     setRoutings([]);
@@ -1221,13 +1231,20 @@ export function ReleaseJODialog({
                                             />
                                         )}
                                     </div>
-                                    <p className="text-[10px] text-muted-foreground">
-                                        {detailsLoadError
-                                            ? detailsLoadError
-                                            : !hasLoadedDetails
+                                    {detailsLoadError ? (
+                                        <div className="space-y-1">
+                                            <p role="alert" className="text-[10px] text-destructive">{detailsLoadError}</p>
+                                            <Button type="button" variant="outline" size="sm" onClick={retryDetails}>
+                                                Retry recipe details
+                                            </Button>
+                                        </div>
+                                    ) : (
+                                        <p className="text-[10px] text-muted-foreground">
+                                            {!hasLoadedDetails
                                                 ? "Loading the recipe batch target and production details."
                                                 : `Effective production target: ${formatProductionValue(targetQuantity)} ${releaseSummaryUom} (${requiredBatchCount || 0} full recipe batch${requiredBatchCount === 1 ? "" : "es"}). SO demand remains ${formatProductionValue(requestedTargetQuantity)} ${releaseSummaryUom}. ${isPieceProductionUom(releaseSummaryUom) ? "Piece targets are shown as whole units." : ""}`}
-                                    </p>
+                                        </p>
+                                    )}
 
                                     <div className="grid grid-cols-2 gap-4">
                                         <div className="space-y-1">
@@ -1307,12 +1324,25 @@ export function ReleaseJODialog({
                         )}                        {/* STEP 2: TIME & MATERIAL SUFFICIENCY */}
                         {currentStep === 2 && (
                             <div className="space-y-4">
-                                {loadingDetails ? (
-                                    <div className="flex flex-col items-center justify-center py-10 space-y-3">
-                                        <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                                        <p className="text-xs text-muted-foreground font-medium">Analyzing BOM and routes...</p>
+                                {detailsLoadError ? (
+                                    <div role="alert" className="flex flex-col items-center justify-center gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-6 py-10 text-center">
+                                        <ShieldAlert className="h-8 w-8 text-destructive" />
+                                        <div>
+                                            <p className="text-sm font-semibold text-foreground">Unable to load BOM details</p>
+                                            <p className="mt-1 max-w-md text-xs text-muted-foreground">{detailsLoadError}</p>
+                                        </div>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={retryDetails}
+                                        >
+                                            Retry
+                                        </Button>
                                     </div>
-                                        ) : (
+                                ) : loadingDetails || !hasLoadedDetails ? (
+                                    <Step2BOMLoadingSkeleton />
+                                ) : (
                                             <>
                                                 {productionMetricsError && (
                                                     <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive" role="alert">
