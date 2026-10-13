@@ -1,13 +1,14 @@
 /* eslint-disable */
 import React from "react";
-import { Layers } from "lucide-react";
+import { AlertTriangle, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { resolveJobOrderJourney } from "../../shared/job-order-journey";
 import { JobOrderJourneyBar } from "../../shared/components/JobOrderJourneyBar";
 import { JobOrderStatusBadge } from "../../shared/components/JobOrderStatusBadge";
-import { isCancelledJobOrderStatus, isJobOrderStatus, isTerminatedJobOrder, JOB_ORDER_STATUS } from "../../job-order-status";
+import { displayJobOrderStatus, isCancelledJobOrderStatus, isJobOrderStatus, isTerminatedJobOrder, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "../../job-order-status";
 import { calculateCumulativeRouteWorkloadHours, calculatePipelinedLineDurationHours, resolveProductionShiftHours } from "../utils/production-timing";
+import { getPlanningQueueWorkflowSummary } from "../utils/queue-workflow-summary";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export interface FamilyGroup {
@@ -46,6 +47,59 @@ function ConnectedSalesOrderCell({ jobOrder }: { jobOrder: any }) {
                 <span className="text-muted-foreground">—</span>
             )}
         </td>
+    );
+}
+
+function WorkflowGuidance({
+    jobOrder,
+    journey,
+    readOnly
+}: {
+    jobOrder: any;
+    journey: ReturnType<typeof resolveJobOrderJourney>;
+    readOnly: boolean;
+}) {
+    if (readOnly) {
+        return <JobOrderJourneyBar journey={journey} compact className="min-w-0" />;
+    }
+
+    const summary = getPlanningQueueWorkflowSummary({
+        status: normalizeJobOrderStatus(jobOrder.status),
+        statusLabel: displayJobOrderStatus(jobOrder.status),
+        currentStage: journey.stageLabel,
+        defaultNextAction: journey.nextAction?.label || null,
+        status_history: jobOrder.status_history
+    });
+    const blockerStyles = summary.blockerTone === "critical"
+        ? "border-destructive/30 bg-destructive/5 text-destructive"
+        : "border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-400";
+
+    return (
+        <div className="mt-2 space-y-1.5">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <div
+                    role="img"
+                    aria-label={`Job Order workflow progress: ${summary.currentStage}`}
+                    className="shrink-0"
+                >
+                    <JobOrderJourneyBar journey={journey} compact className="min-w-0 [&>span]:hidden" />
+                </div>
+                <span className="text-[11px] font-bold leading-snug text-foreground">
+                    <span className="font-semibold text-muted-foreground">Stage: </span>
+                    {summary.currentStage}
+                </span>
+            </div>
+            <div className="text-[11px] leading-snug text-foreground">
+                <span className="font-semibold text-muted-foreground">Next: </span>
+                <span className="font-semibold">{summary.nextAction}</span>
+            </div>
+            {summary.blockedReason && (
+                <div role="note" className={`flex items-start gap-1 rounded-md border px-1.5 py-1 text-[10px] leading-snug ${blockerStyles}`}>
+                    <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+                    <span className="break-words"><strong>Blocked:</strong> {summary.blockedReason}</span>
+                </div>
+            )}
+        </div>
     );
 }
 
@@ -186,7 +240,7 @@ export function JOTable({
                                                     </Badge>
                                                 )}
                                             </div>
-                                            <JobOrderJourneyBar journey={journey} compact className="min-w-0" />
+                                            <WorkflowGuidance jobOrder={jo} journey={journey} readOnly={readOnly} />
                                         </div>
                                     </td>
                                     <td className="px-2 py-3 text-center">
@@ -311,10 +365,10 @@ export function JOTable({
                                                     </Badge>
                                                 )}
                                             </div>
-                                            <JobOrderJourneyBar
+                                            <WorkflowGuidance
+                                                jobOrder={fg.parentJo}
                                                 journey={resolveJobOrderJourney({ status: fg.parentJo.status })}
-                                                compact
-                                                className="min-w-0"
+                                                readOnly={readOnly}
                                             />
                                         </div>
                                     </td>
@@ -384,16 +438,23 @@ export function JOTable({
                                                 )}
                                             </td>
                                             <td className="px-2 py-3">
-                                                <div className="flex flex-wrap items-center gap-1.5">
-                                                    <JobOrderStatusBadge
-                                                        status={cJo.status}
-                                                        className={isCancelledJobOrderStatus(cJo.status) ? "text-xs font-medium" : undefined}
+                                                <div className="space-y-1.5">
+                                                    <div className="flex flex-wrap items-center gap-1.5">
+                                                        <JobOrderStatusBadge
+                                                            status={cJo.status}
+                                                            className={isCancelledJobOrderStatus(cJo.status) ? "text-xs font-medium" : undefined}
+                                                        />
+                                                        {isTerminatedJobOrder(cJo) && (
+                                                            <Badge variant="outline" className="border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300">
+                                                                Terminated
+                                                            </Badge>
+                                                        )}
+                                                    </div>
+                                                    <WorkflowGuidance
+                                                        jobOrder={cJo}
+                                                        journey={resolveJobOrderJourney({ status: cJo.status })}
+                                                        readOnly={readOnly}
                                                     />
-                                                    {isTerminatedJobOrder(cJo) && (
-                                                        <Badge variant="outline" className="border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300">
-                                                            Terminated
-                                                        </Badge>
-                                                    )}
                                                 </div>
                                             </td>
                                             <td className="px-2 py-3 text-center">

@@ -1,5 +1,5 @@
-import React, { useEffect } from "react";
-import { Layers, Info, AlertTriangle, RefreshCw } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { Layers, Info, AlertTriangle, RefreshCw, Filter, ArrowDownUp } from "lucide-react";
 import {
     Card,
     CardContent,
@@ -44,13 +44,34 @@ export function NetRequirementsTable({
     branches,
     pagination
 }: NetRequirementsTableProps) {
+    const [showShortfallsOnly, setShowShortfallsOnly] = useState(false);
+    const [shortfallsFirst, setShortfallsFirst] = useState(false);
     const selectedBranch = branches.find(b => b.id === selectedBranchId);
     const requestedPage = pagination.page;
     const pageSize = pagination.pageSize;
     const onPageChange = pagination.onPageChange;
-    const totalPages = Math.max(1, Math.ceil(netRequirements.length / pageSize));
+    const shortfallCount = useMemo(
+        () => netRequirements.filter(item => item.net_shortfall > 0).length,
+        [netRequirements]
+    );
+    const displayedRequirements = useMemo(() => {
+        const filtered = showShortfallsOnly
+            ? netRequirements.filter(item => item.net_shortfall > 0)
+            : netRequirements;
+
+        if (!shortfallsFirst) return filtered;
+
+        return filtered
+            .map((item, index) => ({ item, index }))
+            .sort((left, right) => {
+                const shortfallOrder = Number(right.item.net_shortfall > 0) - Number(left.item.net_shortfall > 0);
+                return shortfallOrder || left.index - right.index;
+            })
+            .map(({ item }) => item);
+    }, [netRequirements, showShortfallsOnly, shortfallsFirst]);
+    const totalPages = Math.max(1, Math.ceil(displayedRequirements.length / pageSize));
     const page = Math.min(requestedPage, totalPages);
-    const visibleRequirements = netRequirements.slice((page - 1) * pageSize, page * pageSize);
+    const visibleRequirements = displayedRequirements.slice((page - 1) * pageSize, page * pageSize);
 
     useEffect(() => {
         if (requestedPage !== page) onPageChange(page);
@@ -130,6 +151,40 @@ export function NetRequirementsTable({
                     </div>
                 ) : (
                     <>
+                    <div className="flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                        <p className="text-xs text-muted-foreground" aria-live="polite">
+                            {shortfallCount.toLocaleString()} of {netRequirements.length.toLocaleString()} {netRequirements.length === 1 ? "product has" : "products have"} a net shortfall
+                        </p>
+                        <Button
+                            type="button"
+                            variant={showShortfallsOnly ? "default" : "outline"}
+                            size="sm"
+                            aria-pressed={showShortfallsOnly}
+                            aria-label={`Show only materials with a net shortfall. ${shortfallCount} ${shortfallCount === 1 ? "item" : "items"}.`}
+                            onClick={() => {
+                                setShowShortfallsOnly(value => !value);
+                                onPageChange(1);
+                            }}
+                            className="gap-2 self-start sm:self-auto"
+                        >
+                            <Filter className="h-3.5 w-3.5" />
+                            Shortfalls only
+                            <Badge variant={showShortfallsOnly ? "secondary" : "outline"} className="px-1.5 py-0 text-[10px]">
+                                {shortfallCount.toLocaleString()}
+                            </Badge>
+                        </Button>
+                    </div>
+                    {showShortfallsOnly && displayedRequirements.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center gap-3 px-4 py-12 text-center text-muted-foreground">
+                            <Info className="h-8 w-8 text-green-600" />
+                            <span className="text-sm font-semibold text-foreground">No materials have a net shortfall.</span>
+                            <span className="max-w-sm text-xs">All listed materials currently meet their net requirements.</span>
+                            <Button type="button" variant="outline" size="sm" onClick={() => setShowShortfallsOnly(false)}>
+                                Show all materials
+                            </Button>
+                        </div>
+                    ) : (
+                    <>
                     <div className="overflow-x-auto">
                         <Table>
                             <TableHeader className="bg-muted/5">
@@ -138,7 +193,21 @@ export function NetRequirementsTable({
                                     <TableHead className="font-bold text-xs text-right">Gross Demand</TableHead>
                                     <TableHead className="font-bold text-xs text-right">On Hand</TableHead>
                                     <TableHead className="font-bold text-xs text-right">Safety Stock</TableHead>
-                                    <TableHead className="font-bold text-xs text-right">Net Shortfall</TableHead>
+                                    <TableHead className="text-right font-bold text-xs" aria-sort={shortfallsFirst ? "descending" : "none"}>
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            aria-label={shortfallsFirst ? "Reset Net Shortfall grouping" : "Group materials with shortfalls first"}
+                                            aria-pressed={shortfallsFirst}
+                                            title="Group materials with shortfalls before sufficient materials; quantities are not compared across units."
+                                            onClick={() => setShortfallsFirst(value => !value)}
+                                            className="h-8 gap-1 px-2 text-xs font-bold"
+                                        >
+                                            Net Shortfall
+                                            <ArrowDownUp className="h-3.5 w-3.5" />
+                                        </Button>
+                                    </TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody className="divide-y divide-border">
@@ -204,9 +273,11 @@ export function NetRequirementsTable({
                     <PlanningPaginationControls
                         {...pagination}
                         page={page}
-                        totalItems={netRequirements.length}
+                        totalItems={displayedRequirements.length}
                         itemLabel="products"
                     />
+                    </>
+                    )}
                     </>
                 )}
             </CardContent>
