@@ -26,6 +26,8 @@ import {
     getFactoryOverheadBasisLabel
 } from "../utils/cogs-helper";
 import { calculateProductionMetrics } from "../utils/production-metrics";
+import { remainingQuantity } from "../utils/demand-groups";
+import { resolveSalesOrderTargetSellingPrice } from "../utils/sales-order-pricing";
 import { calculateAggregateRunHours, calculateFullBatchTarget, calculatePerUnitMaterialRequirement, calculateReleaseMaterialRequirementPlan, calculateRequiredBatchCount, convergeToFullBatch, DEFAULT_PRODUCTION_SHIFT_HOURS, formatProductionValue, isPieceProductionUom, normalizeProductionOutputQuantity, readUomId, resolveProductionShiftHours, resolveRecipeBatchSizeDisplay, sanitizeQuantityDraft } from "../utils/production-timing";
 import { buildReleaseSummaryHtml, type ReleaseSummaryComponent, type ReleaseSummaryFinancials, type ReleaseSummaryRoutingStep } from "../utils/release-summary-print";
 import { formatPhtDate } from "../../shared/pht-date";
@@ -573,7 +575,13 @@ export function ReleaseJODialog({
                 expectedYieldPercentage: bomData?.expected_yield_percentage
                     ?? (first as any)?.expected_yield_percentage
                     ?? product?.expected_yield_percentage,
-                targetSellingPrice: Number(product?.target_selling_price || product?.targetSellingPrice || product?.price_per_unit || 0),
+                targetSellingPrice: resolveSalesOrderTargetSellingPrice(
+                    selectedLines.map((line) => ({
+                        unitPrice: line.unit_price,
+                        remainingQuantity: remainingQuantity(line)
+                    })),
+                    [product?.target_selling_price, product?.targetSellingPrice, product?.price_per_unit]
+                ),
                 materialCostPerUnit: bomData?.material_cost_per_unit
             });
             return { metrics, error: null };
@@ -748,6 +756,8 @@ export function ReleaseJODialog({
     const releaseSummaryReady = hasLoadedDetails && releaseSummaryShortfallCount === 0 && !productionMetricsError;
 
     const submitRelease = (initialize: boolean) => {
+        if (initialize && currentStep !== 4) return;
+
         if (isEditingDraft && onEditDraft) {
             void onEditDraft({
                 targetQuantity: productionTimingTargetQuantity,
@@ -2079,6 +2089,7 @@ export function ReleaseJODialog({
                                     {releasingJO ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                                     Save as Draft
                         </Button>
+                        {currentStep === 4 && (
                         <Button
                                     variant="outline"
                                     size="sm"
@@ -2095,6 +2106,7 @@ export function ReleaseJODialog({
                                         "Initialize / Release JO"
                                     )}
                         </Button>
+                        )}
                     </div>
                 </footer>
                 <SubmittingLoadingOverlay isOpen={releasingJO} title="Releasing Sales Order Production Run..." />

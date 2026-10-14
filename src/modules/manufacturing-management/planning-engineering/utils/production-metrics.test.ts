@@ -428,6 +428,10 @@ const releaseSummaryHtml = buildReleaseSummaryHtml({
 assert.match(releaseSummaryHtml, /2\.4575 hrs/);
 assert.match(releaseSummaryHtml, /₱25\.8189/);
 assert.match(releaseSummaryHtml, /₱26\.2120/);
+assert.doesNotMatch(releaseSummaryHtml, /<body[^>]*\bonload=/i);
+assert.match(releaseSummaryHtml, /<button type="button" onclick="window\.print\(\)">Print Summary<\/button>/);
+assert.match(releaseSummaryHtml, /<button type="button" onclick="window\.close\(\)">Close Preview<\/button>/);
+assert.match(releaseSummaryHtml, /@media print[\s\S]*?\.no-print\s*\{\s*display:\s*none !important;\s*\}/);
 // Print pagination guards: no trailing blank page. The last table must not
 // carry bottom margin, the footer must not orphan, and the document must
 // have no stray whitespace outside <html>.
