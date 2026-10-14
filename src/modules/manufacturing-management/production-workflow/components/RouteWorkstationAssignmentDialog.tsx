@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Building2, CheckCircle2, GitBranch, Loader2 } from "lucide-react";
+import { AlertTriangle, Building2, Check, CheckCircle2, ChevronsUpDown, GitBranch, Loader2 } from "lucide-react";
 import {
     Dialog,
     DialogContent,
@@ -14,14 +14,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue
-} from "@/components/ui/select";
-import { JobOrder, RoutingTask, type WorkCenterJobOrderAvailability } from "../types";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { JobOrder, RoutingTask, type WorkCenter, type WorkCenterJobOrderAvailability } from "../types";
 import {
     assignRouteWorkCenters,
     fetchWorkCenterAvailability,
@@ -53,6 +48,133 @@ function isPendingRoute(task: RoutingTask): boolean {
 
 function routeLabel(task: RoutingTask): string {
     return `Step ${task.sequence_order || "-"}`;
+}
+
+type WorkCenterSearchOption = WorkCenter & { recommended: boolean };
+
+interface WorkCenterSearchableSelectProps {
+    value: string;
+    fallbackLabel?: string;
+    ariaLabel: string;
+    testId: string;
+    disabled: boolean;
+    groups: Array<{ departmentName: string; workCenters: WorkCenterSearchOption[] }>;
+    workCenters: WorkCenter[];
+    availabilityByWorkCenter: Map<number, WorkCenterJobOrderAvailability>;
+    onValueChange: (value: string) => void;
+}
+
+function WorkCenterSearchableSelect({
+    value,
+    fallbackLabel,
+    ariaLabel,
+    testId,
+    disabled,
+    groups,
+    workCenters,
+    availabilityByWorkCenter,
+    onValueChange
+}: WorkCenterSearchableSelectProps) {
+    const [open, setOpen] = useState(false);
+    const selectedWorkCenter = workCenters.find((workCenter) => String(workCenter.work_center_id) === value);
+    const selectedLabel = selectedWorkCenter
+        ? `${selectedWorkCenter.work_center_name} · WC-${selectedWorkCenter.work_center_id}`
+        : value
+            ? `${fallbackLabel || `Work Center #${value}`} · Current assignment unavailable`
+            : "Select workstation";
+
+    return (
+        <Popover modal={false} open={open} onOpenChange={setOpen}>
+            <PopoverTrigger asChild>
+                <Button
+                    type="button"
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={open}
+                    aria-label={ariaLabel}
+                    data-testid={testId}
+                    className="h-9 w-full min-w-0 justify-between text-xs font-normal"
+                    disabled={disabled}
+                >
+                    <span className="min-w-0 truncate text-left">{selectedLabel}</span>
+                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                </Button>
+            </PopoverTrigger>
+            <PopoverContent
+                align="start"
+                className="z-[100] w-[--radix-popover-trigger-width] min-w-[300px] p-0"
+                data-radix-scroll-lock-ignore="true"
+                onWheelCapture={(event) => event.stopPropagation()}
+                onTouchMoveCapture={(event) => event.stopPropagation()}
+            >
+                <Command>
+                    <CommandInput placeholder="Search workstations by name, ID, department, or asset..." />
+                    <CommandList
+                        className="max-h-64 overscroll-contain touch-pan-y"
+                        data-radix-scroll-lock-ignore="true"
+                        onWheelCapture={(event) => event.stopPropagation()}
+                        onTouchMoveCapture={(event) => event.stopPropagation()}
+                    >
+                        <CommandEmpty>No matching workstations found.</CommandEmpty>
+                        {groups.map((group) => (
+                            <CommandGroup key={group.departmentName} heading={group.departmentName}>
+                                {group.workCenters.map((workCenter) => {
+                                    const workCenterId = Number(workCenter.work_center_id);
+                                    const id = String(workCenterId);
+                                    const availability = availabilityByWorkCenter.get(workCenterId);
+                                    const assetInactive = workCenter.asset?.is_active === false
+                                        || Number(workCenter.asset?.is_active) === 0;
+                                    const searchValue = [
+                                        workCenter.work_center_name,
+                                        `WC-${workCenterId}`,
+                                        group.departmentName,
+                                        workCenter.asset?.item_name,
+                                        workCenter.asset?.item_id?.item_name,
+                                        workCenter.asset?.barcode,
+                                        workCenter.asset?.rfid_code,
+                                        workCenter.asset?.serial,
+                                        workCenter.asset?.condition,
+                                        availability ? `${availability.availableJobOrders.length} ready ${availability.inProgressJobOrders.length} in progress` : ""
+                                    ].filter(Boolean).join(" ");
+
+                                    return (
+                                        <CommandItem
+                                            key={workCenterId}
+                                            value={searchValue}
+                                            onSelect={() => {
+                                                onValueChange(id);
+                                                setOpen(false);
+                                            }}
+                                            className="items-start py-2"
+                                        >
+                                            <Check className={`mt-0.5 h-4 w-4 shrink-0 ${value === id ? "opacity-100" : "opacity-0"}`} />
+                                            <span className="min-w-0 flex-1 space-y-1">
+                                                <span className="flex flex-wrap items-center gap-1">
+                                                    <span className="font-medium">{workCenter.work_center_name} · WC-{workCenterId}</span>
+                                                    {value === id && <Badge variant="outline" className="text-[9px]">Current</Badge>}
+                                                    {workCenter.recommended && <Badge variant="outline" className="text-[9px]">Recommended</Badge>}
+                                                    {assetInactive && <Badge variant="outline" className="text-[9px]">Asset inactive</Badge>}
+                                                    {workCenter.asset?.condition && <Badge variant="outline" className="text-[9px]">{workCenter.asset.condition}</Badge>}
+                                                </span>
+                                                {(workCenter.asset?.item_name || workCenter.asset?.item_id?.item_name || availability) && (
+                                                    <span className="block text-[10px] text-muted-foreground">
+                                                        {[workCenter.asset?.item_name || workCenter.asset?.item_id?.item_name,
+                                                            availability && `${availability.availableJobOrders.length} JOs ready · ${availability.inProgressJobOrders.length} in progress`]
+                                                            .filter(Boolean)
+                                                            .join(" · ")}
+                                                    </span>
+                                                )}
+                                            </span>
+                                        </CommandItem>
+                                    );
+                                })}
+                            </CommandGroup>
+                        ))}
+                    </CommandList>
+                </Command>
+            </PopoverContent>
+        </Popover>
+    );
 }
 
 export function RouteWorkstationAssignmentDialog({
@@ -136,6 +258,22 @@ export function RouteWorkstationAssignmentDialog({
         [workCenterAvailability]
     );
 
+    const workCenterGroups = useMemo(() => {
+        const groups = new Map<string, typeof workCenters>();
+        workCenters.forEach((workCenter) => {
+            const departmentName = workCenter.department?.department_name || "Other workstations";
+            const group = groups.get(departmentName) || [];
+            group.push(workCenter);
+            groups.set(departmentName, group);
+        });
+        return [...groups.entries()]
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([departmentName, entries]) => ({
+                departmentName,
+                workCenters: [...entries].sort((left, right) => left.work_center_name.localeCompare(right.work_center_name))
+            }));
+    }, [workCenters]);
+
     const changed = useMemo(
         () => Object.keys(assignments).some((key) => assignments[Number(key)] !== initialAssignments[Number(key)]),
         [assignments, initialAssignments]
@@ -145,16 +283,22 @@ export function RouteWorkstationAssignmentDialog({
         if (!jobOrderId) return;
 
         const pendingTasks = tasks.filter(isPendingRoute);
-        const missingTask = pendingTasks.find((task) => !assignments[routeId(task)]);
+        const missingTask = pendingTasks.find((task) => {
+            const assignedId = Number(assignments[routeId(task)] || 0);
+            return !assignedId || !workCenters.some((workCenter) => Number(workCenter.work_center_id) === assignedId);
+        });
         if (missingTask) {
-            setError(`${routeLabel(missingTask)} requires a workstation before it can be started.`);
+            setError(`${routeLabel(missingTask)} requires an active workstation before it can be started.`);
             return;
         }
 
-        const payload = pendingTasks.map((task) => ({
-            joRouteId: routeId(task),
-            workCenterId: Number(assignments[routeId(task)])
-        }));
+        const payload = pendingTasks
+            .filter((task) => assignments[routeId(task)] !== initialAssignments[routeId(task)])
+            .map((task) => ({
+                joRouteId: routeId(task),
+                workCenterId: Number(assignments[routeId(task)])
+            }));
+        if (payload.length === 0) return;
         if (payload.some((assignment) => !assignment.joRouteId || !assignment.workCenterId)) {
             setError("Every pending route must have a valid workstation selected.");
             return;
@@ -200,7 +344,7 @@ export function RouteWorkstationAssignmentDialog({
                 <div className="min-h-0 flex-1 overflow-y-auto p-5">
                     <div className="mb-4 flex items-start gap-2 rounded-xl border border-blue-500/20 bg-blue-500/5 p-3 text-xs text-muted-foreground">
                         <Building2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                        <span>Each routing step is assigned independently. Workstations shown for a route come from the product version routing.</span>
+                        <span>Each pending routing step can use any active facility workstation. The product version workstation is marked as recommended.</span>
                     </div>
 
                     {error && (
@@ -249,19 +393,9 @@ export function RouteWorkstationAssignmentDialog({
                                     const id = routeId(task);
                                     const pending = isPendingRoute(task);
                                     const option = optionMap.get(id);
-                                    const allowedIds = option?.workCenterIds?.length
-                                        ? option.workCenterIds
-                                        : task.work_center_id
-                                            ? [Number(task.work_center_id)]
-                                            : [];
-                                    const routeWorkCenters = workCenters.filter((workCenter) =>
-                                        allowedIds.includes(Number(workCenter.work_center_id))
-                                    );
+                                    const recommendedIds = option?.source === "VERSION_ROUTING" ? option.workCenterIds : [];
                                     const currentValue = assignments[id] || "";
-                                    const hasCurrentFallback = currentValue && !routeWorkCenters.some(
-                                        (workCenter) => String(workCenter.work_center_id) === currentValue
-                                    );
-                                    const selectedWorkCenter = routeWorkCenters.find(
+                                    const selectedWorkCenter = workCenters.find(
                                         (workCenter) => String(workCenter.work_center_id) === currentValue
                                     ) || null;
                                     const existingWorkCenter = workCenters.find(
@@ -287,45 +421,31 @@ export function RouteWorkstationAssignmentDialog({
                                             {pending ? (
                                                 <>
                                                 <div className="min-w-0 space-y-1.5">
-                                                <Select
-                                                    value={currentValue}
-                                                    onValueChange={(value) => setAssignments((previous) => ({ ...previous, [id]: value }))}
-                                                    disabled={saving || loading || routeWorkCenters.length === 0}
-                                                >
-                                                    <SelectTrigger className="h-9 w-full text-xs" data-testid={`route-workstation-select-${id}`}>
-                                                        <SelectValue placeholder="Select workstation" />
-                                                    </SelectTrigger>
-                                                    <SelectContent position="popper" className="min-w-[260px]">
-                                                        {hasCurrentFallback && (
-                                                            <SelectItem value={currentValue}>Work Center #{currentValue}</SelectItem>
-                                                        )}
-                                                        {routeWorkCenters.map((workCenter) => (
-                                                            <SelectItem key={workCenter.work_center_id} value={String(workCenter.work_center_id)}>
-                                                                {workCenter.work_center_name} · WC-{workCenter.work_center_id}
-                                                                {workCenter.asset?.condition && (
-                                                                    <Badge variant="outline" className="ml-2 text-[9px]">
-                                                                        {workCenter.asset.condition}
-                                                                    </Badge>
-                                                                )}
-                                                            </SelectItem>
-                                                        ))}
-                                                    </SelectContent>
-                                                </Select>
+                                                    <WorkCenterSearchableSelect
+                                                        value={currentValue}
+                                                        fallbackLabel={task.work_center_name || `Work Center #${currentValue}`}
+                                                        ariaLabel={`Workstation for ${routeLabel(task)}`}
+                                                        testId={`route-workstation-select-${id}`}
+                                                        disabled={saving || loading || workCenters.length === 0}
+                                                        groups={workCenterGroups.map((group) => ({
+                                                            ...group,
+                                                            workCenters: group.workCenters.map((workCenter) => ({
+                                                                ...workCenter,
+                                                                recommended: recommendedIds.includes(Number(workCenter.work_center_id))
+                                                            }))
+                                                        }))}
+                                                        workCenters={workCenters}
+                                                        availabilityByWorkCenter={availabilityByWorkCenter}
+                                                        onValueChange={(value) => setAssignments((previous) => ({ ...previous, [id]: value }))}
+                                                    />
                                                 {selectedWorkCenter && <WorkstationAssetSummary workCenter={selectedWorkCenter} compact />}
-                                                </div>
-                                                {routeWorkCenters.some((workCenter) => availabilityByWorkCenter.has(Number(workCenter.work_center_id))) && (
-                                                    <div className="col-start-4 text-[9px] font-semibold text-muted-foreground">
-                                                        {routeWorkCenters.map((workCenter) => {
-                                                            const availability = availabilityByWorkCenter.get(Number(workCenter.work_center_id));
-                                                            if (!availability) return null;
-                                                            return (
-                                                                <span key={workCenter.work_center_id} className="mr-2 inline-block">
-                                                                    {workCenter.work_center_name}: {availability.availableJobOrders.length} available · {availability.inProgressJobOrders.length} in progress
-                                                                </span>
-                                                            );
-                                                        })}
-                                                    </div>
+                                                {selectedWorkCenter?.asset?.is_active === false && (
+                                                    <Badge variant="outline" className="w-fit text-[9px]">Linked asset inactive</Badge>
                                                 )}
+                                                {!selectedWorkCenter && currentValue && (
+                                                    <p className="text-[10px] font-semibold text-amber-600">Current assignment is not in the active workstation list. Choose an active workstation to replace it.</p>
+                                                )}
+                                                </div>
                                                 </>
                                             ) : (
                                                 <div className="flex min-w-0 items-center gap-1.5 text-xs font-semibold text-muted-foreground">
@@ -337,9 +457,9 @@ export function RouteWorkstationAssignmentDialog({
                                                     />
                                                 </div>
                                             )}
-                                            {pending && routeWorkCenters.length === 0 && (
+                                            {pending && workCenters.length === 0 && (
                                                 <span className="col-start-4 text-[10px] font-semibold text-amber-600">
-                                                    No workstation is configured for this route.
+                                                    No active workstations are available.
                                                 </span>
                                             )}
                                         </div>

@@ -46,6 +46,7 @@ import type { DailyYieldQALog, DailyYieldQAParameter } from "../types";
 
 interface DailyYieldAuditDialogProps {
     controller: DailyYieldAuditController;
+    displayShiftName?: string;
 }
 
 function numericText(value: unknown): string {
@@ -70,9 +71,10 @@ function isParameterFailed(parameter: DailyYieldQAParameter, value: string): boo
         && ["Fail", "false", "No"].includes(value);
 }
 
-export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps) {
+export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYieldAuditDialogProps) {
     const yieldRecord = controller.selectedYield;
     const details = controller.selectedDetails;
+    const shiftName = displayShiftName || yieldRecord?.shiftName || "Shift not specified";
     const acceptedOutputQuantity = parseQAOutputQuantity(controller.dailyAcceptedOutputQuantity) ?? 0;
     const rejectedOutputQuantity = parseQAOutputQuantity(controller.dailyRejectedOutputQuantity) ?? 0;
     const loggedOutputQuantity = Number(yieldRecord?.goodQuantity || 0) + Number(yieldRecord?.rejectedQuantity || 0);
@@ -187,7 +189,7 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                         <ClipboardCheck className="h-5 w-5" /> Record In-Process QA Audit
                     </DialogTitle>
                     <DialogDescription className="text-muted-foreground text-xs">
-                        Record physicochemical specifications and sensory audits for {details?.jobOrderNo || "the selected Job Order"} ({yieldRecord?.shiftName || "shift not specified"}).
+                        Record physicochemical specifications and sensory audits for {details?.jobOrderNo || "the selected Job Order"} ({shiftName}).
                     </DialogDescription>
                 </DialogHeader>
                 {isVerified && (
@@ -210,7 +212,7 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                 <p className="font-mono text-xs font-bold text-primary">{details?.jobOrderNo || "Selected Job Order"}</p>
                                 <p className="mt-0.5 truncate text-xs font-semibold" title={details?.productName}>{details?.productName || "Product not specified"}</p>
                                 <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
-                                    {yieldRecord?.shiftName || "Shift not specified"}
+                                    {shiftName}
                                     {controller.auditStartedAt ? ` · ${formatAuditTimestamp(controller.auditStartedAt)}` : ""}
                                 </p>
                             </div>
