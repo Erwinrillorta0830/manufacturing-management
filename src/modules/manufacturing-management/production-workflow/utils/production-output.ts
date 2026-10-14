@@ -38,3 +38,12 @@ export function hasReachedProductionTarget(targetValue: unknown, goodOutputValue
         && Number.isFinite(goodOutput)
         && goodOutput + QUANTITY_EPSILON >= target;
 }
+
+export function calculateProductionOutputOverrun(targetValue: unknown, goodOutputValue: unknown): number {
+    const target = Number(targetValue ?? 0);
+    const goodOutput = Number(goodOutputValue ?? 0);
+    if (!Number.isFinite(target) || target <= QUANTITY_EPSILON || !Number.isFinite(goodOutput)) return 0;
+
+    const overrun = goodOutput - target;
+    return overrun > QUANTITY_EPSILON ? overrun : 0;
+}

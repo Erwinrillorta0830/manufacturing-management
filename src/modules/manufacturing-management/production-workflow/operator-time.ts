@@ -129,3 +129,8 @@ export function formatElapsedDuration(totalSeconds: number): string {
     const seconds = safeSeconds % 60;
     return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
+
+export function formatElapsedHours(totalHours: number): string {
+    const safeHours = Number.isFinite(totalHours) ? Math.max(0, totalHours) : 0;
+    return formatElapsedDuration(Math.round(safeHours * 3600));
+}

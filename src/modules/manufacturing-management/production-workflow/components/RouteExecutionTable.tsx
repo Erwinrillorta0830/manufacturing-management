@@ -28,7 +28,7 @@ import {
 } from "./OperatorRosterChangeDialog";
 import { WorkstationBreakdownDialog } from "./WorkstationBreakdownDialog";
 import { WorkstationAssetSummary } from "./WorkstationAssetSummary";
-import { elapsedSecondsBetween, elapsedSecondsSince, formatElapsedDuration, formatPhtDateTime } from "../operator-time";
+import { elapsedSecondsBetween, elapsedSecondsSince, formatElapsedDuration, formatElapsedHours, formatPhtDateTime } from "../operator-time";
 import { isTerminalRouteStatus } from "../route-status";
 import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 
@@ -449,7 +449,7 @@ function RouteExecutionRow({
                                         <div className="mt-1 grid grid-cols-3 gap-1 text-[9px] text-muted-foreground">
                                             <span>In (PHT): <strong className="block truncate text-foreground">{formatDateTime(displayedSession.started_at)}</strong></span>
                                             <span>Out (PHT): <strong className="block truncate text-foreground">{formatDateTime(displayedSession.stopped_at)}</strong></span>
-                                            <span>Consumed: <strong className="block font-mono text-foreground">{(operator.totalHours + (operator.activeSession ? elapsedSeconds / 3600 : 0)).toFixed(2)}h</strong></span>
+                                            <span>Consumed: <strong className="block font-mono text-foreground">{formatElapsedHours(operator.totalHours + (operator.activeSession ? elapsedSeconds / 3600 : 0))}</strong></span>
                                         </div>
                                         <div className="mt-1.5 flex flex-wrap items-center gap-1 pointer-coarse:gap-2">
                                             {isTimerPending ? (

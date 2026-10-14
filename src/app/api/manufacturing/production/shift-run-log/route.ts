@@ -401,12 +401,6 @@ async function legacyShiftRunPost(request: Request) {
 
         const accumulatedYield = existingYieldRows.reduce((sum: number, log: any) => sum + Number(log.yield_quantity || 0), 0);
 
-        if (!isRetryRun && accumulatedYield + goodYield > targetQuantity * 1.05) {
-            return NextResponse.json({ 
-                error: `Accumulated yield would exceed target by more than allowable tolerance! Already yielded: ${accumulatedYield.toLocaleString()} units. New yield: ${goodYield.toLocaleString()} units. Target: ${targetQuantity.toLocaleString()} units.` 
-            }, { status: 400 });
-        }
-
         // 2. Hard-staged reservations are the only valid raw-material source
         // for execution. This prerequisite runs before yield/QA writes so a
         // missing or short staging allocation cannot produce a partial run.

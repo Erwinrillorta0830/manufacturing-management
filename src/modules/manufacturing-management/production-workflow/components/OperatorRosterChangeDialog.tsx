@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchableSelect } from "../../planning-engineering/components/SearchableSelect";
-import { elapsedHours, toPhtDateTimeLocal } from "../operator-time";
+import { elapsedHours, formatElapsedHours, toPhtDateTimeLocal } from "../operator-time";
 
 export type OperatorRosterChangeKind = "remove" | "swap" | "edit";
 
@@ -201,8 +201,8 @@ export function OperatorRosterChangeDialog({
                                 {isRunningSession && !stoppedAt ? (
                                     "Leave Time Out blank to keep this timer running."
                                 ) : (
-                                    <>Calculated logged hours: <span className="font-mono font-semibold text-foreground">
-                                        {calculatedHours === null ? "—" : `${calculatedHours.toFixed(2)}h`}
+                                    <>Calculated logged time: <span className="font-mono font-semibold text-foreground">
+                                        {calculatedHours === null ? "—" : formatElapsedHours(calculatedHours)}
                                     </span>. Logged hours will be recalculated from the edited timestamps.</>
                                 )}
                             </p>
