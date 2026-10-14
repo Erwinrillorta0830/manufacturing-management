@@ -1,10 +1,12 @@
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
-import { JOB_ORDER_STATUS, isCancelledJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
+import { directusFileId, fetchDirectusFileMetadata } from "@/app/api/manufacturing/_directus-file-metadata";
+import { JOB_ORDER_STATUS, isCancelledJobOrderStatus, isJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 import type {
     AssetHaltedJobOrder,
     HaltedJobOrderBase,
     MachineAssetReport,
     MachineDowntimeReportPayload,
+    MaintenanceEvidenceFile,
     MaintenanceEpisode,
     RouteStepUsage
 } from "@/modules/manufacturing-management/machine-downtime-report/types";
@@ -29,12 +31,18 @@ const WORK_CENTER_FIELDS = [
     "asset_id.item_id.item_name", "asset_id.serial", "asset_id.barcode"
 ].join(",");
 const STATUS_HISTORY_FIELDS = [
-    "history_id", "job_order_id", "old_status", "new_status", "changed_at", "workflow_action", "remarks"
+    "history_id", "job_order_id", "old_status", "new_status", "changed_at", "workflow_action", "remarks",
+    "jo_route_id", "evidence_image_id"
 ].join(",");
+const STATUS_HISTORY_EVIDENCE_FIELDS = "evidence_id,status_history_id,directus_file_id,sort_order";
 const HISTORY_FIELDS = [
     "id", "asset_id", "started_at", "started_by", "source_type", "source_job_order_id",
     "source_route_id", "source_history_id", "start_reason", "ended_at", "ended_by",
-    "restored_condition", "resolution_notes", "recorded_at", "open_asset_key"
+    "restored_condition", "resolution_notes", "recorded_at", "open_asset_key",
+    "breakdown_category", "root_cause", "corrective_action", "technician_name"
+].join(",");
+const MAINTENANCE_CLEARANCE_FIELDS = [
+    "id", "source_job_order_id", "source_route_id", "ended_at", "restored_condition", "recorded_at", "open_asset_key"
 ].join(",");
 
 export class MachineDowntimeReportError extends Error {
@@ -77,6 +85,10 @@ function text(value: unknown): string {
 
 function dateValue(value: unknown): string | null {
     return typeof value === "string" && value.trim() ? value : null;
+}
+
+function statusHistoryId(row: DirectusRecord): number | null {
+    return relationId(row.history_id, ["history_id", "id"]);
 }
 
 function assetLabel(asset: DirectusRecord): string {
@@ -124,6 +136,20 @@ async function readRows(
         throw new DirectusOperationError(operation, response.status, responseBody);
     }
     return data.filter(isRecord);
+}
+
+async function readOptionalRows(
+    collection: string,
+    fields: string,
+    operation: string,
+    filters: Record<string, string> = {}
+): Promise<DirectusRecord[]> {
+    try {
+        return await readRows(collection, fields, operation, filters);
+    } catch (error) {
+        console.warn(`Unable to load optional ${operation.toLowerCase()}.`, error);
+        return [];
+    }
 }
 
 async function writeItem(
@@ -187,6 +213,10 @@ function routeIsUsed(status: unknown): boolean {
     return normalized === "ongoing" || normalized === "completed";
 }
 
+function routeCanReportBreakdown(status: unknown): boolean {
+    return routeIsUsed(status) || text(status).toLowerCase() === "pending";
+}
+
 function sortedNewestFirst<T extends DirectusRecord>(rows: T[], field: string): T[] {
     return [...rows].sort((left, right) => {
         const leftTime = Date.parse(text(left[field]) || "") || 0;
@@ -197,7 +227,8 @@ function sortedNewestFirst<T extends DirectusRecord>(rows: T[], field: string): 
 
 function mapHistory(
     row: DirectusRecord,
-    jobOrderNos: Map<number, string>
+    jobOrderNos: Map<number, string>,
+    evidenceFiles: MaintenanceEvidenceFile[]
 ): MaintenanceEpisode | null {
     const id = relationId(row.id, ["id"]);
     const assetId = relationId(row.asset_id, ["id"]);
@@ -215,14 +246,53 @@ function mapHistory(
         sourceJobOrderNo: sourceJobOrderId ? jobOrderNos.get(sourceJobOrderId) ?? null : null,
         sourceRouteId: relationId(row.source_route_id, ["jo_route_id", "id"]),
         sourceHistoryId: relationId(row.source_history_id, ["history_id", "id"]),
+        breakdownCategory: text(row.breakdown_category) || null,
+        rootCause: text(row.root_cause) || null,
         startReason: text(row.start_reason) || null,
         endedAt,
         endedBy: relationId(row.ended_by, ["user_id", "id"]),
         restoredCondition: text(row.restored_condition) || null,
+        correctiveAction: text(row.corrective_action) || null,
+        technicianName: text(row.technician_name) || null,
         resolutionNotes: text(row.resolution_notes) || null,
+        evidenceFiles,
         recordedAt: dateValue(row.recorded_at),
         isOpen: endedAt === null
     };
+}
+
+function matchingBreakdownHistoryId(
+    episode: DirectusRecord,
+    statusHistoryRows: DirectusRecord[],
+    evidenceFilesByHistoryId: Map<number, MaintenanceEvidenceFile[]>
+): number | null {
+    const linkedHistoryId = relationId(episode.source_history_id, ["history_id", "id"]);
+    if (linkedHistoryId) return linkedHistoryId;
+    if (!text(episode.breakdown_category) && !text(episode.root_cause)) return null;
+
+    const jobOrderId = relationId(episode.source_job_order_id, ["job_order_id", "id"]);
+    const routeId = relationId(episode.source_route_id, ["jo_route_id", "id"]);
+    const episodeTime = Date.parse(text(episode.started_at));
+    if (!jobOrderId || !routeId || !Number.isFinite(episodeTime)) return null;
+
+    const matchWindowMs = 10 * 60 * 1000;
+    return statusHistoryRows
+        .filter((row) => {
+            const historyId = statusHistoryId(row);
+            const changedAt = Date.parse(text(row.changed_at));
+            return text(row.workflow_action).toLowerCase() === "place-on-hold"
+                && relationId(row.job_order_id, ["job_order_id", "id"]) === jobOrderId
+                && relationId(row.jo_route_id, ["jo_route_id", "id"]) === routeId
+                && historyId !== null
+                && evidenceFilesByHistoryId.has(historyId)
+                && Number.isFinite(changedAt)
+                && Math.abs(changedAt - episodeTime) <= matchWindowMs;
+        })
+        .sort((left, right) =>
+            Math.abs(Date.parse(text(left.changed_at)) - episodeTime)
+            - Math.abs(Date.parse(text(right.changed_at)) - episodeTime)
+        )
+        .map(statusHistoryId)[0] ?? null;
 }
 
 function mapTerminalJobOrder(
@@ -254,6 +324,23 @@ function mapTerminalJobOrder(
         eventType: isTermination ? "Termination" : "Cancellation",
         eventAt: dateValue(row.cancelled_at) || dateValue(history[0]?.changed_at),
         reason
+    };
+}
+
+function mapBreakdownJobOrder(row: DirectusRecord, episode: DirectusRecord): AssetHaltedJobOrder {
+    const jobOrderId = relationId(row.job_order_id, ["job_order_id", "id"]) ?? 0;
+    const category = text(episode.breakdown_category);
+    const rootCause = text(episode.root_cause) || text(episode.start_reason);
+    return {
+        jobOrderId,
+        jobOrderNo: text(row.job_order_no) || "JO #" + jobOrderId,
+        status: text(row.status) || JOB_ORDER_STATUS.ON_HOLD,
+        eventType: "Breakdown",
+        eventAt: dateValue(episode.started_at),
+        reason: [category ? `Category: ${category}` : "", rootCause ? `Root cause: ${rootCause}` : ""]
+            .filter(Boolean)
+            .join(" · ") || null,
+        routeSteps: []
     };
 }
 
@@ -297,7 +384,7 @@ export async function loadMachineDowntimeReport(): Promise<MachineDowntimeReport
                 "manufacturing_job_orders",
                 JOB_ORDER_FIELDS,
                 "Load halted Job Orders",
-                { "filter[status][_in]": "Cancelled,cancelled,Canceled,canceled" }
+                { "filter[status][_in]": "Cancelled,cancelled,Canceled,canceled,On Hold,on hold,on_hold" }
             ),
             readRows(HISTORY_COLLECTION, HISTORY_FIELDS, "Load maintenance history")
         ]);
@@ -320,7 +407,9 @@ export async function loadMachineDowntimeReport(): Promise<MachineDowntimeReport
             if (userId && name) assignedPersonnelById.set(userId, name);
         });
 
-        const jobOrders = jobOrderRows.filter((row) => isCancelledJobOrderStatus(row.status));
+        const jobOrders = jobOrderRows.filter((row) =>
+            isCancelledJobOrderStatus(row.status) || isJobOrderStatus(row.status, JOB_ORDER_STATUS.ON_HOLD)
+        );
         const jobOrderIds = jobOrders
             .map((row) => relationId(row.job_order_id, ["job_order_id", "id"]))
             .filter((id): id is number => id !== null);
@@ -371,15 +460,23 @@ export async function loadMachineDowntimeReport(): Promise<MachineDowntimeReport
         for (const jobOrder of jobOrders) {
             const jobOrderId = relationId(jobOrder.job_order_id, ["job_order_id", "id"]);
             if (!jobOrderId) continue;
-            const base = mapTerminalJobOrder(jobOrder, statusHistoryRows);
+            const isBreakdownHold = isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.ON_HOLD);
             const routeSteps = routesByJobOrder.get(jobOrderId) ?? [];
-            const linkedProductionSteps = routeSteps.filter((step) =>
-                routeIsUsed(step.status) && step.assetId !== null && assetsById.has(step.assetId)
-            );
-            if (linkedProductionSteps.length === 0) continue;
-            for (const step of linkedProductionSteps) {
+            for (const step of routeSteps) {
                 const assetId = step.assetId;
-                if (assetId === null) continue;
+                if (assetId === null || !assetsById.has(assetId)) continue;
+                const breakdownEpisode = isBreakdownHold && routeCanReportBreakdown(step.status)
+                    ? historyRows.find((episode) =>
+                        text(episode.source_type).toLowerCase() === "job_order"
+                        && relationId(episode.source_job_order_id, ["job_order_id", "id"]) === jobOrderId
+                        && relationId(episode.source_route_id, ["jo_route_id", "id"]) === step.routeId
+                        && relationId(episode.asset_id, ["id"]) === assetId
+                    )
+                    : null;
+                if (isBreakdownHold ? !breakdownEpisode : !routeIsUsed(step.status)) continue;
+                const base = isBreakdownHold
+                    ? mapBreakdownJobOrder(jobOrder, breakdownEpisode as DirectusRecord)
+                    : mapTerminalJobOrder(jobOrder, statusHistoryRows);
                 const assetJobs = relatedJobsByAsset.get(assetId) ?? new Map<number, AssetHaltedJobOrder>();
                 const existing = assetJobs.get(jobOrderId);
                 const visibleStep: RouteStepUsage = {
@@ -396,8 +493,58 @@ export async function loadMachineDowntimeReport(): Promise<MachineDowntimeReport
             }
         }
 
+        const breakdownHistoryRows = statusHistoryRows.filter((row) =>
+            text(row.workflow_action).toLowerCase() === "place-on-hold"
+        );
+        const breakdownHistoryIds = breakdownHistoryRows
+            .map(statusHistoryId)
+            .filter((id): id is number => id !== null);
+        const evidenceRows = breakdownHistoryIds.length > 0
+            ? await readOptionalRows(
+                "manufacturing_job_order_status_history_evidence",
+                STATUS_HISTORY_EVIDENCE_FIELDS,
+                "Load breakdown status-history evidence",
+                { "filter[status_history_id][_in]": breakdownHistoryIds.join(",") }
+            )
+            : [];
+        const evidenceRowsByHistoryId = new Map<number, Array<{ fileId: string; sortOrder: number }>>();
+        evidenceRows.forEach((row) => {
+            const historyId = relationId(row.status_history_id, ["history_id", "id"]);
+            const fileId = directusFileId(row.directus_file_id);
+            if (!historyId || !fileId) return;
+            const rows = evidenceRowsByHistoryId.get(historyId) ?? [];
+            rows.push({ fileId, sortOrder: Number(row.sort_order) || 0 });
+            evidenceRowsByHistoryId.set(historyId, rows);
+        });
+        breakdownHistoryRows.forEach((row) => {
+            const historyId = statusHistoryId(row);
+            const fileId = directusFileId(row.evidence_image_id);
+            if (!historyId || !fileId || evidenceRowsByHistoryId.has(historyId)) return;
+            evidenceRowsByHistoryId.set(historyId, [{ fileId, sortOrder: 0 }]);
+        });
+        const evidenceFileIds = [...evidenceRowsByHistoryId.values()].flat().map((row) => row.fileId);
+        const fileMetadataById = await fetchDirectusFileMetadata(evidenceFileIds);
+        const evidenceFilesByHistoryId = new Map<number, MaintenanceEvidenceFile[]>();
+        evidenceRowsByHistoryId.forEach((rows, historyId) => {
+            evidenceFilesByHistoryId.set(historyId, rows
+                .sort((left, right) => left.sortOrder - right.sortOrder)
+                .map(({ fileId, sortOrder }) => {
+                    const metadata = fileMetadataById.get(fileId);
+                    return {
+                        directus_file_id: fileId,
+                        file_name: metadata?.fileName ?? null,
+                        mime_type: metadata?.mimeType ?? null,
+                        file_size: metadata?.fileSize ?? null,
+                        sort_order: sortOrder
+                    };
+                }));
+        });
+
         const episodes = historyRows
-            .map((row) => mapHistory(row, jobOrderNos))
+            .map((row) => {
+                const historyId = matchingBreakdownHistoryId(row, breakdownHistoryRows, evidenceFilesByHistoryId);
+                return mapHistory(row, jobOrderNos, historyId ? evidenceFilesByHistoryId.get(historyId) ?? [] : []);
+            })
             .filter((episode): episode is MaintenanceEpisode => episode !== null);
         const episodesByAsset = new Map<number, MaintenanceEpisode[]>();
         episodes.forEach((episode) => {
@@ -450,6 +597,187 @@ async function getOne(
 ): Promise<DirectusRecord | null> {
     const rows = await readRows(collection, fields, operation, filters, "1");
     return rows[0] ?? null;
+}
+
+export type JobOrderMaintenanceClearance = "pending" | "cleared" | "unfit" | null;
+
+export async function getJobOrderMaintenanceClearance(jobOrderId: number): Promise<JobOrderMaintenanceClearance> {
+    try {
+        const rows = await readRows(
+            HISTORY_COLLECTION,
+            MAINTENANCE_CLEARANCE_FIELDS,
+            "Check Job Order machine maintenance clearance",
+            {
+                "filter[source_type][_eq]": "job_order",
+                "filter[source_job_order_id][_eq]": String(jobOrderId)
+            }
+        );
+        const latestByRoute = new Map<string, DirectusRecord>();
+        for (const episode of sortedNewestFirst(rows, "recorded_at")) {
+            const key = String(relationId(episode.source_route_id, ["jo_route_id", "id"]) || episode.id || "");
+            if (key && !latestByRoute.has(key)) latestByRoute.set(key, episode);
+        }
+        const latestEpisodes = [...latestByRoute.values()];
+        if (latestEpisodes.length === 0) return null;
+        if (latestEpisodes.some((episode) => !dateValue(episode.ended_at) || text(episode.open_asset_key))) return "pending";
+        if (latestEpisodes.some((episode) => text(episode.restored_condition).toLowerCase() !== "good")) return "unfit";
+        return "cleared";
+    } catch (error) {
+        throw apiError(error);
+    }
+}
+
+export async function assertProductionAssetOperational(assetId: number): Promise<void> {
+    try {
+        const asset = await getOne(
+            "assets_and_equipment",
+            "id,asset_type,condition",
+            { "filter[id][_eq]": String(assetId) },
+            "Check production machine condition"
+        );
+        if (!asset || text(asset.asset_type) !== "Production") {
+            throw new MachineDowntimeReportError("The route is not linked to an available Production machine.", 409, "PRODUCTION_ASSET_REQUIRED");
+        }
+        const openEpisode = await getOne(
+            HISTORY_COLLECTION,
+            "id,open_asset_key",
+            { "filter[open_asset_key][_eq]": String(assetId) },
+            "Check for open machine maintenance"
+        );
+        const condition = text(asset.condition).toLowerCase();
+        if (openEpisode || ["under maintenance", "bad", "discontinued"].includes(condition)) {
+            throw new MachineDowntimeReportError(
+                "This machine is unavailable. Complete maintenance and restore it to Good before operating it.",
+                409,
+                "MACHINE_MAINTENANCE_CLEARANCE_REQUIRED"
+            );
+        }
+    } catch (error) {
+        throw apiError(error);
+    }
+}
+
+export async function recordWorkstationBreakdownMaintenance(
+    input: { jobOrderId: number; routeId: number; breakdownCategory: string; rootCause: string },
+    actorUserId: number
+): Promise<{ assetId: number; episodeId: number }> {
+    try {
+        const breakdownCategory = input.breakdownCategory.trim();
+        const rootCause = input.rootCause.trim();
+        if (!breakdownCategory || breakdownCategory.length > 120 || !rootCause || rootCause.length > 5000) {
+            throw new MachineDowntimeReportError("Enter a breakdown category and root cause within the allowed length.", 400, "BREAKDOWN_DETAILS_REQUIRED");
+        }
+        const [jobOrder, route] = await Promise.all([
+            getOne(
+                "manufacturing_job_orders",
+                JOB_ORDER_FIELDS,
+                { "filter[job_order_id][_eq]": String(input.jobOrderId) },
+                "Load Job Order for workstation breakdown"
+            ),
+            getOne(
+                "manufacturing_job_order_routes",
+                ROUTE_FIELDS,
+                { "filter[jo_route_id][_eq]": String(input.routeId) },
+                "Load route for workstation breakdown"
+            )
+        ]);
+        if (!jobOrder || !isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
+            throw new MachineDowntimeReportError("Only an In Production Job Order can report a workstation breakdown.", 409, "JOB_ORDER_NOT_IN_PRODUCTION");
+        }
+        if (!route || relationId(route.job_order_id, ["job_order_id", "id"]) !== input.jobOrderId) {
+            throw new MachineDowntimeReportError("The selected route does not belong to this Job Order.", 422, "JOB_ORDER_ROUTE_MISMATCH");
+        }
+        if (!routeCanReportBreakdown(route.status)) {
+            throw new MachineDowntimeReportError("A breakdown can only be reported against a Pending, Ongoing, or Completed route step.", 409, "ROUTE_STEP_NOT_USED");
+        }
+        const workCenterId = relationId(route.work_center_id, ["work_center_id", "id"]);
+        if (!workCenterId) {
+            throw new MachineDowntimeReportError("Assign a work center to this route before reporting a machine breakdown.", 422, "ROUTE_WORK_CENTER_REQUIRED");
+        }
+        const workCenter = await getOne(
+            "manufacturing_work_centers",
+            WORK_CENTER_FIELDS,
+            { "filter[work_center_id][_eq]": String(workCenterId) },
+            "Load machine linked to route work center"
+        );
+        const linkedAsset = workCenter?.asset_id;
+        const assetId = relationId(linkedAsset, ["id"]);
+        if (!assetId || !isRecord(linkedAsset) || text(linkedAsset.asset_type) !== "Production") {
+            throw new MachineDowntimeReportError("The route work center must be linked to a Production machine before reporting a breakdown.", 422, "PRODUCTION_ASSET_REQUIRED");
+        }
+
+        const existingEpisode = await getOne(
+            HISTORY_COLLECTION,
+            HISTORY_FIELDS,
+            { "filter[open_asset_key][_eq]": String(assetId) },
+            "Check for an existing breakdown episode"
+        );
+        if (existingEpisode) {
+            if (relationId(existingEpisode.source_job_order_id, ["job_order_id", "id"]) === input.jobOrderId
+                && relationId(existingEpisode.source_route_id, ["jo_route_id", "id"]) === input.routeId) {
+                const existingId = relationId(existingEpisode.id, ["id"]);
+                if (existingId) return { assetId, episodeId: existingId };
+            }
+            throw new MachineDowntimeReportError("This machine already has an open maintenance episode.", 409, "MAINTENANCE_EPISODE_ALREADY_OPEN");
+        }
+
+        const now = new Date().toISOString();
+        const created = await writeItem(HISTORY_COLLECTION, null, "POST", {
+            asset_id: assetId,
+            started_at: now,
+            started_by: actorUserId,
+            source_type: "job_order",
+            source_job_order_id: input.jobOrderId,
+            source_route_id: input.routeId,
+            source_history_id: null,
+            start_reason: rootCause,
+            breakdown_category: breakdownCategory,
+            root_cause: rootCause,
+            corrective_action: null,
+            technician_name: null,
+            ended_at: null,
+            ended_by: null,
+            restored_condition: null,
+            resolution_notes: null,
+            recorded_at: now,
+            open_asset_key: String(assetId)
+        }, "Create workstation breakdown maintenance episode");
+        let episodeId = relationId(created?.id, ["id"]);
+        if (!episodeId) {
+            const inserted = await getOne(
+                HISTORY_COLLECTION,
+                HISTORY_FIELDS,
+                { "filter[open_asset_key][_eq]": String(assetId) },
+                "Confirm workstation breakdown maintenance episode"
+            );
+            episodeId = relationId(inserted?.id, ["id"]);
+        }
+        if (!episodeId) {
+            throw new MachineDowntimeReportError("The breakdown episode could not be confirmed. Reconcile the machine before retrying.", 502, "MAINTENANCE_START_PARTIAL_WRITE");
+        }
+
+        try {
+            await writeItem("assets_and_equipment", assetId, "PATCH", { condition: "Under Maintenance" }, "Mark breakdown machine Under Maintenance");
+        } catch (error) {
+            let rolledBack = false;
+            try {
+                await writeItem(HISTORY_COLLECTION, episodeId, "DELETE", null, "Roll back breakdown maintenance episode");
+                rolledBack = true;
+            } catch {
+                rolledBack = false;
+            }
+            if (!rolledBack) {
+                throw new MachineDowntimeReportError("The breakdown was recorded but the machine condition could not be updated. Reconcile this machine before operating it.", 502, "MAINTENANCE_START_PARTIAL_WRITE");
+            }
+            throw error;
+        }
+        return { assetId, episodeId };
+    } catch (error) {
+        if (error instanceof DirectusOperationError && error.status === 400 && /unique|duplicate/i.test(error.responseBody)) {
+            throw new MachineDowntimeReportError("This machine already has an open maintenance episode.", 409, "MAINTENANCE_EPISODE_ALREADY_OPEN");
+        }
+        throw apiError(error);
+    }
 }
 
 async function getTerminalHistory(jobOrderId: number): Promise<DirectusRecord | null> {
@@ -547,6 +875,10 @@ export async function startMachineMaintenance(
             source_route_id: input.routeId,
             source_history_id: relationId(sourceHistory?.history_id, ["history_id", "id"]),
             start_reason: reason,
+            breakdown_category: null,
+            root_cause: null,
+            corrective_action: null,
+            technician_name: null,
             ended_at: null,
             ended_by: null,
             restored_condition: null,
@@ -610,10 +942,21 @@ export async function startMachineMaintenance(
 }
 
 export async function closeMachineMaintenance(
-    input: { assetId: number; restoredCondition: "Good" | "Bad" | "Discontinued"; resolutionNotes?: string },
+    input: {
+        assetId: number;
+        restoredCondition: "Good" | "Bad" | "Discontinued";
+        correctiveAction: string;
+        technicianName: string;
+        resolutionNotes?: string;
+    },
     actorUserId: number
 ): Promise<{ episodeId: number }> {
     try {
+        const correctiveAction = input.correctiveAction.trim();
+        const technicianName = input.technicianName.trim();
+        if (!correctiveAction || correctiveAction.length > 5000 || !technicianName || technicianName.length > 200) {
+            throw new MachineDowntimeReportError("Corrective action and technician name are required to clear maintenance.", 400, "MAINTENANCE_CLEARANCE_DETAILS_REQUIRED");
+        }
         const openEpisode = await getOne(
             HISTORY_COLLECTION,
             HISTORY_FIELDS,
@@ -630,6 +973,8 @@ export async function closeMachineMaintenance(
             ended_at: now,
             ended_by: actorUserId,
             restored_condition: input.restoredCondition,
+            corrective_action: correctiveAction,
+            technician_name: technicianName,
             resolution_notes: input.resolutionNotes?.trim() || null,
             open_asset_key: null
         }, "Close maintenance history");
@@ -641,6 +986,8 @@ export async function closeMachineMaintenance(
                     ended_at: null,
                     ended_by: null,
                     restored_condition: null,
+                    corrective_action: null,
+                    technician_name: null,
                     resolution_notes: null,
                     open_asset_key: String(input.assetId)
                 }, "Roll back maintenance history close");

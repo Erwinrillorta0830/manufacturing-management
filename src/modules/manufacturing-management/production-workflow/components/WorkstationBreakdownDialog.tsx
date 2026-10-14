@@ -27,6 +27,7 @@ export function WorkstationBreakdownDialog({
     onSuccess
 }: WorkstationBreakdownDialogProps) {
     const [yieldQty, setYieldQty] = useState("0");
+    const [breakdownCategory, setBreakdownCategory] = useState("");
     const [haltReason, setHaltReason] = useState("");
     const [evidenceImages, setEvidenceImages] = useState<File[]>([]);
     const [evidenceImageError, setEvidenceImageError] = useState<string | null>(null);
@@ -35,6 +36,7 @@ export function WorkstationBreakdownDialog({
     useEffect(() => {
         if (!open) return;
         setYieldQty("0");
+        setBreakdownCategory("");
         setHaltReason("");
         setEvidenceImages([]);
         setEvidenceImageError(null);
@@ -51,8 +53,12 @@ export function WorkstationBreakdownDialog({
             toast.error("Select a routing step before reporting a breakdown.");
             return;
         }
+        if (!breakdownCategory.trim()) {
+            toast.error("A breakdown category is required.");
+            return;
+        }
         if (!reason) {
-            toast.error("A breakdown reason is required.");
+            toast.error("A root cause is required.");
             return;
         }
         if (evidenceImages.length === 0 || evidenceImageError) {
@@ -75,6 +81,8 @@ export function WorkstationBreakdownDialog({
                 haltedStepId: task.name,
                 yieldQty: parsedYield,
                 reportedYieldQuantity: parsedYield,
+                breakdownCategory: breakdownCategory.trim(),
+                rootCause: reason,
                 haltReason: reason,
                 idempotencyKey: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
                     ? crypto.randomUUID()
@@ -137,12 +145,23 @@ export function WorkstationBreakdownDialog({
                     </div>
 
                     <div className="space-y-1.5">
-                        <Label htmlFor="breakdown-reason">Breakdown reason <span className="text-destructive">*</span></Label>
+                        <Label htmlFor="breakdown-category">Breakdown category <span className="text-destructive">*</span></Label>
+                        <Input
+                            id="breakdown-category"
+                            value={breakdownCategory}
+                            onChange={(event) => setBreakdownCategory(event.target.value)}
+                            maxLength={120}
+                            placeholder="e.g. Mechanical, electrical, controls"
+                        />
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <Label htmlFor="breakdown-reason">Root cause <span className="text-destructive">*</span></Label>
                         <Textarea
                             id="breakdown-reason"
                             value={haltReason}
                             onChange={(event) => setHaltReason(event.target.value)}
-                            placeholder="Describe the equipment issue, material issue, or other production halt..."
+                            placeholder="Describe the equipment failure or other technical cause..."
                             className="min-h-[110px]"
                         />
                     </div>
@@ -169,7 +188,7 @@ export function WorkstationBreakdownDialog({
                     <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
                         Cancel
                     </Button>
-                    <Button type="button" variant="destructive" onClick={handleSubmit} disabled={submitting || !task || !haltReason.trim() || evidenceImages.length === 0 || Boolean(evidenceImageError)}>
+                    <Button type="button" variant="destructive" onClick={handleSubmit} disabled={submitting || !task || !breakdownCategory.trim() || !haltReason.trim() || evidenceImages.length === 0 || Boolean(evidenceImageError)}>
                         {submitting ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> Reporting...</> : "Report Breakdown"}
                     </Button>
                 </DialogFooter>

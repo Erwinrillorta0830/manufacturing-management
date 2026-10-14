@@ -22,6 +22,10 @@ import {
     readProjectedOperatorAssignments,
     synchronizeJobOrderOperatorAssignments
 } from "../../job-orders/_operator-assignment-service";
+import {
+    MachineDowntimeReportError,
+    recordWorkstationBreakdownMaintenance
+} from "../../reports/machine-downtime-report/_service";
 
 async function cancelledJobOrderResponse(jobOrderId: number | string): Promise<NextResponse | null> {
     const numericId = Number(jobOrderId);
@@ -440,13 +444,18 @@ export async function handlePATCH(request: Request) {
             const parsedRouteId = Number(joRouteId);
             const parsedReportedYield = Number(reportedYieldQuantity ?? yieldQty);
             const trimmedHaltReason = typeof haltReason === "string" ? haltReason.trim() : "";
+            const breakdownCategory = typeof body.breakdownCategory === "string" ? body.breakdownCategory.trim() : "";
+            const rootCause = typeof body.rootCause === "string" ? body.rootCause.trim() : trimmedHaltReason;
 
             if (!Number.isInteger(parsedJobOrderId) || parsedJobOrderId <= 0) {
                 return NextResponse.json({ error: "A valid jobOrderId is required." }, { status: 400 });
             }
 
             if (!trimmedHaltReason) {
-                return NextResponse.json({ error: "A meaningful halt reason is required." }, { status: 400 });
+                return NextResponse.json({ error: "A root cause is required." }, { status: 400 });
+            }
+            if (!breakdownCategory || breakdownCategory.length > 120 || !rootCause || rootCause.length > 5000) {
+                return NextResponse.json({ error: "A breakdown category and root cause are required." }, { status: 400 });
             }
             if (!Number.isSafeInteger(parsedRouteId) || parsedRouteId <= 0) {
                 return NextResponse.json({ error: "A valid route is required to report a breakdown." }, { status: 400 });
@@ -478,11 +487,18 @@ export async function handlePATCH(request: Request) {
                 ));
             }
 
+            await recordWorkstationBreakdownMaintenance({
+                jobOrderId: parsedJobOrderId,
+                routeId: parsedRouteId,
+                breakdownCategory,
+                rootCause
+            }, moduleUser.userId);
+
             const result = await executeJobOrderWorkflow(parsedJobOrderId, {
                 action: "place-on-hold",
                 actorUserId: moduleUser.userId,
                 idempotencyKey: String(body.idempotencyKey || `breakdown:${parsedJobOrderId}:${haltedStepId}:${Number(yieldQty || 0)}`).trim(),
-                remarks: `Halted at step ${haltedStepId}. Reported yield: ${parsedReportedYield}. Reason: ${trimmedHaltReason}`,
+                remarks: `Halted at step ${haltedStepId}. Reported yield: ${parsedReportedYield}. Breakdown category: ${breakdownCategory}. Root cause: ${rootCause}`,
                 evidenceImageId: uploadedBreakdownEvidenceImageIds[0],
                 evidenceImageIds: uploadedBreakdownEvidenceImageIds,
                 joRouteId: parsedRouteId,
@@ -856,12 +872,12 @@ export async function handlePATCH(request: Request) {
             return NextResponse.json({ error: e.message, code: e.code }, { status: e.status });
         }
         const message = (e as { message?: string }).message || "Failed to update Job Order";
-        const status = e instanceof JobOrderOperatorAssignmentError || e instanceof JobOrderWorkflowEvidenceError
+        const status = e instanceof JobOrderOperatorAssignmentError || e instanceof JobOrderWorkflowEvidenceError || e instanceof MachineDowntimeReportError
             ? e.status
             : message.startsWith("Unknown Job Order status:") ? 400 : 500;
         return NextResponse.json({
             error: message,
-            ...(e instanceof JobOrderOperatorAssignmentError || e instanceof JobOrderWorkflowEvidenceError ? { code: e.code } : {})
+            ...(e instanceof JobOrderOperatorAssignmentError || e instanceof JobOrderWorkflowEvidenceError || e instanceof MachineDowntimeReportError ? { code: e.code } : {})
         }, { status });
     }
 }

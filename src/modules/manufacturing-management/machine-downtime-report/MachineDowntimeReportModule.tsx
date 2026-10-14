@@ -15,7 +15,7 @@ const MACHINE_PAGE_SIZE = 10;
 const EMPTY_ASSETS: MachineAssetReport[] = [];
 
 type MachineConditionFilter = "All" | "Under Maintenance" | "Good";
-type JobOrderEventFilter = "All" | "Termination" | "Cancellation";
+type JobOrderEventFilter = "All" | "Termination" | "Cancellation" | "Breakdown";
 
 export default function MachineDowntimeReportModule() {
     const reportState = useMachineDowntimeReport();
@@ -111,7 +111,13 @@ export default function MachineDowntimeReportModule() {
             toast.error(error instanceof Error ? error.message : "Unable to start the maintenance episode.");
         }
     };
-    const handleClose = async (input: { assetId: number; restoredCondition: "Good" | "Bad" | "Discontinued"; resolutionNotes?: string }) => {
+    const handleClose = async (input: {
+        assetId: number;
+        restoredCondition: "Good" | "Bad" | "Discontinued";
+        correctiveAction: string;
+        technicianName: string;
+        resolutionNotes?: string;
+    }) => {
         try {
             await reportState.closeEpisode({ action: "close", ...input });
             toast.success("Maintenance episode closed.");
@@ -127,7 +133,7 @@ export default function MachineDowntimeReportModule() {
                 <div>
                     <h2 className="text-xl font-extrabold tracking-tight">Machine Downtime Report</h2>
                     <p className="mt-1 text-xs text-muted-foreground">
-                        Production machines and terminated or cancelled Job Orders from route steps marked Ongoing or Completed.
+                        Production machines, reported breakdowns, and terminated or cancelled Job Orders linked to used route steps.
                     </p>
                 </div>
                 <Button type="button" variant="outline" size="sm" onClick={() => void reportState.refresh()} disabled={reportState.refreshing}>

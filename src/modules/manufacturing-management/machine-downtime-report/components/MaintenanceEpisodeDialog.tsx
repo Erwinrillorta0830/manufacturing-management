@@ -11,9 +11,11 @@ import {
     DialogHeader,
     DialogTitle
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { phtTimestampToEpoch } from "@/modules/manufacturing-management/shared/pht-date";
+import { isManufacturingEvidenceVideo, manufacturingFileUrl } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
 import type { AssetHaltedJobOrder, MachineAssetReport, RouteStepUsage } from "../types";
 
 interface MaintenanceEpisodeDialogProps {
@@ -23,7 +25,13 @@ interface MaintenanceEpisodeDialogProps {
     saving: boolean;
     onOpenChange: (open: boolean) => void;
     onStart: (input: { assetId: number; jobOrderId: number; routeId: number }) => Promise<void>;
-    onClose: (input: { assetId: number; restoredCondition: "Good" | "Bad" | "Discontinued"; resolutionNotes?: string }) => Promise<void>;
+    onClose: (input: {
+        assetId: number;
+        restoredCondition: "Good" | "Bad" | "Discontinued";
+        correctiveAction: string;
+        technicianName: string;
+        resolutionNotes?: string;
+    }) => Promise<void>;
 }
 
 function displayTimestamp(value: string | null): string {
@@ -51,6 +59,8 @@ export function MaintenanceEpisodeDialog({
     onClose
 }: MaintenanceEpisodeDialogProps) {
     const [restoredCondition, setRestoredCondition] = useState<"Good" | "Bad" | "Discontinued">("Good");
+    const [correctiveAction, setCorrectiveAction] = useState("");
+    const [technicianName, setTechnicianName] = useState("");
     const [resolutionNotes, setResolutionNotes] = useState("");
 
     const handleCloseEpisode = async () => {
@@ -58,9 +68,13 @@ export function MaintenanceEpisodeDialog({
         await onClose({
             assetId: asset.assetId,
             restoredCondition,
+            correctiveAction: correctiveAction.trim(),
+            technicianName: technicianName.trim(),
             resolutionNotes: resolutionNotes.trim() || undefined
         });
         setRestoredCondition("Good");
+        setCorrectiveAction("");
+        setTechnicianName("");
         setResolutionNotes("");
     };
 
@@ -79,6 +93,8 @@ export function MaintenanceEpisodeDialog({
             onOpenChange={(nextOpen) => {
                 if (!nextOpen) {
                     setRestoredCondition("Good");
+                    setCorrectiveAction("");
+                    setTechnicianName("");
                     setResolutionNotes("");
                 }
                 onOpenChange(nextOpen);
@@ -135,8 +151,44 @@ export function MaintenanceEpisodeDialog({
                                             {episode.sourceJobOrderNo && (
                                                 <div className="mt-1 text-xs text-muted-foreground">Source: {episode.sourceJobOrderNo}</div>
                                             )}
+                                            {episode.breakdownCategory && <p className="mt-1 text-xs">Category: {episode.breakdownCategory}</p>}
+                                            {episode.rootCause && <p className="mt-1 text-xs">Root cause: {episode.rootCause}</p>}
+                                            {episode.correctiveAction && <p className="mt-1 text-xs">Corrective action: {episode.correctiveAction}</p>}
+                                            {episode.technicianName && <p className="mt-1 text-xs text-muted-foreground">Technician: {episode.technicianName}</p>}
                                             {episode.startReason && <p className="mt-1 text-xs">{episode.startReason}</p>}
                                             {episode.resolutionNotes && <p className="mt-1 text-xs text-muted-foreground">{episode.resolutionNotes}</p>}
+                                            {episode.evidenceFiles.length > 0 && (
+                                                <div className="mt-3 space-y-1.5">
+                                                    <p className="text-xs font-medium">Breakdown evidence</p>
+                                                    <div className="grid gap-2 sm:grid-cols-2">
+                                                        {episode.evidenceFiles.map((file, index) => {
+                                                            const fileUrl = manufacturingFileUrl(file.directus_file_id);
+                                                            const isVideo = isManufacturingEvidenceVideo(file.mime_type, file.file_name);
+                                                            const fileName = file.file_name || `Evidence ${index + 1}`;
+                                                            return (
+                                                                <div key={`${file.directus_file_id}-${index}`} className="overflow-hidden rounded-md border bg-muted/20">
+                                                                    {isVideo ? (
+                                                                        <video
+                                                                            src={fileUrl}
+                                                                            controls
+                                                                            playsInline
+                                                                            preload="metadata"
+                                                                            aria-label={fileName}
+                                                                            className="max-h-48 w-full bg-black"
+                                                                        />
+                                                                    ) : (
+                                                                        <a href={fileUrl} target="_blank" rel="noreferrer" className="block">
+                                                                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                                            <img src={fileUrl} alt={fileName} className="h-32 w-full bg-muted object-contain" />
+                                                                        </a>
+                                                                    )}
+                                                                    <p className="truncate px-2 py-1.5 text-[11px] font-medium" title={fileName}>{fileName}</p>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     ))}
                                 </div>
@@ -159,18 +211,32 @@ export function MaintenanceEpisodeDialog({
                                         <SelectItem value="Discontinued">Discontinued</SelectItem>
                                     </SelectContent>
                                 </Select>
+                                <Input
+                                    value={technicianName}
+                                    onChange={(event) => setTechnicianName(event.target.value)}
+                                    maxLength={200}
+                                    placeholder="Technician name *"
+                                    aria-label="Technician name"
+                                />
+                                <Textarea
+                                    value={correctiveAction}
+                                    onChange={(event) => setCorrectiveAction(event.target.value)}
+                                    maxLength={5000}
+                                    placeholder="Corrective actions taken *"
+                                    rows={3}
+                                />
                                 <Textarea
                                     value={resolutionNotes}
                                     onChange={(event) => setResolutionNotes(event.target.value)}
                                     maxLength={2000}
-                                    placeholder="Resolution notes (optional)"
-                                    rows={3}
+                                    placeholder="Additional resolution notes (optional)"
+                                    rows={2}
                                 />
                                 <DialogFooter>
                                     <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
                                         Cancel
                                     </Button>
-                                    <Button type="button" onClick={() => void handleCloseEpisode()} disabled={saving}>
+                                    <Button type="button" onClick={() => void handleCloseEpisode()} disabled={saving || !technicianName.trim() || !correctiveAction.trim()}>
                                         {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                                         Close episode
                                     </Button>

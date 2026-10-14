@@ -21,6 +21,8 @@ const mutationSchema = z.discriminatedUnion("action", [
         action: z.literal("close"),
         assetId: z.number().int().positive(),
         restoredCondition: z.enum(["Good", "Bad", "Discontinued"]),
+        correctiveAction: z.string().trim().min(1).max(5000),
+        technicianName: z.string().trim().min(1).max(200),
         resolutionNotes: z.string().max(2000).optional()
     })
 ]);
