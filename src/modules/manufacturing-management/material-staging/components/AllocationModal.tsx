@@ -14,6 +14,8 @@ import { hasStagingDelta } from "../utils/allocation-delta";
 import {
     exceedsAvailableQuantity,
     getManualAllocationLimit,
+    getManualAllocationTargetLimit,
+    getRemainingAllocationQuantity,
     getOverTargetQuantity,
     roundAllocationQuantity as roundQuantity,
     ALLOCATION_QUANTITY_EPSILON
@@ -149,7 +151,7 @@ function AllocationForm({
         : manualLines.filter(line => line.quantity > 0),
     [mode, selectedMaterialPreview, manualLines]);
     const selectedQuantity = roundQuantity(selectedLines.reduce((total, line) => total + line.quantity, 0));
-    const remainingQuantity = selectedMaterialPreview?.remaining_quantity ?? Math.max(0, material.required_quantity - material.staged_quantity);
+    const remainingQuantity = selectedMaterialPreview?.remaining_quantity ?? getRemainingAllocationQuantity(material.required_quantity, material.staged_quantity);
     const overTargetQuantity = getOverTargetQuantity(selectedQuantity, remainingQuantity);
     const hasManualInputErrors = mode === "manual" && Object.keys(manualInputErrors).length > 0;
     // Staging is raw-material level: everything stages to the generic floor bin.
@@ -227,7 +229,7 @@ function AllocationForm({
         void loadPreview({ ...previewPayload, mode: nextMode, lines: undefined });
     };
 
-    const getCandidateMaxAllowed = (
+    const getCandidateStockLimit = (
         candidate: AllocationPreview["materials"][number]["candidates"][number],
         lines: AllocationLine[] = manualLines
     ) => {
@@ -238,13 +240,31 @@ function AllocationForm({
         return getManualAllocationLimit(candidate.available_quantity, alreadyAllocatedElsewhere);
     };
 
+    const getCandidateTargetMaxAllowed = (
+        candidate: AllocationPreview["materials"][number]["candidates"][number]
+    ) => {
+        const key = lineKey(candidate);
+        const alreadyAllocatedTowardTarget = manualLines
+            .filter(line => sourceMaterialIds.includes(line.jo_material_id) && lineKey(line) !== key)
+            .reduce((total, line) => total + line.quantity, 0);
+        const linesOnSameStock = manualLines
+            .filter(line => lineKey(line) === key && !sourceMaterialIds.includes(line.jo_material_id))
+            .reduce((total, line) => total + line.quantity, 0);
+        return getManualAllocationTargetLimit(
+            candidate.available_quantity,
+            linesOnSameStock,
+            remainingQuantity,
+            alreadyAllocatedTowardTarget
+        );
+    };
+
     const handleQuantityChange = (candidate: AllocationPreview["materials"][number]["candidates"][number], value: string) => {
         const key = lineKey(candidate);
         setFormError(null);
         setManualInputValues(previous => ({ ...previous, [key]: value }));
 
         const requestedQuantity = value.trim() === "" ? 0 : Number(value);
-        const maxAllowed = getCandidateMaxAllowed(candidate);
+        const maxAllowed = getCandidateStockLimit(candidate);
         if (!Number.isFinite(requestedQuantity) || requestedQuantity < 0) {
             setManualInputErrors(previous => ({ ...previous, [key]: "Enter a quantity of zero or greater." }));
             return;
@@ -299,7 +319,7 @@ function AllocationForm({
     };
 
     const setMax = (candidate: AllocationPreview["materials"][number]["candidates"][number]) => {
-        handleQuantityChange(candidate, String(getCandidateMaxAllowed(candidate)));
+        handleQuantityChange(candidate, String(getCandidateTargetMaxAllowed(candidate)));
     };
 
     const handleSubmit = async (event: React.FormEvent) => {
@@ -452,7 +472,7 @@ function AllocationForm({
                                             const selectedQuantityForCandidate = selectedLines
                                                 .filter(line => lineKey(line) === candidateKey)
                                                 .reduce((total, line) => total + line.quantity, 0);
-                                            const maxAllowed = getCandidateMaxAllowed(candidate);
+                                            const maxAllowed = getCandidateStockLimit(candidate);
                                             const inputError = manualInputErrors[candidateKey];
                                             return (
                                                 <tr key={candidate.allocation_line_id} className="border-t border-border/70">

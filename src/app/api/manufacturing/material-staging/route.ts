@@ -23,6 +23,7 @@ import { fetchMmInventoryMovements, MmInventoryMovementError } from "../services
 import { loadMmLots, mmLotId } from "../services/mm-lots.service";
 import { canStageJobOrderMaterials, isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 import { groupMaterialRequirements } from "@/modules/manufacturing-management/planning-engineering/utils/material-requirement-groups";
+import { getMaterialRequiredQuantity } from "@/modules/manufacturing-management/material-staging/utils/allocation-quantity";
 import {
     authorizeJobOrderModuleAccess,
     JOB_ORDER_MODULE_PATHS
@@ -535,7 +536,7 @@ export async function GET(request: Request) {
                     const product = productMap.get(productId);
                     return material.uom_id ?? product?.unit_of_measurement ?? product?.uom_id;
                 },
-                quantity: (material) => material.allocated_quantity
+                quantity: getMaterialRequiredQuantity
             });
             let totalMaterialsCount = 0;
             let stagedMaterialsCount = 0;
