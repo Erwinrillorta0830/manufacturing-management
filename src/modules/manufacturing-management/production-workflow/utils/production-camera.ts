@@ -1,23 +1,27 @@
+export function shouldUseNativeCameraCapture(isSecureContext: boolean, hasGetUserMedia: boolean): boolean {
+    return !isSecureContext || !hasGetUserMedia;
+}
+
 export function getProductionCameraErrorMessage(error: unknown): string {
     const errorName = error && typeof error === "object" && "name" in error
         ? String(error.name)
         : "";
 
     if (errorName === "NotFoundError" || errorName === "DevicesNotFoundError") {
-        return "No camera detected. Connect or enable a camera, or use Choose File to select an image.";
+        return "No browser camera detected. Use the device capture controls or choose a file.";
     }
 
     if (errorName === "OverconstrainedError" || errorName === "ConstraintNotSatisfiedError") {
-        return "No compatible camera detected. Try another camera, or use Choose File to select an image.";
+        return "No compatible browser camera detected. Use the device capture controls or choose a file.";
     }
 
     if (errorName === "NotAllowedError" || errorName === "PermissionDeniedError" || errorName === "SecurityError") {
-        return "Camera access was blocked. Allow camera permission in your browser settings, or use Choose File to select an image.";
+        return "Browser camera access was blocked. Use the device capture controls or choose a file.";
     }
 
     if (errorName === "NotReadableError" || errorName === "TrackStartError") {
-        return "The camera is unavailable or already in use. Close other apps using it and try again, or use Choose File.";
+        return "The browser camera is unavailable or already in use. Use the device capture controls or choose a file.";
     }
 
-    return "Unable to access a camera. Check that one is connected and that this page has camera permission, or use Choose File.";
+    return "Unable to access the browser camera. Use the device capture controls or choose a file.";
 }
