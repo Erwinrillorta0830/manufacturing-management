@@ -488,8 +488,8 @@ export default function ProductionWorkflowModule() {
                     <>
                     {/* Header */}
                     <div className="bg-gradient-to-r from-primary/10 via-primary/5 to-background p-4 sm:p-5 border-b border-border/50 shrink-0">
-                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                            <div className="space-y-1">
+                        <div className="flex flex-col items-start justify-between gap-4 xl:flex-row xl:items-center">
+                            <div className="min-w-0 space-y-1 xl:max-w-[38%]">
                                 <div className="flex flex-wrap items-center gap-2">
                                     <span className="text-xs font-semibold uppercase tracking-wider text-primary bg-primary/10 px-2 py-0.5 rounded-full">
                                         Job Order Execution Terminal
@@ -520,7 +520,7 @@ export default function ProductionWorkflowModule() {
                                 disabled={jobOrderActionLocked}
                                 aria-busy={jobOrderActionLocked}
                                 aria-label="Job Order actions"
-                                className="m-0 flex min-w-0 flex-wrap items-start justify-end gap-x-4 gap-y-2 border-0 p-0 shrink-0 w-full sm:w-auto sm:justify-start sm:pr-10 sm:mr-2"
+                                className="m-0 grid w-full min-w-0 grid-cols-1 gap-3 border-0 p-0 sm:grid-cols-2 xl:flex xl:flex-1 xl:flex-wrap xl:items-start xl:justify-start xl:gap-x-3 xl:gap-y-2"
                             >
                                 {(isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.DRAFT)
                                     || isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.FOR_PICKING)
