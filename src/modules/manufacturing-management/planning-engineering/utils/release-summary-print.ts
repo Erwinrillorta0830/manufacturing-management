@@ -170,6 +170,9 @@ export function buildReleaseSummaryHtml(data: ReleaseSummaryPrintData, options?:
                         .jo-summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; font-size: 11px; }
                         .jo-summary-label { font-weight: bold; color: #64748b; font-size: 9px; text-transform: uppercase; margin-bottom: 2px; }
                         .jo-summary-value { font-weight: 700; color: #0f172a; font-size: 12px; }
+                        .preview-controls { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 15px; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; }
+                        .preview-controls button { border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; padding: 6px 12px; color: #0f172a; font: inherit; font-weight: 600; cursor: pointer; }
+                        .preview-controls button:hover { background: #f1f5f9; }
                         table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 11px; }
                         table:last-of-type { margin-bottom: 0; }
                         thead { display: table-header-group; }
@@ -184,7 +187,14 @@ export function buildReleaseSummaryHtml(data: ReleaseSummaryPrintData, options?:
                         }
                     </style>
                 </head>
-                <body onload="window.print(); window.close()">
+                <body>
+                    <div class="no-print preview-controls">
+                        <strong>${escapeHtml(documentTitle)} Preview</strong>
+                        <div style="display: flex; gap: 8px;">
+                            <button type="button" onclick="window.print()">Print Summary</button>
+                            <button type="button" onclick="window.close()">Close Preview</button>
+                        </div>
+                    </div>
                     <div class="header">
                         <div>
                             <div class="title">${escapeHtml(documentTitle)}</div>

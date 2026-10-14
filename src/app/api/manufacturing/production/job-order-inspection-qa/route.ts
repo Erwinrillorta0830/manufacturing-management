@@ -18,7 +18,7 @@ import { productionYieldImageUrl } from "@/modules/manufacturing-management/prod
 import { directusFileMetadata, fetchDirectusFileMetadata } from "@/app/api/manufacturing/_directus-file-metadata";
 import { getYieldOutputTotals } from "@/modules/manufacturing-management/manufacturing-job-order-inspection-qa/utils/yield-output-quantities";
 import { buildJobOrderDailyYieldSummaryPage } from "@/modules/manufacturing-management/manufacturing-job-order-inspection-qa/utils/summary-query";
-import { buildYieldSummaryIndex } from "./_yield-summary-index";
+import { buildYieldQAStatusCountIndex, buildYieldSummaryIndex } from "./_yield-summary-index";
 import type { JobOrderDailyYieldSummaryQuery } from "@/modules/manufacturing-management/manufacturing-job-order-inspection-qa/types";
 
 export const runtime = "nodejs";
@@ -281,18 +281,16 @@ async function loadJobOrderSummaries(jobOrderIds?: number[]) {
     );
     const assessments = buildQAYieldAssessments(relevantYields, inspections, routes);
     const acceptedByJobOrder = acceptedQuantityByJobOrder(assessments);
-    const unresolvedByJobOrder = new Map<number, number>();
-    assessments.forEach((assessment) => {
-        if (assessment.qaStatus === "Passed") return;
-        unresolvedByJobOrder.set(
-            assessment.jobOrderId,
-            (unresolvedByJobOrder.get(assessment.jobOrderId) || 0) + 1
-        );
-    });
+    const qaStatusCountsByJobOrder = buildYieldQAStatusCountIndex(
+        assessments,
+        (assessment) => assessment.jobOrderId,
+        (assessment) => assessment.qaStatus
+    );
 
     return eligibleJobOrders.map((jobOrder) => {
         const id = jobOrderId(jobOrder);
         const yieldSummary = yieldsByJobOrder.get(id);
+        const qaStatusCounts = qaStatusCountsByJobOrder.get(id);
         const productId = relationId(jobOrder.product_id, ["product_id", "id"]);
         const product = productsById.get(productId);
         return {
@@ -307,7 +305,9 @@ async function loadJobOrderSummaries(jobOrderIds?: number[]) {
             targetQuantity: numberValue(jobOrder.target_quantity),
             producedQuantity: acceptedByJobOrder.get(id) || 0,
             yieldCount: yieldSummary?.count || 0,
-            unresolvedYieldCount: unresolvedByJobOrder.get(id) || 0,
+            pendingYieldCount: qaStatusCounts?.pendingYieldCount || 0,
+            discrepancyYieldCount: qaStatusCounts?.discrepancyYieldCount || 0,
+            unresolvedYieldCount: qaStatusCounts?.unresolvedYieldCount || 0,
             latestYieldAt: yieldSummary?.latestYieldAt ?? null,
             createdAt: timestampValue(jobOrder.created_at),
             modifiedAt: timestampValue(jobOrder.modified_at),
@@ -498,6 +498,11 @@ async function loadJobOrderDetails(id: number) {
         ...row,
         lotName: row.mmLotId ? textValue(mmLotsById.get(row.mmLotId)?.lot_name) || `Lot #${row.mmLotId}` : null
     }));
+    const qaStatusCounts = buildYieldQAStatusCountIndex(
+        dailyYields,
+        (row) => row.jobOrderId,
+        (row) => row.qaStatus
+    ).get(id);
 
     let closeReadiness: JobOrderClosureReadiness;
     try {
@@ -528,7 +533,9 @@ async function loadJobOrderDetails(id: number) {
         producedQuantity: dailyYields.reduce((sum, row) => (
             sum + (row.qaStatus === "Passed" ? row.totalQuantity : 0)
         ), 0),
-        unresolvedYieldCount: dailyYields.filter((row) => row.qaStatus !== "Passed").length,
+        pendingYieldCount: qaStatusCounts?.pendingYieldCount || 0,
+        discrepancyYieldCount: qaStatusCounts?.discrepancyYieldCount || 0,
+        unresolvedYieldCount: qaStatusCounts?.unresolvedYieldCount || 0,
         latestYieldAt: timestampValue(dailyYields[0]?.loggedAt || dailyYields[0]?.productionDate),
         routes: routeModels,
         dailyYields,

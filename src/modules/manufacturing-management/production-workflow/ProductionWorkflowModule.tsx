@@ -61,6 +61,7 @@ export default function ProductionWorkflowModule() {
         clockedInCount,
         refreshOperators,
         loadingJobs,
+        refreshingJobs,
         loadingOperators,
         pendingTimerKey,
         searchQuery,
@@ -294,13 +295,15 @@ export default function ProductionWorkflowModule() {
                         <Button 
                             variant="outline" 
                             size="default" 
+                            disabled={loadingJobs || refreshingJobs}
                             onClick={() => {
                                 fetchJobs(selectedJobOrderId);
                                 refreshOperators();
                             }}
                             className="h-10 text-xs font-bold shadow-sm bg-background border-input hover:bg-accent"
                         >
-                            <RefreshCw className="mr-2 h-4 w-4" /> Reload Terminal
+                            <RefreshCw className={`mr-2 h-4 w-4 ${refreshingJobs ? "animate-spin" : ""}`} aria-hidden="true" />
+                            {refreshingJobs ? "Updating Terminal…" : "Reload Terminal"}
                         </Button>
                         <Button
                             variant="ghost"
@@ -369,6 +372,7 @@ export default function ProductionWorkflowModule() {
                     searchQuery={searchQuery}
                     setSearchQuery={setSearchQuery}
                     loadingJobs={loadingJobs}
+                    refreshingJobs={refreshingJobs}
                     branches={branches}
                     selectedBranchFilter={selectedBranchFilter}
                     setSelectedBranchFilter={setSelectedBranchFilter}
@@ -511,116 +515,50 @@ export default function ProductionWorkflowModule() {
                                 )}
                             </div>
                             
-                            {/* Action Buttons strip */}
+                            {/* Status-driven primary action, followed by grouped supporting actions. */}
                             <fieldset
                                 disabled={jobOrderActionLocked}
                                 aria-busy={jobOrderActionLocked}
                                 aria-label="Job Order actions"
-                                className="m-0 flex min-w-0 flex-wrap items-center justify-end gap-2 border-0 p-0 shrink-0 w-full sm:w-auto sm:justify-start sm:pr-10 sm:mr-2"
+                                className="m-0 flex min-w-0 flex-wrap items-start justify-end gap-x-4 gap-y-2 border-0 p-0 shrink-0 w-full sm:w-auto sm:justify-start sm:pr-10 sm:mr-2"
                             >
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => setIsHistoryOpen(true)}
-                                    className="h-10 text-xs font-bold border-border shadow-sm"
-                                >
-                                    <History className="mr-1.5 h-4 w-4 text-primary" /> Status History
-                                </Button>
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => setIsGenealogyOpen(true)}
-                                    className="h-10 text-xs font-bold border-border shadow-sm"
-                                >
-                                    <GitBranch className="mr-1.5 h-4 w-4 text-primary" /> Genealogy Audit
-                                </Button>
-                                {isSelectedJobOrderCancellable && (
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => openCancellationModal("cancel")}
-                                        className="h-10 text-xs font-bold border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                                    >
-                                        <XCircle className="mr-1.5 h-4 w-4" /> Cancel Job Order
-                                    </Button>
-                                )}
-                                {canReturnProductionMaterials && (
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => openCancellationModal("return")}
-                                        className="h-10 text-xs font-bold border-amber-500/40 text-amber-600 hover:bg-amber-500/10 hover:text-amber-600"
-                                    >
-                                        <Undo2 className="mr-1.5 h-4 w-4" /> Return Raw Materials
-                                    </Button>
-                                )}
-                                {isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.FOR_PICKING, JOB_ORDER_STATUS.PICKED) && (
-                                    <Button
-                                        onClick={() => void handleStartProduction()}
-                                        disabled={workflowSubmitting || !canStartSelectedJobOrder || jobOrderActionLocked}
-                                        title={canStartSelectedJobOrder ? undefined : isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.FOR_PICKING)
-                                            ? "Materials must be marked as Picked in Material Staging before starting production."
-                                            : loadingJobOrderMaterials
-                                                ? "Checking material staging status."
-                                                : "Stage all required materials before starting production."}
-                                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-10 text-xs px-5 shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/20 transition-all duration-200 flex items-center disabled:opacity-60"
-                                    >
-                                        <Play className="mr-1.5 h-4 w-4" /> {workflowSubmitting ? "Starting Production..." : "Start Production"}
-                                    </Button>
-                                )}
-                                {isJobOrderStatus(
-                                    selectedJobOrderStatus,
-                                    JOB_ORDER_STATUS.FOR_PICKING,
-                                    JOB_ORDER_STATUS.PICKED,
-                                    JOB_ORDER_STATUS.IN_PRODUCTION
-                                )
-                                    && sortedTasks.length > 1
-                                    && sortedTasks.some((task) => !task.status || task.status === "Pending") && (
-                                    <Button
-                                        variant="outline"
-                                        disabled={selectedJobOrderOutputTargetReached}
-                                        onClick={() => setIsRouteAssignmentOpen(true)}
-                                        title={selectedJobOrderOutputTargetReached ? "Production target reached; route configuration is locked." : undefined}
-                                        className="border-primary/40 text-primary hover:bg-primary/10 font-bold h-10 text-xs px-5 shadow-sm transition-all duration-200 flex items-center"
-                                    >
-                                        <GitBranch className="mr-1.5 h-4 w-4" /> Assign Workstations per Route
-                                    </Button>
-                                )}
-                                {isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.DRAFT) ? (
-                                    <Button
-                                        onClick={handleReleaseDraftJO}
-                                        disabled={releasingDraft}
-                                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-10 text-xs px-5 shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/20 transition-all duration-200 flex items-center"
-                                    >
-                                        <ClipboardCheck className="mr-1.5 h-4.5 w-4.5" /> {releasingDraft ? "Initializing..." : "Initialize Job Order"}
-                                    </Button>
-                                ) : isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.IN_PRODUCTION) ? (
-                                    <>
-                                        <Button
-                                            onClick={() => setIsShiftLogOpen(true)}
-                                            disabled={!hasCompletedJobOrderTimer || selectedJobOrderOutputTargetReached}
-                                            title={selectedJobOrderOutputTargetReached
-                                                ? "The good-output target is already reached; complete open routes and send this Job Order to QA."
-                                                : !hasCompletedJobOrderTimer
-                                                    ? "Complete at least one operator timer to enable this action."
-                                                    : undefined}
-                                            className="bg-primary hover:bg-primary/95 text-white font-bold h-10 text-xs px-5 shadow-md shadow-primary/10 hover:shadow-primary/20 transition-all duration-200 flex items-center"
-                                        >
-                                            <ClipboardCheck className="mr-1.5 h-4.5 w-4.5" /> End-of-Shift / Step Progress
-                                        </Button>
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={() => setWorkflowAction("place-on-hold")}
-                                            disabled={selectedJobOrderOutputTargetReached}
-                                            title={selectedJobOrderOutputTargetReached ? "Production target reached; finalize the Job Order for QA." : undefined}
-                                            className="h-10 text-xs font-bold border-amber-500/40 text-amber-700 hover:bg-amber-500/10 dark:text-amber-400"
-                                        >
-                                            <PauseCircle className="mr-1.5 h-4 w-4" /> Place on Hold
-                                        </Button>
-                                        {selectedJobOrderOutputTargetReached && (
+                                {(isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.DRAFT)
+                                    || isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.FOR_PICKING)
+                                    || isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.PICKED)
+                                    || isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.IN_PRODUCTION)
+                                    || isSelectedJobOrderHeld) && (
+                                    <div role="group" aria-label="Next action" className="flex min-w-0 flex-col gap-1.5">
+                                        <span className="px-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Next action</span>
+                                        {isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.DRAFT) ? (
                                             <Button
-                                                size="sm"
+                                                onClick={handleReleaseDraftJO}
+                                                disabled={releasingDraft}
+                                                className="h-10 bg-emerald-600 px-4 text-xs font-bold text-white shadow-sm hover:bg-emerald-500"
+                                            >
+                                                <ClipboardCheck className="mr-1.5 h-4 w-4" /> {releasingDraft ? "Initializing..." : "Initialize Job Order"}
+                                            </Button>
+                                        ) : isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.FOR_PICKING) ? (
+                                            <Button
+                                                onClick={handleJourneyAction}
+                                                disabled={Boolean(selectedJobOrderJourney?.blockers.length || selectedJobOrderJourney?.nextAction?.blockedReason)}
+                                                title={selectedJobOrderJourney?.nextAction?.blockedReason || selectedJobOrderJourney?.blockers[0]}
+                                                className="h-10 bg-primary px-4 text-xs font-bold text-primary-foreground shadow-sm hover:bg-primary/90"
+                                            >
+                                                <ClipboardCheck className="mr-1.5 h-4 w-4" /> {selectedJobOrderJourney?.nextAction?.label || "Stage Materials"}
+                                            </Button>
+                                        ) : isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.PICKED) ? (
+                                            <Button
+                                                onClick={() => void handleStartProduction()}
+                                                disabled={workflowSubmitting || !canStartSelectedJobOrder || jobOrderActionLocked}
+                                                title={canStartSelectedJobOrder ? undefined : loadingJobOrderMaterials
+                                                    ? "Checking material staging status."
+                                                    : "Stage all required materials before starting production."}
+                                                className="h-10 bg-emerald-600 px-4 text-xs font-bold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-60"
+                                            >
+                                                <Play className="mr-1.5 h-4 w-4" /> {workflowSubmitting ? "Starting Production..." : "Start Production"}
+                                            </Button>
+                                        ) : isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.IN_PRODUCTION) && selectedJobOrderOutputTargetReached ? (
+                                            <Button
                                                 disabled={!allRoutesCompleted || hasActiveJobOrderTimer || workflowSubmitting}
                                                 onClick={() => setWorkflowAction("complete-production")}
                                                 title={!allRoutesCompleted
@@ -628,41 +566,136 @@ export default function ProductionWorkflowModule() {
                                                     : hasActiveJobOrderTimer
                                                         ? "Stop all active operator timers before finalizing."
                                                         : "Send the completed production run to QA and reconciliation."}
-                                                className="h-10 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white"
+                                                className="h-10 bg-emerald-600 px-4 text-xs font-bold text-white shadow-sm hover:bg-emerald-500"
                                             >
-                                                <CheckCircle className="mr-1.5 h-4 w-4" /> Complete & Close JO
+                                                <CheckCircle className="mr-1.5 h-4 w-4" /> Complete &amp; Close JO
                                             </Button>
-                                        )}
+                                        ) : isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.IN_PRODUCTION) ? (
+                                            <Button
+                                                onClick={() => setIsShiftLogOpen(true)}
+                                                disabled={!hasCompletedJobOrderTimer}
+                                                title={!hasCompletedJobOrderTimer ? "Complete at least one operator timer to enable this action." : undefined}
+                                                className="h-10 bg-primary px-4 text-xs font-bold text-primary-foreground shadow-sm hover:bg-primary/90"
+                                            >
+                                                <ClipboardCheck className="mr-1.5 h-4 w-4" /> Log Shift Run
+                                            </Button>
+                                        ) : isSelectedJobOrderHeld ? (
+                                            <Button
+                                                size="sm"
+                                                onClick={() => setWorkflowAction("resume-production")}
+                                                className="h-10 bg-emerald-600 px-4 text-xs font-bold text-white shadow-sm hover:bg-emerald-500"
+                                            >
+                                                <CheckCircle className="mr-1.5 h-4 w-4" /> Resume Production
+                                            </Button>
+                                        ) : null}
+                                    </div>
+                                )}
+
+                                <div role="group" aria-label="Review" className="flex min-w-0 flex-col gap-1.5">
+                                    <span className="px-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Review</span>
+                                    <div className="flex flex-wrap items-center gap-2">
                                         <Button
                                             variant="outline"
                                             size="sm"
-                                            onClick={() => setWorkflowAction("terminate-production")}
-                                            disabled={selectedJobOrderOutputTargetReached}
-                                            title={selectedJobOrderOutputTargetReached ? "Production target reached; finalize the Job Order for QA." : undefined}
-                                            className="h-10 text-xs font-bold border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                            onClick={() => setIsHistoryOpen(true)}
+                                            className="h-10 text-xs font-bold border-border shadow-sm"
                                         >
-                                            <XCircle className="mr-1.5 h-4 w-4" /> Terminate
-                                        </Button>
-                                    </>
-                                ) : isSelectedJobOrderHeld ? (
-                                    <>
-                                        <Button
-                                            size="sm"
-                                            onClick={() => setWorkflowAction("resume-production")}
-                                            className="h-10 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white"
-                                        >
-                                            <CheckCircle className="mr-1.5 h-4 w-4" /> Resume Production
+                                            <History className="mr-1.5 h-4 w-4 text-primary" /> Status History
                                         </Button>
                                         <Button
                                             variant="outline"
                                             size="sm"
-                                            onClick={() => setWorkflowAction("terminate-production")}
-                                            className="h-10 text-xs font-bold border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                            onClick={() => setIsGenealogyOpen(true)}
+                                            className="h-10 text-xs font-bold border-border shadow-sm"
                                         >
-                                            <XCircle className="mr-1.5 h-4 w-4" /> Terminate
+                                            <GitBranch className="mr-1.5 h-4 w-4 text-primary" /> Genealogy Audit
                                         </Button>
-                                    </>
+                                    </div>
+                                </div>
+
+                                {(isJobOrderStatus(
+                                    selectedJobOrderStatus,
+                                    JOB_ORDER_STATUS.FOR_PICKING,
+                                    JOB_ORDER_STATUS.PICKED,
+                                    JOB_ORDER_STATUS.IN_PRODUCTION
+                                ) && sortedTasks.length > 1 && sortedTasks.some((task) => !task.status || task.status === "Pending"))
+                                    || isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.IN_PRODUCTION) ? (
+                                    <div role="group" aria-label="Workflow tools" className="flex min-w-0 flex-col gap-1.5">
+                                        <span className="px-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Workflow tools</span>
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            {isJobOrderStatus(
+                                                selectedJobOrderStatus,
+                                                JOB_ORDER_STATUS.FOR_PICKING,
+                                                JOB_ORDER_STATUS.PICKED,
+                                                JOB_ORDER_STATUS.IN_PRODUCTION
+                                            ) && sortedTasks.length > 1 && sortedTasks.some((task) => !task.status || task.status === "Pending") && (
+                                                <Button
+                                                    variant="outline"
+                                                    disabled={selectedJobOrderOutputTargetReached}
+                                                    onClick={() => setIsRouteAssignmentOpen(true)}
+                                                    title={selectedJobOrderOutputTargetReached ? "Production target reached; route configuration is locked." : undefined}
+                                                    className="h-10 border-primary/40 px-3 text-xs font-bold text-primary shadow-sm hover:bg-primary/10"
+                                                >
+                                                    <GitBranch className="mr-1.5 h-4 w-4" /> Assign Workstations per Route
+                                                </Button>
+                                            )}
+                                            {isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.IN_PRODUCTION) && (
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => setWorkflowAction("place-on-hold")}
+                                                    disabled={selectedJobOrderOutputTargetReached}
+                                                    title={selectedJobOrderOutputTargetReached ? "Production target reached; finalize the Job Order for QA." : undefined}
+                                                    className="h-10 text-xs font-bold border-amber-500/40 text-amber-700 hover:bg-amber-500/10 dark:text-amber-400"
+                                                >
+                                                    <PauseCircle className="mr-1.5 h-4 w-4" /> Place on Hold
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </div>
                                 ) : null}
+
+                                {(isSelectedJobOrderCancellable || canReturnProductionMaterials
+                                    || isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.IN_PRODUCTION)
+                                    || isSelectedJobOrderHeld) && (
+                                    <div role="group" aria-label="Exception actions" className="flex min-w-0 flex-col gap-1.5">
+                                        <span className="px-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Exception actions</span>
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            {isSelectedJobOrderCancellable && (
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => openCancellationModal("cancel")}
+                                                    className="h-10 text-xs font-bold border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                                >
+                                                    <XCircle className="mr-1.5 h-4 w-4" /> Cancel Job Order
+                                                </Button>
+                                            )}
+                                            {canReturnProductionMaterials && (
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => openCancellationModal("return")}
+                                                    className="h-10 text-xs font-bold border-amber-500/40 text-amber-600 hover:bg-amber-500/10 hover:text-amber-600"
+                                                >
+                                                    <Undo2 className="mr-1.5 h-4 w-4" /> Return Raw Materials
+                                                </Button>
+                                            )}
+                                            {isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.IN_PRODUCTION, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD) && (
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => setWorkflowAction("terminate-production")}
+                                                    disabled={isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.IN_PRODUCTION) && selectedJobOrderOutputTargetReached}
+                                                    title={selectedJobOrderOutputTargetReached ? "Production target reached; finalize the Job Order for QA." : undefined}
+                                                    className="h-10 text-xs font-bold border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                                >
+                                                    <XCircle className="mr-1.5 h-4 w-4" /> Terminate
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
                             </fieldset>
                         </div>
 
@@ -717,22 +750,14 @@ export default function ProductionWorkflowModule() {
                                 action={selectedCalloutAction}
                                 blockers={selectedJobOrderJourney?.blockers || []}
                                 title="What's next"
-                                onAction={!jobOrderActionLocked && (onBenchNextAction
-                                    ? hasCompletedJobOrderTimer
-                                    : Boolean(selectedJobOrder)) ? handleJourneyAction : undefined}
                             />
                         )}
                         {isSelectedJobOrderHeld && !isSelectedJobOrderCancelled && (
-                            <div className="flex flex-col gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs font-semibold text-amber-700 dark:text-amber-400 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs font-semibold text-amber-700 dark:text-amber-400">
                                 <span className="flex items-start gap-2">
                                     <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                                     This Job Order is on hold. Resolve the issue and record resolution remarks before continuing production.
                                 </span>
-                                <div className="flex items-center gap-2 shrink-0">
-                                    <Button size="sm" variant="outline" disabled={jobOrderActionLocked} onClick={() => setWorkflowAction("resume-production")} className="h-8 border-amber-500/40 text-amber-700 hover:bg-amber-500/10 dark:text-amber-400">
-                                        Resume Production
-                                    </Button>
-                                </div>
                             </div>
                         )}
                         {/* Job Order progress summary above the operation tracker */}

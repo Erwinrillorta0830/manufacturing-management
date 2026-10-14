@@ -93,6 +93,8 @@ export function useProductionWorkflow() {
     
     // UI states
     const [loadingJobs, setLoadingJobs] = useState(true);
+    const [refreshingJobs, setRefreshingJobs] = useState(false);
+    const hasLoadedJobsRef = useRef(false);
     const [loadingOperators, setLoadingOperators] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
     const [branches, setBranches] = useState<any[]>([]);
@@ -326,9 +328,16 @@ const selectedTask = useMemo(() => {
         silent = false,
         refreshSelectedDetails = true
     ): Promise<boolean> => {
-        if (!silent) setLoadingJobs(true);
+        if (!silent) {
+            if (hasLoadedJobsRef.current) {
+                setRefreshingJobs(true);
+            } else {
+                setLoadingJobs(true);
+            }
+        }
         try {
             const queueRows = await fetchTerminalJobOrderQueue();
+            hasLoadedJobsRef.current = true;
             setJobOrders(queueRows);
 
             const nextId = selectIdAfterFetch || selectedJobOrderIdRef.current || "";
@@ -347,7 +356,10 @@ const selectedTask = useMemo(() => {
             if (!silent) toast.error(err.message || "Failed to load Job Orders from terminal.");
             return false;
         } finally {
-            if (!silent) setLoadingJobs(false);
+            if (!silent) {
+                setLoadingJobs(false);
+                setRefreshingJobs(false);
+            }
         }
     }, [loadSelectedJobOrderDetails]);
 
@@ -1327,6 +1339,7 @@ const selectedTask = useMemo(() => {
         refreshOperators,
         pendingTimerKey,
         loadingJobs,
+        refreshingJobs,
         loadingOperators,
         searchQuery,
         setSearchQuery,

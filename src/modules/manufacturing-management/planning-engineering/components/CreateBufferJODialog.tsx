@@ -1157,6 +1157,8 @@ export function CreateBufferJODialog({
     };
 
     const handleConfirmRelease = async (initialize = false) => {
+        if (initialize && currentStep !== 4) return;
+
         const branchId = parseValidBranchId(selectedBranchId);
         if (!selectedProductId || branchId === null) {
             toast.error("Please select a target branch before creating a Job Order.");
@@ -1469,6 +1471,7 @@ export function CreateBufferJODialog({
                                 {submitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                                 Save as Draft
                         </Button>
+                        {currentStep === 4 && (
                         <Button
                                 size="sm"
                                 onClick={() => handleConfirmRelease(true)}
@@ -1484,6 +1487,7 @@ export function CreateBufferJODialog({
                                     "Initialize / Release JO"
                                 )}
                         </Button>
+                        )}
                     </div>
                     </div>
                 </footer>

@@ -49,14 +49,35 @@ function LineStack({ lines, render }: { lines: SalesOrderDetail[]; render: (line
 
 function ProductionTableSkeleton() {
     return (
-        <div className="space-y-3 p-6" aria-label="Loading Sales Orders in production">
-            {Array.from({ length: 4 }).map((_, index) => (
-                <div key={index} className="grid grid-cols-6 gap-4 animate-pulse">
-                    {Array.from({ length: 6 }).map((__, cellIndex) => (
-                        <div key={cellIndex} className="h-10 rounded-md bg-muted" />
-                    ))}
-                </div>
-            ))}
+        <div role="status" aria-busy="true" aria-label="Loading Sales Orders in production">
+            <div className="2xl:hidden space-y-3 p-3">
+                {Array.from({ length: 3 }).map((_, index) => (
+                    <div key={index} className="space-y-3 rounded-lg border p-3 animate-pulse">
+                        <div className="flex items-center justify-between gap-3">
+                            <div className="h-5 w-36 rounded bg-muted" />
+                            <div className="h-5 w-24 rounded-full bg-muted" />
+                        </div>
+                        <div className="h-4 w-2/3 rounded bg-muted" />
+                        <div className="space-y-2 border-t pt-3">
+                            <div className="h-4 w-3/4 rounded bg-muted" />
+                            <div className="grid grid-cols-3 gap-2">
+                                <div className="h-12 rounded bg-muted" />
+                                <div className="h-12 rounded bg-muted" />
+                                <div className="h-12 rounded bg-muted" />
+                            </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+            <div className="hidden 2xl:block space-y-3 p-6">
+                {Array.from({ length: 4 }).map((_, index) => (
+                    <div key={index} className="grid grid-cols-8 gap-4 animate-pulse">
+                        {Array.from({ length: 8 }).map((__, cellIndex) => (
+                            <div key={cellIndex} className="h-10 rounded-md bg-muted" />
+                        ))}
+                    </div>
+                ))}
+            </div>
         </div>
     );
 }
@@ -158,7 +179,100 @@ export function InProductionSalesOrdersTable({
                                 </Button>
                             </div>
                         )}
-                        <div className="max-h-[50vh] overflow-x-auto overflow-y-auto">
+                        <div className="2xl:hidden max-h-[50vh] space-y-3 overflow-y-auto p-3">
+                            {visibleGroups.map((group) => (
+                                <article key={group.order.order_id} className="rounded-lg border bg-card p-3 shadow-sm">
+                                    <header className="flex flex-wrap items-start justify-between gap-2">
+                                        <div className="min-w-0">
+                                            <div className="break-all font-mono text-sm font-bold text-foreground">{group.order.order_no}</div>
+                                            <div className="mt-1 break-words text-xs text-muted-foreground">
+                                                <span className="font-semibold">Customer: </span>{group.order.customer_name || group.order.customer_code || "Not specified"}
+                                            </div>
+                                            <div className="mt-1 text-[11px] text-muted-foreground">
+                                                {group.lines.length} product line{group.lines.length === 1 ? "" : "s"}
+                                            </div>
+                                        </div>
+                                        <Badge variant="outline" className="max-w-full border-sky-500/30 bg-sky-500/10 font-bold text-sky-700 dark:text-sky-300">
+                                            {group.order.order_status}
+                                        </Badge>
+                                    </header>
+
+                                    <div className="mt-3 space-y-3">
+                                        {group.lines.map((line) => (
+                                            <section key={line.detail_id} className="space-y-3 border-t pt-3">
+                                                <div>
+                                                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Product / BOM Version</div>
+                                                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-sm font-semibold text-foreground">
+                                                        <span className="break-words">{line.product_id?.product_name || "Unknown product"}</span>
+                                                        <span className="rounded border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                                                            {line.product_id?.uom || "Pieces"}
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-[11px] font-medium text-primary">BOM version: {line.bom_version_name || "No Version"}</div>
+                                                </div>
+
+                                                <div>
+                                                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Connected Job Orders</div>
+                                                    {line.linkedJobOrders && line.linkedJobOrders.length > 0 ? (
+                                                        <div className="mt-1 space-y-2">
+                                                            {line.linkedJobOrders.map((jobOrder) => (
+                                                                <div key={jobOrder.jobOrderId} className="rounded-md bg-muted/30 p-2">
+                                                                    <div className="flex flex-wrap items-center gap-1.5">
+                                                                        <span className="break-all font-mono text-xs font-semibold text-foreground">{jobOrder.jobOrderNo}</span>
+                                                                        {jobOrder.isTerminated && (
+                                                                            <Badge variant="outline" className="border-orange-500/30 bg-orange-500/10 px-1.5 py-0 text-[9px] text-orange-700 dark:text-orange-300">
+                                                                                Terminated
+                                                                            </Badge>
+                                                                        )}
+                                                                    </div>
+                                                                    <div className="mt-1 flex flex-wrap gap-x-2 text-[11px] text-muted-foreground">
+                                                                        <span>{displayJobOrderStatus(jobOrder.status)}</span>
+                                                                        <span>{jobOrder.allocatedQuantity.toLocaleString()} allocated</span>
+                                                                        <span>{jobOrder.producedQuantity.toLocaleString()} produced</span>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    ) : <div className="mt-1 text-xs text-muted-foreground">No connected Job Order</div>}
+                                                </div>
+
+                                                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                                                    <div className="rounded-md bg-muted/30 p-2">
+                                                        <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Ordered</div>
+                                                        <div className="mt-1 text-xs font-bold text-foreground">{Number(line.ordered_quantity || 0).toLocaleString()} {line.product_id?.uom || "pcs"}</div>
+                                                    </div>
+                                                    <div className="rounded-md bg-muted/30 p-2">
+                                                        <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Planned</div>
+                                                        <div className="mt-1 text-xs font-bold text-amber-700">{Number(line.planned_quantity || 0).toLocaleString()}</div>
+                                                    </div>
+                                                    <div className="rounded-md bg-muted/30 p-2">
+                                                        <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Remaining</div>
+                                                        <div className="mt-1 text-xs font-bold text-emerald-700">{remainingQuantity(line).toLocaleString()} {line.product_id?.uom || "pcs"}</div>
+                                                    </div>
+                                                </div>
+
+                                                <div>
+                                                    {canCreateReplacementJobOrder(line) ? (
+                                                        <Button
+                                                            type="button"
+                                                            size="sm"
+                                                            variant="outline"
+                                                            className="min-h-10 w-full gap-1.5"
+                                                            onClick={() => onCreateJobOrder(line.detail_id)}
+                                                            aria-label={`Create replacement Job Order for ${group.order.order_no}, ${line.product_id?.product_name || "product"}`}
+                                                        >
+                                                            <Plus className="h-3.5 w-3.5" />
+                                                            Create JO
+                                                        </Button>
+                                                    ) : <div className="text-xs text-muted-foreground">No action available</div>}
+                                                </div>
+                                            </section>
+                                        ))}
+                                    </div>
+                                </article>
+                            ))}
+                        </div>
+                        <div className="hidden 2xl:block max-h-[50vh] overflow-x-auto overflow-y-auto">
                             <Table>
                             <TableHeader className="sticky top-0 z-10 bg-muted/5">
                                 <TableRow>

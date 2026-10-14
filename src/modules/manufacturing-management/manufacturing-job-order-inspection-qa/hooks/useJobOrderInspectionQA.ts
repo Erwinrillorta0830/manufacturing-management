@@ -32,7 +32,9 @@ export function useJobOrderInspectionQA() {
     const [productOptions, setProductOptions] = useState<Array<{ value: string; label: string }>>([]);
     const [unresolvedJobOrderCount, setUnresolvedJobOrderCount] = useState(0);
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [refreshError, setRefreshError] = useState<string | null>(null);
     const [selectedJobOrder, setSelectedJobOrder] = useState<JobOrderDailyYieldSummary | null>(null);
     const [selectedDetails, setSelectedDetails] = useState<JobOrderDailyYieldDetails | null>(null);
     const [detailsLoading, setDetailsLoading] = useState(false);
@@ -48,6 +50,7 @@ export function useJobOrderInspectionQA() {
     const [pageSize, setPageSizeState] = useState(8);
     const closeIdempotencyKeys = useRef(new Map<number, string>());
     const summaryRequestId = useRef(0);
+    const hasSummarySnapshot = useRef(false);
     const handledDeepLink = useRef<string | null>(null);
 
     useEffect(() => {
@@ -57,10 +60,18 @@ export function useJobOrderInspectionQA() {
 
     const dateFrom = dateRange?.from ? phtDateKey(dateRange.from) : "";
     const dateTo = dateRange?.to ? phtDateKey(dateRange.to) : "";
-    const loadJobOrders = useCallback(async (signal?: AbortSignal) => {
+    const loadJobOrders = useCallback(async (signal?: AbortSignal, backgroundRefresh = false) => {
         const requestId = ++summaryRequestId.current;
-        setLoading(true);
+        const preserveResults = backgroundRefresh && hasSummarySnapshot.current;
+        if (preserveResults) {
+            setLoading(false);
+            setRefreshing(true);
+        } else {
+            setRefreshing(false);
+            setLoading(true);
+        }
         setError(null);
+        setRefreshError(null);
         try {
             const result = await fetchJobOrderDailyYieldSummaries({
                 page,
@@ -73,6 +84,7 @@ export function useJobOrderInspectionQA() {
                 flaggedOnly,
             }, signal);
             if (signal?.aborted || requestId !== summaryRequestId.current) return;
+            hasSummarySnapshot.current = true;
             setJobOrders(result.data);
             setFilteredTotal(result.meta.total);
             setTotalPages(result.meta.totalPages);
@@ -84,9 +96,13 @@ export function useJobOrderInspectionQA() {
         } catch (loadError) {
             if (signal?.aborted || requestId !== summaryRequestId.current) return;
             const message = loadError instanceof Error ? loadError.message : "Failed to load JO Daily Yields.";
-            setError(message);
+            if (preserveResults) setRefreshError(message);
+            else setError(message);
         } finally {
-            if (!signal?.aborted && requestId === summaryRequestId.current) setLoading(false);
+            if (!signal?.aborted && requestId === summaryRequestId.current) {
+                if (preserveResults) setRefreshing(false);
+                else setLoading(false);
+            }
         }
     }, [appliedSearchQuery, dateFrom, dateTo, flaggedOnly, page, pageSize, productFilter, statusFilter]);
 
@@ -208,7 +224,7 @@ export function useJobOrderInspectionQA() {
     }, []);
 
     const refresh = useCallback(async () => {
-        await loadJobOrders();
+        await loadJobOrders(undefined, true);
         if (selectedJobOrder) {
             await loadDetails(selectedJobOrder.jobOrderId);
         }
@@ -268,7 +284,9 @@ export function useJobOrderInspectionQA() {
         searchQuery,
         setSearchQuery: updateSearchQuery,
         loading,
+        refreshing,
         error,
+        refreshError,
         selectedJobOrder,
         selectedDetails,
         detailsLoading,

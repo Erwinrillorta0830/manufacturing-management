@@ -341,22 +341,41 @@ export function usePlanningEngineering() {
         let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
         let isDisposed = false;
         let reconnectAttempts = 0;
+        let needsResync = false;
         const movementRefreshScheduler = createInventoryRefreshScheduler(
             () => isDisposed ? Promise.resolve() : refreshNetRequirementsRef.current(),
             { debounceMs: 500, maxWaitMs: 3000 }
         );
 
-        const connectSSE = () => {
-            if (isDisposed) return;
-            if (reconnectAttempts >= 10) {
-                console.warn("[Planning Realtime SSE] Maximum reconnect attempts reached (10). Standing by.");
-                return;
-            }
+        function scheduleReconnect() {
+            needsResync = true;
+            if (isDisposed || reconnectTimeout !== null) return;
 
+            reconnectAttempts = Math.min(reconnectAttempts + 1, 5);
+            const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+            reconnectTimeout = setTimeout(() => {
+                reconnectTimeout = null;
+                connectSSE();
+            }, delay);
+        }
+
+        function connectSSE() {
+            if (isDisposed || eventSource) return;
             try {
-                eventSource = new EventSource("/api/manufacturing/inventory/movements/stream");
+                const source = new EventSource("/api/manufacturing/inventory/movements/stream");
+                eventSource = source;
 
-                eventSource.addEventListener("movement", (event) => {
+                source.addEventListener("open", () => {
+                    if (isDisposed || eventSource !== source) return;
+                    reconnectAttempts = 0;
+                    if (needsResync) {
+                        needsResync = false;
+                        movementRefreshScheduler.schedule();
+                    }
+                });
+
+                source.addEventListener("movement", (event) => {
+                    if (isDisposed || eventSource !== source) return;
                     try {
                         const movement = JSON.parse(event.data);
                         const { branchId, productIds } = inventoryRefreshContextRef.current;
@@ -369,27 +388,18 @@ export function usePlanningEngineering() {
                     }
                 });
 
-                eventSource.onerror = () => {
-                    if (eventSource) {
-                        eventSource.close();
-                        eventSource = null;
-                    }
-                    if (!isDisposed && reconnectAttempts < 10) {
-                        reconnectAttempts++;
-                        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
-                        reconnectTimeout = setTimeout(connectSSE, delay);
-                    }
+                source.onerror = () => {
+                    if (isDisposed || eventSource !== source) return;
+                    source.close();
+                    eventSource = null;
+                    scheduleReconnect();
                 };
 
             } catch (err) {
                 console.error("[Planning Realtime SSE] Error initializing EventSource:", err);
-                if (!isDisposed && reconnectAttempts < 10) {
-                    reconnectAttempts++;
-                    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
-                    reconnectTimeout = setTimeout(connectSSE, delay);
-                }
+                scheduleReconnect();
             }
-        };
+        }
 
         connectSSE();
 

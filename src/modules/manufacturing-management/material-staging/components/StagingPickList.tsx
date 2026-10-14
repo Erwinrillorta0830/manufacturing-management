@@ -45,6 +45,85 @@ interface StagingPickListProps {
     isProcessing?: boolean;
 }
 
+interface MaterialLotBreakdownProps {
+    jobOrder: StagingJobOrder;
+    material: MaterialStagingItem;
+    onOpenTransferModal: StagingPickListProps["onOpenTransferModal"];
+    canStageMaterials: boolean;
+    isProcessing: boolean;
+}
+
+function MaterialLotBreakdown({
+    jobOrder,
+    material,
+    onOpenTransferModal,
+    canStageMaterials,
+    isProcessing
+}: MaterialLotBreakdownProps) {
+    return (
+        <div className="rounded-lg border border-border/80 bg-background/80 p-3 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                <span>Allocated Lot Breakdown for {material.product_name}</span>
+                <span>{material.allocations.length} Assigned Lot(s)</span>
+            </div>
+
+            <div className="space-y-2">
+                {material.allocations.map((lot, index) => (
+                    <div
+                        key={String(lot.lot_id) + "-" + String(lot.batch_no) + "-" + index}
+                        className="grid min-w-0 grid-cols-2 gap-x-3 gap-y-2 rounded-md border border-border/50 bg-muted/30 p-2 text-xs"
+                    >
+                        <div className="col-span-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+                            <span className="break-all font-mono font-bold text-foreground">
+                                {lot.batch_no || "Unknown batch"}
+                            </span>
+                            {lot.expiry_date && (
+                                <span className="text-[11px] text-muted-foreground">
+                                    Exp: {lot.expiry_date}
+                                </span>
+                            )}
+                        </div>
+
+                        <div className="min-w-0 text-[11px] text-muted-foreground">
+                            Allocated: <strong className="break-all font-mono text-foreground">{lot.allocated_quantity} {material.uom}</strong>
+                        </div>
+                        <div className="min-w-0 text-[11px] text-muted-foreground">
+                            Available: <strong className="break-all font-mono text-foreground">{lot.on_hand_lot_quantity} {material.uom}</strong>
+                        </div>
+
+                        <div className="col-span-2 min-w-0 text-[11px] text-muted-foreground">
+                            Bin: <code className="break-all font-mono font-semibold text-foreground">{lot.staging_bin}</code>
+                        </div>
+
+                        <div className="col-span-2 flex min-w-0 flex-col gap-2">
+                            <Badge
+                                variant="outline"
+                                title={stagingStateInfo(lot.reservation_status)?.description}
+                                className={lot.reservation_status === "HARD"
+                                    ? "max-w-full whitespace-normal bg-emerald-500/10 text-emerald-500 border-emerald-500/30 text-[10px]"
+                                    : "max-w-full whitespace-normal bg-amber-500/10 text-amber-500 border-amber-500/30 text-[10px]"
+                                }
+                            >
+                                {stagingStateInfo(lot.reservation_status)?.label || lot.reservation_status}
+                            </Badge>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => onOpenTransferModal(jobOrder, material, lot)}
+                                disabled={isProcessing || !canStageMaterials}
+                                title={!canStageMaterials ? "Staging is locked after production starts." : undefined}
+                                className="h-7 w-full text-[11px] px-2 text-primary hover:bg-primary/10"
+                            >
+                                Stage Lot
+                            </Button>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
 export function StagingPickList({
     jobOrder,
     onOpenTransferModal,
@@ -314,13 +393,13 @@ export function StagingPickList({
             </div>
 
             {/* Allocated Materials Pick List Table */}
-            <div className="rounded-xl border border-border overflow-hidden bg-background">
-                <div className="p-3.5 bg-muted/40 border-b border-border flex items-center justify-between">
-                    <div className="flex items-center gap-2 font-semibold text-xs text-foreground uppercase tracking-wider">
+            <div className="rounded-xl border border-border overflow-hidden bg-background @container/staging-list">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/40 p-3.5">
+                    <div className="flex min-w-0 items-center gap-2 font-semibold text-xs text-foreground uppercase tracking-wider">
                         <Boxes className="h-4 w-4 text-primary" />
-                        Allocated Bill of Materials & Lot Breakdown
+                        <span className="min-w-0 break-words">Allocated Bill of Materials & Lot Breakdown</span>
                     </div>
-                    <span className="text-xs text-muted-foreground">
+                    <span className="shrink-0 text-xs text-muted-foreground">
                         {jobOrder.materials.length} component line(s)
                     </span>
                 </div>
@@ -330,196 +409,290 @@ export function StagingPickList({
                         No material requirements found for this Job Order version.
                     </div>
                 ) : (
-                    <Table>
-                        <TableHeader>
-                            <TableRow className="bg-muted/20 text-xs">
-                                <TableHead className="w-8"></TableHead>
-                                <TableHead className="font-semibold">Component / SKU</TableHead>
-                                <TableHead className="text-right font-semibold">Required Qty</TableHead>
-                                <TableHead className="text-right font-semibold">Staged Qty</TableHead>
-                                <TableHead className="text-right font-semibold">Main Store On-Hand</TableHead>
-                                <TableHead className="font-semibold">Staging Bin</TableHead>
-                                <TableHead className="font-semibold">Reservation</TableHead>
-                                <TableHead className="text-right font-semibold">Staging Action</TableHead>
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {jobOrder.materials.map((mat) => {
-                                const isExpanded = !!expandedMaterials[mat.jo_material_id];
-                                const hasShortage = mat.has_shortage;
-                                const isHard = mat.reservation_status === "HARD";
-                                const isPartial = mat.reservation_status === "PARTIAL";
+                    <>
+                    <div className="hidden @min-[56rem]/staging-list:block">
+                        <Table className="table-fixed">
+                            <TableHeader>
+                                <TableRow className="bg-muted/20 text-xs">
+                                    <TableHead className="w-[5%] whitespace-normal break-words"></TableHead>
+                                    <TableHead className="w-[19%] whitespace-normal break-words font-semibold">Component / SKU</TableHead>
+                                    <TableHead className="w-[9%] whitespace-normal break-words text-right font-semibold">Required Qty</TableHead>
+                                    <TableHead className="w-[9%] whitespace-normal break-words text-right font-semibold">Staged Qty</TableHead>
+                                    <TableHead className="w-[12%] whitespace-normal break-words text-right font-semibold">Remaining to Stage</TableHead>
+                                    <TableHead className="w-[12%] whitespace-normal break-words text-right font-semibold">Main Store On-Hand</TableHead>
+                                    <TableHead className="w-[12%] whitespace-normal break-words font-semibold">Staging Bin</TableHead>
+                                    <TableHead className="w-[10%] whitespace-normal break-words font-semibold">Reservation</TableHead>
+                                    <TableHead className="w-[12%] whitespace-normal break-words text-right font-semibold">Staging Action</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {jobOrder.materials.map((mat) => {
+                                    const isExpanded = !!expandedMaterials[mat.jo_material_id];
+                                    const hasShortage = mat.has_shortage;
+                                    const isHard = mat.reservation_status === "HARD";
+                                    const isPartial = mat.reservation_status === "PARTIAL";
+                                    const remainingToStage = Math.max(0, mat.required_quantity - mat.staged_quantity);
 
-                                return (
-                                    <React.Fragment key={mat.jo_material_id}>
-                                        <TableRow className={`text-xs hover:bg-muted/40 transition-colors ${hasShortage ? "bg-red-500/[0.03]" : ""}`}>
-                                            <TableCell className="p-2 text-center">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => toggleExpandMaterial(mat.jo_material_id)}
-                                                    className="p-1 rounded hover:bg-muted text-muted-foreground"
-                                                >
-                                                    {isExpanded ? (
-                                                        <ChevronDown className="h-4 w-4" />
-                                                    ) : (
-                                                        <ChevronRight className="h-4 w-4" />
-                                                    )}
-                                                </button>
-                                            </TableCell>
-                                            <TableCell className="font-medium">
-                                                <div className="space-y-0.5">
-                                                    <div className="font-semibold text-foreground flex items-center gap-2">
-                                                        {mat.product_name}
-                                                        {hasShortage && (
-                                                            <span className="text-[10px] text-red-500 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded font-mono font-medium">
-                                                                Shortage: {mat.shortage_quantity} {mat.uom}
-                                                            </span>
+                                    return (
+                                        <React.Fragment key={mat.jo_material_id}>
+                                            <TableRow className={`text-xs hover:bg-muted/40 transition-colors ${hasShortage ? "bg-red-500/[0.03]" : ""}`}>
+                                                <TableCell className="p-2 text-center">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => toggleExpandMaterial(mat.jo_material_id)}
+                                                        className="p-1 rounded hover:bg-muted text-muted-foreground"
+                                                    >
+                                                        {isExpanded ? (
+                                                            <ChevronDown className="h-4 w-4" />
+                                                        ) : (
+                                                            <ChevronRight className="h-4 w-4" />
                                                         )}
-                                                    </div>
-                                                    <div className="text-[11px] text-muted-foreground font-mono">
-                                                        {mat.product_code} &bull; {mat.allocations.length} lot(s)
-                                                    </div>
-                                                </div>
-                                            </TableCell>
-                                            <TableCell className="text-right font-mono font-semibold text-foreground">
-                                                {mat.required_quantity.toLocaleString()} {mat.uom}
-                                            </TableCell>
-                                            <TableCell className="text-right font-mono font-semibold">
-                                                <span className={mat.is_staged ? "text-emerald-500" : "text-amber-500"}>
-                                                    {mat.staged_quantity.toLocaleString()} {mat.uom}
-                                                </span>
-                                            </TableCell>
-                                            <TableCell className="text-right font-mono font-medium">
-                                                <span className={mat.on_hand_quantity < mat.required_quantity ? "text-red-500 font-bold" : "text-muted-foreground"}>
-                                                    {mat.on_hand_quantity.toLocaleString()} {mat.uom}
-                                                </span>
-                                            </TableCell>
-                                            <TableCell>
-                                                <div className="flex items-center gap-1.5 font-mono text-[11px]">
-                                                    <Warehouse className="h-3.5 w-3.5 text-muted-foreground" />
-                                                    <span className={mat.is_staged ? "text-emerald-500 font-semibold" : "text-foreground"}>
-                                                        {mat.staging_bin}
-                                                    </span>
-                                                </div>
-                                            </TableCell>
-                                            <TableCell>
-                                                {isHard ? (
-                                                    <Badge
-                                                        title="HARD: all required quantity for this component is staged on the floor."
-                                                        className="bg-emerald-600 text-white border border-emerald-600 text-[10px] font-semibold"
-                                                    >
-                                                        Floor Ready
-                                                    </Badge>
-                                                ) : isPartial ? (
-                                                    <Badge
-                                                        variant="secondary"
-                                                        title="PARTIAL: some of this component is staged on the floor."
-                                                        className="bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20 text-[10px] font-semibold"
-                                                    >
-                                                        Partially staged
-                                                    </Badge>
-                                                ) : (
-                                                    <Badge
-                                                        variant="secondary"
-                                                        title="SOFT: reserved in the Main Store; not staged yet."
-                                                        className="bg-muted text-muted-foreground border border-border text-[10px] font-semibold"
-                                                    >
-                                                        To stage
-                                                    </Badge>
-                                                )}
-                                            </TableCell>
-                                            <TableCell className="text-right">
-                                                <Button
-                                                    variant={mat.is_staged ? "outline" : "default"}
-                                                    size="sm"
-                                                    onClick={() => onOpenTransferModal(jobOrder, mat)}
-                                                    disabled={isProcessing || !canStageMaterials}
-                                                    title={!canStageMaterials ? "Staging is locked after production starts." : undefined}
-                                                    className="text-xs h-7 px-2.5 shadow-none"
-                                                >
-                                                    {mat.is_staged ? (
-                                                        <>Re-stage</>
-                                                    ) : (
-                                                        <>
-                                                            <ArrowRight className="h-3.5 w-3.5 mr-1" />
-                                                            Stage to Bin
-                                                        </>
-                                                    )}
-                                                </Button>
-                                            </TableCell>
-                                        </TableRow>
-
-                                        {/* Expandable Lot Allocations Row */}
-                                        {isExpanded && (
-                                            <TableRow className="bg-muted/15 border-b border-border">
-                                                <TableCell colSpan={8} className="p-3 pl-12">
-                                                    <div className="rounded-lg border border-border/80 bg-background/80 p-3 space-y-2">
-                                                        <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
-                                                            <span>Allocated Lot Breakdown for {mat.product_name}</span>
-                                                            <span>{mat.allocations.length} Assigned Lot(s)</span>
+                                                    </button>
+                                                </TableCell>
+                                                <TableCell className="min-w-0 whitespace-normal font-medium">
+                                                    <div className="min-w-0 space-y-0.5">
+                                                        <div className="flex min-w-0 flex-wrap items-center gap-2 font-semibold text-foreground">
+                                                            <span className="min-w-0 break-words">{mat.product_name}</span>
+                                                            {hasShortage && (
+                                                                <span className="max-w-full whitespace-normal break-words rounded border border-red-500/20 bg-red-500/10 px-1.5 py-0.5 font-mono text-[10px] font-medium text-red-500">
+                                                                    Main Store shortage: {mat.shortage_quantity} {mat.uom}
+                                                                </span>
+                                                            )}
                                                         </div>
-
-                                                        <div className="space-y-1.5">
-                                                            {mat.allocations.map((lot, lIdx) => (
-                                                                <div
-                                                                    key={lIdx}
-                                                                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2 rounded-md bg-muted/30 border border-border/50 text-xs"
-                                                                >
-                                                                    <div className="flex items-center gap-3">
-                                                                        <span className="font-mono font-bold text-foreground">
-                                                                            {lot.batch_no}
-                                                                        </span>
-                                                                        {lot.expiry_date && (
-                                                                            <span className="text-[11px] text-muted-foreground">
-                                                                                Exp: {lot.expiry_date}
-                                                                            </span>
-                                                                        )}
-                                                                    </div>
-
-                                                                    <div className="flex items-center gap-4">
-                                                                        <div className="text-[11px] text-muted-foreground">
-                                                                            Allocated: <strong className="font-mono text-foreground">{lot.allocated_quantity} {mat.uom}</strong>
-                                                                        </div>
-                                                                        <div className="text-[11px] text-muted-foreground">
-                                                                            Available: <strong className="font-mono text-foreground">{lot.on_hand_lot_quantity} {mat.uom}</strong>
-                                                                        </div>
-                                                                        <div className="text-[11px] text-muted-foreground">
-                                                                            Bin: <code className="font-mono text-foreground font-semibold">{lot.staging_bin}</code>
-                                                                        </div>
-                                                                        <Badge
-                                                                            variant="outline"
-                                                                            title={stagingStateInfo(lot.reservation_status)?.description}
-                                                                            className={
-                                                                                lot.reservation_status === "HARD"
-                                                                                    ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30 text-[10px]"
-                                                                                    : "bg-amber-500/10 text-amber-500 border-amber-500/30 text-[10px]"
-                                                                            }
-                                                                        >
-                                                                            {stagingStateInfo(lot.reservation_status)?.label || lot.reservation_status}
-                                                                        </Badge>
-                                                                        <Button
-                                                                            variant="ghost"
-                                                                            size="sm"
-                                                                            onClick={() => onOpenTransferModal(jobOrder, mat, lot)}
-                                                                            disabled={isProcessing || !canStageMaterials}
-                                                                            title={!canStageMaterials ? "Staging is locked after production starts." : undefined}
-                                                                            className="h-6 text-[11px] px-2 text-primary hover:bg-primary/10"
-                                                                        >
-                                                                            Stage Lot
-                                                                        </Button>
-                                                                    </div>
-                                                                </div>
-                                                            ))}
+                                                        <div className="break-all font-mono text-[11px] text-muted-foreground">
+                                                            {mat.product_code} &bull; {mat.allocations.length} lot(s)
                                                         </div>
                                                     </div>
                                                 </TableCell>
+                                                <TableCell className="break-words whitespace-normal text-right font-mono font-semibold text-foreground">
+                                                    {mat.required_quantity.toLocaleString()} {mat.uom}
+                                                </TableCell>
+                                                <TableCell className="break-words whitespace-normal text-right font-mono font-semibold">
+                                                    <span className={mat.is_staged ? "text-emerald-500" : "text-amber-500"}>
+                                                        {mat.staged_quantity.toLocaleString()} {mat.uom}
+                                                    </span>
+                                                </TableCell>
+                                                <TableCell className="break-words whitespace-normal text-right font-mono font-semibold text-foreground">
+                                                    {remainingToStage.toLocaleString()} {mat.uom}
+                                                </TableCell>
+                                                <TableCell className="break-words whitespace-normal text-right font-mono font-medium">
+                                                    <span className={mat.on_hand_quantity < mat.required_quantity ? "text-red-500 font-bold" : "text-muted-foreground"}>
+                                                        {mat.on_hand_quantity.toLocaleString()} {mat.uom}
+                                                    </span>
+                                                </TableCell>
+                                                <TableCell className="whitespace-normal">
+                                                    <div className="flex min-w-0 flex-wrap items-center gap-1.5 font-mono text-[11px]">
+                                                        <Warehouse className="h-3.5 w-3.5 text-muted-foreground" />
+                                                        <span className={mat.is_staged ? "min-w-0 break-all text-emerald-500 font-semibold" : "min-w-0 break-all text-foreground"}>
+                                                            {mat.staging_bin}
+                                                        </span>
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell className="whitespace-normal">
+                                                    {isHard ? (
+                                                        <Badge
+                                                            title="HARD: all required quantity for this component is staged on the floor."
+                                                            className="max-w-full whitespace-normal border border-emerald-600 bg-emerald-600 text-[10px] font-semibold text-white"
+                                                        >
+                                                            Floor Ready
+                                                        </Badge>
+                                                    ) : isPartial ? (
+                                                        <Badge
+                                                            variant="secondary"
+                                                            title="PARTIAL: some of this component is staged on the floor."
+                                                            className="max-w-full whitespace-normal border border-amber-500/20 bg-amber-500/10 text-[10px] font-semibold text-amber-700 dark:text-amber-400"
+                                                        >
+                                                            Partially staged
+                                                        </Badge>
+                                                    ) : (
+                                                        <Badge
+                                                            variant="secondary"
+                                                            title="SOFT: reserved in the Main Store; not staged yet."
+                                                            className="max-w-full whitespace-normal border border-border bg-muted text-[10px] font-semibold text-muted-foreground"
+                                                        >
+                                                            To stage
+                                                        </Badge>
+                                                    )}
+                                                </TableCell>
+                                                <TableCell className="text-right whitespace-normal">
+                                                    <Button
+                                                        variant={mat.is_staged ? "outline" : "default"}
+                                                        size="xs"
+                                                        onClick={() => onOpenTransferModal(jobOrder, mat)}
+                                                        disabled={isProcessing || !canStageMaterials}
+                                                        title={!canStageMaterials ? "Staging is locked after production starts." : undefined}
+                                                        className="h-7 max-w-full whitespace-normal px-1.5 text-[10px] shadow-none"
+                                                    >
+                                                        {mat.is_staged ? (
+                                                            <>Re-stage</>
+                                                        ) : (
+                                                            <>
+                                                                <ArrowRight className="h-3.5 w-3.5 mr-1" />
+                                                                Stage to Bin
+                                                            </>
+                                                        )}
+                                                    </Button>
+                                                </TableCell>
                                             </TableRow>
+
+                                            {/* Expandable Lot Allocations Row */}
+                                            {isExpanded && (
+                                                <TableRow className="bg-muted/15 border-b border-border">
+                                                    <TableCell colSpan={9} className="p-3 pl-12">
+                                                        <MaterialLotBreakdown
+                                                            jobOrder={jobOrder}
+                                                            material={mat}
+                                                            onOpenTransferModal={onOpenTransferModal}
+                                                            canStageMaterials={canStageMaterials}
+                                                            isProcessing={isProcessing}
+                                                        />
+                                                    </TableCell>
+                                                </TableRow>
+                                            )}
+                                        </React.Fragment>
+                                    );
+                                })}
+                            </TableBody>
+                        </Table>
+                    </div>
+
+                    <div className="space-y-3 p-3 @min-[56rem]/staging-list:hidden">
+                        {jobOrder.materials.map((mat) => {
+                            const isExpanded = !!expandedMaterials[mat.jo_material_id];
+                            const hasShortage = mat.has_shortage;
+                            const isHard = mat.reservation_status === "HARD";
+                            const isPartial = mat.reservation_status === "PARTIAL";
+                            const remainingToStage = Math.max(0, mat.required_quantity - mat.staged_quantity);
+                            const lotDetailsId = "staging-lots-" + jobOrder.job_order_id + "-" + mat.jo_material_id;
+
+                            return (
+                                <article
+                                    key={mat.jo_material_id}
+                                    className={"min-w-0 rounded-xl border border-border p-3 " + (hasShortage ? "bg-red-500/[0.03]" : "bg-card")}
+                                >
+                                    <div className="flex min-w-0 items-start gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => toggleExpandMaterial(mat.jo_material_id)}
+                                            aria-expanded={isExpanded}
+                                            aria-controls={lotDetailsId}
+                                            aria-label={(isExpanded ? "Hide" : "Show") + " lot breakdown for " + mat.product_name}
+                                            className="mt-0.5 shrink-0 rounded p-1 text-muted-foreground hover:bg-muted"
+                                        >
+                                            {isExpanded ? (
+                                                <ChevronDown className="h-4 w-4" />
+                                            ) : (
+                                                <ChevronRight className="h-4 w-4" />
+                                            )}
+                                        </button>
+                                        <div className="min-w-0 flex-1">
+                                            <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                                <h3 className="min-w-0 break-words text-sm font-semibold text-foreground">
+                                                    {mat.product_name}
+                                                </h3>
+                                                {hasShortage && (
+                                                    <Badge variant="destructive" className="max-w-full whitespace-normal break-words text-[10px]">
+                                                        Main Store shortage: {mat.shortage_quantity} {mat.uom}
+                                                    </Badge>
+                                                )}
+                                            </div>
+                                            <div className="mt-0.5 break-all font-mono text-[11px] text-muted-foreground">
+                                                {mat.product_code} &bull; {mat.allocations.length} lot(s)
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="mt-3 grid min-w-0 grid-cols-2 gap-2">
+                                        <div className="min-w-0 rounded-lg bg-muted/40 p-2">
+                                            <div className="text-[10px] font-medium text-muted-foreground">Required Qty</div>
+                                            <div className="break-words font-mono text-xs font-semibold text-foreground">
+                                                {mat.required_quantity.toLocaleString()} {mat.uom}
+                                            </div>
+                                        </div>
+                                        <div className="min-w-0 rounded-lg bg-muted/40 p-2">
+                                            <div className="text-[10px] font-medium text-muted-foreground">Staged Qty</div>
+                                            <div className={"break-words font-mono text-xs font-semibold " + (mat.is_staged ? "text-emerald-500" : "text-amber-500")}>
+                                                {mat.staged_quantity.toLocaleString()} {mat.uom}
+                                            </div>
+                                        </div>
+                                        <div className="min-w-0 rounded-lg bg-muted/40 p-2">
+                                            <div className="text-[10px] font-medium text-muted-foreground">Remaining to Stage</div>
+                                            <div className="break-words font-mono text-xs font-semibold text-foreground">
+                                                {remainingToStage.toLocaleString()} {mat.uom}
+                                            </div>
+                                        </div>
+                                        <div className="min-w-0 rounded-lg bg-muted/40 p-2">
+                                            <div className="text-[10px] font-medium text-muted-foreground">Main Store On-Hand</div>
+                                            <div className={"break-words font-mono text-xs font-semibold " + (mat.on_hand_quantity < mat.required_quantity ? "text-red-500" : "text-muted-foreground")}>
+                                                {mat.on_hand_quantity.toLocaleString()} {mat.uom}
+                                            </div>
+                                            {hasShortage && (
+                                                <div className="mt-1 break-words text-[10px] font-medium text-red-500">
+                                                    Main Store shortage: {mat.shortage_quantity} {mat.uom}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <div className="mt-2 grid min-w-0 grid-cols-2 gap-2">
+                                        <div className="min-w-0 rounded-lg border border-border/70 p-2">
+                                            <div className="text-[10px] font-medium text-muted-foreground">Staging Bin</div>
+                                            <div className={"break-all font-mono text-[11px] font-semibold " + (mat.is_staged ? "text-emerald-500" : "text-foreground")}>
+                                                {mat.staging_bin}
+                                            </div>
+                                        </div>
+                                        <div className="min-w-0 rounded-lg border border-border/70 p-2">
+                                            <div className="mb-1 text-[10px] font-medium text-muted-foreground">Reservation</div>
+                                            {isHard ? (
+                                                <Badge className="max-w-full whitespace-normal border border-emerald-600 bg-emerald-600 text-[10px] font-semibold text-white">
+                                                    Floor Ready
+                                                </Badge>
+                                            ) : isPartial ? (
+                                                <Badge variant="secondary" className="max-w-full whitespace-normal border border-amber-500/20 bg-amber-500/10 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
+                                                    Partially staged
+                                                </Badge>
+                                            ) : (
+                                                <Badge variant="secondary" className="max-w-full whitespace-normal border border-border bg-muted text-[10px] font-semibold text-muted-foreground">
+                                                    To stage
+                                                </Badge>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <Button
+                                        variant={mat.is_staged ? "outline" : "default"}
+                                        size="sm"
+                                        onClick={() => onOpenTransferModal(jobOrder, mat)}
+                                        disabled={isProcessing || !canStageMaterials}
+                                        title={!canStageMaterials ? "Staging is locked after production starts." : undefined}
+                                        className="mt-2 w-full text-xs"
+                                    >
+                                        {mat.is_staged ? (
+                                            "Re-stage"
+                                        ) : (
+                                            <>
+                                                <ArrowRight className="h-3.5 w-3.5" />
+                                                Stage to Bin
+                                            </>
                                         )}
-                                    </React.Fragment>
-                                );
-                            })}
-                        </TableBody>
-                    </Table>
+                                    </Button>
+
+                                    {isExpanded && (
+                                        <div id={lotDetailsId} className="mt-3">
+                                            <MaterialLotBreakdown
+                                                jobOrder={jobOrder}
+                                                material={mat}
+                                                onOpenTransferModal={onOpenTransferModal}
+                                                canStageMaterials={canStageMaterials}
+                                                isProcessing={isProcessing}
+                                            />
+                                        </div>
+                                    )}
+                                </article>
+                            );
+                        })}
+                    </div>
+                    </>
                 )}
             </div>
         </div>

@@ -1,13 +1,14 @@
 /* eslint-disable */
 import React from "react";
-import { Layers } from "lucide-react";
+import { AlertTriangle, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { resolveJobOrderJourney } from "../../shared/job-order-journey";
 import { JobOrderJourneyBar } from "../../shared/components/JobOrderJourneyBar";
 import { JobOrderStatusBadge } from "../../shared/components/JobOrderStatusBadge";
-import { isCancelledJobOrderStatus, isJobOrderStatus, isTerminatedJobOrder, JOB_ORDER_STATUS } from "../../job-order-status";
+import { displayJobOrderStatus, isCancelledJobOrderStatus, isJobOrderStatus, isTerminatedJobOrder, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "../../job-order-status";
 import { calculateCumulativeRouteWorkloadHours, calculatePipelinedLineDurationHours, resolveProductionShiftHours } from "../utils/production-timing";
+import { getPlanningQueueWorkflowSummary } from "../utils/queue-workflow-summary";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export interface FamilyGroup {
@@ -49,6 +50,181 @@ function ConnectedSalesOrderCell({ jobOrder }: { jobOrder: any }) {
     );
 }
 
+function getJobOrderMetrics(jobOrder: any) {
+    const tasks = jobOrder.routing_tasks || [];
+    const shiftHrs = resolveProductionShiftHours(jobOrder.shiftOption, jobOrder.shift_option);
+    if (tasks.length === 0) {
+        return { leadTimeHours: 0, leadTimeDays: 0, cumulativeHours: 0, shiftHrs };
+    }
+    const cumulativeHours = calculateCumulativeRouteWorkloadHours(tasks);
+    const leadTimeHours = calculatePipelinedLineDurationHours(tasks);
+    return { leadTimeHours, leadTimeDays: leadTimeHours / shiftHrs, cumulativeHours, shiftHrs };
+}
+
+function JobOrderResponsiveCard({
+    jobOrder,
+    handleOpenDetails,
+    handleEditDraft,
+    readOnly,
+    roleLabel,
+    detailActionLabel = "View Details",
+    child = false
+}: {
+    jobOrder: any;
+    handleOpenDetails: (jobOrder: any) => void;
+    handleEditDraft: (jobOrder: any) => void;
+    readOnly: boolean;
+    roleLabel?: string;
+    detailActionLabel?: string;
+    child?: boolean;
+}) {
+    const metrics = getJobOrderMetrics(jobOrder);
+    const journey = resolveJobOrderJourney({ status: jobOrder.status });
+    const salesOrders = (jobOrder.salesOrders || jobOrder.sales_orders || [])
+        .map((salesOrder: any) => String(salesOrder.order_no || salesOrder.orderNo || "").trim())
+        .filter(Boolean)
+        .filter((orderNo: string, index: number, orderNumbers: string[]) => orderNumbers.indexOf(orderNo) === index);
+
+    return (
+        <article className={`rounded-lg border bg-card p-3 shadow-sm ${child ? "border-sky-500/30 bg-sky-500/[0.02]" : ""}`}>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                    {roleLabel && <div className="mb-1 text-[10px] font-black uppercase tracking-wide text-muted-foreground">{roleLabel}</div>}
+                    <div className="break-all font-mono text-sm font-bold text-primary">{jobOrder.jo_id}</div>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                    <JobOrderStatusBadge
+                        status={jobOrder.status}
+                        className={isCancelledJobOrderStatus(jobOrder.status) ? "text-xs font-medium" : undefined}
+                    />
+                    {isTerminatedJobOrder(jobOrder) && (
+                        <Badge variant="outline" className="border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300">
+                            Terminated
+                        </Badge>
+                    )}
+                </div>
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-2 border-t pt-3 text-xs">
+                <div className="col-span-2 min-w-0">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Connected SO</div>
+                    {salesOrders.length > 0 ? (
+                        <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1">
+                            {salesOrders.map((orderNo: string) => <span key={orderNo} className="break-all font-mono font-semibold text-primary">{orderNo}</span>)}
+                        </div>
+                    ) : <div className="mt-1 text-muted-foreground">—</div>}
+                </div>
+                <div className="col-span-2 min-w-0">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Product</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                        <span className="break-words font-bold text-foreground">{jobOrder.product_name}</span>
+                        <span className="rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+                            {jobOrder.uom_name || jobOrder.unit_of_measurement || "Pieces"}
+                        </span>
+                    </div>
+                </div>
+                <div>
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Target Qty</div>
+                    <div className="mt-1 font-semibold text-foreground">
+                        {jobOrder.quantity?.toLocaleString()} <span className="font-normal text-muted-foreground">{jobOrder.uom_name || jobOrder.uom_shortcut || "pcs"}</span>
+                    </div>
+                </div>
+                <div>
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Duration / Lead Time</div>
+                    {metrics.leadTimeHours > 0 ? (
+                        <div className="mt-1 space-y-0.5 font-mono text-[11px]">
+                            <div className="font-bold text-foreground">{metrics.leadTimeDays.toFixed(1)} days</div>
+                            <div className="text-muted-foreground">{metrics.leadTimeHours.toFixed(1)} line hrs</div>
+                            <div className="text-muted-foreground">Effort: {metrics.cumulativeHours.toFixed(1)} mach-hrs</div>
+                        </div>
+                    ) : <div className="mt-1 text-muted-foreground">—</div>}
+                </div>
+            </div>
+
+            <div className="mt-3 border-t pt-3">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Stage / Status</div>
+                <WorkflowGuidance jobOrder={jobOrder} journey={journey} readOnly={readOnly} />
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2 border-t pt-3">
+                {!readOnly && isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.DRAFT) && (
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleEditDraft(jobOrder)}
+                        title="Edit this Draft Job Order."
+                        className="min-h-10 flex-1 border-amber-500/30 text-amber-700 hover:border-amber-500 hover:bg-amber-500/5 dark:text-amber-400"
+                    >
+                        Edit
+                    </Button>
+                )}
+                <Button
+                    size="sm"
+                    variant={child ? "ghost" : "outline"}
+                    onClick={() => handleOpenDetails(jobOrder)}
+                    title={readOnly ? "View Job Order details." : journey.nextAction?.blockedReason || journey.nextAction?.description || "View Job Order details."}
+                    className={`min-h-10 flex-1 ${child ? "text-sky-700 hover:bg-sky-500/10" : "border-primary/30 text-primary hover:border-primary hover:bg-primary/5"}`}
+                >
+                    {detailActionLabel}
+                </Button>
+            </div>
+        </article>
+    );
+}
+
+function WorkflowGuidance({
+    jobOrder,
+    journey,
+    readOnly
+}: {
+    jobOrder: any;
+    journey: ReturnType<typeof resolveJobOrderJourney>;
+    readOnly: boolean;
+}) {
+    if (readOnly) {
+        return <JobOrderJourneyBar journey={journey} compact className="min-w-0" />;
+    }
+
+    const summary = getPlanningQueueWorkflowSummary({
+        status: normalizeJobOrderStatus(jobOrder.status),
+        statusLabel: displayJobOrderStatus(jobOrder.status),
+        currentStage: journey.stageLabel,
+        defaultNextAction: journey.nextAction?.label || null,
+        status_history: jobOrder.status_history
+    });
+    const blockerStyles = summary.blockerTone === "critical"
+        ? "border-destructive/30 bg-destructive/5 text-destructive"
+        : "border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-400";
+
+    return (
+        <div className="mt-2 space-y-1.5">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <div
+                    role="img"
+                    aria-label={`Job Order workflow progress: ${summary.currentStage}`}
+                    className="shrink-0"
+                >
+                    <JobOrderJourneyBar journey={journey} compact className="min-w-0 [&>span]:hidden" />
+                </div>
+                <span className="text-[11px] font-bold leading-snug text-foreground">
+                    <span className="font-semibold text-muted-foreground">Stage: </span>
+                    {summary.currentStage}
+                </span>
+            </div>
+            <div className="text-[11px] leading-snug text-foreground">
+                <span className="font-semibold text-muted-foreground">Next: </span>
+                <span className="font-semibold">{summary.nextAction}</span>
+            </div>
+            {summary.blockedReason && (
+                <div role="note" className={`flex items-start gap-1 rounded-md border px-1.5 py-1 text-[10px] leading-snug ${blockerStyles}`}>
+                    <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+                    <span className="break-words"><strong>Blocked:</strong> {summary.blockedReason}</span>
+                </div>
+            )}
+        </div>
+    );
+}
+
 export function JOTable({
     unreleasedJobs,
     familyGroups,
@@ -60,6 +236,23 @@ export function JOTable({
     if (loadingJobs && unreleasedJobs.length === 0) {
         return (
             <div role="status" aria-busy="true" aria-label="Loading Job Orders" className="w-full overflow-hidden border rounded-lg">
+                <div className="2xl:hidden space-y-3 p-3">
+                    {Array.from({ length: 4 }, (_, row) => (
+                        <div key={row} className="space-y-3 rounded-lg border p-3">
+                            <div className="flex items-center justify-between gap-3">
+                                <Skeleton className="h-5 w-36" />
+                                <Skeleton className="h-5 w-24 rounded-full" />
+                            </div>
+                            <Skeleton className="h-4 w-2/3" />
+                            <div className="grid grid-cols-2 gap-2">
+                                <Skeleton className="h-12" />
+                                <Skeleton className="h-12" />
+                            </div>
+                            <Skeleton className="h-10 w-full" />
+                        </div>
+                    ))}
+                </div>
+                <div className="hidden 2xl:block">
                 <table className="w-full table-fixed text-sm text-left text-muted-foreground border-collapse">
                     <colgroup>
                         <col style={{ width: "12%" }} />
@@ -87,6 +280,7 @@ export function JOTable({
                         ))}
                     </tbody>
                 </table>
+                </div>
             </div>
         );
     }
@@ -103,6 +297,73 @@ export function JOTable({
 
     return (
         <div className="w-full overflow-hidden border rounded-lg">
+            <div className="2xl:hidden space-y-3 p-3">
+                {familyGroups.map((familyGroup) => {
+                    if (!familyGroup.isFamily) {
+                        return (
+                            <JobOrderResponsiveCard
+                                key={familyGroup.parentJo.jo_id || familyGroup.parentJo.id}
+                                jobOrder={familyGroup.parentJo}
+                                handleOpenDetails={handleOpenDetails}
+                                handleEditDraft={handleEditDraft}
+                                readOnly={readOnly}
+                            />
+                        );
+                    }
+
+                    const parentMetrics = getJobOrderMetrics(familyGroup.parentJo);
+                    const childMetrics = familyGroup.childJos.map(getJobOrderMetrics);
+                    const familyLeadHours = parentMetrics.leadTimeHours + childMetrics.reduce((sum, metrics) => sum + metrics.leadTimeHours, 0);
+                    const familyLeadDays = familyLeadHours / parentMetrics.shiftHrs;
+                    const familyEffort = parentMetrics.cumulativeHours + childMetrics.reduce((sum, metrics) => sum + metrics.cumulativeHours, 0);
+
+                    return (
+                        <section key={`family-cards-${familyGroup.familyId}`} className="space-y-2 rounded-lg border border-sky-500/30 bg-sky-500/[0.03] p-2">
+                            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-sky-500/10 p-3">
+                                <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-sky-700 dark:text-sky-300">
+                                        <span className="inline-flex items-center gap-1 rounded border border-sky-500/30 bg-sky-500/20 px-2 py-1 text-[10px] font-black uppercase">
+                                            <Layers className="h-3 w-3" aria-hidden="true" /> Family JO Group
+                                        </span>
+                                        <span className="break-all font-mono text-foreground">{familyGroup.familyId}</span>
+                                    </div>
+                                    <div className="mt-1 text-[11px] text-muted-foreground">
+                                        {1 + familyGroup.childJos.length} jobs: 1 parent assembly + {familyGroup.childJos.length} sub-assembly runs
+                                    </div>
+                                    {familyLeadHours > 0 && (
+                                        <div className="mt-1 text-[11px] text-sky-700 dark:text-sky-300">
+                                            Family lead time: <strong>{familyLeadDays.toFixed(1)} days</strong> ({familyLeadHours.toFixed(1)} line hrs) · Effort: {familyEffort.toFixed(1)} mach-hrs
+                                        </div>
+                                    )}
+                                </div>
+                                <Button size="sm" onClick={() => handleOpenDetails(familyGroup.parentJo)} className="min-h-10 font-bold bg-sky-600 text-white hover:bg-sky-500">
+                                    {readOnly ? "View Details" : `Manage Entire Family (${1 + familyGroup.childJos.length} JOs)`}
+                                </Button>
+                            </div>
+                            <JobOrderResponsiveCard
+                                jobOrder={familyGroup.parentJo}
+                                handleOpenDetails={handleOpenDetails}
+                                handleEditDraft={handleEditDraft}
+                                readOnly={readOnly}
+                                roleLabel="Parent JO"
+                                detailActionLabel={readOnly || isJobOrderStatus(familyGroup.parentJo.status, JOB_ORDER_STATUS.DRAFT) ? "View Details" : "Manage Family"}
+                            />
+                            {familyGroup.childJos.map((childJo: any) => (
+                                <JobOrderResponsiveCard
+                                    key={childJo.jo_id}
+                                    jobOrder={childJo}
+                                    handleOpenDetails={handleOpenDetails}
+                                    handleEditDraft={handleEditDraft}
+                                    readOnly={readOnly}
+                                    roleLabel="Sub-Assembly"
+                                    child
+                                />
+                            ))}
+                        </section>
+                    );
+                })}
+            </div>
+            <div className="hidden 2xl:block">
             <table className="w-full table-fixed text-sm text-left text-muted-foreground border-collapse">
                 <colgroup>
                     <col style={{ width: "12%" }} />
@@ -126,21 +387,9 @@ export function JOTable({
                 </thead>
                 <tbody className="divide-y text-foreground/90">
                     {familyGroups.map((fg) => {
-                        const computeJoMetrics = (jo: any) => {
-                            const tasks = jo.routing_tasks || [];
-                            const shiftHrs = resolveProductionShiftHours(jo.shiftOption, jo.shift_option);
-                            if (tasks.length === 0) {
-                                return { leadTimeHours: 0, leadTimeDays: 0, cumulativeHours: 0, shiftHrs };
-                            }
-                            const cumulativeHours = calculateCumulativeRouteWorkloadHours(tasks);
-                            const leadTimeHours = calculatePipelinedLineDurationHours(tasks);
-                            const leadTimeDays = leadTimeHours / shiftHrs;
-                            return { leadTimeHours, leadTimeDays, cumulativeHours, shiftHrs };
-                        };
-
                         if (!fg.isFamily) {
                             const jo = fg.parentJo;
-                            const metrics = computeJoMetrics(jo);
+                            const metrics = getJobOrderMetrics(jo);
                             const journey = resolveJobOrderJourney({ status: jo.status });
                             return (
                                 <tr key={jo.jo_id || jo.id} className="hover:bg-muted/10">
@@ -186,7 +435,7 @@ export function JOTable({
                                                     </Badge>
                                                 )}
                                             </div>
-                                            <JobOrderJourneyBar journey={journey} compact className="min-w-0" />
+                                            <WorkflowGuidance jobOrder={jo} journey={journey} readOnly={readOnly} />
                                         </div>
                                     </td>
                                     <td className="px-2 py-3 text-center">
@@ -220,8 +469,8 @@ export function JOTable({
                         }
 
                         // Family pipelined lead time and cumulative workload
-                        const pMetrics = computeJoMetrics(fg.parentJo);
-                        const cMetricsList = fg.childJos.map((c: any) => computeJoMetrics(c));
+                        const pMetrics = getJobOrderMetrics(fg.parentJo);
+                        const cMetricsList = fg.childJos.map((c: any) => getJobOrderMetrics(c));
                         const totalChildLeadTime = cMetricsList.reduce((sum: number, m: any) => sum + m.leadTimeHours, 0);
                         const totalChildCumulative = cMetricsList.reduce((sum: number, m: any) => sum + m.cumulativeHours, 0);
 
@@ -311,10 +560,10 @@ export function JOTable({
                                                     </Badge>
                                                 )}
                                             </div>
-                                            <JobOrderJourneyBar
+                                            <WorkflowGuidance
+                                                jobOrder={fg.parentJo}
                                                 journey={resolveJobOrderJourney({ status: fg.parentJo.status })}
-                                                compact
-                                                className="min-w-0"
+                                                readOnly={readOnly}
                                             />
                                         </div>
                                     </td>
@@ -345,7 +594,7 @@ export function JOTable({
 
                                 {/* Child Sub-Assembly JO Rows */}
                                 {fg.childJos.map((cJo: any) => {
-                                    const cMetrics = computeJoMetrics(cJo);
+                                    const cMetrics = getJobOrderMetrics(cJo);
                                     return (
                                         <tr key={cJo.jo_id} className="hover:bg-sky-500/5 bg-sky-500/[0.02]">
                                             <td className="px-2 py-3 pl-4 break-words font-semibold text-sky-600 dark:text-sky-400 sm:pl-6">
@@ -384,16 +633,23 @@ export function JOTable({
                                                 )}
                                             </td>
                                             <td className="px-2 py-3">
-                                                <div className="flex flex-wrap items-center gap-1.5">
-                                                    <JobOrderStatusBadge
-                                                        status={cJo.status}
-                                                        className={isCancelledJobOrderStatus(cJo.status) ? "text-xs font-medium" : undefined}
+                                                <div className="space-y-1.5">
+                                                    <div className="flex flex-wrap items-center gap-1.5">
+                                                        <JobOrderStatusBadge
+                                                            status={cJo.status}
+                                                            className={isCancelledJobOrderStatus(cJo.status) ? "text-xs font-medium" : undefined}
+                                                        />
+                                                        {isTerminatedJobOrder(cJo) && (
+                                                            <Badge variant="outline" className="border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300">
+                                                                Terminated
+                                                            </Badge>
+                                                        )}
+                                                    </div>
+                                                    <WorkflowGuidance
+                                                        jobOrder={cJo}
+                                                        journey={resolveJobOrderJourney({ status: cJo.status })}
+                                                        readOnly={readOnly}
                                                     />
-                                                    {isTerminatedJobOrder(cJo) && (
-                                                        <Badge variant="outline" className="border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300">
-                                                            Terminated
-                                                        </Badge>
-                                                    )}
                                                 </div>
                                             </td>
                                             <td className="px-2 py-3 text-center">
@@ -427,6 +683,7 @@ export function JOTable({
                     })}
                 </tbody>
             </table>
+            </div>
         </div>
     );
 }

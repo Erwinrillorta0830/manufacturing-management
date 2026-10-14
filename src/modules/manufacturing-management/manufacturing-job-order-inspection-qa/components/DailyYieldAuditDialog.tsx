@@ -92,11 +92,18 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
     const [evidenceExpanded, setEvidenceExpanded] = React.useState(false);
     const [showAllAuditTrail, setShowAllAuditTrail] = React.useState(false);
     const [showAllOperators, setShowAllOperators] = React.useState(false);
+    const [checklistSectionOpen, setChecklistSectionOpen] = React.useState(false);
+    const [evidenceSectionOpen, setEvidenceSectionOpen] = React.useState(false);
+    const [auditTrailSectionOpen, setAuditTrailSectionOpen] = React.useState(false);
     React.useEffect(() => {
         setEvidenceExpanded(false);
         setShowAllAuditTrail(false);
         setShowAllOperators(false);
-    }, [yieldRecord?.ledgerId]);
+        const shouldStartOpen = window.matchMedia("(min-width: 64rem)").matches;
+        setChecklistSectionOpen(shouldStartOpen);
+        setEvidenceSectionOpen(shouldStartOpen);
+        setAuditTrailSectionOpen(shouldStartOpen);
+    }, [controller.isOpen, yieldRecord?.ledgerId]);
     const sortedAuditRoutes = React.useMemo(
         () => [...(controller.routes ?? [])].sort((left, right) => left.sequenceOrder - right.sequenceOrder),
         [controller.routes]
@@ -174,7 +181,7 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
 
     return (
         <Dialog open={controller.isOpen} onOpenChange={(open) => open ? controller.setIsOpen(true) : controller.closeAudit()}>
-            <DialogContent showCloseButton={!controller.actionLoading} className="w-[calc(100vw-1rem)] sm:w-[75vw] sm:max-w-[75vw] max-h-[calc(100dvh-1rem)] sm:max-h-[calc(100dvh-2rem)] overflow-hidden bg-background border border-border text-foreground flex flex-col p-4 sm:p-5 gap-3">
+            <DialogContent showCloseButton={!controller.actionLoading} className="w-[calc(100vw-1rem)] sm:w-[75vw] sm:max-w-[75vw] h-[calc(100dvh-1rem)] sm:h-[calc(100dvh-2rem)] max-h-[calc(100dvh-1rem)] sm:max-h-[calc(100dvh-2rem)] overflow-hidden bg-background border border-border text-foreground flex flex-col p-4 sm:p-5 gap-3">
                 <DialogHeader className="shrink-0 pb-1 border-b border-border/40">
                     <DialogTitle className="flex items-center gap-2 text-primary font-bold text-base">
                         <ClipboardCheck className="h-5 w-5" /> Record In-Process QA Audit
@@ -197,11 +204,48 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                             {controller.saveError}
                         </div>
                     )}
-                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 flex-1 min-h-0 overflow-hidden py-1">
+                    <div className="mb-2 shrink-0 rounded-xl border border-primary/20 bg-primary/5 p-3 lg:hidden">
+                        <div className="flex min-w-0 items-start justify-between gap-2">
+                            <div className="min-w-0">
+                                <p className="font-mono text-xs font-bold text-primary">{details?.jobOrderNo || "Selected Job Order"}</p>
+                                <p className="mt-0.5 truncate text-xs font-semibold" title={details?.productName}>{details?.productName || "Product not specified"}</p>
+                                <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
+                                    {yieldRecord?.shiftName || "Shift not specified"}
+                                    {controller.auditStartedAt ? ` · ${formatAuditTimestamp(controller.auditStartedAt)}` : ""}
+                                </p>
+                            </div>
+                            {details?.productUom && <Badge variant="secondary" className="shrink-0 text-[10px]">{details.productUom}</Badge>}
+                        </div>
+                        <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-primary/10 pt-2 text-[10px] sm:grid-cols-4">
+                            <div className="min-w-0">
+                                <p className="text-muted-foreground">Target</p>
+                                <p className="mt-0.5 truncate font-mono font-semibold">{numericText(details?.targetQuantity)} {details?.productUom || "units"}</p>
+                            </div>
+                            <div className="min-w-0">
+                                <p className="text-muted-foreground">Produced</p>
+                                <p className="mt-0.5 truncate font-mono font-semibold text-emerald-700 dark:text-emerald-300">{numericText(details?.producedQuantity)} {details?.productUom || "units"}</p>
+                            </div>
+                            <div className="min-w-0">
+                                <p className="text-muted-foreground">Good Stock</p>
+                                <p className="mt-0.5 truncate font-mono font-semibold text-emerald-700 dark:text-emerald-300">{numericText(yieldRecord?.goodQuantity)}</p>
+                            </div>
+                            <div className="min-w-0">
+                                <p className="text-muted-foreground">Rejected FG</p>
+                                <p className="mt-0.5 truncate font-mono font-semibold text-rose-700 dark:text-rose-300">{numericText(yieldRecord?.rejectedQuantity)}</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div
+                        role="region"
+                        aria-label="Audit form content"
+                        tabIndex={0}
+                        className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+                    >
+                    <div className="grid min-h-0 grid-cols-1 gap-5 lg:grid-cols-12">
                         {/* LEFT COLUMN: Header, Shift Yield Stats, Logs, Evidence & Audit Trail */}
-                        <div className="lg:col-span-5 flex flex-col space-y-4 overflow-y-auto pr-1 scrollbar-thin">
+                        <div className="flex min-w-0 flex-col space-y-4 lg:col-span-5 lg:pr-1">
                             {/* Product Details Card */}
-                            <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 space-y-1.5 shadow-2xs">
+                            <div className="hidden rounded-xl border border-primary/20 bg-primary/5 p-3 shadow-2xs lg:block lg:space-y-1.5">
                                 <div className="flex items-start justify-between gap-2">
                                     <div className="min-w-0">
                                         <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
@@ -232,7 +276,7 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                             </div>
 
                             {/* Session Meta (Audited By & Timestamp) */}
-                            <div className="grid grid-cols-2 gap-2">
+                            <div className="hidden grid-cols-2 gap-2 lg:grid">
                                 <div className="rounded-xl border border-border bg-muted/20 p-2.5">
                                     <p className="text-[10px] uppercase text-muted-foreground flex items-center gap-1 font-semibold"><User className="h-3 w-3" />Audited By</p>
                                     <p className="mt-1 truncate text-xs font-bold" title={inspectorDisplayName}>{inspectorDisplayName}</p>
@@ -325,8 +369,12 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
 
                             {/* Operator Checklist Parameter Entries (Read-Only) */}
                             <div className="border border-border rounded-xl p-3 bg-muted/10">
-                                <details className="group cursor-pointer">
-                                    <summary className="flex justify-between items-center text-foreground font-bold text-xs select-none">
+                                <details
+                                    className="group cursor-pointer"
+                                    open={checklistSectionOpen}
+                                    onToggle={(event) => setChecklistSectionOpen(event.currentTarget.open)}
+                                >
+                                    <summary className="flex select-none items-center justify-between text-xs font-bold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
                                         <span>Operator Checklist Logs (Read-Only)</span>
                                         <span className="text-[10px] text-primary group-open:hidden font-semibold">Show logs</span>
                                         <span className="text-[10px] text-primary hidden group-open:inline font-semibold">Hide logs</span>
@@ -351,7 +399,7 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                                 No matching operator checklist logs found for this shift.
                                             </div>
                                         ) : (
-                                            <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                                            <div className="space-y-1.5">
                                                 {controller.matchingLogs.map((log: DailyYieldQALog, index: number) => {
                                                     const task = typeof log.task_id === "object" ? log.task_id : null;
                                                     return (
@@ -377,18 +425,21 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
 
                             {/* End-of-shift Evidence Image */}
                             {yieldRecord?.evidenceImage && (
-                                <div className="bg-sky-500/[0.03] border border-sky-500/20 rounded-xl p-3 space-y-2 shadow-sm">
-                                    <div className="flex items-center gap-2 pb-1.5 border-b border-sky-500/10">
+                                <details
+                                    className="group rounded-xl border border-sky-500/20 bg-sky-500/[0.03] p-3 shadow-sm"
+                                    open={evidenceSectionOpen}
+                                    onToggle={(event) => setEvidenceSectionOpen(event.currentTarget.open)}
+                                >
+                                    <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-xs font-bold text-sky-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary dark:text-sky-300">
+                                        <span className="flex min-w-0 items-center gap-2">
                                         <div className="p-1 bg-sky-500/10 rounded-lg text-sky-600 dark:text-sky-400">
                                             <ImageIcon className="h-3.5 w-3.5" />
                                         </div>
-                                        <div>
-                                            <h4 className="font-bold text-sky-800 dark:text-sky-300 uppercase tracking-wider text-[10px]">
-                                                End-of-Shift Evidence
-                                            </h4>
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center gap-3 rounded-lg border border-sky-500/20 bg-background/70 p-2">
+                                            <span className="truncate uppercase tracking-wider">End-of-Shift Evidence</span>
+                                        </span>
+                                        <span className="shrink-0 text-[10px] font-semibold text-primary">{evidenceSectionOpen ? "Hide" : "Show"}</span>
+                                    </summary>
+                                    <div className="mt-2 flex items-center gap-3 rounded-lg border border-sky-500/20 bg-background/70 p-2">
                                         {isManufacturingEvidenceVideo(yieldRecord.evidenceImage.mimeType, yieldRecord.evidenceImage.fileName) ? (
                                             <video
                                                 src={yieldRecord.evidenceImage.url}
@@ -439,30 +490,24 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                             </a>
                                         </div>
                                     </div>
-                                </div>
+                                </details>
                             )}
 
                             {/* Audit Trail (Contained, No Overflow) */}
-                            <div className="space-y-2 border border-border rounded-xl p-3 bg-muted/5 overflow-hidden">
-                                <div className="flex items-center justify-between border-b pb-1.5 border-border/60">
-                                    <h4 className="text-foreground font-bold text-xs uppercase tracking-wider flex items-center gap-1.5">
+                            <details
+                                className="group space-y-2 overflow-hidden rounded-xl border border-border bg-muted/5 p-3"
+                                open={auditTrailSectionOpen}
+                                onToggle={(event) => setAuditTrailSectionOpen(event.currentTarget.open)}
+                            >
+                                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 border-b border-border/60 pb-1.5 text-xs font-bold uppercase tracking-wider text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+                                    <span className="flex items-center gap-1.5">
                                         <History className="h-3.5 w-3.5 text-primary" /> Audit Trail
-                                    </h4>
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-[10px] text-muted-foreground font-mono">
-                                            {auditTrailEntries.length} {auditTrailEntries.length === 1 ? "entry" : "entries"}
-                                        </span>
-                                        {auditTrailEntries.length > 2 && (
-                                            <button
-                                                type="button"
-                                                onClick={() => setShowAllAuditTrail(true)}
-                                                className="text-[10px] text-primary hover:underline font-semibold"
-                                            >
-                                                Show all ({auditTrailEntries.length})
-                                            </button>
-                                        )}
-                                    </div>
-                                </div>
+                                    </span>
+                                    <span className="shrink-0 text-[10px] font-medium normal-case text-muted-foreground">
+                                        {auditTrailEntries.length} {auditTrailEntries.length === 1 ? "entry" : "entries"} · {auditTrailSectionOpen ? "Hide" : "Show"}
+                                    </span>
+                                </summary>
+                                <div className="space-y-2 pt-2">
                                 {auditTrailEntries.length === 0 ? (
                                     <p className="text-xs text-muted-foreground py-3 text-center">No audit events have been recorded yet.</p>
                                 ) : (
@@ -492,24 +537,36 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                         })}
                                     </ol>
                                 )}
-                            </div>
+                                {auditTrailEntries.length > 2 && (
+                                    <div className="text-right">
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowAllAuditTrail(true)}
+                                            className="text-[10px] font-semibold text-primary hover:underline"
+                                        >
+                                            Show all ({auditTrailEntries.length})
+                                        </button>
+                                    </div>
+                                )}
+                                </div>
+                            </details>
                         </div>
 
                         {/* RIGHT COLUMN: The Steps, Parameters, WIP Output Traceability, and QA Decisions (7 of 12) */}
-                        <div className="lg:col-span-7 flex flex-col space-y-4 overflow-y-auto pl-1 pr-1 scrollbar-thin">
+                        <div className="flex min-w-0 flex-col space-y-4 lg:col-span-7 lg:pl-1 lg:pr-1">
                             {/* Step QC Sheet Header & Routing Checklist */}
                             <div className="space-y-2 border border-border rounded-xl p-3 bg-muted/10">
                                 <Label className="text-foreground font-bold text-xs block border-b pb-1.5 border-border/60">
                                     Daily Quality Control Sheet (All Routing Steps)
                                 </Label>
-                                <div className="flex flex-wrap items-center gap-1.5 p-2 bg-muted/20 border border-border rounded-xl text-[10px] font-bold">
+                                <div className="flex flex-wrap items-center gap-1.5 p-2 bg-muted/20 border border-border rounded-xl text-[10px] font-bold [@media(pointer:coarse)]:gap-2.5">
                                     {controller.routes.length > 0 ? controller.routes.map((route, index) => {
                                         const audited = controller.selectedYield?.audits.some((audit) => Number(audit.jo_route_id) === route.id);
                                         return (
                                             <React.Fragment key={route.id}>
                                                 <button
                                                     type="button"
-                                                    className={`flex items-center gap-1 px-2 py-0.5 rounded-md border ${audited ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-amber-500/10 text-amber-400 border-amber-500/20"}`}
+                                                    className={`flex items-center gap-1 rounded-md border px-2 py-0.5 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 [@media(pointer:coarse)]:gap-2 [@media(pointer:coarse)]:px-3 [@media(pointer:coarse)]:py-2 [@media(pointer:coarse)]:text-xs ${audited ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-amber-500/10 text-amber-400 border-amber-500/20"}`}
                                                     onClick={() => controller.setSelectedRouteId(route.id)}
                                                 >
                                                     <span>{route.sequenceOrder}. {route.name}</span>
@@ -522,7 +579,7 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                     )}
                                 </div>
 
-                                <div className="grid grid-cols-1 gap-3 max-h-[360px] overflow-y-auto pr-1 scrollbar-thin">
+                                <div className="grid grid-cols-1 gap-3">
                                     {controller.referenceLoading && controller.routes.length > 0 ? (
                                         <div role="status" aria-label="Loading QA templates" aria-busy="true" className="space-y-2">
                                             <span className="sr-only">Loading QA templates and checklist parameters...</span>
@@ -928,6 +985,7 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                                 <textarea id="daily-yield-remarks" disabled={isVerified} value={controller.dailyRemarks} onChange={(event) => controller.setDailyRemarks(event.target.value)} className="flex min-h-[52px] w-full rounded-md border border-border bg-background text-foreground px-3 py-1.5 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary" placeholder="Details about moisture logs, physicochemical traits or sensory notes..." />
                             </div>
                         </div>
+                    </div>
                     </div>
 
                     {/* Dialog Footer */}

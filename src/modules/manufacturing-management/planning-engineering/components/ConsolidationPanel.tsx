@@ -1,18 +1,22 @@
 import React from "react";
-import { Settings, AlertTriangle, Check } from "lucide-react";
+import { ChevronDown, Settings, AlertTriangle, Check, Trash2 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { SalesOrderDetail, SalesOrderReleaseGroup } from "../types";
 import { Skeleton } from "@/components/ui/skeleton";
+import { remainingQuantity } from "../utils/demand-groups";
 
 interface ConsolidationPanelProps {
     selectedLines: SalesOrderDetail[];
     releaseGroups: SalesOrderReleaseGroup[];
     mergeValidation: { isValid: boolean; reason: string };
     hasValidTargetBranch: boolean;
+    releaseBlockReason: string | null;
     handleInitiateRelease: () => void;
+    handleRemoveLine: (detailId: number) => void;
     versionStock: number | null;
     loadingVersionStock: boolean;
     canDirectAllocate: boolean;
@@ -24,7 +28,9 @@ export function ConsolidationPanel({
     releaseGroups,
     mergeValidation,
     hasValidTargetBranch,
+    releaseBlockReason,
     handleInitiateRelease,
+    handleRemoveLine,
     versionStock,
     loadingVersionStock,
     canDirectAllocate,
@@ -48,13 +54,7 @@ export function ConsolidationPanel({
                     </div>
                 ) : (
                     <div className="space-y-4">
-                        {!mergeValidation.isValid ? (
-                            <Alert variant="destructive">
-                                <AlertTriangle className="h-4 w-4" />
-                                <AlertTitle className="text-xs font-bold uppercase">Release Blocked</AlertTitle>
-                                <AlertDescription className="text-xs font-medium mt-1">{mergeValidation.reason}</AlertDescription>
-                            </Alert>
-                        ) : (
+                        {!releaseBlockReason && (
                             <Alert className="border-green-200 bg-green-50/10">
                                 <Check className="h-4 w-4 text-green-600" />
                                 <AlertTitle className="text-xs font-bold text-green-700 uppercase">Valid Multi-JO Release</AlertTitle>
@@ -66,52 +66,92 @@ export function ConsolidationPanel({
 
                         <div className="space-y-2">
                             {releaseGroups.map((group, index) => (
-                                <div key={group.key} className="bg-card border rounded-lg p-3 space-y-2">
-                                    <div className="flex items-start justify-between gap-3 text-xs">
-                                        <div className="min-w-0">
-                                            <div className="font-bold text-foreground truncate">{group.productName}</div>
-                                            <div className="text-[10px] text-muted-foreground">{group.bomVersionName} · {group.lines.length} detail line{group.lines.length === 1 ? "" : "s"}</div>
+                                <Collapsible key={group.key} className="bg-card border rounded-lg p-3">
+                                    <div className="space-y-2">
+                                        <div className="flex items-start justify-between gap-3 text-xs">
+                                            <div className="min-w-0">
+                                                <div className="font-bold text-foreground truncate">{group.productName}</div>
+                                                <div className="text-[10px] text-muted-foreground">{group.bomVersionName} · {group.lines.length} detail line{group.lines.length === 1 ? "" : "s"}</div>
+                                            </div>
+                                            <div className="flex shrink-0 items-center gap-2">
+                                                <Badge variant="outline" className="font-bold text-primary border-primary/20 bg-primary/5">JO {index + 1}</Badge>
+                                                <CollapsibleTrigger asChild>
+                                                    <Button type="button" variant="outline" size="sm" className="group h-8 px-2 text-xs">
+                                                        Review {group.lines.length} {group.lines.length === 1 ? "line" : "lines"}
+                                                        <ChevronDown className="h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-180" aria-hidden="true" />
+                                                        <span className="sr-only">for {group.productName}</span>
+                                                    </Button>
+                                                </CollapsibleTrigger>
+                                            </div>
                                         </div>
-                                        <Badge variant="outline" className="shrink-0 font-bold text-primary border-primary/20 bg-primary/5">JO {index + 1}</Badge>
-                                    </div>
-                                    <div className="flex justify-between items-center text-xs">
-                                        <span className="font-semibold text-muted-foreground">Sales Orders:</span>
-                                        <span className="font-bold text-foreground text-right">{group.lines.map((line) => line.order_no).filter(Boolean).filter((value, lineIndex, values) => values.indexOf(value) === lineIndex).join(", ")}</span>
-                                    </div>
-                                    <div className="flex justify-between items-center text-xs">
-                                        <span className="font-semibold text-muted-foreground">Full remaining quantity:</span>
-                                        <span className="font-bold text-emerald-700">{group.totalRemainingQuantity.toLocaleString()} {group.lines[0]?.product_id?.uom || "units"}</span>
-                                    </div>
-                                    {releaseGroups.length === 1 && (
                                         <div className="flex justify-between items-center text-xs">
-                                            <span className="font-semibold text-muted-foreground">Available version stock:</span>
-                                            {loadingVersionStock ? <div role="status" aria-busy="true" aria-label="Checking available version stock"><Skeleton className="h-4 w-16" /></div> : <span className="font-bold text-foreground">{versionStock !== null ? versionStock.toLocaleString() : "N/A"}</span>}
+                                            <span className="font-semibold text-muted-foreground">Sales Orders:</span>
+                                            <span className="font-bold text-foreground text-right">{group.lines.map((line) => line.order_no).filter(Boolean).filter((value, lineIndex, values) => values.indexOf(value) === lineIndex).join(", ")}</span>
                                         </div>
-                                    )}
-                                </div>
+                                        <div className="flex justify-between items-center text-xs">
+                                            <span className="font-semibold text-muted-foreground">Full remaining quantity:</span>
+                                            <span className="font-bold text-emerald-700">{group.totalRemainingQuantity.toLocaleString()} {group.lines[0]?.product_id?.uom || "units"}</span>
+                                        </div>
+                                        {releaseGroups.length === 1 && (
+                                            <div className="flex justify-between items-center text-xs">
+                                                <span className="font-semibold text-muted-foreground">Available version stock:</span>
+                                                {loadingVersionStock ? <div role="status" aria-busy="true" aria-label="Checking available version stock"><Skeleton className="h-4 w-16" /></div> : <span className="font-bold text-foreground">{versionStock !== null ? versionStock.toLocaleString() : "N/A"}</span>}
+                                            </div>
+                                        )}
+                                    </div>
+                                    <CollapsibleContent className="mt-3 space-y-2 border-t pt-3">
+                                        <h3 className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Selected Sales Order lines</h3>
+                                        {group.lines.map((line) => (
+                                            <div key={line.detail_id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/20 px-3 py-2">
+                                                <div className="min-w-0 text-xs">
+                                                    <div className="break-all font-semibold text-foreground">{line.order_no || `Sales Order ${line.order_id}`}</div>
+                                                    <div className="text-[10px] text-muted-foreground">
+                                                        Line #{line.detail_id} · {remainingQuantity(line).toLocaleString()} {line.product_id?.uom || "units"} remaining
+                                                    </div>
+                                                </div>
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="shrink-0 text-destructive hover:text-destructive"
+                                                    aria-label={`Remove ${line.order_no || `Sales Order ${line.order_id}`} line ${line.detail_id} from selection`}
+                                                    onClick={() => handleRemoveLine(line.detail_id)}
+                                                >
+                                                    <Trash2 className="h-4 w-4" aria-hidden="true" />
+                                                    Remove
+                                                </Button>
+                                            </div>
+                                        ))}
+                                    </CollapsibleContent>
+                                </Collapsible>
                             ))}
-                        </div>
-
-                        <div className="space-y-2">
-                            <Button className="w-full font-bold text-xs uppercase" disabled={!hasValidTargetBranch || !mergeValidation.isValid} onClick={() => handleInitiateRelease()}>
-                                {releaseGroups.length > 1 ? `Release ${releaseGroups.length} Job Orders` : "Release Job Order"}
-                            </Button>
-
-                            {canDirectAllocate && hasValidTargetBranch && mergeValidation.isValid && versionStock !== null && versionStock >= (releaseGroups[0]?.totalRemainingQuantity || 0) && (
-                                <Button type="button" variant="outline" className="w-full font-bold text-xs uppercase border-emerald-600/50 text-emerald-600 dark:text-emerald-400 bg-emerald-50/20 dark:bg-emerald-950/20 hover:bg-emerald-600 hover:text-white transition-all duration-200" onClick={handleInitiateDirectAllocate}>
-                                    Direct Allocate &amp; Invoice
-                                </Button>
-                            )}
-
-                            {canDirectAllocate && hasValidTargetBranch && mergeValidation.isValid && versionStock !== null && versionStock < (releaseGroups[0]?.totalRemainingQuantity || 0) && (
-                                <p className="text-[10px] text-muted-foreground leading-snug">Direct Allocate &amp; Invoice becomes available when version stock ({versionStock.toLocaleString()}) covers the remaining quantity ({(releaseGroups[0]?.totalRemainingQuantity || 0).toLocaleString()}).</p>
-                            )}
-                            {!canDirectAllocate && releaseGroups.length > 1 && (
-                                <p className="text-[10px] text-muted-foreground leading-snug">Direct allocation is limited to one product/BOM group because it posts one inventory allocation at a time.</p>
-                            )}
                         </div>
                     </div>
                 )}
+                <div className="space-y-2 shrink-0">
+                    <Button className="w-full font-bold text-xs uppercase" disabled={releaseBlockReason !== null} onClick={() => handleInitiateRelease()}>
+                        {releaseGroups.length > 1 ? `Release ${releaseGroups.length} Job Orders` : "Release Job Order"}
+                    </Button>
+                    {releaseBlockReason && (
+                        <div role="status" className="flex items-start gap-2 text-[11px] font-medium leading-snug text-amber-700 dark:text-amber-400">
+                            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                            <span>{releaseBlockReason}</span>
+                        </div>
+                    )}
+
+                    {selectedLines.length > 0 && canDirectAllocate && hasValidTargetBranch && mergeValidation.isValid && versionStock !== null && versionStock >= (releaseGroups[0]?.totalRemainingQuantity || 0) && (
+                        <Button type="button" variant="outline" className="w-full font-bold text-xs uppercase border-emerald-600/50 text-emerald-600 dark:text-emerald-400 bg-emerald-50/20 dark:bg-emerald-950/20 hover:bg-emerald-600 hover:text-white transition-all duration-200" onClick={handleInitiateDirectAllocate}>
+                            Direct Allocate &amp; Invoice
+                        </Button>
+                    )}
+
+                    {selectedLines.length > 0 && canDirectAllocate && hasValidTargetBranch && mergeValidation.isValid && versionStock !== null && versionStock < (releaseGroups[0]?.totalRemainingQuantity || 0) && (
+                        <p className="text-[10px] text-muted-foreground leading-snug">Direct Allocate &amp; Invoice becomes available when version stock ({versionStock.toLocaleString()}) covers the remaining quantity ({(releaseGroups[0]?.totalRemainingQuantity || 0).toLocaleString()}).</p>
+                    )}
+                    {selectedLines.length > 0 && !canDirectAllocate && releaseGroups.length > 1 && (
+                        <p className="text-[10px] text-muted-foreground leading-snug">Direct allocation is limited to one product/BOM group because it posts one inventory allocation at a time.</p>
+                    )}
+                </div>
             </CardContent>
         </Card>
     );
