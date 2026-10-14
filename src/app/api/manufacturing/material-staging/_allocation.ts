@@ -39,8 +39,11 @@ import {
 } from "@/modules/manufacturing-management/job-order-status";
 import {
     ALLOCATION_QUANTITY_EPSILON,
+    allocateFefoQuantities,
     exceedsAvailableQuantity,
-    getAllocationShortage
+    getAllocationShortage,
+    getMaterialRequiredQuantity,
+    getRemainingAllocationQuantity
 } from "@/modules/manufacturing-management/material-staging/utils/allocation-quantity";
 import {
     addStagedMovementQuantity,
@@ -248,12 +251,6 @@ function movementBatch(movement: NormalizedMmInventoryMovement | MaterialStaging
 
 function movementRemarks(movement: NormalizedMmInventoryMovement | MaterialStagingStockMovement): string {
     return text((movement as NormalizedMmInventoryMovement).remarks ?? (movement as MaterialStagingStockMovement).remarks);
-}
-
-function materialRequiredQuantity(row: DirectusRecord): number {
-    return Math.max(0, quantity(
-        row.allocated_quantity ?? row.required_quantity ?? row.quantity_required ?? row.quantity ?? 0
-    ));
 }
 
 function reservationId(row: DirectusRecord): number {
@@ -555,7 +552,7 @@ async function loadAllocationContext(payload: AllocationPreviewPayload): Promise
             productCode: text(product.product_code) || `SKU-${productId}`,
             uom: text(unitRelation.unit_shortcut ?? row.uom ?? row.unit) || "units",
             productUnitId,
-            requiredQuantity: materialRequiredQuantity(row),
+            requiredQuantity: getMaterialRequiredQuantity(row),
             stagedQuantity: 0
         } satisfies MaterialContext;
     }).filter(material => material.id > 0 && material.productId > 0);
@@ -648,16 +645,14 @@ function candidateStockKey(material: MaterialContext, candidate: AllocationCandi
 }
 
 function buildAutoLines(material: MaterialContext, candidates: AllocationCandidate[]): AllocationLine[] {
-    let remaining = roundQuantity(material.requiredQuantity - material.stagedQuantity);
-    const lines: AllocationLine[] = [];
-    for (const candidate of candidates) {
-        if (remaining <= QUANTITY_EPSILON) break;
-        const requested = roundQuantity(Math.min(remaining, candidate.available_quantity));
-        if (requested <= QUANTITY_EPSILON) continue;
-        lines.push(candidateToLine(candidate, material.id, `auto-${material.id}-${candidate.inventory_lot_id}`, requested));
-        remaining = roundQuantity(remaining - requested);
-    }
-    return lines;
+    const quantities = allocateFefoQuantities(
+        material.requiredQuantity,
+        material.stagedQuantity,
+        candidates.map(candidate => candidate.available_quantity)
+    );
+    return candidates.flatMap((candidate, index) => quantities[index] > QUANTITY_EPSILON
+        ? [candidateToLine(candidate, material.id, `auto-${material.id}-${candidate.inventory_lot_id}`, quantities[index])]
+        : []);
 }
 
 function validateManualLines(
@@ -742,7 +737,7 @@ export async function prepareAllocationPreview(payload: AllocationPreviewPayload
             const stockKey = candidateStockKey(material, candidate);
             proposedQuantityByStock.set(stockKey, (proposedQuantityByStock.get(stockKey) || 0) + line.quantity);
         }
-        const remainingQuantity = roundQuantity(material.requiredQuantity - material.stagedQuantity);
+        const remainingQuantity = getRemainingAllocationQuantity(material.requiredQuantity, material.stagedQuantity);
         const proposedQuantity = roundQuantity(proposed.reduce((total, line) => total + line.quantity, 0));
         const availableQuantity = roundQuantity(candidates.reduce((total, candidate) => total + candidate.available_quantity, 0));
         return {
