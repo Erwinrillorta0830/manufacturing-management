@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import Image from "next/image";
 import { Plus, Search, Edit, DollarSign, Activity, Settings, Check, LayoutGrid, Image as ImageIcon, ChevronsLeft, ChevronsRight, RefreshCw, Info, Calendar, User, X, ChevronDown, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
@@ -8,9 +8,10 @@ import { WorkCenter, AssetRecord, DepartmentRecord } from "@/modules/manufacturi
 import {
     fetchWorkCenters,
     createWorkCenter,
-    saveWorkCenter
+    saveWorkCenter,
+    fetchAssets,
+    fetchDepartments
 } from "./services/work-stations-api";
-import { fetchAssets, fetchDepartments } from "@/modules/manufacturing-management/finished-goods-master/services/finished-goods-api";
 import { Button } from "@/components/ui/button";
 import {
     Select,
@@ -21,6 +22,60 @@ import {
 } from "@/components/ui/select";
 
 import { formatNumber, formatCurrency } from "@/lib/utils";
+
+function resolveAssetImageUrl(img?: string | null): string | null {
+    if (!img) return null;
+    const trimmed = img.trim();
+    if (!trimmed) return null;
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://") || trimmed.startsWith("/")) {
+        return trimmed;
+    }
+    const baseUrl = (process.env.NEXT_PUBLIC_DIRECTUS_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "").replace(/\/+$/, "");
+    return baseUrl ? `${baseUrl}/assets/${trimmed}` : null;
+}
+
+function AssetImageThumbnail({
+    src,
+    alt,
+    className = "w-10 h-10 rounded border border-border shrink-0 overflow-hidden relative cursor-zoom-in hover:scale-105 transition-transform",
+    placeholderClassName = "w-10 h-10 bg-muted/20 border border-dashed rounded flex items-center justify-center text-muted-foreground/30 shrink-0",
+    iconClassName = "h-4.5 w-4.5",
+    fallbackContent,
+    onClick
+}: {
+    src?: string | null;
+    alt: string;
+    className?: string;
+    placeholderClassName?: string;
+    iconClassName?: string;
+    fallbackContent?: React.ReactNode;
+    onClick?: (e: React.MouseEvent) => void;
+}) {
+    const [failedSrc, setFailedSrc] = useState<string | null>(null);
+    const resolvedSrc = resolveAssetImageUrl(src);
+    const isFailed = !resolvedSrc || failedSrc === resolvedSrc;
+
+    if (isFailed) {
+        return (
+            <div className={placeholderClassName}>
+                {fallbackContent || <ImageIcon className={iconClassName} />}
+            </div>
+        );
+    }
+
+    return (
+        <div className={className} onClick={onClick}>
+            <Image
+                src={resolvedSrc}
+                alt={alt}
+                fill
+                unoptimized
+                className="object-cover"
+                onError={() => setFailedSrc(resolvedSrc)}
+            />
+        </div>
+    );
+}
 
 export default function WorkStationsModule() {
     const [workCenters, setWorkCenters] = useState<WorkCenter[]>([]);
@@ -242,17 +297,36 @@ export default function WorkStationsModule() {
         setAssetSearch(matchedAsset ? getAssetLabel(matchedAsset) : "");
     };
 
+    const isProductionAsset = useCallback((a: AssetRecord): boolean => {
+        const deptRaw = a.department as unknown;
+        if (deptRaw && typeof deptRaw === "object") {
+            const deptObj = deptRaw as Record<string, unknown>;
+            const dId = Number(deptObj.department_id ?? deptObj.id);
+            if (dId === 4) return true;
+            const dName = String(deptObj.department_name ?? deptObj.name ?? "").toLowerCase();
+            if (dName.includes("production")) return true;
+        } else if (typeof deptRaw === "number" && !isNaN(deptRaw)) {
+            if (deptRaw === 4) return true;
+            const found = departments.find(d => Number(d.department_id) === Number(deptRaw) || Number((d as unknown as { id?: number }).id) === Number(deptRaw));
+            if (found && (Number(found.department_id) === 4 || (found.department_name || "").toLowerCase().includes("production"))) return true;
+        } else if (typeof deptRaw === "string" && deptRaw.trim()) {
+            if (deptRaw === "4" || deptRaw.toLowerCase().includes("production")) return true;
+        }
+        return false;
+    }, [departments]);
+
     const handleOpenEditModal = (wc: WorkCenter, isFromView = false) => {
         setEditingWorkCenter(wc);
         setWcName(wc.work_center_name);
         setOverheadCost(wc.overhead_cost_per_hour != null ? String(Number(wc.overhead_cost_per_hour)) : "0");
         setCapacity(wc.capacity_per_hour != null ? String(Math.round(Number(wc.capacity_per_hour))) : "0");
-        setSelectedAssetId(wc.asset_id || null);
         setIsActive(Boolean(wc.is_active));
 
-        // Prepopulate searches (without prepending raw ID)
+        // Prepopulate searches only if asset belongs strictly to Production department
         const matchedAsset = assets.find(a => a.id === wc.asset_id);
-        setAssetSearch(matchedAsset ? getAssetLabel(matchedAsset) : "");
+        const isProd = matchedAsset ? isProductionAsset(matchedAsset) : false;
+        setSelectedAssetId(isProd ? (wc.asset_id || null) : null);
+        setAssetSearch(isProd && matchedAsset ? getAssetLabel(matchedAsset) : "");
 
         setValidationAttempted(false);
         setIsTransitioning(isFromView);
@@ -281,8 +355,13 @@ export default function WorkStationsModule() {
         }
 
         const selectedAsset = assets.find(a => a.id === selectedAssetId);
-        if (selectedAsset && selectedAsset.is_active === false && selectedAssetId !== editingWorkCenter?.asset_id) {
+        if (selectedAsset && selectedAsset.is_active === false) {
             toast.error("The selected Asset / Equipment is inactive and cannot be assigned to a work station.");
+            return;
+        }
+
+        if (selectedAsset && !isProductionAsset(selectedAsset)) {
+            toast.error("The selected Asset / Equipment must belong to the Production department.");
             return;
         }
 
@@ -345,12 +424,11 @@ export default function WorkStationsModule() {
         }
     };
 
-    // Auto-filter asset matches (excluding inactive assets)
+    // Auto-filter asset matches (strictly Production department only)
     const filteredAssets = useMemo(() => {
         const selectableAssets = assets.filter(a => {
             const isActive = a.is_active !== false;
-            const isCurrentlyAssigned = selectedAssetId !== null && a.id === selectedAssetId;
-            return isActive || isCurrentlyAssigned;
+            return isProductionAsset(a) && isActive;
         });
 
         if (!assetSearch.trim()) return selectableAssets;
@@ -361,7 +439,7 @@ export default function WorkStationsModule() {
                 (a.rfid_code || "").toLowerCase().includes(search) ||
                 (a.barcode || "").toLowerCase().includes(search);
         });
-    }, [assets, assetSearch, selectedAssetId]);
+    }, [assets, assetSearch, isProductionAsset]);
 
     // Auto-derive department from currently selected asset
     const selectedAsset = useMemo(() => {
@@ -615,27 +693,15 @@ export default function WorkStationsModule() {
 
                                             return (
                                                 <div className="flex items-center gap-3">
-                                                    {itemImage ? (
-                                                        <div
-                                                            className="w-10 h-10 rounded border border-border shrink-0 overflow-hidden relative cursor-zoom-in hover:scale-105 transition-transform"
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                setPreviewImage(itemImage);
-                                                            }}
-                                                        >
-                                                            <Image
-                                                                src={itemImage}
-                                                                alt={assetName || "Asset"}
-                                                                fill
-                                                                unoptimized
-                                                                className="object-cover"
-                                                            />
-                                                        </div>
-                                                    ) : (
-                                                        <div className="w-10 h-10 bg-muted/20 border border-dashed rounded flex items-center justify-center text-muted-foreground/30 shrink-0">
-                                                            <ImageIcon className="h-4.5 w-4.5" />
-                                                        </div>
-                                                    )}
+                                                    <AssetImageThumbnail
+                                                        src={itemImage}
+                                                        alt={assetName || "Asset"}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            const resolved = resolveAssetImageUrl(itemImage);
+                                                            if (resolved) setPreviewImage(resolved);
+                                                        }}
+                                                    />
                                                     <div className="flex flex-col">
                                                         <span className="font-semibold text-foreground">
                                                             {assetName || rfidCode || barcodeCode || "Asset"}
@@ -880,7 +946,7 @@ export default function WorkStationsModule() {
                                 <div className="relative">
                                     <input
                                         type="text"
-                                        placeholder="Search asset or equipment RFID..."
+                                        placeholder="Search production asset or equipment RFID..."
                                         value={assetSearch}
                                         onChange={e => {
                                             setAssetSearch(e.target.value);
@@ -927,7 +993,7 @@ export default function WorkStationsModule() {
                                         <div className="fixed inset-0 z-10" onClick={handleCloseAssetDropdown} />
                                         <div className="absolute left-0 right-0 mt-1 max-h-40 overflow-y-auto rounded-lg bg-card border border-border shadow-lg py-1 z-20 text-xs">
                                             {filteredAssets.length === 0 ? (
-                                                <div className="px-3 py-2 text-muted-foreground italic">No matching equipment found.</div>
+                                                <div className="px-3 py-2 text-muted-foreground italic">No matching production equipment found.</div>
                                             ) : (
                                                 filteredAssets.map(asset => {
                                                     const label = getAssetLabel(asset);
@@ -943,22 +1009,17 @@ export default function WorkStationsModule() {
                                                             className="w-full text-left px-3 py-2 hover:bg-muted text-foreground flex items-center justify-between"
                                                         >
                                                             <div className="flex items-center gap-2">
-                                                                {asset.item_image ? (
-                                                                    <div className="w-7 h-7 rounded border border-border shrink-0 overflow-hidden relative">
-                                                                        <Image
-                                                                            src={asset.item_image}
-                                                                            alt={label}
-                                                                            fill
-                                                                            unoptimized
-                                                                            className="object-cover"
-                                                                        />
-                                                                    </div>
-                                                                ) : (
-                                                                    <div className="w-7 h-7 bg-muted/20 border border-dashed rounded flex items-center justify-center text-muted-foreground/30 shrink-0">
-                                                                        <ImageIcon className="h-3.5 w-3.5" />
-                                                                    </div>
-                                                                )}
-                                                                <span>{label}</span>
+                                                                <AssetImageThumbnail
+                                                                    src={asset.item_image}
+                                                                    alt={label}
+                                                                    className="w-7 h-7 rounded border border-border shrink-0 overflow-hidden relative"
+                                                                    placeholderClassName="w-7 h-7 bg-muted/20 border border-dashed rounded flex items-center justify-center text-muted-foreground/30 shrink-0"
+                                                                    iconClassName="h-3.5 w-3.5"
+                                                                />
+                                                                <div className="flex flex-col">
+                                                                    <span className="font-medium">{label}</span>
+                                                                    <span className="text-[10px] text-muted-foreground">Department: Production</span>
+                                                                </div>
                                                             </div>
                                                             {selectedAssetId === asset.id && <Check className="h-3.5 w-3.5 text-primary" />}
                                                         </button>
@@ -970,6 +1031,14 @@ export default function WorkStationsModule() {
                                 )}
                                 {selectedAssetId && (() => {
                                     const selectedAsset = assets.find(a => a.id === selectedAssetId);
+                                    if (selectedAsset && !isProductionAsset(selectedAsset)) {
+                                        return (
+                                            <div className="flex items-center gap-1.5 text-[11px] font-semibold text-destructive bg-destructive/10 border border-destructive/20 rounded-md px-2.5 py-1.5 mt-1.5">
+                                                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                                                <span>Invalid Asset: Selected equipment does not belong to the Production department (ID: 4).</span>
+                                            </div>
+                                        );
+                                    }
                                     if (selectedAsset && selectedAsset.is_active === false) {
                                         return (
                                             <div className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-md px-2.5 py-1.5 mt-1.5">
@@ -1156,25 +1225,22 @@ export default function WorkStationsModule() {
                                             <div className="border border-border/60 rounded-xl p-4 flex flex-col md:flex-row gap-4 bg-background">
                                                 {/* Left: Image Container */}
                                                 <div className="w-full md:w-1/3 shrink-0">
-                                                    {itemImage ? (
-                                                        <div
-                                                            className="w-full h-24 rounded-lg border border-border bg-muted/5 shrink-0 overflow-hidden relative cursor-zoom-in hover:scale-102 transition-transform"
-                                                            onClick={() => setPreviewImage(itemImage)}
-                                                        >
-                                                            <Image
-                                                                src={itemImage}
-                                                                alt={assetName || "Asset image"}
-                                                                fill
-                                                                unoptimized
-                                                                className="object-cover"
-                                                            />
-                                                        </div>
-                                                    ) : (
-                                                        <div className="w-full h-24 bg-muted/20 border border-dashed rounded-lg flex flex-col items-center justify-center text-muted-foreground/30 gap-1 shrink-0">
-                                                            <ImageIcon className="h-6 w-6" />
-                                                            <span className="text-[9px] font-semibold uppercase tracking-wider">No Image</span>
-                                                        </div>
-                                                    )}
+                                                    <AssetImageThumbnail
+                                                        src={itemImage}
+                                                        alt={assetName || "Asset image"}
+                                                        className="w-full h-24 rounded-lg border border-border bg-muted/5 shrink-0 overflow-hidden relative cursor-zoom-in hover:scale-102 transition-transform"
+                                                        placeholderClassName="w-full h-24 bg-muted/20 border border-dashed rounded-lg flex flex-col items-center justify-center text-muted-foreground/30 gap-1 shrink-0"
+                                                        fallbackContent={
+                                                            <>
+                                                                <ImageIcon className="h-6 w-6" />
+                                                                <span className="text-[9px] font-semibold uppercase tracking-wider">No Image</span>
+                                                            </>
+                                                        }
+                                                        onClick={() => {
+                                                            const resolved = resolveAssetImageUrl(itemImage);
+                                                            if (resolved) setPreviewImage(resolved);
+                                                        }}
+                                                    />
                                                 </div>
                                                 {/* Right: Info details */}
                                                 <div className="flex-1 space-y-2">
