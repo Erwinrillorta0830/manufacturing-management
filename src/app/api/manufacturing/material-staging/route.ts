@@ -13,8 +13,10 @@ import {
     branchProductBatchKey,
     branchProductKey,
     branchProductLotBatchKey,
+    mergeMaterialStagingOnHandMovements,
     normalizeBatchNo,
     normalizeDirectusStagingMovement,
+    sumMovementQuantitiesByBranchProduct,
     type MaterialStagingStockMovement
 } from "./_stock";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../services/mm-inventory-movements.service";
@@ -190,13 +192,7 @@ export async function GET(request: Request) {
         const rawStagingMovements: MaterialStagingStockMovement[] = stagingMovementsRes && stagingMovementsRes.ok
             ? ((await stagingMovementsRes.json()).data || []).map((movement: Record<string, unknown>) => normalizeDirectusStagingMovement(movement))
             : [];
-        const springMovementIds = new Set(movementsRes
-            .map((movement) => Number(movement.movement_id || 0))
-            .filter((movementId) => movementId > 0));
-        const rawMovements: MaterialStagingStockMovement[] = [
-            ...movementsRes,
-            ...rawStagingMovements.filter((movement) => !movement.movement_id || !springMovementIds.has(movement.movement_id))
-        ];
+        const rawMovements = mergeMaterialStagingOnHandMovements(movementsRes, rawStagingMovements);
         const rawReceiving = receivingRes && receivingRes.ok ? (await receivingRes.json()).data || [] : [];
         const rawYields = yieldsRes && yieldsRes.ok ? (await yieldsRes.json()).data || [] : [];
 
@@ -251,7 +247,7 @@ export async function GET(request: Request) {
         });
 
         // Compute stock using the same branch/product/lot/batch identity used by the transfer API.
-        const stockByBranchProduct = new Map<string, number>();
+        const stockByBranchProduct = sumMovementQuantitiesByBranchProduct(rawMovements);
         const stockByBranchProductBatchLot = new Map<string, {
             branchId: number;
             productId: number;
@@ -271,9 +267,6 @@ export async function GET(request: Request) {
             const lotId = Number(m.mm_lot_id || 0);
             const inventoryLotId = Number(m.inventory_lot_id || 0);
             if (pId && branchId) {
-                const productKey = branchProductKey(branchId, pId);
-                stockByBranchProduct.set(productKey, (stockByBranchProduct.get(productKey) || 0) + qty);
-
                 if (lotId) {
                     const batchKey = branchProductBatchKey(branchId, pId, normalizedBatchNo);
                     const lotKey = branchProductLotBatchKey(branchId, pId, lotId, normalizedBatchNo);

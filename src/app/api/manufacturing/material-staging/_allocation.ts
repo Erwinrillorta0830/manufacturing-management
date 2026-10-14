@@ -13,10 +13,14 @@ import {
     type MmLotRecord
 } from "../services/mm-lots.service";
 import {
+    branchProductKey,
+    mergeMaterialStagingMovements,
+    mergeMaterialStagingOnHandMovements,
     normalizeBatchNo,
     normalizeDirectusStagingMovement,
     isValidQaStatus,
     isExpired,
+    sumMovementQuantitiesByBranchProduct,
     type MaterialStagingStockMovement
 } from "./_stock";
 import type {
@@ -100,6 +104,7 @@ interface AllocationContext {
     targetBin: string;
     materials: MaterialContext[];
     reservations: ReservationContext[];
+    stockByBranchProduct: Map<string, number>;
     candidatesByMaterial: Map<number, AllocationCandidate[]>;
 }
 
@@ -477,15 +482,13 @@ async function loadAllocationContext(payload: AllocationPreviewPayload): Promise
         "Load inventory movements"
     );
     const directusMovements = directusMovementRows.map(normalizeDirectusStagingMovement);
-    const springMovementIds = new Set(springMovements.map(movement => Number(movement.movement_id || 0)).filter(id => id > 0));
-    const movements: Array<NormalizedMmInventoryMovement | MaterialStagingStockMovement> = [
-        ...springMovements,
-        ...directusMovements.filter(movement => !movement.movement_id || !springMovementIds.has(Number(movement.movement_id)))
-    ];
+    type AllocationMovement = NormalizedMmInventoryMovement | MaterialStagingStockMovement;
+    const movements = mergeMaterialStagingMovements<AllocationMovement>(springMovements, directusMovements);
+    const mainStoreMovements = mergeMaterialStagingOnHandMovements(springMovements, directusMovements);
 
+    const stockByBranchProduct = sumMovementQuantitiesByBranchProduct(mainStoreMovements);
     const stockByInventoryLotBatch = new Map<string, number>();
-    const stagedMovementQuantityByMaterialId = new Map<number, number>();
-    movements.forEach(movement => {
+    mainStoreMovements.forEach(movement => {
         const movementBranch = movementBranchId(movement);
         const productId = movementProductId(movement);
         const lotId = movementLotId(movement);
@@ -496,7 +499,15 @@ async function loadAllocationContext(payload: AllocationPreviewPayload): Promise
             const inventoryKey = `${productId}:${lotId}:${inventoryLotId}:${normalizeBatchNo(batchNo)}`;
             stockByInventoryLotBatch.set(inventoryKey, (stockByInventoryLotBatch.get(inventoryKey) || 0) + movementQuantity(movement));
         }
+    });
 
+    const stagedMovementQuantityByMaterialId = new Map<number, number>();
+    movements.forEach(movement => {
+        const movementBranch = movementBranchId(movement);
+        const productId = movementProductId(movement);
+        const lotId = movementLotId(movement);
+        const batchNo = movementBatch(movement);
+        if (movementBranch !== branchId || !productId || !lotId || !batchNo) return;
         const remarks = movementRemarks(movement);
         const isStagingMovement = remarks.includes("[MM-MATERIAL-STAGING]");
         const isReturnMovement = remarks.includes("[MM-MATERIAL-STAGING-RETURN]");
@@ -612,6 +623,7 @@ async function loadAllocationContext(payload: AllocationPreviewPayload): Promise
         targetBin: resolveStagingTargetBin(workCenterId),
         materials,
         reservations: reservationContexts,
+        stockByBranchProduct,
         candidatesByMaterial
     };
 }
@@ -739,6 +751,10 @@ export async function prepareAllocationPreview(payload: AllocationPreviewPayload
             product_name: material.productName,
             product_code: material.productCode,
             uom: material.uom,
+            main_store_on_hand_quantity: roundQuantity(Math.max(
+                0,
+                context.stockByBranchProduct.get(branchProductKey(context.branchId, material.productId)) || 0
+            )),
             required_quantity: material.requiredQuantity,
             staged_quantity: material.stagedQuantity,
             remaining_quantity: remainingQuantity,

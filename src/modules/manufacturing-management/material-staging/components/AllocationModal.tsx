@@ -127,6 +127,7 @@ function AllocationForm({
         ? {
             ...selectedMaterialPreviews[0],
             required_quantity: selectedMaterialPreviews.reduce((total, item) => total + item.required_quantity, 0),
+            main_store_on_hand_quantity: selectedMaterialPreviews[0].main_store_on_hand_quantity,
             staged_quantity: selectedMaterialPreviews.reduce((total, item) => total + item.staged_quantity, 0),
             remaining_quantity: selectedMaterialPreviews.reduce((total, item) => total + item.remaining_quantity, 0),
             shortage_quantity: selectedMaterialPreviews.reduce((total, item) => total + item.shortage_quantity, 0),
@@ -425,9 +426,15 @@ function AllocationForm({
                         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/30 p-3">
                             <div>
                                 <div className="text-xs font-semibold uppercase tracking-wider">Eligible lots and batches</div>
-                                <div className="text-[11px] text-muted-foreground">Only active, non-expired, QA-valid canonical inventory lots are selectable.</div>
+                                <div className="text-[11px] text-muted-foreground">Only active, non-expired, QA-valid canonical inventory lots are selectable. Lot availability reflects reservations held by other Job Orders.</div>
                             </div>
-                            <Badge variant={selectedQuantity >= remainingQuantity ? "default" : "secondary"} className="text-[11px]">Selected {selectedQuantity.toLocaleString()} / Expected {remainingQuantity.toLocaleString()} {material.uom}</Badge>
+                            <div className="flex flex-wrap items-center gap-2">
+                                <div className="rounded-md border border-border bg-background px-3 py-1.5 text-right">
+                                    <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Main Store On-Hand</div>
+                                    <div className="font-mono text-xs font-semibold">{selectedMaterialPreview.main_store_on_hand_quantity.toLocaleString()} {material.uom}</div>
+                                </div>
+                                <Badge variant={selectedQuantity >= remainingQuantity ? "default" : "secondary"} className="text-[11px]">Selected {selectedQuantity.toLocaleString()} / Expected {remainingQuantity.toLocaleString()} {material.uom}</Badge>
+                            </div>
                         </div>
                         {selectedMaterialPreview.candidates.length === 0 ? (
                             <div className="p-8 text-center text-xs text-muted-foreground">No eligible lot/batch inventory is available for this material.</div>
@@ -436,7 +443,7 @@ function AllocationForm({
                                 <table className="w-full min-w-[680px] text-xs">
                                     <thead className="bg-muted/20 text-left text-[11px] uppercase tracking-wider text-muted-foreground">
                                         <tr>
-                                            <th className="p-3">Lot</th><th className="p-3">Batch</th><th className="p-3">Expiry</th><th className="p-3">QA</th><th className="p-3 text-right">Available</th><th className="p-3 text-right">Allocate</th>
+                                            <th className="p-3">Lot</th><th className="p-3">Batch</th><th className="p-3">Expiry</th><th className="p-3">QA</th><th className="p-3 text-right">Lot Available</th><th className="p-3 text-right">Allocate</th>
                                         </tr>
                                     </thead>
                                     <tbody>

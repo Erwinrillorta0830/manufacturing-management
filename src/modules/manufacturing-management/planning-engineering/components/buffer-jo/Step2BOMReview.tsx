@@ -74,28 +74,13 @@ export function Step2BOMReview({
     hasShortfalls,
     handlePrintProcurementRequest
 }: Step2BOMReviewProps) {
-    const renderAvailableLots = (productId: number | undefined, uom: string, kilogramsPerUnit?: number | null) => {
-        const lots = productId ? inventories[Number(productId)]?.available_lots : [];
-        if (!Array.isArray(lots) || lots.length === 0) {
-            return <div className="text-[9px] text-muted-foreground">No available lots</div>;
-        }
-
+    const renderMainStoreOnHand = (productId: number | undefined, uom: string, kilogramsPerUnit?: number | null) => {
+        const onHand = productId ? Number(inventories[Number(productId)]?.main_store_on_hand || 0) : 0;
+        const quantity = formatInventoryQuantity(onHand, uom, kilogramsPerUnit);
         return (
-            <div className="space-y-1.5">
-                {lots.map((lot: any) => {
-                    const quantity = formatInventoryQuantity(Number(lot.available || 0), uom, kilogramsPerUnit);
-                    const lotName = lot.lot_name || (lot.lot_id ? `Lot #${lot.lot_id}` : "Unassigned lot");
-                    const batchNo = lot.batch_no && lot.batch_no !== "LOT-N/A" ? lot.batch_no : "Unidentified batch";
-                    const rowKey = `${lot.lot_id ?? "no-lot"}:${lot.inventory_lot_id ?? "no-inventory-lot"}:${lot.batch_no}`;
-
-                    return (
-                        <div key={rowKey} className="leading-tight">
-                            <div className="text-[8px] font-medium text-foreground">{lotName} · {batchNo}</div>
-                            <div>{quantity.quantity}</div>
-                            {quantity.kilograms && <div className="text-[8px]">{quantity.kilograms}</div>}
-                        </div>
-                    );
-                })}
+            <div className="leading-tight">
+                <div>{quantity.quantity}</div>
+                {quantity.kilograms && <div className="text-[8px]">{quantity.kilograms}</div>}
             </div>
         );
     };
@@ -321,7 +306,7 @@ export function Step2BOMReview({
                                     <th className="p-2.5 w-8 text-center">PR</th>
                                     <th className="p-2.5">Raw Material / Component</th>
                                     <th className="p-2.5 text-center">Planned / Demand</th>
-                                    <th className="p-2.5 text-center">Net Unreserved Stock</th>
+                                    <th className="p-2.5 text-center">Main Store On-Hand</th>
                                     <th className="p-2.5 text-center">Shortfall</th>
                                     <th className="p-2.5 text-right">Status</th>
                                 </tr>
@@ -336,7 +321,7 @@ export function Step2BOMReview({
                                         Number(comp.wastage_factor_percentage || 0)
                                     );
                                     const needed = materialPlan.plannedRequired;
-                                    const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
+                                    const available = compProductId ? (inventories[Number(compProductId)]?.main_store_on_hand || 0) : 0;
                                     const shortfall = Math.max(0, needed - available);
                                     const isSufficient = shortfall === 0;
                                     const uom = comp.unit_of_measurement || "pcs";
@@ -432,7 +417,7 @@ export function Step2BOMReview({
                                                     {demandDisplay.kilograms && <div className="text-[9px] font-normal text-muted-foreground">{demandDisplay.kilograms}</div>}
                                                 </td>
                                                 <td className="p-2.5 text-center text-muted-foreground">
-                                                    {renderAvailableLots(compProductId ? Number(compProductId) : undefined, uom, kilogramsPerUnit)}
+                                                    {renderMainStoreOnHand(compProductId ? Number(compProductId) : undefined, uom, kilogramsPerUnit)}
                                                 </td>
                                                 <td className={`p-2.5 text-center font-bold ${shortfall > 0 ? (isSubAssembly ? "text-sky-600 dark:text-sky-400" : "text-red-600 dark:text-red-400") : "text-muted-foreground/60"}`}>
                                                     {shortfall > 0 ? (
@@ -467,7 +452,7 @@ export function Step2BOMReview({
                                                     Number(cc.quantity_required || 0),
                                                     Number(cc.wastage_factor_percentage || 0)
                                                 );
-                                                const ccAvailable = ccId ? (inventories[Number(ccId)]?.on_hand || 0) : 0;
+                                                const ccAvailable = ccId ? (inventories[Number(ccId)]?.main_store_on_hand || 0) : 0;
                                                 const ccShortfall = Math.max(0, ccNeeded - ccAvailable);
                                                 const ccUom = cc.unit_of_measurement || "pcs";
                                                 const ccKilogramsPerUnit = cc.component_product_id?.kilograms_per_inventory_unit;
@@ -498,7 +483,7 @@ export function Step2BOMReview({
                                                             {ccNeededDisplay.kilograms && <div className="text-[8px] text-muted-foreground/60">{ccNeededDisplay.kilograms}</div>}
                                                         </td>
                                                         <td className="p-2.5 text-center text-muted-foreground">
-                                                            {renderAvailableLots(ccId ? Number(ccId) : undefined, ccUom, ccKilogramsPerUnit)}
+                                                            {renderMainStoreOnHand(ccId ? Number(ccId) : undefined, ccUom, ccKilogramsPerUnit)}
                                                         </td>
                                                         <td className={`p-2.5 text-center font-bold ${ccShortfall > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground/60"}`}>
                                                             {ccShortfall > 0 ? <>

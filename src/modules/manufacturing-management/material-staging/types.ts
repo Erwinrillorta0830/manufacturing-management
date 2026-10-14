@@ -82,6 +82,7 @@ export interface MaterialAllocationPreview {
     product_name: string;
     product_code: string;
     uom: string;
+    main_store_on_hand_quantity: number;
     required_quantity: number;
     staged_quantity: number;
     remaining_quantity: number;
