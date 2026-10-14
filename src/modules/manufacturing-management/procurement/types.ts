@@ -417,6 +417,7 @@ export interface LinkedProduct {
         product_name?: string;
         description?: string | null;
         product_type?: number | string | { id?: number | string; type_id?: number | string; product_type_id?: number | string } | null;
+        product_type_name?: string | null;
         parent_id?: number | string | { product_id?: number | string; id?: number | string } | null;
         unit_of_measurement?: {
             unit_id: number;
