@@ -330,6 +330,7 @@ export interface JobOrderStatusHistoryRecord {
     job_order_no?: string;
     work_center_id?: number | null;
     work_center_name?: string | null;
+    work_center_names?: string[];
     previous_status?: string | null;
     status: string;
     changed_by?: number | null;

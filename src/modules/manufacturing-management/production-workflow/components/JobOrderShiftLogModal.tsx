@@ -32,6 +32,8 @@ import {
     resumeShiftRunLogSession,
     ShiftRunLogPayload,
     ShiftRunLogRequestError,
+    fetchJobOrderStatusHistory,
+    fetchWorkCenters,
     submitShiftRunLog
 } from "../services/production-api";
 import { EvidenceMediaInput } from "./EvidenceMediaInput";
@@ -49,8 +51,14 @@ import {
     sumProductionOutputQuantities
 } from "../utils/material-consumption";
 import { hasCompletedTimer } from "../operator-time";
-import { getPhtDateInputValue } from "../../shared/pht-date";
-import { calculateProductionOutputOverrun, hasReachedProductionTarget } from "../utils/production-output";
+import { isTerminalRouteStatus } from "../route-status";
+import { formatPhtDate, formatPhtTimestamp, getPhtDateInputValue } from "../../shared/pht-date";
+import { calculateProductionOutputOverrun, calculateShiftOutputConfirmationSummary, committedGoodOutputOrAggregate, hasReachedProductionTarget } from "../utils/production-output";
+import {
+    buildShiftClosureReportErrorHtml,
+    buildShiftClosureReportHtml,
+    buildShiftClosureReportLoadingHtml
+} from "../utils/shift-closure-report";
 
 interface JobOrderShiftLogModalProps {
     open: boolean;
@@ -179,6 +187,32 @@ export function JobOrderShiftLogModal({
         const fname = u.user_fname || u.first_name || "";
         const lname = u.user_lname || u.last_name || "";
         return `${fname} ${lname}`.trim() || `User #${uId}`;
+    };
+
+    const formatCompletionResponseError = (result: any) => {
+        const details = result?.details || {};
+        const routeIds = Array.isArray(details.routeIds) ? details.routeIds : [];
+        const routeBlockers = routeIds.map((routeId: unknown) => {
+            const id = Number(routeId);
+            const task = sortedTasks.find((candidate) => Number(candidate.id) === id || Number(candidate.jo_route_id || 0) === id);
+            return task
+                ? `Step ${task.sequence_order || "-"}: ${task.name} (${task.status || "Not started"})`
+                : `Route #${id}`;
+        });
+        const operatorSessionIds = Array.isArray(details.operatorSessionIds) ? details.operatorSessionIds : [];
+        const timerBlockers = operatorSessionIds.map((sessionId: unknown) => {
+            const operator = allJobOperators.find((candidate) => Number(candidate.id) === Number(sessionId));
+            if (!operator) return `operator session #${Number(sessionId)}`;
+            const task = sortedTasks.find((candidate) => Number(candidate.id) === Number(operator.task_id));
+            return `${getUserLabel(operator.user_id)}${task ? ` on Step ${task.sequence_order || "-"}: ${task.name}` : ""}`;
+        });
+        const extraDetails = [
+            routeBlockers.length > 0 ? `Open route steps: ${routeBlockers.join("; ")}.` : "",
+            timerBlockers.length > 0 ? `Active timers: ${timerBlockers.join("; ")}.` : "",
+            result?.code === "PRODUCTION_TIMERS_ACTIVE" && timerBlockers.length === 0 ? "Stop all active operator timers and retry." : "",
+            result?.code === "PRODUCTION_OPERATIONS_INCOMPLETE" && routeBlockers.length === 0 ? "Complete every open route step and retry." : ""
+        ].filter(Boolean);
+        return [result?.error || "The Job Order could not be finalized.", ...extraDetails].join(" ");
     };
 
     const activeOperator = allJobOperators.find((operator) => operator.started_at !== null && operator.stopped_at === null);
@@ -631,7 +665,7 @@ export function JobOrderShiftLogModal({
                 const reachedTarget = hasReachedProductionTarget(targetQty, producedAfter);
                 const outputOverrun = calculateProductionOutputOverrun(targetQty, producedAfter);
                 const overrunNotice = outputOverrun > 0
-                    ? ` Good output exceeded the target by ${formatProductionQuantity(outputOverrun)} pcs (${formatProductionQuantity(producedAfter)}/${formatProductionQuantity(targetQty)} pcs). No further production sessions can be recorded.`
+                    ? ` Good output exceeded the target by ${formatProductionQuantity(outputOverrun)} pcs (${formatProductionQuantity(producedAfter)}/${formatProductionQuantity(targetQty)} pcs); this excess is shown as a QA variance.`
                     : "";
 
                 if (completeProductionAfterLog && res.jobOrderCompletion?.success) {
@@ -639,9 +673,9 @@ export function JobOrderShiftLogModal({
                     if (outputOverrun > 0) toast.warning(message);
                     else toast.success(message);
                 } else if (completeProductionAfterLog) {
-                    toast.warning(`Shift saved and output target reached (${formatProductionQuantity(producedAfter)}/${formatProductionQuantity(targetQty)} pcs).${overrunNotice} The QA handoff did not complete: ${res.jobOrderCompletion?.error || "Retry Complete & Close JO after resolving the blockers."}`);
+                    toast.warning(`Shift saved and output target reached (${formatProductionQuantity(producedAfter)}/${formatProductionQuantity(targetQty)} pcs).${overrunNotice} The QA handoff did not complete: ${formatCompletionResponseError(res.jobOrderCompletion)}`);
                 } else if (reachedTarget) {
-                    const message = `Shift saved for ${fullShiftName}. Good-output target reached (${formatProductionQuantity(producedAfter)}/${formatProductionQuantity(targetQty)} pcs).${overrunNotice} Finalize the Job Order for QA.`;
+                    const message = `Shift saved for ${fullShiftName}. Good-output target reached (${formatProductionQuantity(producedAfter)}/${formatProductionQuantity(targetQty)} pcs).${overrunNotice} The Job Order remains In Production until you explicitly close it.`;
                     if (outputOverrun > 0) toast.warning(message);
                     else toast.success(message);
                 } else {
@@ -656,7 +690,7 @@ export function JobOrderShiftLogModal({
                     setInsufficiencyError(res.error);
                     setIsInsufficiencyOpen(true);
                 } else {
-                    toast.error(res.error || "Failed to log shift run.");
+                    toast.error(formatCompletionResponseError(res));
                 }
             }
         } catch (err: any) {
@@ -688,89 +722,201 @@ export function JobOrderShiftLogModal({
     };
 
     const handlePrintShiftReport = () => {
-        const fullShiftName = `Day ${productionDay} - ${shiftName}`;
-        
-        const operatorsHtml = groupedJobOperators.length === 0 
-            ? "<tr><td colspan='2' style='text-align: center; font-style: italic; padding: 12px;'>No personnel logged on this shift.</td></tr>"
-            : groupedJobOperators.map(op => `
-                <tr>
-                    <td style="padding: 10px; border-bottom: 1px solid #eee; font-weight: bold; font-size: 13px;">${getUserLabel(op.user_id)}</td>
-                    <td style="padding: 10px; border-bottom: 1px solid #eee; color: #555; font-size: 13px;">${op.user_position || "Shop Floor Tech"}</td>
-                </tr>
-            `).join("");
-
-        const materialsHtml = shiftMaterials.length === 0
-            ? "<tr><td colspan='4' style='text-align: center; font-style: italic; padding: 12px;'>No raw materials consumed.</td></tr>"
-            : shiftMaterials.map(m => {
-                const theoretical = materialTheoretical(m);
-                const actual = Number(m.actual_qty || 0);
-                const deviation = actual - theoretical;
-                return `
-                    <tr>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee; font-weight: bold; font-size: 13px;">${m.product_name}</td>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee; font-family: monospace; text-align: right; font-size: 13px;">${theoretical.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee; font-family: monospace; text-align: right; font-weight: bold; font-size: 13px;">${actual.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee; font-family: monospace; text-align: right; color: ${deviation > 0 ? '#d9534f' : '#5cb85c'}; font-weight: bold; font-size: 13px;">${deviation > 0 ? '+' : ''}${deviation.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-                    </tr>
-                `;
-            }).join("");
-
         const printWindow = window.open("", "_blank");
-        if (!printWindow) return;
+        if (!printWindow) {
+            toast.error("Please allow popups to preview the shift closure report.");
+            return;
+        }
 
-        printWindow.document.write(`
-            <html>
-            <head>
-                <title>Shift Closure Report - JO #${selectedJobOrder.order_no || selectedJobOrder.jo_id}</title>
-                <style>
-                    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 40px; color: #222; }
-                    .header { border-bottom: 2px solid #222; padding-bottom: 15px; margin-bottom: 25px; }
-                    .header h1 { margin: 0; font-size: 24px; text-transform: uppercase; }
-                    .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px; background: #fcfcfc; padding: 18px; border-radius: 8px; border: 1px solid #e2e8f0; font-size: 13px; }
-                    table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 20px; }
-                    th { background: #f7fafc; text-align: left; padding: 10px; border-bottom: 2px solid #e2e8f0; }
-                    .preview-controls { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 20px; }
-                    .preview-controls button { border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; padding: 8px 12px; color: #222; font: inherit; font-weight: 600; cursor: pointer; }
-                    .preview-controls button:hover { background: #f7fafc; }
-                    @media print { .preview-controls { display: none !important; } }
-                </style>
-            </head>
-            <body>
-                <div class="preview-controls">
-                    <button type="button" onclick="window.print()">Print Report</button>
-                    <button type="button" onclick="window.close()">Close Preview</button>
-                </div>
-                <div class="header">
-                    <h1>Shift Run Closure & Backflushing Report</h1>
-                    <p>Antigravity Manufacturing Management System • JO #${selectedJobOrder.order_no || selectedJobOrder.jo_id}</p>
-                </div>
-                <div class="meta-grid">
-                    <div>
-                        <div><strong>Job Order No:</strong> ${selectedJobOrder.order_no || selectedJobOrder.jo_id}</div>
-                        <div><strong>Product:</strong> ${selectedJobOrder.product_name}</div>
-                    </div>
-                    <div>
-                        <div><strong>Shift Run:</strong> ${fullShiftName}</div>
-                        <div><strong>Good Yield:</strong> ${formatProductionQuantity(Number(shiftYieldQty))} pcs • <strong>Rejected Units:</strong> ${formatProductionQuantity(Number(rejectedQty))} pcs</div>
-                        <div><strong>Output Traceability:</strong> Assigned during In-Process QA</div>
-                    </div>
-                </div>
-                <h3>Personnel Present on Shift</h3>
-                <table>
-                    <thead><tr><th>Name</th><th>Role</th></tr></thead>
-                    <tbody>${operatorsHtml}</tbody>
-                </table>
-                <h3>Exact WIP Reservation Consumption</h3>
-                <table>
-                    <thead><tr><th>Material</th><th style="text-align: right;">Std Qty</th><th style="text-align: right;">Actual Consumed</th><th style="text-align: right;">Deviation</th></tr></thead>
-                    <tbody>${materialsHtml}</tbody>
-                </table>
-            </body>
-            </html>
-        `);
+        const jobOrderNo = String(selectedJobOrder.order_no || selectedJobOrder.job_order_no || selectedJobOrder.jo_id);
+        printWindow.document.write(buildShiftClosureReportLoadingHtml(jobOrderNo));
         printWindow.document.close();
-    };
 
+        void (async () => {
+            try {
+                const jobOrderId = Number(selectedJobOrder.order_id || selectedJobOrder.job_order_id || 0);
+                if (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0) {
+                    throw new Error("A valid Job Order ID is required to load breakdown history.");
+                }
+
+                const [statusHistory, workCenterLookup] = await Promise.all([
+                    fetchJobOrderStatusHistory(jobOrderId),
+                    fetchWorkCenters().then((response) => response.data).catch(() => null)
+                ]);
+                const workCenterById = new Map((workCenterLookup || []).map((workCenter) => [
+                    Number(workCenter.work_center_id),
+                    workCenter
+                ]));
+                const routeById = new Map<number, RoutingTask>();
+                sortedTasks.forEach((task) => {
+                    routeById.set(Number(task.id), task);
+                    if (task.jo_route_id) routeById.set(Number(task.jo_route_id), task);
+                });
+                const getRouteWorkCenter = (task?: RoutingTask | null) => {
+                    const workCenterId = Number(task?.work_center_id || 0);
+                    return workCenterById.get(workCenterId) || task?.work_center || null;
+                };
+                const routeLabel = (task?: RoutingTask | null) => task
+                    ? "Step " + (task.sequence_order || "-") + " · " + task.name
+                    : "Route step not recorded";
+                const workCenterLabel = (task?: RoutingTask | null) => {
+                    const workCenter = getRouteWorkCenter(task);
+                    return workCenter?.work_center_name
+                        || task?.work_center_name
+                        || (task?.work_center_id ? "Work Center #" + task.work_center_id : "Unassigned");
+                };
+                const assetIdForWorkCenter = (workCenter: ReturnType<typeof getRouteWorkCenter>) => {
+                    const assetId = workCenter?.asset?.id
+                        || (typeof workCenter?.asset_id === "number" ? workCenter.asset_id : null);
+                    return assetId ? String(assetId) : "";
+                };
+                const machineDetailsFor = (task?: RoutingTask | null) => {
+                    const asset = getRouteWorkCenter(task)?.asset;
+                    return [
+                        asset?.serial ? "S/N " + asset.serial : "",
+                        asset?.barcode ? "Barcode " + asset.barcode : "",
+                        asset?.rfid_code ? "RFID " + asset.rfid_code : ""
+                    ].filter(Boolean).join(" · ");
+                };
+                const machineNameFor = (task?: RoutingTask | null) => {
+                    const workCenter = getRouteWorkCenter(task);
+                    const assetId = assetIdForWorkCenter(workCenter);
+                    return workCenter?.asset?.item_name
+                        || workCenter?.asset?.item_id?.item_name
+                        || (assetId ? "Asset #" + assetId : "");
+                };
+
+                const routeRows = sortedTasks.map((task, index) => ({
+                    sequence: Number(task.sequence_order || index + 1),
+                    operation: task.name,
+                    status: task.status,
+                    qaStatus: task.qa_status || "Not recorded",
+                    workCenterId: task.work_center_id ? "WC-" + task.work_center_id : "Unassigned",
+                    workCenterName: workCenterLabel(task),
+                    machineId: assetIdForWorkCenter(getRouteWorkCenter(task)),
+                    machineName: machineNameFor(task),
+                    machineDetails: machineDetailsFor(task),
+                    plannedSetupHours: Number(task.planned_setup_hours || 0),
+                    plannedRunHours: Number(task.planned_run_hours || 0),
+                    actualSetupHours: Number(task.actual_setup_hours || 0),
+                    actualRunHours: Number(task.actual_run_hours || 0)
+                }));
+
+                const operatorRows = allJobOperators
+                    .filter((operator) => !operator.is_placeholder)
+                    .map((operator) => {
+                        const task = routeById.get(Number(operator.task_id)) || routeById.get(Number(operator.routing_id));
+                        const isActive = Boolean(operator.started_at && !operator.stopped_at);
+                        return {
+                            name: getUserLabel(operator.user_id),
+                            role: operator.user_position || "Shop Floor Tech",
+                            route: routeLabel(task),
+                            workstation: workCenterLabel(task),
+                            timeIn: operator.started_at ? formatPhtTimestamp(operator.started_at) : "Not recorded",
+                            timeOut: operator.stopped_at
+                                ? formatPhtTimestamp(operator.stopped_at)
+                                : isActive ? "Active at report time" : "Not recorded",
+                            durationHours: Number(operator.actual_hours || 0),
+                            isActive
+                        };
+                    });
+
+                const routeNameById = new Map<number, string>();
+                sortedTasks.forEach((task) => {
+                    routeNameById.set(Number(task.id), routeLabel(task));
+                    if (task.jo_route_id) routeNameById.set(Number(task.jo_route_id), routeLabel(task));
+                });
+                const breakdownRows = statusHistory
+                    .filter((record) => /^\s*Halted at step\b/i.test(String(record.remarks || "")))
+                    .map((record) => {
+                        const remarksText = String(record.remarks || "");
+                        const stepFromRemarks = remarksText.match(/^\s*Halted at step\s+(.+?)\.\s*Reported yield:/i)?.[1];
+                        const reason = remarksText.match(/Reason:\s*(.*)$/i)?.[1] || "";
+                        const routeId = Number(record.jo_route_id || 0);
+                        const task = routeById.get(routeId);
+                        const centerId = Number(record.work_center_id || task?.work_center_id || 0);
+                        const workCenter = workCenterById.get(centerId) || task?.work_center || null;
+                        const reportedYieldValue = record.reported_yield_quantity;
+                        return {
+                            timestamp: formatPhtTimestamp(record.changed_at),
+                            step: routeNameById.get(routeId) || stepFromRemarks || "Route step not recorded",
+                            workstation: workCenter?.work_center_name
+                                || record.work_center_name
+                                || task?.work_center_name
+                                || (centerId ? "Work Center #" + centerId : "Unassigned"),
+                            machineId: assetIdForWorkCenter(workCenter)
+                                ? "Asset #" + assetIdForWorkCenter(workCenter)
+                                : "",
+                            reportedYield: reportedYieldValue === null || reportedYieldValue === undefined
+                                || !Number.isFinite(Number(reportedYieldValue))
+                                ? null
+                                : Number(reportedYieldValue),
+                            reason,
+                            reportedBy: record.changed_by_name
+                                || (record.changed_by ? getUserLabel(Number(record.changed_by)) : "System"),
+                            evidenceFiles: (record.evidence_files || [])
+                                .map((file) => file.file_name || file.directus_file_id)
+                                .filter((file): file is string => Boolean(file))
+                        };
+                    });
+                const selectedReason = rejectionReasons.find((reason) =>
+                    String(reason.id ?? reason.reason_id ?? "") === selectedReasonId
+                );
+                const branchName = (selectedJobOrder as JobOrder & { branch_name?: string }).branch_name
+                    || (selectedJobOrder.branch_id ? "Branch #" + selectedJobOrder.branch_id : "Not recorded");
+                const reportHtml = buildShiftClosureReportHtml({
+                    jobOrderNo,
+                    productName: selectedJobOrder.product_name,
+                    branch: branchName,
+                    jobOrderStatus: String(selectedJobOrder.status || "Not recorded"),
+                    printedAt: formatPhtTimestamp(new Date()),
+                    documentNo: "SC-" + jobOrderNo,
+                    revision: "1.0",
+                    sessionKey,
+                    productionDay,
+                    shiftName,
+                    productionDate: formatPhtDate(productionDate),
+                    targetQuantity,
+                    outputUnit: selectedJobOrder.uom_shortcut || selectedJobOrder.uom_name || "units",
+                    goodQuantity: Number(shiftYieldQty || 0),
+                    rejectedQuantity: Number(rejectedQty || 0),
+                    rejectionReason: selectedReason ? selectedReason.code + " · " + selectedReason.reason_name : "No defect / standard run",
+                    rejectionRemarks,
+                    sessionRemarks: remarks,
+                    varianceReason,
+                    outputBatchStatus: "Assigned during In-Process QA",
+                    currentEvidenceFiles: evidenceImage
+                        ? [evidenceImage.name + " · " + (evidenceImage.type || "unknown file type") + " · " + evidenceImage.size.toLocaleString() + " bytes"]
+                        : [],
+                    routes: routeRows,
+                    operators: operatorRows,
+                    materials: shiftMaterials.map((material) => ({
+                        productName: material.product_name,
+                        unit: material.unit_shortcut || "units",
+                        mmLot: material.mm_lot_name || "",
+                        inventoryLot: material.inventory_lot_batch_no || "",
+                        batchNo: material.batch_no || "",
+                        standardQuantity: materialTheoretical(material),
+                        actualQuantity: requestedConsumption(material)
+                    })),
+                    breakdowns: breakdownRows,
+                    workstationMetadataUnavailable: workCenterLookup === null
+                });
+
+                if (!printWindow.closed) {
+                    printWindow.document.open();
+                    printWindow.document.write(reportHtml);
+                    printWindow.document.close();
+                }
+            } catch (error) {
+                if (printWindow.closed) return;
+                const message = error instanceof Error ? error.message : "Required Job Order history could not be loaded.";
+                printWindow.document.open();
+                printWindow.document.write(buildShiftClosureReportErrorHtml(jobOrderNo, message));
+                printWindow.document.close();
+            }
+        })();
+    };
     const materialConsumptionDefaults = React.useMemo(
         () => calculateMaterialConsumptionDefaults(shiftMaterials, targetQuantity, totalOutputQuantity),
         [shiftMaterials, targetQuantity, totalOutputQuantity]
@@ -1061,17 +1207,38 @@ export function JobOrderShiftLogModal({
         || !productionDate
         || !shiftName.trim();
     const isPrintDisabled = loadingShiftMaterials || Boolean(materialsLoadError) || hasInsufficiency || !hasOutput || !shiftName.trim();
-    const goodOutputBeforeShift = Number(selectedJobOrder.producedQty
+    const priorYieldRows = selectedJobOrder.yield_logs || [];
+    const goodOutputBeforeShift = committedGoodOutputOrAggregate(priorYieldRows, selectedJobOrder.producedQty
         ?? selectedJobOrder.completed_quantity
         ?? selectedJobOrder.productionOutputQuantity
         ?? 0);
-    const projectedGoodOutput = goodOutputBeforeShift + (Number(shiftYieldQty) || 0);
+    const outputSummary = calculateShiftOutputConfirmationSummary(
+        goodOutputBeforeShift,
+        shiftYieldQty,
+        priorYieldRows,
+        rejectedQty
+    );
+    const projectedGoodOutput = outputSummary.projectedGoodQuantity;
+    const currentShiftRejectedQuantity = outputSummary.sessionRejectedQuantity;
+    const cumulativeRejectedQuantity = outputSummary.cumulativeRejectedQuantity;
+    const totalManufacturedRunQuantity = outputSummary.totalManufacturedRunQuantity;
     const finalShiftReachesTarget = hasReachedProductionTarget(targetQuantity, projectedGoodOutput);
     const projectedOutputOverrun = calculateProductionOutputOverrun(targetQuantity, projectedGoodOutput);
-    const hasActiveJobOrderTimer = allJobOperators.some((operator) => Boolean(operator.started_at) && !operator.stopped_at);
-    const allRoutesReadyForCompletion = !hasActiveJobOrderTimer
-        && sortedTasks.length > 0
-        && sortedTasks.every((task) => ["completed", "done", "closed"].includes(String(task.status || "").trim().toLowerCase()));
+    const incompleteRouteTasks = sortedTasks.filter((task) => !isTerminalRouteStatus(task.status));
+    const activeJobOrderTimerOperators = allJobOperators.filter((operator) => Boolean(operator.started_at) && !operator.stopped_at);
+    const completionBlockers = [
+        ...(sortedTasks.length === 0 ? ["No routing steps are configured for this Job Order."] : []),
+        ...incompleteRouteTasks.map((task, index) =>
+            `Step ${task.sequence_order || index + 1}: ${task.name || "Unnamed operation"} is ${task.status || "Not started"}.`
+        ),
+        ...activeJobOrderTimerOperators.map((operator) => {
+            const task = sortedTasks.find((candidate) => Number(candidate.id) === Number(operator.task_id));
+            return task
+                ? `Stop ${getUserLabel(operator.user_id)}'s active timer on Step ${task.sequence_order || "-"}: ${task.name} before finalizing.`
+                : `Stop ${getUserLabel(operator.user_id)}'s active timer before finalizing.`;
+        })
+    ];
+    const allRoutesReadyForCompletion = completionBlockers.length === 0;
 
     return (
         <>
@@ -1750,16 +1917,25 @@ export function JobOrderShiftLogModal({
                         </div>
                         <div>
                             <p className="text-xs text-muted-foreground">Good Output</p>
-                            <p className="font-semibold">{formatProductionQuantity(Number(shiftYieldQty) || 0)}</p>
+                            <p className="font-semibold">{formatProductionQuantity(outputSummary.sessionGoodQuantity)} pcs</p>
+                            <p className="text-[11px] text-muted-foreground">
+                                Projected Total: {formatProductionQuantity(projectedGoodOutput)} / {formatProductionQuantity(targetQuantity)} pcs
+                            </p>
                         </div>
                         <div>
                             <p className="text-xs text-muted-foreground">Rejected Units</p>
-                            <p className="font-semibold">{formatProductionQuantity(Number(rejectedQty) || 0)}</p>
+                            <p className="font-semibold">{formatProductionQuantity(currentShiftRejectedQuantity)} pcs</p>
+                            <p className="text-[11px] text-muted-foreground">
+                                Cumulative Rejects: {formatProductionQuantity(cumulativeRejectedQuantity)} pcs
+                            </p>
                         </div>
                         <div className="col-span-2 rounded-md border border-border/60 bg-background/70 px-3 py-2">
-                            <p className="text-xs text-muted-foreground">Projected Good Output / Target</p>
+                            <p className="text-xs text-muted-foreground">Total Manufactured Run</p>
                             <p className="font-semibold">
-                                {formatProductionQuantity(projectedGoodOutput)} / {formatProductionQuantity(targetQuantity)} pcs
+                                {formatProductionQuantity(totalManufacturedRunQuantity)} pcs
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                                {formatProductionQuantity(projectedGoodOutput)} Good + {formatProductionQuantity(cumulativeRejectedQuantity)} Rejected
                             </p>
                         </div>
                     </div>
@@ -1768,12 +1944,17 @@ export function JobOrderShiftLogModal({
                             ? "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300"
                             : "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300"}`}>
                             {projectedOutputOverrun > 0
-                                ? `Projected good output exceeds the target by ${formatProductionQuantity(projectedOutputOverrun)} pcs. This actual output can be saved; no further production sessions can be recorded after the target is reached.`
-                                : "This shift reaches the good-output target. Completing the Job Order sends production to QA and locks new floor activity."}
-                            {!allRoutesReadyForCompletion && (hasActiveJobOrderTimer
-                                ? " Stop active timers and complete every route step before finalizing."
-                                : " Complete every route step before finalizing.")}
+                                ? `Projected good output exceeds the target by ${formatProductionQuantity(projectedOutputOverrun)} pcs. Save the actual quantity; the excess is shown as a QA variance, and remaining quantity stays at 0.`
+                                : "This shift reaches the good-output target. Production can continue while the Job Order remains In Production; close it explicitly when ready for QA."}
                         </p>
+                    )}
+                    {finalShiftReachesTarget && !allRoutesReadyForCompletion && (
+                        <div role="alert" aria-live="polite" className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
+                            <p className="font-semibold">Complete these requirements before closing the Job Order:</p>
+                            <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                                {completionBlockers.map((blocker, index) => <li key={`${index}-${blocker}`}>{blocker}</li>)}
+                            </ul>
+                        </div>
                     )}
 
                     <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
@@ -1798,7 +1979,7 @@ export function JobOrderShiftLogModal({
                                 <Button
                                     type="button"
                                     disabled={submittingShiftLog || !allRoutesReadyForCompletion}
-                                    title={!allRoutesReadyForCompletion ? "Complete every route step before finalizing production." : undefined}
+                                    title={!allRoutesReadyForCompletion ? completionBlockers.join(" ") : undefined}
                                     onClick={() => void handleConfirmShiftLog(true)}
                                     className="bg-emerald-600 text-white hover:bg-emerald-500"
                                 >

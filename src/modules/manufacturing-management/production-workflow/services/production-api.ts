@@ -462,9 +462,11 @@ export async function assignRouteWorkCenters(
 
 export async function fetchJobOrderStatusHistory(joId: string | number): Promise<JobOrderStatusHistoryRecord[]> {
     const res = await fetch(`/api/manufacturing/job-orders/${encodeURIComponent(String(joId))}/status-history`, { cache: "no-store" });
-    if (!res.ok) throw new Error("Failed to load Job Order status history.");
-    const json = await res.json();
-    return json.data || [];
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json.success === false) {
+        throw new Error(json.error || "Failed to load Job Order status history.");
+    }
+    return Array.isArray(json.data) ? json.data : [];
 }
 
 export async function fetchRejectionReasons(): Promise<RejectionReason[]> {

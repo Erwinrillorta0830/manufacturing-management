@@ -6,14 +6,19 @@ export interface FinishedGoodsAllocationInput {
 export interface FinishedGoodsProgressLine {
     orderNo: string;
     targetQuantity: number;
-    produced: number;
+    good: number;
+    nad: number;
+    totalProduced: number;
     remaining: number;
 }
 
 export interface FinishedGoodsProgressTotals {
     targetQuantity: number;
-    producedQuantity: number;
+    goodQuantity: number;
+    nadQuantity: number;
+    totalProducedQuantity: number;
     remainingQuantity: number;
+    overrunQuantity: number;
 }
 
 export interface FinishedGoodsProgressBreakdown {
@@ -34,11 +39,13 @@ function roundQuantity(value: number): number {
 
 export function buildFinishedGoodsProgress(
     targetQuantityInput: number,
-    producedQuantityInput: number,
+    goodQuantityInput: number,
+    nadQuantityInput: number,
     allocations: FinishedGoodsAllocationInput[]
 ): FinishedGoodsProgressBreakdown {
     const targetQuantity = roundQuantity(targetQuantityInput);
-    const producedQuantity = roundQuantity(producedQuantityInput);
+    const goodQuantity = roundQuantity(goodQuantityInput);
+    const nadQuantity = roundQuantity(nadQuantityInput);
     const allocationsByOrder = new Map<string, number>();
 
     allocations.forEach((allocation) => {
@@ -67,7 +74,7 @@ export function buildFinishedGoodsProgress(
         isBuffer: false
     }));
 
-    if (hasBufferTarget || (outputBuckets.length === 0 && (targetQuantity > 0 || producedQuantity > 0))) {
+    if (hasBufferTarget || (outputBuckets.length === 0 && (targetQuantity > 0 || goodQuantity + nadQuantity > 0))) {
         outputBuckets.push({
             orderNo: "Unallocated Buffer / Stock",
             targetQuantity: bufferTargetQuantity || targetQuantity,
@@ -78,28 +85,22 @@ export function buildFinishedGoodsProgress(
         });
     }
 
-    const producedMicros = Math.round(producedQuantity * QUANTITY_SCALE);
-    const rawShares = outputBuckets.map((bucket) => producedMicros * bucket.weight);
-    const allocatedMicros = rawShares.map((share) => Math.floor(share));
-    let remainingMicros = producedMicros - allocatedMicros.reduce((total, quantity) => total + quantity, 0);
-    const remainderOrder = rawShares
-        .map((share, index) => ({ index, fraction: share - Math.floor(share) }))
-        .sort((left, right) => right.fraction - left.fraction);
-
-    for (let index = 0; remainingMicros > 0 && remainderOrder.length > 0; index += 1) {
-        allocatedMicros[remainderOrder[index % remainderOrder.length].index] += 1;
-        remainingMicros -= 1;
-    }
+    const weights = outputBuckets.map((bucket) => bucket.weight);
+    const allocatedGood = distributeQuantity(Math.min(goodQuantity, targetQuantity), weights);
+    const allocatedNad = distributeQuantity(nadQuantity, weights);
 
     const salesOrders: FinishedGoodsProgressLine[] = [];
     const bufferStock: FinishedGoodsProgressLine[] = [];
     outputBuckets.forEach((bucket, index) => {
-        const produced = allocatedMicros[index] / QUANTITY_SCALE;
+        const good = allocatedGood[index];
+        const nad = allocatedNad[index];
         const line: FinishedGoodsProgressLine = {
             orderNo: bucket.orderNo,
             targetQuantity: bucket.targetQuantity,
-            produced,
-            remaining: roundQuantity(Math.max(0, bucket.targetQuantity - produced))
+            good,
+            nad,
+            totalProduced: roundQuantity(good + nad),
+            remaining: roundQuantity(Math.max(0, bucket.targetQuantity - good))
         };
         if (bucket.isBuffer) bufferStock.push(line);
         else salesOrders.push(line);
@@ -110,8 +111,28 @@ export function buildFinishedGoodsProgress(
         bufferStock,
         totals: {
             targetQuantity,
-            producedQuantity,
-            remainingQuantity: roundQuantity(Math.max(0, targetQuantity - producedQuantity))
+            goodQuantity,
+            nadQuantity,
+            totalProducedQuantity: roundQuantity(goodQuantity + nadQuantity),
+            remainingQuantity: roundQuantity(Math.max(0, targetQuantity - goodQuantity)),
+            overrunQuantity: roundQuantity(Math.max(0, goodQuantity - targetQuantity))
         }
     };
+}
+
+function distributeQuantity(quantity: number, weights: number[]): number[] {
+    const quantityMicros = Math.round(quantity * QUANTITY_SCALE);
+    const rawShares = weights.map((weight) => quantityMicros * weight);
+    const allocatedMicros = rawShares.map((share) => Math.floor(share));
+    let remainingMicros = quantityMicros - allocatedMicros.reduce((total, amount) => total + amount, 0);
+    const remainderOrder = rawShares
+        .map((share, index) => ({ index, fraction: share - Math.floor(share) }))
+        .sort((left, right) => right.fraction - left.fraction);
+
+    for (let index = 0; remainingMicros > 0 && remainderOrder.length > 0; index += 1) {
+        allocatedMicros[remainderOrder[index % remainderOrder.length].index] += 1;
+        remainingMicros -= 1;
+    }
+
+    return allocatedMicros.map((amount) => amount / QUANTITY_SCALE);
 }

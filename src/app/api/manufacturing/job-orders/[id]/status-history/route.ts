@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { directusFileId, directusFileMetadata, fetchDirectusFileMetadata } from "@/app/api/manufacturing/_directus-file-metadata";
 import { authorizeJobOrderModuleAccess, JOB_ORDER_MODULE_PATHS } from "@/app/api/manufacturing/job-orders/_module-access";
+import { resolveHistoryWorkCenter } from "@/app/api/manufacturing/job-orders/_workflow-station-context";
 
 type DirectusRecord = Record<string, unknown>;
 
@@ -36,6 +37,11 @@ const LEGACY_STATUS_HISTORY_FIELDS = [
     "remarks"
 ].join(",");
 
+const ROUTE_STATUS_HISTORY_FIELDS = [
+    ...LEGACY_STATUS_HISTORY_FIELDS.split(","),
+    "jo_route_id"
+].join(",");
+
 class DirectusRequestError extends Error {
     constructor(public readonly status: number, public readonly responseBody: string) {
         super(`Job Order status-history lookup failed with HTTP ${status}`);
@@ -49,14 +55,6 @@ function positiveId(value: unknown): number | null {
         : value;
     const id = Number(raw);
     return Number.isSafeInteger(id) && id > 0 ? id : null;
-}
-
-function parseLegacyWorkCenterRemark(remarks: unknown): { workCenterId: number; workCenterName: string | null } | null {
-    if (typeof remarks !== "string") return null;
-    const match = remarks.match(/^\s*Station Start Scanner:\s*.*?Work Center\s+"([^"]+)"\s+\(ID:\s*(\d+)\)\s*$/i);
-    const workCenterId = positiveId(match?.[2]);
-    if (!match || !workCenterId) return null;
-    return { workCenterId, workCenterName: match[1].trim() || null };
 }
 
 function historyUrl(fields: string, jobOrderId: number): string {
@@ -103,7 +101,15 @@ async function fetchHistoryRows(jobOrderId: number): Promise<DirectusRecord[]> {
             && [400, 403].includes(error.status)
             && /work_center_id|field|permission|does not exist/i.test(error.responseBody);
         if (!canUseLegacyProjection) throw error;
-        return directusRows(historyUrl(LEGACY_STATUS_HISTORY_FIELDS, jobOrderId));
+        try {
+            return await directusRows(historyUrl(ROUTE_STATUS_HISTORY_FIELDS, jobOrderId));
+        } catch (routeProjectionError) {
+            const canUseOldestProjection = routeProjectionError instanceof DirectusRequestError
+                && [400, 403].includes(routeProjectionError.status)
+                && /jo_route_id|field|permission|does not exist/i.test(routeProjectionError.responseBody);
+            if (!canUseOldestProjection) throw routeProjectionError;
+            return directusRows(historyUrl(LEGACY_STATUS_HISTORY_FIELDS, jobOrderId));
+        }
     }
 }
 
@@ -123,15 +129,18 @@ function enrichHistoryRecord(
     record: DirectusRecord,
     userMap: Map<number, string>,
     workCenterMap: Map<number, string>,
+    routeWorkCenterMap: Map<number, number>,
     evidenceFilesById: Map<string, { fileName: string | null; mimeType: string | null; fileSize: number | null }>,
     evidenceRowsByHistoryId: Map<number, DirectusRecord[]>
 ) {
-    const persistedWorkCenterId = positiveId(record?.work_center_id);
-    const legacyStation = persistedWorkCenterId ? null : parseLegacyWorkCenterRemark(record?.remarks);
-    const workCenterId = persistedWorkCenterId || legacyStation?.workCenterId || null;
-    const workCenterName = workCenterId
-        ? workCenterMap.get(workCenterId) || legacyStation?.workCenterName || `Station #${workCenterId}`
-        : "Unassigned";
+    const station = resolveHistoryWorkCenter(record, routeWorkCenterMap);
+    const workCenterId = station.workCenterId;
+    const workCenterNames = station.workCenterIds.map((id) =>
+        workCenterMap.get(id) || (id === workCenterId ? station.workCenterName : null) || `Station #${id}`
+    );
+    const workCenterName = workCenterNames.length
+        ? workCenterNames.join(" · ")
+        : station.workCenterName || "Unassigned";
     const historyId = positiveId(record.history_id ?? record.id);
     const storedEvidenceRows = historyId ? evidenceRowsByHistoryId.get(historyId) || [] : [];
     const evidenceFiles = storedEvidenceRows
@@ -176,7 +185,8 @@ function enrichHistoryRecord(
         status: record.status ?? record.new_status ?? "",
         changed_by_name: userMap.get(Number(record.changed_by))
             || (record.changed_by ? `User #${record.changed_by}` : "System"),
-        work_center_name: workCenterName
+        work_center_name: workCenterName,
+        work_center_names: workCenterNames
     };
 }
 
@@ -191,13 +201,11 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     }
 
     try {
-        const [historyRows, users, workCenters] = await Promise.all([
-            fetchHistoryRows(jobOrderId).catch((error) => {
-                console.error("Error fetching Job Order status history:", error);
-                return [];
-            }),
+        const [historyRows, users, workCenters, jobOrderRoutes] = await Promise.all([
+            fetchHistoryRows(jobOrderId),
             fetchOptionalRows("/items/user?limit=-1&fields=user_id,user_fname,user_lname"),
-            fetchOptionalRows("/items/manufacturing_work_centers?limit=-1&fields=work_center_id,work_center_name")
+            fetchOptionalRows("/items/manufacturing_work_centers?limit=-1&fields=work_center_id,work_center_name"),
+            fetchOptionalRows(`/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${jobOrderId}&fields=jo_route_id,work_center_id,sequence_order&sort=sequence_order&limit=-1`)
         ]);
 
         const userMap = new Map<number, string>();
@@ -208,6 +216,12 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
         const workCenterMap = new Map<number, string>();
         workCenters.forEach((workCenter) => {
             workCenterMap.set(Number(workCenter.work_center_id), String(workCenter.work_center_name ?? ""));
+        });
+        const routeWorkCenterMap = new Map<number, number>();
+        jobOrderRoutes.forEach((route) => {
+            const routeId = positiveId(route.jo_route_id ?? route.id);
+            const workCenterId = positiveId(route.work_center_id);
+            if (routeId && workCenterId) routeWorkCenterMap.set(routeId, workCenterId);
         });
 
         const historyIds = historyRows
@@ -229,7 +243,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
             ...evidenceRows.map((row) => directusFileId(row.directus_file_id))
         ];
         const evidenceFilesById = await fetchDirectusFileMetadata(evidenceFileIds);
-        const data = historyRows.map((row) => enrichHistoryRecord(row, userMap, workCenterMap, evidenceFilesById, evidenceRowsByHistoryId));
+        const data = historyRows.map((row) => enrichHistoryRecord(row, userMap, workCenterMap, routeWorkCenterMap, evidenceFilesById, evidenceRowsByHistoryId));
         return NextResponse.json({ success: true, data });
     } catch (error) {
         console.error("Error loading Job Order status history:", error);

@@ -28,6 +28,7 @@ import {
 import { elapsedSecondsBetween, hoursFromSeconds } from "../operator-time";
 import type { JobOrderWorkflowAction } from "../../job-order-workflow";
 import { areJobOrderMaterialsFullyStaged } from "../utils/material-staging-readiness";
+import { isTerminalRouteStatus } from "../route-status";
 import {
     buildDisplayRouteOperatorRecords,
     normalizeOperatorAssignmentMap
@@ -220,6 +221,11 @@ const selectedTask = useMemo(() => {
     if (selectedTaskId === null) return null;
     return sortedTasks.find((t) => t.id === selectedTaskId) || null;
 }, [sortedTasks, selectedTaskId]);
+const workflowStationRoute = selectedTask || sortedTasks.find((task) => !isTerminalRouteStatus(task.status)) || null;
+const workflowStationRouteId = Number(workflowStationRoute?.jo_route_id ?? workflowStationRoute?.id);
+const workflowStationJoRouteId = Number.isSafeInteger(workflowStationRouteId) && workflowStationRouteId > 0
+    ? workflowStationRouteId
+    : null;
 
 // Deep link support: /mm/shop-floor-execution-terminal?id=... or ?jo=JO-XXXX selects the Job Order.
     useEffect(() => {
@@ -1226,7 +1232,10 @@ const selectedTask = useMemo(() => {
 
         setWorkflowSubmitting(true);
         try {
-            await executeJobOrderWorkflow(jobOrderId, { action: "start-production" });
+            await executeJobOrderWorkflow(jobOrderId, {
+                action: "start-production",
+                joRouteId: workflowStationJoRouteId
+            });
             toast.success("Production started.");
             await fetchJobs(selectedJobOrder.jo_id, true);
             return true;
@@ -1236,7 +1245,7 @@ const selectedTask = useMemo(() => {
         } finally {
             setWorkflowSubmitting(false);
         }
-    }, [selectedJobOrder, fetchJobs, loadingJobOrderMaterials, jobOrderMaterialsJobOrderId, jobOrderMaterials]);
+    }, [selectedJobOrder, fetchJobs, loadingJobOrderMaterials, jobOrderMaterialsJobOrderId, jobOrderMaterials, workflowStationJoRouteId]);
 
     const handleWorkflowAction = useCallback(async (
         action: Extract<JobOrderWorkflowAction, "place-on-hold" | "resume-production" | "complete-production" | "terminate-production">,
@@ -1263,6 +1272,7 @@ const selectedTask = useMemo(() => {
         try {
             await executeJobOrderWorkflow(jobOrderId, {
                 action,
+                joRouteId: workflowStationJoRouteId,
                 ...input
             });
             const successMessage: Record<typeof action, string> = {
@@ -1280,7 +1290,7 @@ const selectedTask = useMemo(() => {
         } finally {
             setWorkflowSubmitting(false);
         }
-    }, [selectedJobOrder, fetchJobs]);
+    }, [selectedJobOrder, fetchJobs, workflowStationJoRouteId]);
 
     const filteredJobOrders = useMemo(() => {
         const normalizedSearchQuery = searchQuery.toLowerCase();
