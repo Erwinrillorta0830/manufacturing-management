@@ -31,8 +31,28 @@ interface RawBranch {
     isActive?: number | boolean | string;
 }
 
+function parseParentId(raw: unknown): number | null {
+    if (!raw) return null;
+    if (typeof raw === "number") return raw > 0 ? raw : null;
+    if (typeof raw === "string") {
+        const n = parseInt(raw, 10);
+        return isNaN(n) || n <= 0 ? null : n;
+    }
+    if (typeof raw === "object") {
+        const obj = raw as Record<string, unknown>;
+        const idVal = obj.product_id ?? obj.id;
+        if (typeof idVal === "number") return idVal > 0 ? idVal : null;
+        if (typeof idVal === "string") {
+            const n = parseInt(idVal, 10);
+            return isNaN(n) || n <= 0 ? null : n;
+        }
+    }
+    return null;
+}
+
 interface RawProduct {
     product_id: number;
+    parent_id?: number | { product_id?: number; id?: number } | null;
     product_name: string;
     product_code: string | null;
     description?: string | null;
@@ -41,7 +61,8 @@ interface RawProduct {
     price_per_unit?: number | string | null;
     maintaining_quantity: number;
     product_type?: number | { id?: number; name?: string } | null;
-    unit_of_measurement: { unit_shortcut: string | null } | null;
+    unit_of_measurement: { unit_shortcut: string | null; unit_name?: string | null } | null;
+    unit_of_measurement_count?: number | string | null;
 }
 
 interface SpringProductOnhand {
@@ -77,6 +98,33 @@ interface SpringBatchOnhand {
     expiry_date?: string;
 }
 
+interface SpringMovementRow {
+    branchId?: number;
+    branch_id?: number;
+    productId?: number;
+    product_id?: number;
+    inventoryLotId?: number | string | null;
+    inventory_lot_id?: number | string | null;
+    mmLotId?: number | string | null;
+    mm_lot_id?: number | string | null;
+    lotId?: number;
+    lot_id?: number;
+    batchNo?: string;
+    batch_no?: string;
+    quantityIn?: number | string;
+    quantity_in?: number | string;
+    quantityOut?: number | string;
+    quantity_out?: number | string;
+    unitCost?: number | string;
+    unit_cost?: number | string;
+    manufacturingDate?: string;
+    manufacturing_date?: string;
+    expirationDate?: string;
+    expiration_date?: string;
+    expiryDate?: string;
+    expiry_date?: string;
+}
+
 export interface NearExpiryBatch {
     batch_no: string;
     lot_name: string | null;
@@ -97,14 +145,24 @@ export interface NearExpiryBatch {
 
 export interface LowStockItem {
     product_id: number;
+    parent_id: number | null;
     product_name: string;
     product_code: string | null;
     description: string | null;
     unit: string | null;
-    on_hand: number; // Usable unexpired on-hand (FEFO)
+    unit_multiplier: number;
+    is_child: boolean;
+    family_root_id: number;
+    family_members_count: number;
+    physical_on_hand: number; // Actual physical on-hand in this SKU's UOM
+    family_equivalent_on_hand: number; // Converted total family stock in this SKU's UOM
+    family_total_base_pieces: number; // Total physical pieces pooled across all family variants
+    base_unit_name: string; // e.g. "PCS"
+    on_hand: number; // Backwards-compatible alias for physical_on_hand
     expired_quantity: number;
     total_physical_on_hand: number;
     maintaining_quantity: number;
+    stock_status: "CRITICAL_DEFICIT" | "PACKAGING_DEFICIT" | "SAFE";
     near_expiry_batches: NearExpiryBatch[];
 }
 
@@ -153,14 +211,14 @@ export async function GET() {
         }
 
         // 2. Fetch Directus metadata & Spring Boot live on-hand in parallel
-        const [branchRes, productRes, invLotsRes, lotsRes, prodTypesRes, springProdRes, springBatchRes] = await Promise.all([
+        const [branchRes, productRes, invLotsRes, lotsRes, prodTypesRes, springProdRes, springBatchRes, springMovementsRes] = await Promise.all([
             fetch(
                 `${DIRECTUS_URL}/items/branches?limit=-1&fields=id,branch_name,branch_code,isBadStock,isActive`,
                 { headers, cache: "no-store" }
             ),
             fetch(
-                `${DIRECTUS_URL}/items/products?filter[isActive][_eq]=1&filter[maintaining_quantity][_gt]=0` +
-                `&fields=product_id,product_name,product_code,description,cost_per_unit,estimated_unit_cost,price_per_unit,maintaining_quantity,product_type,unit_of_measurement.unit_shortcut&limit=-1`,
+                `${DIRECTUS_URL}/items/products?filter[isActive][_eq]=1` +
+                `&fields=product_id,parent_id,product_name,product_code,description,cost_per_unit,estimated_unit_cost,price_per_unit,maintaining_quantity,product_type,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count&limit=-1`,
                 { headers, cache: "no-store" }
             ),
             fetch(
@@ -177,6 +235,7 @@ export async function GET() {
             ).catch(() => null),
             fetch(`${SPRING_API_BASE}/api/mm-product-onhand/all`, { headers: springHeaders, cache: "no-store" }).catch(() => null),
             fetch(`${SPRING_API_BASE}/api/mm-batch-onhand/all`, { headers: springHeaders, cache: "no-store" }).catch(() => null),
+            fetch(`${SPRING_API_BASE}/api/mm-inventory-movements/all`, { headers: springHeaders, cache: "no-store" }).catch(() => null),
         ]);
 
         if (!branchRes.ok) {
@@ -337,12 +396,80 @@ export async function GET() {
         const nearExpiryMap = new Map<number, NearExpiryBatch[]>();
         const flatNearExpiryBatches: NearExpiryBatch[] = [];
 
+        // Pre-aggregate inventory movements from /api/mm-inventory-movements/all
+        const movementNetByBranchProductBatch = new Map<string, {
+            onhand: number;
+            totalIn: number;
+            totalOut: number;
+            unitCost: number;
+            count: number;
+            mfgDate?: string;
+            expDate?: string;
+            lotId?: number;
+            lotName?: string;
+        }>();
+
+        if (springMovementsRes && springMovementsRes.ok) {
+            try {
+                const movJson = await springMovementsRes.json();
+                const movList: SpringMovementRow[] = Array.isArray(movJson) ? movJson : movJson?.data || [];
+                for (const m of movList) {
+                    const bId = Number(m.branchId ?? m.branch_id ?? 0);
+                    const pId = Number(m.productId ?? m.product_id ?? 0);
+                    const bNo = String(m.batchNo ?? m.batch_no ?? "").trim();
+                    const bNoLower = bNo.toLowerCase();
+                    if (bId <= 0 || pId <= 0 || !bNoLower || !goodBranchIds.has(bId)) continue;
+
+                    const qIn = Number(m.quantityIn ?? m.quantity_in ?? 0);
+                    const qOut = Number(m.quantityOut ?? m.quantity_out ?? 0);
+                    const net = qIn - qOut;
+                    const cost = Number(m.unitCost ?? m.unit_cost ?? 0);
+                    const rawExp = m.expirationDate ?? m.expiration_date ?? m.expiryDate ?? m.expiry_date;
+                    const expDateStr = rawExp ? String(rawExp).split("T")[0] : undefined;
+                    const lotId = Number(m.mmLotId ?? m.mm_lot_id ?? m.lotId ?? m.lot_id ?? 0);
+
+                    const key = `${bId}_${pId}_${bNoLower}`;
+                    const cur = movementNetByBranchProductBatch.get(key) || {
+                        onhand: 0,
+                        totalIn: 0,
+                        totalOut: 0,
+                        unitCost: 0,
+                        count: 0,
+                        lotId: lotId > 0 ? lotId : undefined,
+                    };
+
+                    cur.onhand += net;
+                    cur.totalIn += qIn;
+                    cur.totalOut += qOut;
+                    cur.count += 1;
+                    if (cost > 0) cur.unitCost = cost;
+                    if (expDateStr && !cur.expDate) cur.expDate = expDateStr;
+                    if (lotId > 0 && !cur.lotId) cur.lotId = lotId;
+                    movementNetByBranchProductBatch.set(key, cur);
+                }
+            } catch (err) {
+                console.warn("[low-stock-alert] Error parsing movements:", err);
+            }
+        }
+
         // A. Process Spring Batch On-Hand (Authoritative for Batch Expirations)
         if (springBatchRes && springBatchRes.ok) {
             const batchJson = await springBatchRes.json();
             const batchList: SpringBatchOnhand[] = Array.isArray(batchJson) ? batchJson : batchJson?.data || [];
-            
-            const batchPhysicalSum = new Map<number, number>();
+
+            // Consolidate rows for the same batch across conditions (e.g. GOOD +12, DAMAGED -8)
+            const consolidatedBatchMap = new Map<string, {
+                bId: number;
+                pId: number;
+                bNo: string;
+                bNoLower: string;
+                invId: number;
+                lotId: number;
+                lotName: string;
+                onhand: number;
+                rawExp?: string;
+                unitCost: number;
+            }>();
 
             for (const row of batchList) {
                 const pId = Number(row.productId ?? row.product_id ?? 0);
@@ -353,9 +480,51 @@ export async function GET() {
                 const invId = Number(row.inventoryLotId || row.inventory_lot_id || 0);
                 const rawSpringLotId = Number(row.mmLotId || row.mm_lot_id || row.lotId || row.lot_id || 0);
 
-                if (pId <= 0 || qty <= 0 || !goodBranchIds.has(bId)) continue;
+                if (pId <= 0 || !bNoLower || !goodBranchIds.has(bId)) continue;
 
-                batchPhysicalSum.set(pId, (batchPhysicalSum.get(pId) || 0) + qty);
+                const key = `${bId}_${pId}_${bNoLower}`;
+                const rawExp = row.expirationDate ?? row.expiration_date ?? row.expiry_date;
+                const rowCost = Number(row.unitCost ?? row.unit_cost ?? 0);
+
+                const existing = consolidatedBatchMap.get(key);
+                if (existing) {
+                    existing.onhand += qty;
+                    if (invId > 0 && !existing.invId) existing.invId = invId;
+                    if (rawSpringLotId > 0 && !existing.lotId) existing.lotId = rawSpringLotId;
+                    if (row.lotName && !existing.lotName) existing.lotName = String(row.lotName);
+                    if (rawExp && !existing.rawExp) existing.rawExp = String(rawExp);
+                    if (rowCost > 0 && !existing.unitCost) existing.unitCost = rowCost;
+                } else {
+                    consolidatedBatchMap.set(key, {
+                        bId,
+                        pId,
+                        bNo,
+                        bNoLower,
+                        invId,
+                        lotId: rawSpringLotId,
+                        lotName: String(row.lotName ?? row.lot_name ?? "").trim(),
+                        onhand: qty,
+                        rawExp: rawExp ? String(rawExp) : undefined,
+                        unitCost: rowCost > 0 ? rowCost : 0,
+                    });
+                }
+            }
+
+            const batchPhysicalSum = new Map<number, number>();
+
+            for (const [key, bData] of consolidatedBatchMap.entries()) {
+                const { bId, pId, bNo, bNoLower, invId, lotId: rawSpringLotId } = bData;
+                const movInfo = movementNetByBranchProductBatch.get(key);
+
+                // Live on-hand: prefer verified movement audit ledger if movements exist, otherwise use consolidated onhand
+                const netQty = (movInfo && movInfo.count > 0)
+                    ? movInfo.onhand
+                    : bData.onhand;
+
+                // Depleted batches have no physical presence in warehouse
+                if (netQty <= 0) continue;
+
+                batchPhysicalSum.set(pId, (batchPhysicalSum.get(pId) || 0) + netQty);
 
                 // Multi-tier lookup for batch metadata (lot name, expiration date, unit cost)
                 const matchedMeta =
@@ -365,27 +534,35 @@ export async function GET() {
                     lotByBatchOnly.get(bNoLower);
 
                 // Resolve expiration date
-                const rawExp = row.expirationDate ?? row.expiration_date ?? row.expiry_date;
-                const expDateStr = rawExp
-                    ? String(rawExp).split("T")[0]
-                    : matchedMeta?.expDate || null;
+                const expDateStr = bData.rawExp
+                    ? String(bData.rawExp).split("T")[0]
+                    : (movInfo?.expDate || matchedMeta?.expDate || null);
 
                 const daysRemaining = getDiffDays(expDateStr);
 
-                if (daysRemaining !== null && daysRemaining <= 0) {
-                    // Batch is expired -> accumulate expired quantity
-                    expiredMap.set(pId, (expiredMap.get(pId) || 0) + qty);
-                } else if (daysRemaining !== null && daysRemaining > 0) {
-                    // Requirement: If the raw material product batches is 6 months (180 days) before expiry date, show it in modal
+                if (daysRemaining !== null) {
+                    const isExpired = daysRemaining <= 0;
+                    if (isExpired) {
+                        // Batch is expired -> accumulate verified expired quantity to exclude from usable on-hand
+                        expiredMap.set(pId, (expiredMap.get(pId) || 0) + netQty);
+                    }
+
+                    // Include both expired batches and near-expiry batches within threshold
+                    // Raw materials have a 180-day window; finished goods/others have 90-day window
                     const isRaw = rawMaterialProductIds.has(pId);
-                    if (isRaw && daysRemaining <= 180) {
+                    const isNearExpiry = daysRemaining > 0 && (isRaw ? daysRemaining <= 180 : daysRemaining <= 90);
+
+                    if (isExpired || isNearExpiry) {
                         const product = productById.get(pId);
                         const branchInfo = branchMap.get(bId);
 
                         // Resolve lot name with multiple reliable fallbacks
-                        let lotName = String(row.lotName ?? row.lot_name ?? "").trim();
+                        let lotName = bData.lotName;
                         if (!lotName && rawSpringLotId > 0) {
                             lotName = lotNameMap.get(rawSpringLotId) || "";
+                        }
+                        if (!lotName && movInfo?.lotId && movInfo.lotId > 0) {
+                            lotName = lotNameMap.get(movInfo.lotId) || "";
                         }
                         if (!lotName && matchedMeta?.lotName) {
                             lotName = matchedMeta.lotName;
@@ -394,13 +571,17 @@ export async function GET() {
                             lotName = lotNameMap.get(matchedMeta.lotId) || (matchedMeta.lotId > 0 ? `LOT-${matchedMeta.lotId}` : "");
                         }
 
-                        // Resolve unit cost
+                        // Resolve unit cost:
+                        // 1. Actual movement transaction unit cost (e.g. 0.01 from stock adjustment / sales ledger)
+                        // 2. Directus mm_inventory_lots unit cost
+                        // 3. Spring Boot row unit cost
+                        // 4. Product catalog cost
                         const rawCost =
-                            row.unitCost ??
-                            row.unit_cost ??
-                            matchedMeta?.unitCost ??
-                            product?.cost_per_unit ??
-                            product?.estimated_unit_cost ??
+                            (movInfo && movInfo.unitCost > 0 ? movInfo.unitCost : 0) ||
+                            (matchedMeta && matchedMeta.unitCost > 0 ? matchedMeta.unitCost : 0) ||
+                            (bData.unitCost > 0 ? bData.unitCost : 0) ||
+                            product?.cost_per_unit ||
+                            product?.estimated_unit_cost ||
                             product?.price_per_unit;
                         const unitCost = rawCost !== null && rawCost !== undefined && !isNaN(Number(rawCost))
                             ? Number(rawCost)
@@ -408,7 +589,9 @@ export async function GET() {
 
                         // Determine expiration status
                         let status: "CRITICAL" | "WARNING" | "UPCOMING" | "EXPIRED" = "UPCOMING";
-                        if (daysRemaining <= 14) {
+                        if (isExpired) {
+                            status = "EXPIRED";
+                        } else if (daysRemaining <= 14) {
                             status = "CRITICAL";
                         } else if (daysRemaining <= 30) {
                             status = "WARNING";
@@ -426,7 +609,98 @@ export async function GET() {
                             branch_id: bId,
                             branch_name: branchInfo?.branch_name || `Branch ${bId}`,
                             branch_code: branchInfo?.branch_code || `B${bId}`,
-                            quantity: qty,
+                            quantity: netQty,
+                            unit: product?.unit_of_measurement?.unit_shortcut || null,
+                            unit_cost: unitCost,
+                            expiration_date: expDateStr,
+                            days_remaining: daysRemaining,
+                            status,
+                        };
+
+                        const existingList = nearExpiryMap.get(pId) || [];
+                        existingList.push(batchItem);
+                        nearExpiryMap.set(pId, existingList);
+                        flatNearExpiryBatches.push(batchItem);
+                    }
+                }
+            }
+
+            // Also check for batches present in movementNetByBranchProductBatch not returned in consolidatedBatchMap
+            for (const [key, movInfo] of movementNetByBranchProductBatch.entries()) {
+                if (consolidatedBatchMap.has(key) || movInfo.onhand <= 0) continue;
+
+                const [bIdStr, pIdStr, ...restParts] = key.split("_");
+                const bId = Number(bIdStr);
+                const pId = Number(pIdStr);
+                const bNoLower = restParts.join("_");
+                const netQty = movInfo.onhand;
+
+                batchPhysicalSum.set(pId, (batchPhysicalSum.get(pId) || 0) + netQty);
+
+                const matchedMeta =
+                    lotByBranchProdBatch.get(`${bId}_${pId}_${bNoLower}`) ||
+                    lotByProdBatch.get(`${pId}_${bNoLower}`) ||
+                    lotByBatchOnly.get(bNoLower);
+
+                const expDateStr = movInfo.expDate || matchedMeta?.expDate || null;
+                const daysRemaining = getDiffDays(expDateStr);
+
+                if (daysRemaining !== null) {
+                    const isExpired = daysRemaining <= 0;
+                    if (isExpired) {
+                        expiredMap.set(pId, (expiredMap.get(pId) || 0) + netQty);
+                    }
+
+                    const isRaw = rawMaterialProductIds.has(pId);
+                    const isNearExpiry = daysRemaining > 0 && (isRaw ? daysRemaining <= 180 : daysRemaining <= 90);
+
+                    if (isExpired || isNearExpiry) {
+                        const product = productById.get(pId);
+                        const branchInfo = branchMap.get(bId);
+
+                        let lotName = "";
+                        if (movInfo.lotId && movInfo.lotId > 0) {
+                            lotName = lotNameMap.get(movInfo.lotId) || "";
+                        }
+                        if (!lotName && matchedMeta?.lotName) {
+                            lotName = matchedMeta.lotName;
+                        }
+                        if (!lotName && matchedMeta?.lotId) {
+                            lotName = lotNameMap.get(matchedMeta.lotId) || (matchedMeta.lotId > 0 ? `LOT-${matchedMeta.lotId}` : "");
+                        }
+
+                        const rawCost =
+                            (movInfo.unitCost > 0 ? movInfo.unitCost : 0) ||
+                            (matchedMeta && matchedMeta.unitCost > 0 ? matchedMeta.unitCost : 0) ||
+                            product?.cost_per_unit ||
+                            product?.estimated_unit_cost ||
+                            product?.price_per_unit;
+                        const unitCost = rawCost !== null && rawCost !== undefined && !isNaN(Number(rawCost))
+                            ? Number(rawCost)
+                            : 0;
+
+                        let status: "CRITICAL" | "WARNING" | "UPCOMING" | "EXPIRED" = "UPCOMING";
+                        if (isExpired) {
+                            status = "EXPIRED";
+                        } else if (daysRemaining <= 14) {
+                            status = "CRITICAL";
+                        } else if (daysRemaining <= 30) {
+                            status = "WARNING";
+                        } else {
+                            status = "UPCOMING";
+                        }
+
+                        const batchItem: NearExpiryBatch = {
+                            batch_no: bNoLower.toUpperCase(),
+                            lot_name: lotName || null,
+                            product_id: pId,
+                            product_name: product?.product_name || `Product #${pId}`,
+                            product_code: product?.product_code || null,
+                            product_description: product?.description || null,
+                            branch_id: bId,
+                            branch_name: branchInfo?.branch_name || `Branch ${bId}`,
+                            branch_code: branchInfo?.branch_code || `B${bId}`,
+                            quantity: netQty,
                             unit: product?.unit_of_measurement?.unit_shortcut || null,
                             unit_cost: unitCost,
                             expiration_date: expDateStr,
@@ -464,14 +738,83 @@ export async function GET() {
             }
         }
 
-        // 5. Evaluate Usable On-Hand (FEFO: Usable = Total - Expired) and Filter
+        // 5. Build Product Family Groups & Calculate Family Base Stock Pool
+        // Group all products by Family Root (parent_id or self)
+        const familyMembersMap = new Map<number, RawProduct[]>();
+        for (const p of productData) {
+            const rawParentId = parseParentId(p.parent_id);
+            const rootId = rawParentId && rawParentId > 0 && rawParentId !== p.product_id ? rawParentId : p.product_id;
+            const members = familyMembersMap.get(rootId) || [];
+            members.push(p);
+            familyMembersMap.set(rootId, members);
+        }
+
+        // Helper to retrieve usable on-hand (total physical minus expired)
+        const getUsableOnHand = (productId: number) => {
+            const totalPhysical = totalPhysicalMap.get(productId) ?? 0;
+            const expiredQty = expiredMap.get(productId) ?? 0;
+            return {
+                totalPhysical,
+                expiredQty,
+                usableOnHand: Math.max(0, totalPhysical - expiredQty),
+            };
+        };
+
+        // Calculate total physical pieces pooled across all family members
+        const familyTotalBasePiecesMap = new Map<number, number>();
+        const familyBaseUnitMap = new Map<number, string>();
+
+        for (const [rootId, members] of familyMembersMap.entries()) {
+            let totalPieces = 0;
+            let baseUnit = "PCS";
+
+            // Determine base unit: prioritize member with multiplier == 1 or the root product
+            const baseMember =
+                members.find((m) => {
+                    const cnt = Number(m.unit_of_measurement_count);
+                    return !isNaN(cnt) && cnt === 1;
+                }) ||
+                members.find((m) => m.product_id === rootId) ||
+                members[0];
+
+            if (baseMember?.unit_of_measurement?.unit_shortcut) {
+                baseUnit = baseMember.unit_of_measurement.unit_shortcut;
+            }
+
+            for (const m of members) {
+                const { usableOnHand } = getUsableOnHand(m.product_id);
+                const rawCount = Number(m.unit_of_measurement_count);
+                const mult = !isNaN(rawCount) && rawCount > 0 ? rawCount : 1;
+                totalPieces += usableOnHand * mult;
+            }
+
+            familyTotalBasePiecesMap.set(rootId, totalPieces);
+            familyBaseUnitMap.set(rootId, baseUnit);
+        }
+
+        // 6. Evaluate Usable On-Hand (Physical & Family-Equivalent) and Classify Deficits
         const lowStockItems: LowStockItem[] = productData
             .map((p): LowStockItem => {
-                const totalPhysical = totalPhysicalMap.get(p.product_id) ?? 0;
-                const expiredQty = expiredMap.get(p.product_id) ?? 0;
-                const usableOnHand = Math.max(0, totalPhysical - expiredQty);
-                const maintaining = Number(p.maintaining_quantity);
+                const { totalPhysical, expiredQty, usableOnHand } = getUsableOnHand(p.product_id);
+                const maintaining = Number(p.maintaining_quantity || 0);
                 const nearExpiry = nearExpiryMap.get(p.product_id) ?? [];
+
+                const rawParentId = parseParentId(p.parent_id);
+                const isChild = Boolean(rawParentId && rawParentId > 0 && rawParentId !== p.product_id);
+                const rootId = isChild ? rawParentId! : p.product_id;
+
+                const rawCount = Number(p.unit_of_measurement_count);
+                const multiplier = !isNaN(rawCount) && rawCount > 0 ? rawCount : 1;
+
+                const familyMembers = familyMembersMap.get(rootId) || [p];
+                const familyTotalPieces = familyTotalBasePiecesMap.get(rootId) ?? usableOnHand * multiplier;
+                const baseUnitName = familyBaseUnitMap.get(rootId) || p.unit_of_measurement?.unit_shortcut || "PCS";
+
+                // Equivalent on-hand converted to this variant's packaging unit
+                const familyEquivalentOnHand =
+                    multiplier > 0
+                        ? Number((familyTotalPieces / multiplier).toFixed(2))
+                        : familyTotalPieces;
 
                 // Sort near expiry batches with nearest expiry first (FEFO)
                 nearExpiry.sort((a, b) => {
@@ -480,24 +823,60 @@ export async function GET() {
                     return daysA - daysB;
                 });
 
+                // Status Classification:
+                // - CRITICAL_DEFICIT: Both physical on-hand and total family equivalent are below maintaining target (true shortage)
+                // - PACKAGING_DEFICIT: Physical on-hand is low, but total family equivalent meets or exceeds target (convertible stock exists)
+                // - SAFE: Physical stock meets or exceeds maintaining target
+                let stockStatus: "CRITICAL_DEFICIT" | "PACKAGING_DEFICIT" | "SAFE" = "SAFE";
+                if (usableOnHand <= maintaining && maintaining > 0) {
+                    if (familyEquivalentOnHand < maintaining) {
+                        stockStatus = "CRITICAL_DEFICIT";
+                    } else {
+                        stockStatus = "PACKAGING_DEFICIT";
+                    }
+                }
+
                 return {
                     product_id: p.product_id,
+                    parent_id: rawParentId,
                     product_name: p.product_name,
                     product_code: p.product_code ?? null,
                     description: p.description || null,
                     unit: p.unit_of_measurement?.unit_shortcut ?? null,
-                    on_hand: usableOnHand,
+                    unit_multiplier: multiplier,
+                    is_child: isChild,
+                    family_root_id: rootId,
+                    family_members_count: familyMembers.length,
+                    physical_on_hand: usableOnHand,
+                    family_equivalent_on_hand: familyEquivalentOnHand,
+                    family_total_base_pieces: familyTotalPieces,
+                    base_unit_name: baseUnitName,
+                    on_hand: usableOnHand, // Backwards-compatible alias
                     expired_quantity: expiredQty,
                     total_physical_on_hand: totalPhysical,
                     maintaining_quantity: maintaining,
+                    stock_status: stockStatus,
                     near_expiry_batches: nearExpiry,
                 };
             })
-            .filter((item) => item.on_hand <= item.maintaining_quantity || item.near_expiry_batches.length > 0)
-            // Sort: Products with lowest stock ratio first (0 on_hand = worst), then by name
+            // Filter: show items with deficits (critical or packaging) or items with near-expiry batches
+            .filter((item) => {
+                const hasDeficit = item.maintaining_quantity > 0 && (
+                    item.physical_on_hand <= item.maintaining_quantity ||
+                    item.family_equivalent_on_hand <= item.maintaining_quantity
+                );
+                return hasDeficit || item.near_expiry_batches.length > 0;
+            })
+            // Sort: Critical deficits first, then packaging deficits, then by ratio of equivalent stock ascending
             .sort((a, b) => {
-                const ratioA = a.maintaining_quantity > 0 ? a.on_hand / a.maintaining_quantity : 0;
-                const ratioB = b.maintaining_quantity > 0 ? b.on_hand / b.maintaining_quantity : 0;
+                if (a.stock_status !== b.stock_status) {
+                    if (a.stock_status === "CRITICAL_DEFICIT") return -1;
+                    if (b.stock_status === "CRITICAL_DEFICIT") return 1;
+                    if (a.stock_status === "PACKAGING_DEFICIT") return -1;
+                    if (b.stock_status === "PACKAGING_DEFICIT") return 1;
+                }
+                const ratioA = a.maintaining_quantity > 0 ? a.family_equivalent_on_hand / a.maintaining_quantity : 0;
+                const ratioB = b.maintaining_quantity > 0 ? b.family_equivalent_on_hand / b.maintaining_quantity : 0;
                 if (ratioA !== ratioB) return ratioA - ratioB;
                 return a.product_name.localeCompare(b.product_name);
             });
