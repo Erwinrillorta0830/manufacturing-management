@@ -1282,13 +1282,6 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
             ? sumCommittedGoodOutput(priorYieldRows)
             : committedGoodOutputOrAggregate([], goodOutputAggregateFallback(jobOrder.actual_quantity_produced, jobOrder.completed_quantity));
         const projectedGoodQuantity = existingGoodQuantity + input.goodQty;
-        if (!existingLedger && hasReachedProductionTarget(targetQuantity, existingGoodQuantity)) {
-            throw new ProductionSessionError(
-                409,
-                "PRODUCTION_TARGET_REACHED",
-                "The Job Order good-output target has been reached. No additional production sessions can be recorded."
-            );
-        }
         if (input.completeProductionAfterLog && !hasReachedProductionTarget(targetQuantity, projectedGoodQuantity)) {
             throw new ProductionSessionError(
                 422,
@@ -1620,7 +1613,8 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
                 jobOrderCompletion: {
                     success: false,
                     error: message,
-                    code: error instanceof JobOrderWorkflowError ? error.code : "JOB_ORDER_COMPLETION_FAILED"
+                    code: error instanceof JobOrderWorkflowError ? error.code : "JOB_ORDER_COMPLETION_FAILED",
+                    details: error instanceof JobOrderWorkflowError ? error.details : undefined
                 }
             });
         }

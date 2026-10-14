@@ -9,7 +9,7 @@ import {
     DIRECTUS_URL,
     headers
 } from "@/app/api/manufacturing/directus-api";
-import { committedGoodOutputOrAggregate, goodOutputAggregateFallback } from "@/modules/manufacturing-management/production-workflow/utils/production-output";
+import { committedGoodOutputOrAggregate, committedNadOutputOrAggregate, goodOutputAggregateFallback } from "@/modules/manufacturing-management/production-workflow/utils/production-output";
 import { getBOMDetailsForVersion, getActiveVersionForProduct, selectPreferredActiveVersion } from "../../finished-goods/versions/versions-helper";
 import { movementMmLotReference, movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
 import { loadYieldMaterials, YieldMaterialsError } from "../../production/_yield-materials";
@@ -49,6 +49,7 @@ import {
 } from "@/app/api/manufacturing/job-orders/_module-access";
 import { loadSubassemblyBOMComponents, parseSubassemblyProductIds } from "../helpers/subassembly-bom-components";
 import { fetchTerminalJobOrderDetails, fetchTerminalJobOrderQueue } from "../helpers/terminal-job-orders";
+import { buildWipAdditionalIndex, calculateWipMaterialBalance, getWipAdditionalForLot } from "../helpers/job-order-progress-materials";
 import {
     branchProductKey,
     mergeMaterialStagingMovements,
@@ -1032,7 +1033,7 @@ export async function handleGET(request: Request) {
             const round6 = (value: number) => Math.round((Number.isFinite(value) ? value : 0) * 1_000_000) / 1_000_000;
 
             const joRes = await fetch(
-                `${DIRECTUS_URL}/items/manufacturing_job_orders/${encodeURIComponent(String(numericJoId))}?fields=job_order_id,job_order_no,status,target_quantity,completed_quantity,actual_quantity_produced`,
+                `${DIRECTUS_URL}/items/manufacturing_job_orders/${encodeURIComponent(String(numericJoId))}?fields=job_order_id,job_order_no,status,target_quantity,completed_quantity,actual_quantity_produced,rejected_quantity`,
                 { headers, cache: "no-store" }
             );
             if (!joRes.ok) {
@@ -1049,7 +1050,7 @@ export async function handleGET(request: Request) {
 
             const targetQuantity = Math.max(0, Number(jobOrder.target_quantity || 0));
             const yieldLedgerRes = await fetch(
-                `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(numericJoId))}&fields=yield_quantity,commit_status&limit=-1`,
+                `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(numericJoId))}&fields=yield_quantity,rejected_quantity,scrap_quantity,commit_status&limit=-1`,
                 { headers, cache: "no-store" }
             );
             const yieldLedgerRows: any[] = yieldLedgerRes.ok ? ((await yieldLedgerRes.json()).data || []) : [];
@@ -1057,6 +1058,7 @@ export async function handleGET(request: Request) {
                 yieldLedgerRows,
                 goodOutputAggregateFallback(jobOrder.actual_quantity_produced, jobOrder.completed_quantity)
             );
+            const nadQuantity = committedNadOutputOrAggregate(yieldLedgerRows, jobOrder.rejected_quantity);
 
             // Raw materials and their WIP reservations.
             const materialsRes = await fetch(
@@ -1075,6 +1077,39 @@ export async function handleGET(request: Request) {
                 if (reservationsRes.ok) {
                     reservations = (await reservationsRes.json()).data || [];
                 }
+            }
+
+            let additionalWipIndex = buildWipAdditionalIndex([]);
+            if (materialIds.length > 0) {
+                const topUpParams = new URLSearchParams({
+                    "filter[source_document_id][_eq]": String(numericJoId),
+                    "filter[source_event_key][_starts_with]": `wip-top-up:${numericJoId}:`,
+                    fields: "quantity,mm_lot_id,batch_no,remarks",
+                    limit: "-1"
+                });
+                let topUpMovements: any[] | null = null;
+                try {
+                    const topUpMovementsRes = await fetch(
+                        `${DIRECTUS_URL}/items/inventory_movements?${topUpParams.toString()}`,
+                        { headers, cache: "no-store" }
+                    );
+                    const topUpPayload = await topUpMovementsRes.json().catch(() => null);
+                    if (topUpMovementsRes.ok && Array.isArray(topUpPayload?.data)) {
+                        topUpMovements = topUpPayload.data;
+                    } else {
+                        console.error("Job Order WIP top-up lookup failed:", topUpMovementsRes.status);
+                    }
+                } catch (error) {
+                    console.error("Job Order WIP top-up lookup failed:", error);
+                }
+
+                if (!topUpMovements) {
+                    return NextResponse.json(
+                        { error: "Additional WIP material quantities are temporarily unavailable.", code: "WIP_TOP_UP_MOVEMENTS_UNAVAILABLE" },
+                        { status: 502 }
+                    );
+                }
+                additionalWipIndex = buildWipAdditionalIndex(topUpMovements);
             }
 
             // Storage-lot names for the per-lot reservation breakdown.
@@ -1128,6 +1163,8 @@ export async function handleGET(request: Request) {
                     ? reservationConsumed
                     : round6(Math.max(0, Number(material.actual_consumed_quantity || 0)));
                 const returned = sumReservations("returned_quantity");
+                const additional = round6(additionalWipIndex.byMaterial.get(materialId) || 0);
+                const materialBalance = calculateWipMaterialBalance(reserved, additional, consumed, returned);
 
                 // Collapse the per-reservation rows into one row per lot/batch. When any
                 // staged/issued rows exist, they supersede their SOFT originals so lot
@@ -1161,6 +1198,13 @@ export async function handleGET(request: Request) {
                     const allocated = issued > 0 ? issued : (staged > 0 ? staged : reservedForLot);
                     const lotConsumed = sumLot("actual_used_quantity");
                     const lotReturned = sumLot("returned_quantity");
+                    const lotAdditional = getWipAdditionalForLot(
+                        additionalWipIndex,
+                        materialId,
+                        group.mmLotId,
+                        group.batchNo
+                    );
+                    const lotBalance = calculateWipMaterialBalance(allocated, lotAdditional, lotConsumed, lotReturned);
 
                     return {
                         mmLotId: group.mmLotId,
@@ -1168,9 +1212,10 @@ export async function handleGET(request: Request) {
                         storageLocation: group.mmLotId ? (mmLotNameById.get(group.mmLotId) || null) : null,
                         batchNo: group.batchNo,
                         status: lotStatusRank.find((candidate) => group.statuses.includes(candidate)) || group.statuses[0] || null,
-                        allocated,
-                        consumed: lotConsumed,
-                        remaining: round6(Math.max(0, allocated - lotConsumed - lotReturned))
+                        allocated: lotBalance.reserved,
+                        additional: lotBalance.additional,
+                        consumed: lotBalance.consumed,
+                        remaining: lotBalance.remaining
                     };
                 });
 
@@ -1181,9 +1226,10 @@ export async function handleGET(request: Request) {
                     materialId,
                     productName: product?.product_name || `Product #${productId || "?"}`,
                     unitShortcut: product?.unit_of_measurement?.unit_shortcut || "units",
-                    reserved,
-                    consumed,
-                    remaining: round6(Math.max(0, reserved - consumed - returned)),
+                    reserved: materialBalance.reserved,
+                    additional: materialBalance.additional,
+                    consumed: materialBalance.consumed,
+                    remaining: materialBalance.remaining,
                     lots
                 };
             });
@@ -1194,6 +1240,7 @@ export async function handleGET(request: Request) {
                 ? {
                     unitShortcut: rawMaterialLines[0].unitShortcut,
                     reserved: round6(rawMaterialLines.reduce((total: number, line: any) => total + line.reserved, 0)),
+                    additional: round6(rawMaterialLines.reduce((total: number, line: any) => total + line.additional, 0)),
                     consumed: round6(rawMaterialLines.reduce((total: number, line: any) => total + line.consumed, 0)),
                     remaining: round6(rawMaterialLines.reduce((total: number, line: any) => total + line.remaining, 0))
                 }
@@ -1242,7 +1289,7 @@ export async function handleGET(request: Request) {
                     allocatedQuantity: Number(allocation.allocated_quantity || 0)
                 };
             });
-            const finishedGoods = buildFinishedGoodsProgress(targetQuantity, producedQuantity, finishedGoodsAllocations);
+            const finishedGoods = buildFinishedGoodsProgress(targetQuantity, producedQuantity, nadQuantity, finishedGoodsAllocations);
             const finishedGoodsTotals = finishedGoods.totals;
 
             return NextResponse.json({
@@ -1251,7 +1298,9 @@ export async function handleGET(request: Request) {
                     jobOrderNo: jobOrder.job_order_no || `JO-${numericJoId}`,
                     status: jobOrder.status || null,
                     targetQuantity: finishedGoodsTotals.targetQuantity,
-                    producedQuantity: finishedGoodsTotals.producedQuantity,
+                    producedQuantity: finishedGoodsTotals.goodQuantity,
+                    nadQuantity: finishedGoodsTotals.nadQuantity,
+                    totalProducedQuantity: finishedGoodsTotals.totalProducedQuantity,
                     remainingQuantity: finishedGoodsTotals.remainingQuantity
                 },
                 rawMaterials: { lines: rawMaterialLines, total: rawMaterialsTotal },

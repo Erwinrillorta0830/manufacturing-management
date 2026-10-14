@@ -228,13 +228,11 @@ export default function ProductionWorkflowModule() {
             description: "Record this session's output, traceability details, and exact WIP consumption."
         }
         : null;
-    const selectedCalloutAction = selectedJobOrderOutputTargetReached
-        ? null
-        : onBenchNextAction || selectedJobOrderJourney?.nextAction || null;
+    const selectedCalloutAction = onBenchNextAction || selectedJobOrderJourney?.nextAction || null;
 
     const handleJourneyAction = () => {
         if (onBenchNextAction) {
-            if (!selectedJobOrderOutputTargetReached && hasCompletedJobOrderTimer) setIsShiftLogOpen(true);
+            if (hasCompletedJobOrderTimer) setIsShiftLogOpen(true);
             return;
         }
         if (!selectedJobOrder) return;
@@ -557,28 +555,31 @@ export default function ProductionWorkflowModule() {
                                             >
                                                 <Play className="mr-1.5 h-4 w-4" /> {workflowSubmitting ? "Starting Production..." : "Start Production"}
                                             </Button>
-                                        ) : isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.IN_PRODUCTION) && selectedJobOrderOutputTargetReached ? (
-                                            <Button
-                                                disabled={!allRoutesCompleted || hasActiveJobOrderTimer || workflowSubmitting}
-                                                onClick={() => setWorkflowAction("complete-production")}
-                                                title={!allRoutesCompleted
-                                                    ? "Stop active timers and complete every open route step before finalizing."
-                                                    : hasActiveJobOrderTimer
-                                                        ? "Stop all active operator timers before finalizing."
-                                                        : "Send the completed production run to QA and reconciliation."}
-                                                className="h-10 bg-emerald-600 px-4 text-xs font-bold text-white shadow-sm hover:bg-emerald-500"
-                                            >
-                                                <CheckCircle className="mr-1.5 h-4 w-4" /> Complete &amp; Close JO
-                                            </Button>
                                         ) : isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.IN_PRODUCTION) ? (
-                                            <Button
-                                                onClick={() => setIsShiftLogOpen(true)}
-                                                disabled={!hasCompletedJobOrderTimer}
-                                                title={!hasCompletedJobOrderTimer ? "Complete at least one operator timer to enable this action." : undefined}
-                                                className="h-10 bg-primary px-4 text-xs font-bold text-primary-foreground shadow-sm hover:bg-primary/90"
-                                            >
-                                                <ClipboardCheck className="mr-1.5 h-4 w-4" /> Log Shift Run
-                                            </Button>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <Button
+                                                    onClick={() => setIsShiftLogOpen(true)}
+                                                    disabled={!hasCompletedJobOrderTimer}
+                                                    title={!hasCompletedJobOrderTimer ? "Complete at least one operator timer to enable this action." : undefined}
+                                                    className="h-10 bg-primary px-4 text-xs font-bold text-primary-foreground shadow-sm hover:bg-primary/90"
+                                                >
+                                                    <ClipboardCheck className="mr-1.5 h-4 w-4" /> Log Shift Run
+                                                </Button>
+                                                {selectedJobOrderOutputTargetReached && (
+                                                    <Button
+                                                        disabled={!allRoutesCompleted || hasActiveJobOrderTimer || workflowSubmitting}
+                                                        onClick={() => setWorkflowAction("complete-production")}
+                                                        title={!allRoutesCompleted
+                                                            ? "Stop active timers and complete every open route step before finalizing."
+                                                            : hasActiveJobOrderTimer
+                                                                ? "Stop all active operator timers before finalizing."
+                                                                : "Send the completed production run to QA and reconciliation."}
+                                                        className="h-10 bg-emerald-600 px-4 text-xs font-bold text-white shadow-sm hover:bg-emerald-500"
+                                                    >
+                                                        <CheckCircle className="mr-1.5 h-4 w-4" /> Complete &amp; Close JO
+                                                    </Button>
+                                                )}
+                                            </div>
                                         ) : isSelectedJobOrderHeld ? (
                                             <Button
                                                 size="sm"
@@ -631,9 +632,7 @@ export default function ProductionWorkflowModule() {
                                             ) && sortedTasks.length > 1 && sortedTasks.some((task) => !task.status || task.status === "Pending") && (
                                                 <Button
                                                     variant="outline"
-                                                    disabled={selectedJobOrderOutputTargetReached}
                                                     onClick={() => setIsRouteAssignmentOpen(true)}
-                                                    title={selectedJobOrderOutputTargetReached ? "Production target reached; route configuration is locked." : undefined}
                                                     className="h-10 border-primary/40 px-3 text-xs font-bold text-primary shadow-sm hover:bg-primary/10"
                                                 >
                                                     <GitBranch className="mr-1.5 h-4 w-4" /> Assign Workstations per Route
@@ -644,8 +643,6 @@ export default function ProductionWorkflowModule() {
                                                     variant="outline"
                                                     size="sm"
                                                     onClick={() => setWorkflowAction("place-on-hold")}
-                                                    disabled={selectedJobOrderOutputTargetReached}
-                                                    title={selectedJobOrderOutputTargetReached ? "Production target reached; finalize the Job Order for QA." : undefined}
                                                     className="h-10 text-xs font-bold border-amber-500/40 text-amber-700 hover:bg-amber-500/10 dark:text-amber-400"
                                                 >
                                                     <PauseCircle className="mr-1.5 h-4 w-4" /> Place on Hold
@@ -686,8 +683,6 @@ export default function ProductionWorkflowModule() {
                                                     variant="outline"
                                                     size="sm"
                                                     onClick={() => setWorkflowAction("terminate-production")}
-                                                    disabled={isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.IN_PRODUCTION) && selectedJobOrderOutputTargetReached}
-                                                    title={selectedJobOrderOutputTargetReached ? "Production target reached; finalize the Job Order for QA." : undefined}
                                                     className="h-10 text-xs font-bold border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
                                                 >
                                                     <XCircle className="mr-1.5 h-4 w-4" /> Terminate
@@ -713,7 +708,7 @@ export default function ProductionWorkflowModule() {
                             <div className="flex items-start gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs font-semibold text-emerald-800 dark:text-emerald-300">
                                 <CheckCircle className="mt-0.5 h-4 w-4 shrink-0" />
                                 <span>
-                                    Good-output target reached. New shift entries, material top-ups, timer starts, and operator changes are locked. Stop active timers and complete open route steps, then select <strong>Complete &amp; Close JO</strong> to hand production to QA and reconciliation.
+                                    Good-output target reached. Production can continue while this Job Order remains In Production. Log actual output, including any over-production; excess good output is shown as a QA variance and remaining quantity stays at zero.
                                 </span>
                             </div>
                         )}
@@ -791,7 +786,6 @@ export default function ProductionWorkflowModule() {
                                 }}
                                 onRequestCompleteStep={handleRequestCompleteStep}
                                 readOnly={isProductionReadOnly || jobOrderActionLocked}
-                                productionTargetReached={selectedJobOrderOutputTargetReached}
                             />
                         )}
                     </div>

@@ -10,7 +10,6 @@ import {
 import { isValidQaStatus, isExpired, normalizeBatchNo, normalizeDirectusStagingMovement } from "@/app/api/manufacturing/material-staging/_stock";
 import { fetchMmInventoryMovements, type NormalizedMmInventoryMovement } from "@/app/api/manufacturing/services/mm-inventory-movements.service";
 import { getAvailableInventoryLots } from "@/app/api/manufacturing/planning-engineering/helpers/inventory-helper";
-import { committedGoodOutputOrAggregate, goodOutputAggregateFallback, hasReachedProductionTarget } from "@/modules/manufacturing-management/production-workflow/utils/production-output";
 
 const EPSILON = 0.000001;
 const SOURCE_BIN = "MAIN-STORE";
@@ -501,7 +500,7 @@ export async function recordWipTopUp(request: Request): Promise<NextResponse> {
     }
 
     const jobOrder = await directusRequest<any>(
-        `/items/manufacturing_job_orders/${input.jobOrderId}?fields=job_order_id,job_order_no,status,branch_id,product_id,primary_work_center_id,target_quantity,completed_quantity,rejected_quantity,actual_quantity_produced`,
+        `/items/manufacturing_job_orders/${input.jobOrderId}?fields=job_order_id,job_order_no,status,branch_id,product_id,primary_work_center_id`,
         `Load Job Order ${input.jobOrderId}`
     );
     const status = normalizeJobOrderStatus(jobOrder?.status);
@@ -511,22 +510,6 @@ export async function recordWipTopUp(request: Request): Promise<NextResponse> {
     if (status !== JOB_ORDER_STATUS.IN_PRODUCTION) {
         throw new WipTopUpError("Raw materials can only be added while the Job Order is In Production.", 409, "JOB_ORDER_NOT_IN_PRODUCTION");
     }
-    const yieldRows = await directusRows<any>(
-        `/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${input.jobOrderId}&fields=yield_quantity,commit_status&limit=-1`,
-        `Check production target for Job Order ${input.jobOrderId}`
-    );
-    const targetQuantity = Number(jobOrder?.target_quantity ?? 0);
-    if (hasReachedProductionTarget(targetQuantity, committedGoodOutputOrAggregate(
-        yieldRows,
-        goodOutputAggregateFallback(jobOrder.actual_quantity_produced, jobOrder.completed_quantity)
-    ))) {
-        throw new WipTopUpError(
-            "The Job Order good-output target has been reached. Additional materials cannot be added to production.",
-            409,
-            "PRODUCTION_TARGET_REACHED"
-        );
-    }
-
     const branchId = relationId(jobOrder?.branch_id, "branch_id") || relationId(jobOrder?.branch_id, "id");
     if (!branchId) throw new WipTopUpError("The Job Order has no receiving branch.", 409, "JOB_ORDER_BRANCH_MISSING");
 

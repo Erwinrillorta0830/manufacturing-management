@@ -52,7 +52,6 @@ interface RouteExecutionTableProps {
     onRequestCompleteStep: (taskId: number) => void;
     onBreakdownSaved?: () => void;
     readOnly?: boolean;
-    productionTargetReached?: boolean;
 }
 
 interface RouteExecutionRowProps {
@@ -76,7 +75,6 @@ interface RouteExecutionRowProps {
     onRequestCompleteStep: (taskId: number) => void;
     setSelectedTaskId: (id: number) => void;
     readOnly: boolean;
-    productionTargetReached: boolean;
 }
 
 interface OperatorGroup {
@@ -158,8 +156,7 @@ function RouteExecutionRow({
     onOpenBreakdown,
     onRequestCompleteStep,
     setSelectedTaskId,
-    readOnly,
-    productionTargetReached
+    readOnly
 }: RouteExecutionRowProps) {
     const [assigneeId, setAssigneeId] = useState("");
     const [materialsOpen, setMaterialsOpen] = useState(false);
@@ -213,7 +210,7 @@ function RouteExecutionRow({
     const isOngoing = task.status === "Ongoing" || task.status === "In Progress";
     const isQAHold = task.status === "QA Hold";
     const canStartTimer = isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION);
-    const floorMutationsLocked = readOnly || productionTargetReached;
+    const floorMutationsLocked = readOnly;
     const hasMaterials = (task.bom_items || []).length > 0;
     const hasRunningOperator = groupedOperators.some((operator) => operator.activeSession !== null);
     const [timerNow, setTimerNow] = useState(() => Date.now());
@@ -397,11 +394,9 @@ function RouteExecutionRow({
                     <div className="mt-2 text-[10px] text-muted-foreground">
                         {isCompleted
                             ? "Completion recorded"
-                            : productionTargetReached
-                                ? "Output target reached. Complete this route to stop active timers; other production actions are locked."
-                                : readOnly
-                                    ? "Route actions unavailable"
-                                    : "Complete this route explicitly when finished"}
+                            : readOnly
+                                ? "Route actions unavailable"
+                                : "Complete this route explicitly when finished"}
                     </div>
                 </td>
                 <td className={compact ? "block px-3 py-3 align-top" : "px-3 py-3 align-top"} onClick={(event) => event.stopPropagation()}>
@@ -461,7 +456,7 @@ function RouteExecutionRow({
                                                     <Square className="mr-1 h-2.5 w-2.5 fill-current pointer-coarse:h-4 pointer-coarse:w-4" /> Stop
                                                 </Button>
                                             ) : (
-                                                <Button type="button" size="xs" variant="outline" disabled={floorMutationsLocked || isCompleted || !canStartTimer} title={productionTargetReached ? "The Job Order output target has been reached." : isCompleted ? "Cannot start a timer because this route is completed." : !canStartTimer ? "Start production before starting an operator timer." : "Start shift timer"} className="h-6 border-emerald-500/30 px-2 text-[9px] font-bold text-emerald-700 dark:text-emerald-400 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:px-3 pointer-coarse:text-xs" onClick={() => handleStartTimer(task.id, operator.userId)}>
+                                                <Button type="button" size="xs" variant="outline" disabled={floorMutationsLocked || isCompleted || !canStartTimer} title={isCompleted ? "Cannot start a timer because this route is completed." : !canStartTimer ? "Start production before starting an operator timer." : "Start shift timer"} className="h-6 border-emerald-500/30 px-2 text-[9px] font-bold text-emerald-700 dark:text-emerald-400 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:px-3 pointer-coarse:text-xs" onClick={() => handleStartTimer(task.id, operator.userId)}>
                                                     <Play className="mr-1 h-2.5 w-2.5 fill-current pointer-coarse:h-4 pointer-coarse:w-4" /> Start
                                                 </Button>
                                             )}
@@ -596,8 +591,7 @@ export function RouteExecutionTable({
     handleSaveOperatorTimes,
     onRequestCompleteStep,
     onBreakdownSaved,
-    readOnly = false,
-    productionTargetReached = false
+    readOnly = false
 }: RouteExecutionTableProps) {
     const layoutRef = useRef<HTMLDivElement>(null);
     const [compact, setCompact] = useState(true);
@@ -744,7 +738,6 @@ export function RouteExecutionTable({
                                     onRequestCompleteStep={onRequestCompleteStep}
                                     setSelectedTaskId={setSelectedTaskId}
                                     readOnly={readOnly}
-                                    productionTargetReached={productionTargetReached}
                                 />
                             ))}
                         </tbody>
