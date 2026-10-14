@@ -28,6 +28,7 @@ import {
     salesOrderDetailIdsFromAllocations,
     salesOrderStatusAfterJobOrderInitialization
 } from "@/modules/manufacturing-management/job-order-initialization";
+import { getJobOrderMaintenanceClearance } from "../reports/machine-downtime-report/_service";
 
 const QUANTITY_EPSILON = 0.000001;
 
@@ -1238,6 +1239,32 @@ export async function executeJobOrderWorkflow(
     }
     if (command.action === "resume-production" && !text(command.resolutionRemarks)) {
         throw new JobOrderWorkflowError("A resolution remark is required before resuming production.", 400, "WORKFLOW_RESOLUTION_REQUIRED");
+    }
+    if (command.action === "resume-production") {
+        let maintenanceClearance;
+        try {
+            maintenanceClearance = await getJobOrderMaintenanceClearance(jobOrderId);
+        } catch {
+            throw new JobOrderWorkflowError(
+                "Machine maintenance clearance could not be verified. Refresh the Job Order and try again.",
+                502,
+                "MAINTENANCE_CLEARANCE_CHECK_FAILED"
+            );
+        }
+        if (maintenanceClearance === "pending") {
+            throw new JobOrderWorkflowError(
+                "Complete and submit the Machine Downtime Report before resuming this Job Order.",
+                409,
+                "MAINTENANCE_CLEARANCE_REQUIRED"
+            );
+        }
+        if (maintenanceClearance === "unfit") {
+            throw new JobOrderWorkflowError(
+                "The machine has not been restored to Good condition and cannot be used for production.",
+                409,
+                "MACHINE_NOT_OPERATIONAL"
+            );
+        }
     }
 
     if (command.force && !text(command.overrideReason)) {

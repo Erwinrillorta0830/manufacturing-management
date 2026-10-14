@@ -34,7 +34,7 @@ interface MachineDowntimeTableProps {
     pageSize: number;
     onSearchQueryChange: (value: string) => void;
     onConditionFilterChange: (value: "All" | "Under Maintenance" | "Good") => void;
-    onEventFilterChange: (value: "All" | "Termination" | "Cancellation") => void;
+    onEventFilterChange: (value: "All" | "Termination" | "Cancellation" | "Breakdown") => void;
     onResetFilters: () => void;
     onPageChange: (page: number) => void;
     onOpenHistory: (assetId: number) => void;
@@ -84,11 +84,11 @@ function HaltedJobRows({
                         <span className="text-xs text-muted-foreground">{dateLabel(jobOrder.eventAt)}</span>
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
-                        {jobOrder.reason || "No termination or cancellation reason was recorded."}
+                        {jobOrder.reason || "No downtime reason was recorded."}
                     </p>
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-2">
-                    {jobOrder.routeSteps.map((routeStep) => (
+                    {jobOrder.eventType !== "Breakdown" && jobOrder.routeSteps.map((routeStep) => (
                         <Button
                             key={routeStep.routeId}
                             type="button"
@@ -169,6 +169,7 @@ export function MachineDowntimeTable({
                             <SelectItem value="All">All JO events</SelectItem>
                             <SelectItem value="Termination">Termination</SelectItem>
                             <SelectItem value="Cancellation">Cancellation</SelectItem>
+                            <SelectItem value="Breakdown">Breakdown</SelectItem>
                         </SelectContent>
                     </Select>
                     {hasActiveFilters && (
@@ -222,7 +223,7 @@ export function MachineDowntimeTable({
                         {asset.haltedJobOrders.length === 0 ? (
                             <div className="flex items-center gap-2 border-t px-4 py-4 text-sm text-muted-foreground">
                                 <Clock3 className="h-4 w-4" />
-                                No recorded terminations or cancellations are linked to a used route on this machine.
+                                No reported breakdowns, terminations, or cancellations are linked to a used route on this machine.
                             </div>
                         ) : null}
                     </CardContent>

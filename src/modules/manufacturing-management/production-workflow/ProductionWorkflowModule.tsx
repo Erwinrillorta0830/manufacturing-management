@@ -198,6 +198,11 @@ export default function ProductionWorkflowModule() {
     const isSelectedJobOrderCancelled = isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.CANCELLED);
     const isSelectedJobOrderCancellable = isCancellableJobOrderStatus(selectedJobOrderStatus);
     const isSelectedJobOrderHeld = isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD);
+    const resumeUnavailableMachineTask = sortedTasks.find((task) =>
+        ["under maintenance", "bad", "discontinued"].includes(
+            String(task.work_center?.asset?.condition || "").trim().toLowerCase()
+        )
+    );
     const isSelectedJobOrderProductionCompleted = isJobOrderStatus(
         selectedJobOrderStatus,
         JOB_ORDER_STATUS.PRODUCTION_COMPLETED,
@@ -581,13 +586,24 @@ export default function ProductionWorkflowModule() {
                                                 )}
                                             </div>
                                         ) : isSelectedJobOrderHeld ? (
-                                            <Button
-                                                size="sm"
-                                                onClick={() => setWorkflowAction("resume-production")}
-                                                className="h-10 bg-emerald-600 px-4 text-xs font-bold text-white shadow-sm hover:bg-emerald-500"
-                                            >
-                                                <CheckCircle className="mr-1.5 h-4 w-4" /> Resume Production
-                                            </Button>
+                                            <div className="flex flex-col items-start gap-1">
+                                                <Button
+                                                    size="sm"
+                                                    onClick={() => setWorkflowAction("resume-production")}
+                                                    disabled={Boolean(resumeUnavailableMachineTask) || workflowSubmitting}
+                                                    title={resumeUnavailableMachineTask
+                                                        ? `${resumeUnavailableMachineTask.work_center_name || "The assigned machine"} must be cleared and restored to Good before resuming.`
+                                                        : undefined}
+                                                    className="h-10 bg-emerald-600 px-4 text-xs font-bold text-white shadow-sm hover:bg-emerald-500"
+                                                >
+                                                    <CheckCircle className="mr-1.5 h-4 w-4" /> Resume Production
+                                                </Button>
+                                                {resumeUnavailableMachineTask && (
+                                                    <span className="max-w-xs px-1 text-[11px] text-amber-700 dark:text-amber-300">
+                                                        Maintenance clearance and Good machine condition are required before resuming.
+                                                    </span>
+                                                )}
+                                            </div>
                                         ) : null}
                                     </div>
                                 )}

@@ -27,6 +27,10 @@ import {
     swapJobOrderOperatorAssignment,
     updateJobOrderOperatorAssignment
 } from "../../job-orders/_operator-assignment-service";
+import {
+    assertProductionAssetOperational,
+    MachineDowntimeReportError
+} from "../../reports/machine-downtime-report/_service";
 
 // Directus configuration
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
@@ -333,14 +337,15 @@ interface RouteJobOrderContext {
     jobOrderId: number;
     jobOrderNo: string;
     sequenceOrder: number;
+    workCenterId: number;
     routeStatus: string;
     status: string;
     assignedPersonnel: ReturnType<typeof normalizeOperatorAssignments>;
 }
 
 async function getRouteJobOrderContext(taskId: number): Promise<RouteJobOrderContext> {
-    const routePayload = await directusRequest<{ data?: { job_order_id?: unknown; sequence_order?: unknown; status?: unknown } }>(
-        `/items/manufacturing_job_order_routes/${taskId}?fields=jo_route_id,job_order_id,sequence_order,status`,
+    const routePayload = await directusRequest<{ data?: { job_order_id?: unknown; sequence_order?: unknown; status?: unknown; work_center_id?: unknown } }>(
+        `/items/manufacturing_job_order_routes/${taskId}?fields=jo_route_id,job_order_id,sequence_order,status,work_center_id`,
     );
     const jobOrderId = relationId(routePayload?.data?.job_order_id);
     if (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0) {
@@ -362,10 +367,28 @@ async function getRouteJobOrderContext(taskId: number): Promise<RouteJobOrderCon
         jobOrderId,
         jobOrderNo: String(jobOrder.job_order_no || `JO-${jobOrderId}`),
         sequenceOrder,
+        workCenterId: relationId(routePayload?.data?.work_center_id),
         routeStatus: String(routePayload?.data?.status || ""),
         status: String(jobOrder.status || ""),
         assignedPersonnel: normalizeOperatorAssignments(jobOrder.assigned_personnel)
     };
+}
+
+async function assertRouteMachineOperational(context: RouteJobOrderContext): Promise<void> {
+    if (!context.workCenterId) return;
+    const workCenterPayload = await directusRequest<{ data?: { asset_id?: unknown } }>(
+        `/items/manufacturing_work_centers/${context.workCenterId}?fields=work_center_id,asset_id.id`
+    );
+    const assetId = relationId(workCenterPayload?.data?.asset_id);
+    if (!assetId) return;
+    try {
+        await assertProductionAssetOperational(assetId);
+    } catch (error) {
+        if (error instanceof MachineDowntimeReportError) {
+            throw new DirectusRouteOperatorError(error.status, error.message, error.code);
+        }
+        throw error;
+    }
 }
 
 async function assertProductionMutationAllowed(
@@ -605,6 +628,9 @@ export async function POST(request: Request) {
 
         if (joId !== String(context.jobOrderId) && joId !== context.jobOrderNo) {
             return NextResponse.json({ error: "The route does not belong to the supplied Job Order." }, { status: 409 });
+        }
+        if (action === "start-timer") {
+            await assertRouteMachineOperational(context);
         }
 
         if (rosterAction) {
