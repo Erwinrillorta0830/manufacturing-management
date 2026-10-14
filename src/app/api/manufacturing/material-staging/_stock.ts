@@ -60,6 +60,56 @@ export interface MaterialStagingStockMovement {
     remarks?: string | null;
 }
 
+export function mergeMaterialStagingMovements<T extends { movement_id?: number | null }>(
+    ledgerMovements: readonly T[],
+    directusStagingMovements: readonly T[]
+): T[] {
+    const ledgerMovementIds = new Set(
+        ledgerMovements
+            .map((movement) => Number(movement.movement_id || 0))
+            .filter((movementId) => movementId > 0)
+    );
+
+    return [
+        ...ledgerMovements,
+        ...directusStagingMovements.filter((movement) => {
+            const movementId = Number(movement.movement_id || 0);
+            return movementId <= 0 || !ledgerMovementIds.has(movementId);
+        })
+    ];
+}
+
+export function mergeMaterialStagingOnHandMovements<
+    TLedger extends { movement_id?: number | null; remarks?: string | null },
+    TDirectus extends { movement_id?: number | null; remarks?: string | null }
+>(
+    ledgerMovements: readonly TLedger[],
+    directusStagingMovements: readonly TDirectus[]
+): Array<TLedger | TDirectus> {
+    const onHandStagingMovements = directusStagingMovements.filter(movement =>
+        String(movement.remarks || "").includes("[MM-MATERIAL-STAGING]")
+    );
+    return mergeMaterialStagingMovements<TLedger | TDirectus>(ledgerMovements, onHandStagingMovements);
+}
+
+export function sumMovementQuantitiesByBranchProduct(
+    movements: readonly Pick<MaterialStagingStockMovement, "branch_id" | "product_id" | "quantity">[]
+): Map<string, number> {
+    const stockByBranchProduct = new Map<string, number>();
+
+    for (const movement of movements) {
+        const branchId = Number(movement.branch_id || 0);
+        const productId = Number(movement.product_id || 0);
+        if (!branchId || !productId) continue;
+
+        const quantity = Number(movement.quantity || 0);
+        const key = branchProductKey(branchId, productId);
+        stockByBranchProduct.set(key, (stockByBranchProduct.get(key) || 0) + quantity);
+    }
+
+    return stockByBranchProduct;
+}
+
 function numericValue(value: unknown): number {
     if (value && typeof value === "object") {
         const record = value as Record<string, unknown>;

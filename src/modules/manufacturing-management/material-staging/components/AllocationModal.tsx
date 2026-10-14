@@ -14,6 +14,8 @@ import { hasStagingDelta } from "../utils/allocation-delta";
 import {
     exceedsAvailableQuantity,
     getManualAllocationLimit,
+    getManualAllocationTargetLimit,
+    getRemainingAllocationQuantity,
     getOverTargetQuantity,
     roundAllocationQuantity as roundQuantity,
     ALLOCATION_QUANTITY_EPSILON
@@ -127,6 +129,7 @@ function AllocationForm({
         ? {
             ...selectedMaterialPreviews[0],
             required_quantity: selectedMaterialPreviews.reduce((total, item) => total + item.required_quantity, 0),
+            main_store_on_hand_quantity: selectedMaterialPreviews[0].main_store_on_hand_quantity,
             staged_quantity: selectedMaterialPreviews.reduce((total, item) => total + item.staged_quantity, 0),
             remaining_quantity: selectedMaterialPreviews.reduce((total, item) => total + item.remaining_quantity, 0),
             shortage_quantity: selectedMaterialPreviews.reduce((total, item) => total + item.shortage_quantity, 0),
@@ -148,7 +151,7 @@ function AllocationForm({
         : manualLines.filter(line => line.quantity > 0),
     [mode, selectedMaterialPreview, manualLines]);
     const selectedQuantity = roundQuantity(selectedLines.reduce((total, line) => total + line.quantity, 0));
-    const remainingQuantity = selectedMaterialPreview?.remaining_quantity ?? Math.max(0, material.required_quantity - material.staged_quantity);
+    const remainingQuantity = selectedMaterialPreview?.remaining_quantity ?? getRemainingAllocationQuantity(material.required_quantity, material.staged_quantity);
     const overTargetQuantity = getOverTargetQuantity(selectedQuantity, remainingQuantity);
     const hasManualInputErrors = mode === "manual" && Object.keys(manualInputErrors).length > 0;
     // Staging is raw-material level: everything stages to the generic floor bin.
@@ -226,7 +229,7 @@ function AllocationForm({
         void loadPreview({ ...previewPayload, mode: nextMode, lines: undefined });
     };
 
-    const getCandidateMaxAllowed = (
+    const getCandidateStockLimit = (
         candidate: AllocationPreview["materials"][number]["candidates"][number],
         lines: AllocationLine[] = manualLines
     ) => {
@@ -237,13 +240,31 @@ function AllocationForm({
         return getManualAllocationLimit(candidate.available_quantity, alreadyAllocatedElsewhere);
     };
 
+    const getCandidateTargetMaxAllowed = (
+        candidate: AllocationPreview["materials"][number]["candidates"][number]
+    ) => {
+        const key = lineKey(candidate);
+        const alreadyAllocatedTowardTarget = manualLines
+            .filter(line => sourceMaterialIds.includes(line.jo_material_id) && lineKey(line) !== key)
+            .reduce((total, line) => total + line.quantity, 0);
+        const linesOnSameStock = manualLines
+            .filter(line => lineKey(line) === key && !sourceMaterialIds.includes(line.jo_material_id))
+            .reduce((total, line) => total + line.quantity, 0);
+        return getManualAllocationTargetLimit(
+            candidate.available_quantity,
+            linesOnSameStock,
+            remainingQuantity,
+            alreadyAllocatedTowardTarget
+        );
+    };
+
     const handleQuantityChange = (candidate: AllocationPreview["materials"][number]["candidates"][number], value: string) => {
         const key = lineKey(candidate);
         setFormError(null);
         setManualInputValues(previous => ({ ...previous, [key]: value }));
 
         const requestedQuantity = value.trim() === "" ? 0 : Number(value);
-        const maxAllowed = getCandidateMaxAllowed(candidate);
+        const maxAllowed = getCandidateStockLimit(candidate);
         if (!Number.isFinite(requestedQuantity) || requestedQuantity < 0) {
             setManualInputErrors(previous => ({ ...previous, [key]: "Enter a quantity of zero or greater." }));
             return;
@@ -298,7 +319,7 @@ function AllocationForm({
     };
 
     const setMax = (candidate: AllocationPreview["materials"][number]["candidates"][number]) => {
-        handleQuantityChange(candidate, String(getCandidateMaxAllowed(candidate)));
+        handleQuantityChange(candidate, String(getCandidateTargetMaxAllowed(candidate)));
     };
 
     const handleSubmit = async (event: React.FormEvent) => {
@@ -425,9 +446,15 @@ function AllocationForm({
                         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/30 p-3">
                             <div>
                                 <div className="text-xs font-semibold uppercase tracking-wider">Eligible lots and batches</div>
-                                <div className="text-[11px] text-muted-foreground">Only active, non-expired, QA-valid canonical inventory lots are selectable.</div>
+                                <div className="text-[11px] text-muted-foreground">Only active, non-expired, QA-valid canonical inventory lots are selectable. Lot availability reflects reservations held by other Job Orders.</div>
                             </div>
-                            <Badge variant={selectedQuantity >= remainingQuantity ? "default" : "secondary"} className="text-[11px]">Selected {selectedQuantity.toLocaleString()} / Expected {remainingQuantity.toLocaleString()} {material.uom}</Badge>
+                            <div className="flex flex-wrap items-center gap-2">
+                                <div className="rounded-md border border-border bg-background px-3 py-1.5 text-right">
+                                    <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Main Store On-Hand</div>
+                                    <div className="font-mono text-xs font-semibold">{selectedMaterialPreview.main_store_on_hand_quantity.toLocaleString()} {material.uom}</div>
+                                </div>
+                                <Badge variant={selectedQuantity >= remainingQuantity ? "default" : "secondary"} className="text-[11px]">Selected {selectedQuantity.toLocaleString()} / Expected {remainingQuantity.toLocaleString()} {material.uom}</Badge>
+                            </div>
                         </div>
                         {selectedMaterialPreview.candidates.length === 0 ? (
                             <div className="p-8 text-center text-xs text-muted-foreground">No eligible lot/batch inventory is available for this material.</div>
@@ -436,7 +463,7 @@ function AllocationForm({
                                 <table className="w-full min-w-[680px] text-xs">
                                     <thead className="bg-muted/20 text-left text-[11px] uppercase tracking-wider text-muted-foreground">
                                         <tr>
-                                            <th className="p-3">Lot</th><th className="p-3">Batch</th><th className="p-3">Expiry</th><th className="p-3">QA</th><th className="p-3 text-right">Available</th><th className="p-3 text-right">Allocate</th>
+                                            <th className="p-3">Lot</th><th className="p-3">Batch</th><th className="p-3">Expiry</th><th className="p-3">QA</th><th className="p-3 text-right">Lot Available</th><th className="p-3 text-right">Allocate</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -445,7 +472,7 @@ function AllocationForm({
                                             const selectedQuantityForCandidate = selectedLines
                                                 .filter(line => lineKey(line) === candidateKey)
                                                 .reduce((total, line) => total + line.quantity, 0);
-                                            const maxAllowed = getCandidateMaxAllowed(candidate);
+                                            const maxAllowed = getCandidateStockLimit(candidate);
                                             const inputError = manualInputErrors[candidateKey];
                                             return (
                                                 <tr key={candidate.allocation_line_id} className="border-t border-border/70">

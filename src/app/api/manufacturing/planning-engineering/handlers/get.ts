@@ -14,7 +14,7 @@ import { getBOMDetailsForVersion, getActiveVersionForProduct, selectPreferredAct
 import { movementMmLotReference, movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
 import { loadYieldMaterials, YieldMaterialsError } from "../../production/_yield-materials";
 import { DISPOSITIONS_COLLECTION, enrichDispositions, readDispositions } from "../../qa/_dispositions";
-import { fetchMmInventoryMovements, MmInventoryMovementError, movementErrorStatus } from "../../services/mm-inventory-movements.service";
+import { fetchMmInventoryMovements, MmInventoryMovementError, movementErrorStatus, type NormalizedMmInventoryMovement } from "../../services/mm-inventory-movements.service";
 import { loadMmInventoryLots, loadMmLots, MmLotError, mmInventoryLotId, mmLotId, unitId } from "../../services/mm-lots.service";
 import { getAvailableInventoryLots } from "../helpers/inventory-helper";
 import { paginate } from "../../_pagination";
@@ -49,6 +49,13 @@ import {
 } from "@/app/api/manufacturing/job-orders/_module-access";
 import { loadSubassemblyBOMComponents, parseSubassemblyProductIds } from "../helpers/subassembly-bom-components";
 import { fetchTerminalJobOrderDetails, fetchTerminalJobOrderQueue } from "../helpers/terminal-job-orders";
+import {
+    branchProductKey,
+    mergeMaterialStagingMovements,
+    normalizeDirectusStagingMovement,
+    sumMovementQuantitiesByBranchProduct,
+    type MaterialStagingStockMovement
+} from "../../material-staging/_stock";
 
 const WIZARD_STEP_TIMEOUT_MS = 20000;
 
@@ -648,14 +655,50 @@ export async function handleGET(request: Request) {
             const unclassifiedMap = new Map<number, number>();
             let movementStockMap = new Map<string, number>();
             let movements: any[] = [];
+            let mainStoreOnHandByBranchProduct = new Map<string, number>();
 
             if (pIds.length > 0) {
-                movements = (await fetchMmInventoryMovements({
+                const springMovementsPromise = fetchMmInventoryMovements({
                     branch: branchId,
                     product: pIds.length === 1 ? pIds[0] : null
-                })).filter((movement) => {
+                });
+                const stagingMovementFilter = encodeURIComponent(JSON.stringify({
+                    _and: [
+                        { branch_id: { _eq: branchId } },
+                        { product_id: { _in: pIds } },
+                        { remarks: { _contains: "[MM-MATERIAL-STAGING]" } }
+                    ]
+                }));
+                const directusStagingMovementsPromise: Promise<MaterialStagingStockMovement[]> = fetch(
+                    `${DIRECTUS_URL}/items/inventory_movements?filter=${stagingMovementFilter}&fields=movement_id,product_id,branch_id,quantity,remarks&limit=-1`,
+                    { headers, cache: "no-store" }
+                )
+                    .then(async (response) => {
+                        if (!response.ok) return [];
+                        const payload = await response.json().catch(() => null);
+                        if (!Array.isArray(payload?.data)) return [];
+                        return payload.data.map((row: Record<string, unknown>) => normalizeDirectusStagingMovement(row));
+                    })
+                    .catch((error) => {
+                        console.warn("Directus material-staging movements could not be loaded for Job Order materials:", error);
+                        return [];
+                    });
+                const [springMovements, directusStagingMovements] = await Promise.all([
+                    springMovementsPromise,
+                    directusStagingMovementsPromise
+                ]);
+                const allInventoryMovements = mergeMaterialStagingMovements<NormalizedMmInventoryMovement | MaterialStagingStockMovement>(
+                    springMovements,
+                    directusStagingMovements
+                );
+                const productInventoryMovements = allInventoryMovements.filter((movement) => {
+                    const productId = Number(movement.product_id || ("productId" in movement ? movement.productId : 0) || 0);
+                    return pIds.includes(productId);
+                });
+                mainStoreOnHandByBranchProduct = sumMovementQuantitiesByBranchProduct(productInventoryMovements);
+                movements = productInventoryMovements.filter((movement: any) => {
                     const productId = Number(movement.product_id || movement.productId || 0);
-                    return pIds.includes(productId) && isCompatibleStorageLot(productId, movementMmLotReference(movement));
+                    return isCompatibleStorageLot(productId, movementMmLotReference(movement));
                 });
                 movementStockMap = sumMovementQuantitiesByStock(movements);
 
@@ -964,6 +1007,7 @@ export async function handleGET(request: Request) {
                     product_name: prod?.product_name || `Product #${d.product_id}`,
                     unit_shortcut: prod?.unit_of_measurement?.unit_shortcut || "units",
                     available_stock: availableStock,
+                    main_store_on_hand: Math.max(0, mainStoreOnHandByBranchProduct.get(branchProductKey(branchId, compProductId)) || 0),
                     pending_qa_stock: pendingQaMap.get(Number(d.product_id)) || 0,
                     qa_hold_stock: qaHoldMap.get(Number(d.product_id)) || 0,
                     unclassified_stock: unclassifiedMap.get(Number(d.product_id)) || 0,
