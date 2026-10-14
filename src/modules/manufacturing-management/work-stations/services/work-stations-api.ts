@@ -1,4 +1,4 @@
-import type { WorkCenter } from "../../finished-goods-master/types";
+import type { WorkCenter, AssetRecord, DepartmentRecord } from "../../finished-goods-master/types";
 
 export async function fetchWorkCenters(): Promise<WorkCenter[]> {
     const res = await fetch("/api/manufacturing/work-stations", { cache: "no-store" });
@@ -25,3 +25,16 @@ export async function saveWorkCenter(workCenterId: number, workCenter: Partial<W
     if (!res.ok) throw new Error("Failed to update work station via BFF");
     return res.json();
 }
+
+export async function fetchAssets(): Promise<AssetRecord[]> {
+    const res = await fetch("/api/manufacturing/work-stations/assets", { cache: "no-store" });
+    if (!res.ok) throw new Error("Failed to fetch work station assets from BFF");
+    return res.json();
+}
+
+export async function fetchDepartments(): Promise<DepartmentRecord[]> {
+    const res = await fetch("/api/manufacturing/work-stations/departments", { cache: "no-store" });
+    if (!res.ok) throw new Error("Failed to fetch departments from BFF");
+    return res.json();
+}
+
