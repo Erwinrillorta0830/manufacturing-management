@@ -208,7 +208,24 @@ export default function PlanningEngineeringModule() {
 
     const handleTargetBranchChange = (value: string) => {
         const branchId = Number(value);
-        setSelectedBranchId(Number.isSafeInteger(branchId) && branchId > 0 ? branchId : null);
+        const nextBranchId = Number.isSafeInteger(branchId) && branchId > 0 ? branchId : null;
+        if (nextBranchId === selectedBranchId) return;
+
+        if (selectedDetailIds.length === 0) {
+            setSelectedBranchId(nextBranchId);
+            return;
+        }
+
+        const branchNameForId = (id: number | null) => id === null
+            ? "No target branch"
+            : branches.find((branch) => Number(branch.id) === id)?.branch_name || `Branch ${id}`;
+
+        setPendingBranchChange({
+            branchId: nextBranchId,
+            fromBranchName: branchNameForId(selectedBranchId),
+            toBranchName: branchNameForId(nextBranchId),
+            selectedLineCount: selectedDetailIds.length
+        });
     };
     const hasValidTargetBranch = selectedBranchId !== null && Number.isSafeInteger(selectedBranchId) && selectedBranchId > 0;
     const releaseBlockReason = loadingBranches
@@ -242,6 +259,12 @@ export default function PlanningEngineeringModule() {
             : { ...current, [tab]: { page: 1, pageSize } });
     }, []);
     const [showWorkflowGuide, setShowWorkflowGuide] = useState(true);
+    const [pendingBranchChange, setPendingBranchChange] = useState<{
+        branchId: number | null;
+        fromBranchName: string;
+        toBranchName: string;
+        selectedLineCount: number;
+    } | null>(null);
     const [isBufferDialogOpen, setIsBufferDialogOpen] = useState(false);
     const [selectedUnreleasedJo, setSelectedUnreleasedJo] = useState<any | null>(null);
     const [draftJobOrderToEdit, setDraftJobOrderToEdit] = useState<any | null>(null);
@@ -1332,7 +1355,7 @@ export default function PlanningEngineeringModule() {
         <div className="space-y-6 p-1 sm:p-2">
             {/* Summary Cards */}
             <PlanningSummaryCards
-                demandLinesCount={salesOrderGroups.length}
+                demandLinesCount={schedulableDemandLineCount}
                 shortfallItemsCount={shortfallCount}
                 unreleasedJobsCount={unreleasedJobs.length}
                 familyGroupsCount={familyGroups.filter((group) => group.isFamily).length}
@@ -1480,6 +1503,7 @@ export default function PlanningEngineeringModule() {
                             hasValidTargetBranch={hasValidTargetBranch}
                             releaseBlockReason={releaseBlockReason}
                             handleInitiateRelease={() => handleInitiateRelease()}
+                            handleRemoveLine={(detailId) => handleSelectLine(detailId, false)}
                             versionStock={versionStock}
                             loadingVersionStock={loadingVersionStock}
                             canDirectAllocate={releaseGroups.length === 1}
@@ -1620,6 +1644,43 @@ export default function PlanningEngineeringModule() {
                     </div>
                 </TabsContent>
             </Tabs>
+
+            {/* Target Branch Change Confirmation */}
+            <AlertDialog
+                open={pendingBranchChange !== null}
+                onOpenChange={(open) => {
+                    if (!open) setPendingBranchChange(null);
+                }}
+            >
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Change Target Branch?</AlertDialogTitle>
+                        <AlertDialogDescription asChild>
+                            <div className="space-y-2">
+                                <p>
+                                    Changing from <strong>{pendingBranchChange?.fromBranchName}</strong> to{" "}
+                                    <strong>{pendingBranchChange?.toBranchName}</strong> will clear{" "}
+                                    {pendingBranchChange?.selectedLineCount.toLocaleString()} selected Sales Order detail{" "}
+                                    {pendingBranchChange?.selectedLineCount === 1 ? "line" : "lines"}.
+                                </p>
+                                <p>Do you want to continue?</p>
+                            </div>
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={(event) => {
+                                event.preventDefault();
+                                if (pendingBranchChange) setSelectedBranchId(pendingBranchChange.branchId);
+                                setPendingBranchChange(null);
+                            }}
+                        >
+                            Change Branch
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
 
             {/* Direct Allocation Confirmation Dialog */}
             <AlertDialog open={isDirectAllocDialogOpen} onOpenChange={setIsDirectAllocDialogOpen}>
