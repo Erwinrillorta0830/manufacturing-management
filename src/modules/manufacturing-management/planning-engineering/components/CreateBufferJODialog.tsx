@@ -540,7 +540,7 @@ export function CreateBufferJODialog({
                 Number(comp.wastage_factor_percentage || 0)
             );
             const needed = materialPlan.plannedRequired;
-            const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
+            const available = compProductId ? (inventories[Number(compProductId)]?.main_store_on_hand || 0) : 0;
             const shortfall = Math.max(0, needed - available);
 
             if (shortfall > 0) {
@@ -557,7 +557,7 @@ export function CreateBufferJODialog({
                             Number(cc.quantity_required || 0),
                             Number(cc.wastage_factor_percentage || 0)
                         );
-                        const ccAvailable = ccId ? (inventories[Number(ccId)]?.on_hand || 0) : 0;
+                        const ccAvailable = ccId ? (inventories[Number(ccId)]?.main_store_on_hand || 0) : 0;
                         const ccShortfall = Math.max(0, ccNeeded - ccAvailable);
                         if (ccShortfall > 0) {
                             initialSelections[`child-${compProductId}-${ccId}`] = true;
@@ -634,7 +634,7 @@ export function CreateBufferJODialog({
             Number(comp.quantity_required || 0),
             Number(comp.wastage_factor_percentage || 0)
         ).plannedRequired;
-        const available = compProductId ? Number(inventories[compProductId]?.on_hand || 0) : 0;
+        const available = compProductId ? Number(inventories[compProductId]?.main_store_on_hand || 0) : 0;
         const shortfall = Math.max(0, needed - available);
         const subRoute = compProductId ? (subAssemblyRoutings[compProductId] || (subAssemblyRoutings as any)[String(compProductId)]) : null;
         if (shortfall > 0 && subRoute) {
@@ -706,7 +706,7 @@ export function CreateBufferJODialog({
             Number(comp.wastage_factor_percentage || 0)
         );
         const needed = materialPlan.plannedRequired;
-        const available = compProductId ? Number(inventories[compProductId]?.on_hand || 0) : 0;
+        const available = compProductId ? Number(inventories[compProductId]?.main_store_on_hand || 0) : 0;
         return {
             name: comp.component_product_id?.product_name || `Product #${compProductId}`,
             code: comp.component_product_id?.product_code || "",
@@ -801,7 +801,7 @@ export function CreateBufferJODialog({
                 Number(comp.quantity_required || 0),
                 Number(comp.wastage_factor_percentage || 0)
             ).plannedRequired;
-        const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
+        const available = compProductId ? (inventories[Number(compProductId)]?.main_store_on_hand || 0) : 0;
         return Math.max(0, needed - available) > 0;
     });
 
@@ -821,7 +821,7 @@ export function CreateBufferJODialog({
                 Number(comp.quantity_required || 0),
                 Number(comp.wastage_factor_percentage || 0)
             ).plannedRequired;
-            const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
+            const available = compProductId ? (inventories[Number(compProductId)]?.main_store_on_hand || 0) : 0;
             const shortfall = Math.max(0, needed - available);
             const uom = comp.unit_of_measurement || "pcs";
             const children = subAssemblyBoms[Number(compProductId)] || [];
@@ -852,7 +852,7 @@ export function CreateBufferJODialog({
                         Number(cc.quantity_required || 0),
                         Number(cc.wastage_factor_percentage || 0)
                     );
-                    const ccAvailable = ccId ? (inventories[Number(ccId)]?.on_hand || 0) : 0;
+                    const ccAvailable = ccId ? (inventories[Number(ccId)]?.main_store_on_hand || 0) : 0;
                     const ccShortfall = Math.max(0, ccNeeded - ccAvailable);
                     const ccUom = cc.unit_of_measurement || "pcs";
 

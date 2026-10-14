@@ -5,6 +5,7 @@ import { Camera, CircleStop, FolderOpen, Trash2, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { getProductionCameraErrorMessage, shouldUseNativeCameraCapture } from "../utils/production-camera";
 import {
     isManufacturingEvidenceVideo,
     MANUFACTURING_EVIDENCE_VIDEO_MAX_BYTES,
@@ -40,18 +41,6 @@ function mediaExtension(mimeType: string): string {
     }
 }
 
-function cameraErrorMessage(error: unknown): string {
-    if (error instanceof DOMException) {
-        if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
-            return "Camera access was denied. You can still choose an image or video file.";
-        }
-        if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
-            return "No camera was found. You can still choose an image or video file.";
-        }
-    }
-    return "Camera access is unavailable. You can still choose an image or video file.";
-}
-
 export function EvidenceMediaInput({
     id,
     label,
@@ -70,9 +59,12 @@ export function EvidenceMediaInput({
     const [cameraStarting, setCameraStarting] = useState(false);
     const [cameraReady, setCameraReady] = useState(false);
     const [recording, setRecording] = useState(false);
+    const [nativeCaptureMode, setNativeCaptureMode] = useState(false);
     const [cameraError, setCameraError] = useState<string | null>(null);
     const [cameraNotice, setCameraNotice] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const nativePhotoInputRef = useRef<HTMLInputElement>(null);
+    const nativeVideoInputRef = useRef<HTMLInputElement>(null);
     const cameraVideoRef = useRef<HTMLVideoElement>(null);
     const cameraStreamRef = useRef<MediaStream | null>(null);
     const recorderRef = useRef<MediaRecorder | null>(null);
@@ -82,6 +74,13 @@ export function EvidenceMediaInput({
     const cameraRequestIdRef = useRef(0);
 
     const selectedFiles = multiple ? files ?? [] : file ? [file] : [];
+
+    useEffect(() => {
+        setNativeCaptureMode(shouldUseNativeCameraCapture(
+            window.isSecureContext,
+            Boolean(navigator.mediaDevices?.getUserMedia)
+        ));
+    }, []);
 
     useEffect(() => {
         const previewFiles = multiple ? files ?? [] : file ? [file] : [];
@@ -142,13 +141,15 @@ export function EvidenceMediaInput({
         video.srcObject = cameraStream;
         void video.play().catch(() => {
             if (cameraStreamRef.current === cameraStream) {
-                setCameraError("The camera preview could not start. Check browser permissions or choose a file instead.");
+                setCameraError("The browser camera preview could not start. Use the device capture controls or choose a file.");
+                setNativeCaptureMode(true);
+                stopCamera();
             }
         });
         return () => {
             if (video.srcObject === cameraStream) video.srcObject = null;
         };
-    }, [cameraStream]);
+    }, [cameraStream, stopCamera]);
 
     const acceptFiles = useCallback((incomingFiles: File[]) => {
         setCameraError(null);
@@ -176,12 +177,19 @@ export function EvidenceMediaInput({
         setCameraError(null);
         setCameraNotice(null);
         setCameraReady(false);
-        stopCamera();
-        const requestId = ++cameraRequestIdRef.current;
-        if (!navigator.mediaDevices?.getUserMedia) {
-            setCameraError("Camera access is unavailable in this browser. You can still choose an image or video file.");
+
+        if (nativeCaptureMode || shouldUseNativeCameraCapture(
+            window.isSecureContext,
+            Boolean(navigator.mediaDevices?.getUserMedia)
+        )) {
+            stopCamera();
+            setNativeCaptureMode(true);
+            nativePhotoInputRef.current?.click();
             return;
         }
+
+        stopCamera();
+        const requestId = ++cameraRequestIdRef.current;
 
         setCameraStarting(true);
         try {
@@ -197,7 +205,8 @@ export function EvidenceMediaInput({
             setCameraStream(stream);
         } catch (cameraAccessError) {
             if (requestId === cameraRequestIdRef.current) {
-                setCameraError(cameraErrorMessage(cameraAccessError));
+                setNativeCaptureMode(true);
+                setCameraError(getProductionCameraErrorMessage(cameraAccessError));
             }
         } finally {
             if (requestId === cameraRequestIdRef.current) setCameraStarting(false);
@@ -240,7 +249,8 @@ export function EvidenceMediaInput({
             return;
         }
         if (typeof MediaRecorder === "undefined") {
-            setCameraError("Video recording is not supported in this browser. You can still choose an image or video file.");
+            setNativeCaptureMode(true);
+            setCameraError("Browser video recording is unavailable. Use Record video or choose a video file.");
             return;
         }
 
@@ -334,6 +344,40 @@ export function EvidenceMediaInput({
                 className="sr-only"
                 tabIndex={-1}
             />
+            <Input
+                ref={nativePhotoInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={(event) => {
+                    const capturedFiles = Array.from(event.target.files || []);
+                    event.target.value = "";
+                    if (capturedFiles.length === 0) return;
+                    stopCamera();
+                    acceptFiles(capturedFiles);
+                }}
+                disabled={disabled}
+                aria-label={`Capture ${label.toLowerCase()} photo`}
+                className="sr-only"
+                tabIndex={-1}
+            />
+            <Input
+                ref={nativeVideoInputRef}
+                type="file"
+                accept="video/*"
+                capture="environment"
+                onChange={(event) => {
+                    const capturedFiles = Array.from(event.target.files || []);
+                    event.target.value = "";
+                    if (capturedFiles.length === 0) return;
+                    stopCamera();
+                    acceptFiles(capturedFiles);
+                }}
+                disabled={disabled}
+                aria-label={`Capture ${label.toLowerCase()} video`}
+                className="sr-only"
+                tabIndex={-1}
+            />
             <p id={`${id}-help`} className="text-[11px] text-muted-foreground">
                 Images: PNG, JPG, or WEBP up to 5 MB each. Videos: MP4, WEBM, or MOV up to 100 MB each.
                 {multiple && ` Up to ${MANUFACTURING_EVIDENCE_MAX_FILES} files and 100 MB total.`}
@@ -342,6 +386,22 @@ export function EvidenceMediaInput({
                 <Button type="button" variant="outline" size="sm" onClick={() => void startCamera()} disabled={disabled || cameraStarting || Boolean(cameraStream)}>
                     <Camera className="mr-1.5 h-4 w-4" /> {cameraStarting ? "Opening camera…" : "Open camera"}
                 </Button>
+                {nativeCaptureMode && (
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                            setCameraError(null);
+                            setCameraNotice(null);
+                            stopCamera();
+                            nativeVideoInputRef.current?.click();
+                        }}
+                        disabled={disabled || recording}
+                    >
+                        <Video className="mr-1.5 h-4 w-4" /> Record video
+                    </Button>
+                )}
                 <Button
                     type="button"
                     variant="outline"

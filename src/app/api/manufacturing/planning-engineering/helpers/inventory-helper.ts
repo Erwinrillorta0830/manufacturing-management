@@ -3,7 +3,14 @@ import { DIRECTUS_URL, headers } from "./shared";
 import { getActiveVersionForProduct } from "../../finished-goods/versions/versions-helper";
 import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
 import { fetchMmInventoryMovements, MmInventoryMovementError, type NormalizedMmInventoryMovement } from "../../services/mm-inventory-movements.service";
-import { isExpired, normalizeDirectusStagingMovement } from "../../material-staging/_stock";
+import {
+    branchProductKey,
+    isExpired,
+    mergeMaterialStagingMovements,
+    normalizeDirectusStagingMovement,
+    sumMovementQuantitiesByBranchProduct,
+    type MaterialStagingStockMovement
+} from "../../material-staging/_stock";
 import { loadMmInventoryLots, loadMmLots, mmInventoryLotId, mmLotId, resolveProductUnitId } from "../../services/mm-lots.service";
 import { JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
 import { getUnissuedReservationQuantity } from "./reservation-availability";
@@ -682,13 +689,6 @@ export async function getProductInventoryAndSafetyStock(
             ]
         }));
 
-        const productTypeIds = new Set<number>(
-            products
-                .map((product: any) => Number(product.product_type?.id || product.product_type || 0))
-                .filter((productTypeId: number) => productTypeId > 0)
-        );
-        const movementProductType = productTypeIds.size === 1 ? [...productTypeIds][0] : null;
-
         // Request only the products used by this BOM. Fetching the complete
         // branch ledger for a multi-material BOM can take longer than the
         // wizard's client timeout even though the final response is valid.
@@ -698,8 +698,7 @@ export async function getProductInventoryAndSafetyStock(
                 INVENTORY_MOVEMENT_REQUEST_CONCURRENCY,
                 (productId) => fetchMmInventoryMovements({
                     branch: bId,
-                    product: productId,
-                    productType: movementProductType
+                    product: productId
                 })
             ).catch(async (error) => {
                 if (!(error instanceof MmInventoryMovementError) || error.status !== 429) throw error;
@@ -709,14 +708,36 @@ export async function getProductInventoryAndSafetyStock(
             })
             : fetchMmInventoryMovements({
                 branch: bId,
-                product: null,
-                productType: movementProductType
+                product: null
             }).then((rows) => [rows]);
 
-        const [recRes, yieldRes, movementResponses, versionsRes, unitsRes, inventoryLotsRes] = await Promise.all([
+        const stagingMovementFilter = encodeURIComponent(JSON.stringify({
+            _and: [
+                { branch_id: { _eq: bId } },
+                { product_id: { _in: allProductIds } },
+                { remarks: { _contains: "[MM-MATERIAL-STAGING]" } }
+            ]
+        }));
+        const stagingMovementsPromise = fetch(
+            `${DIRECTUS_URL}/items/inventory_movements?filter=${stagingMovementFilter}&fields=movement_id,product_id,branch_id,quantity,remarks&limit=-1`,
+            { headers, cache: "no-store" }
+        )
+            .then(async (response) => {
+                if (!response.ok) return [];
+                const payload = await response.json().catch(() => null);
+                if (!Array.isArray(payload?.data)) return [];
+                return payload.data.map((row: Record<string, unknown>) => normalizeDirectusStagingMovement(row));
+            })
+            .catch((error) => {
+                console.warn("Directus material-staging movements could not be loaded for Main Store On-Hand:", error);
+                return [];
+            });
+
+        const [recRes, yieldRes, movementResponses, stagingMovements, versionsRes, unitsRes, inventoryLotsRes] = await Promise.all([
             fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?${recFilter}filter[branch_id][_eq]=${bId}&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?${yieldFilter}fields=*,job_order_id.product_id,job_order_id.job_order_no&limit=-1`, { headers, cache: "no-store" }),
             movementResponsesPromise,
+            stagingMovementsPromise,
             fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?filter=${versionFilter}&fields=product_id&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/units?limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/mm_inventory_lots?filter=${inventoryLotFilter}&fields=inventory_lot_id,product_id,branch_id,lot_id,batch_no,qa_status,expiry_date,manufacturing_date,status&limit=-1`, { headers, cache: "no-store" }).catch(() => null)
@@ -724,7 +745,11 @@ export async function getProductInventoryAndSafetyStock(
 
         const receipts = recRes.ok ? (await recRes.json()).data || [] : [];
         const yields = yieldRes.ok ? (await yieldRes.json()).data || [] : [];
-        const movements = movementResponses.flat();
+        const movements = mergeMaterialStagingMovements<NormalizedMmInventoryMovement | MaterialStagingStockMovement>(
+            movementResponses.flat(),
+            stagingMovements
+        );
+        const mainStoreStockByBranchProduct = sumMovementQuantitiesByBranchProduct(movements);
         const versionData = versionsRes.ok ? (await versionsRes.json()).data || [] : [];
         const unitsData = unitsRes.ok ? (await unitsRes.json()).data || [] : [];
         const inventoryLotData = inventoryLotsRes?.ok ? (await inventoryLotsRes.json()).data || [] : [];
@@ -873,7 +898,7 @@ export async function getProductInventoryAndSafetyStock(
         const movementStockMap = new Map<string, number>(); // "productId:batchNo" -> sum of quantity
         const movementLotBalances = new Map<string, InventoryBreakdownBalance>();
         movements
-            .filter((movement) => allProductIds.length === 0 || allProductIds.includes(Number(movement.product_id || movement.productId || 0)))
+            .filter((movement) => allProductIds.length === 0 || allProductIds.includes(Number(movement.product_id || 0)))
             .forEach((mov: any) => {
             const pId = Number(mov.product_id?.product_id || mov.product_id);
             const productUnitId = productUnitIds.get(pId);
@@ -1015,6 +1040,7 @@ export async function getProductInventoryAndSafetyStock(
                 uom_shortcut: uomShortcut,
                 unit_of_measurement: uomName,
                 on_hand: availableOnHand,
+                main_store_on_hand: Math.max(0, mainStoreStockByBranchProduct.get(branchProductKey(bId, pId)) || 0),
                 safety_stock: safetyStock,
                 available_lots: availableLotsByProduct.get(pId) || [],
                 recommended_lots: recommendedLots

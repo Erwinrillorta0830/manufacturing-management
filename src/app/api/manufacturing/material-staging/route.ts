@@ -13,14 +13,17 @@ import {
     branchProductBatchKey,
     branchProductKey,
     branchProductLotBatchKey,
+    mergeMaterialStagingOnHandMovements,
     normalizeBatchNo,
     normalizeDirectusStagingMovement,
+    sumMovementQuantitiesByBranchProduct,
     type MaterialStagingStockMovement
 } from "./_stock";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../services/mm-inventory-movements.service";
 import { loadMmLots, mmLotId } from "../services/mm-lots.service";
 import { canStageJobOrderMaterials, isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 import { groupMaterialRequirements } from "@/modules/manufacturing-management/planning-engineering/utils/material-requirement-groups";
+import { getMaterialRequiredQuantity } from "@/modules/manufacturing-management/material-staging/utils/allocation-quantity";
 import {
     authorizeJobOrderModuleAccess,
     JOB_ORDER_MODULE_PATHS
@@ -190,13 +193,7 @@ export async function GET(request: Request) {
         const rawStagingMovements: MaterialStagingStockMovement[] = stagingMovementsRes && stagingMovementsRes.ok
             ? ((await stagingMovementsRes.json()).data || []).map((movement: Record<string, unknown>) => normalizeDirectusStagingMovement(movement))
             : [];
-        const springMovementIds = new Set(movementsRes
-            .map((movement) => Number(movement.movement_id || 0))
-            .filter((movementId) => movementId > 0));
-        const rawMovements: MaterialStagingStockMovement[] = [
-            ...movementsRes,
-            ...rawStagingMovements.filter((movement) => !movement.movement_id || !springMovementIds.has(movement.movement_id))
-        ];
+        const rawMovements = mergeMaterialStagingOnHandMovements(movementsRes, rawStagingMovements);
         const rawReceiving = receivingRes && receivingRes.ok ? (await receivingRes.json()).data || [] : [];
         const rawYields = yieldsRes && yieldsRes.ok ? (await yieldsRes.json()).data || [] : [];
 
@@ -251,7 +248,7 @@ export async function GET(request: Request) {
         });
 
         // Compute stock using the same branch/product/lot/batch identity used by the transfer API.
-        const stockByBranchProduct = new Map<string, number>();
+        const stockByBranchProduct = sumMovementQuantitiesByBranchProduct(rawMovements);
         const stockByBranchProductBatchLot = new Map<string, {
             branchId: number;
             productId: number;
@@ -271,9 +268,6 @@ export async function GET(request: Request) {
             const lotId = Number(m.mm_lot_id || 0);
             const inventoryLotId = Number(m.inventory_lot_id || 0);
             if (pId && branchId) {
-                const productKey = branchProductKey(branchId, pId);
-                stockByBranchProduct.set(productKey, (stockByBranchProduct.get(productKey) || 0) + qty);
-
                 if (lotId) {
                     const batchKey = branchProductBatchKey(branchId, pId, normalizedBatchNo);
                     const lotKey = branchProductLotBatchKey(branchId, pId, lotId, normalizedBatchNo);
@@ -542,7 +536,7 @@ export async function GET(request: Request) {
                     const product = productMap.get(productId);
                     return material.uom_id ?? product?.unit_of_measurement ?? product?.uom_id;
                 },
-                quantity: (material) => material.allocated_quantity
+                quantity: getMaterialRequiredQuantity
             });
             let totalMaterialsCount = 0;
             let stagedMaterialsCount = 0;

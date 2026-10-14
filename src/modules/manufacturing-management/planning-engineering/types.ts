@@ -262,6 +262,7 @@ export interface JobOrderMaterial {
     staged_quantity?: number;
     required_quantity?: number;
     available_stock?: number;
+    main_store_on_hand?: number;
     shortfall?: number;
     batch_no?: string;
     staging_bin?: string;

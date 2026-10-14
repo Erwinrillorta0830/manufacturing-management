@@ -36,7 +36,6 @@ interface SuppliersDirectoryProps {
     isEditingSupplier?: boolean;
     onStartEditSupplier?: (supplier: Supplier) => void;
     onCreateSupplier: (e: React.FormEvent) => void;
-    rawMaterials?: RawMaterial[];
     supplierRefreshKey?: number;
 }
 
@@ -61,7 +60,6 @@ export default function SuppliersDirectory({
     isEditingSupplier = false,
     onStartEditSupplier,
     onCreateSupplier,
-    rawMaterials = [],
     supplierRefreshKey = 0
 }: SuppliersDirectoryProps) {
     const [search, setSearch] = useState("");
@@ -79,6 +77,7 @@ export default function SuppliersDirectory({
     const [isCatalogMatrixOpen, setIsCatalogMatrixOpen] = useState(false);
     const [catalogMaterials, setCatalogMaterials] = useState<RawMaterial[] | null>(null);
     const [loadingCatalogMaterials, setLoadingCatalogMaterials] = useState(false);
+    const [catalogLoadError, setCatalogLoadError] = useState<string | null>(null);
 
     // Linked products state
     const [linkedProducts, setLinkedProducts] = useState<LinkedProduct[]>([]);
@@ -226,15 +225,17 @@ export default function SuppliersDirectory({
 
     const loadCatalogMaterials = useCallback(async () => {
         setLoadingCatalogMaterials(true);
+        setCatalogLoadError(null);
         try {
             setCatalogMaterials(await fetchPurchaseOrderProductCatalog(-1));
         } catch (error) {
             console.error(error);
-            setCatalogMaterials(rawMaterials);
+            setCatalogMaterials([]);
+            setCatalogLoadError("Unable to load the product catalog. Close and reopen the matrix to try again.");
         } finally {
             setLoadingCatalogMaterials(false);
         }
-    }, [rawMaterials]);
+    }, []);
 
     const handleOpenCatalogMatrix = useCallback(() => {
         setIsCatalogMatrixOpen(true);
@@ -582,7 +583,7 @@ export default function SuppliersDirectory({
                                     <div>
                                         <div className="flex items-center gap-2">
                                             <h4 className="text-xs font-black text-foreground uppercase tracking-wider">
-                                                Associated Raw Materials & Catalog Items
+                                                Associated Products
                                             </h4>
                                             <span className="text-[10px] font-bold bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded-full flex items-center gap-1">
                                                 <CheckCircle2 className="h-3 w-3 text-primary" />
@@ -590,7 +591,7 @@ export default function SuppliersDirectory({
                                             </span>
                                         </div>
                                         <p className="text-[10px] text-muted-foreground">
-                                            Catalog items and raw materials supplied by {activeSupplier.supplier_name}
+                                            Products supplied by {activeSupplier.supplier_name}
                                         </p>
                                     </div>
                                 </div>
@@ -656,9 +657,9 @@ export default function SuppliersDirectory({
                                         <div className="h-12 w-12 rounded-full bg-primary/10 text-primary flex items-center justify-center mb-1">
                                             <LinkIcon className="h-6 w-6" />
                                         </div>
-                                        <h5 className="text-xs font-bold text-foreground">No Raw Materials Linked</h5>
+                                        <h5 className="text-xs font-bold text-foreground">No Products Linked</h5>
                                         <p className="text-[11px] text-muted-foreground max-w-sm">
-                                            Associate raw materials or catalog items to this vendor to streamline purchase orders and landed cost allocation.
+                                            Associate products from the catalog to this supplier to streamline purchase orders and landed cost allocation.
                                         </p>
                                         <button
                                             type="button"
@@ -755,7 +756,8 @@ export default function SuppliersDirectory({
                 isOpen={isCatalogMatrixOpen}
                 onClose={() => setIsCatalogMatrixOpen(false)}
                 supplier={activeSupplier || null}
-                rawMaterials={catalogMaterials ?? rawMaterials}
+                catalogProducts={catalogMaterials ?? []}
+                catalogLoadError={catalogLoadError}
                 linkedProducts={linkedProducts}
                 loadingLinkedProducts={loadingLinkedProducts || loadingCatalogMaterials}
                 onSaveUpdates={handleSaveCatalogUpdates}

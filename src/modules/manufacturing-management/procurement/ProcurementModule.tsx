@@ -132,7 +132,6 @@ export default function ProcurementModule({ initialTab = "suppliers", hideNavTab
                         isEditingSupplier={isEditingSupplier}
                         onStartEditSupplier={handleStartEditSupplier}
                         onCreateSupplier={handleCreateSupplier}
-                        rawMaterials={rawMaterials}
                         supplierRefreshKey={supplierDirectoryRefreshKey}
                     />
                 )}
