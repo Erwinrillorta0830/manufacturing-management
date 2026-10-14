@@ -729,9 +729,17 @@ export function JobOrderShiftLogModal({
                     .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px; background: #fcfcfc; padding: 18px; border-radius: 8px; border: 1px solid #e2e8f0; font-size: 13px; }
                     table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 20px; }
                     th { background: #f7fafc; text-align: left; padding: 10px; border-bottom: 2px solid #e2e8f0; }
+                    .preview-controls { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 20px; }
+                    .preview-controls button { border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; padding: 8px 12px; color: #222; font: inherit; font-weight: 600; cursor: pointer; }
+                    .preview-controls button:hover { background: #f7fafc; }
+                    @media print { .preview-controls { display: none !important; } }
                 </style>
             </head>
             <body>
+                <div class="preview-controls">
+                    <button type="button" onclick="window.print()">Print Report</button>
+                    <button type="button" onclick="window.close()">Close Preview</button>
+                </div>
                 <div class="header">
                     <h1>Shift Run Closure & Backflushing Report</h1>
                     <p>Antigravity Manufacturing Management System • JO #${selectedJobOrder.order_no || selectedJobOrder.jo_id}</p>
@@ -757,9 +765,6 @@ export function JobOrderShiftLogModal({
                     <thead><tr><th>Material</th><th style="text-align: right;">Std Qty</th><th style="text-align: right;">Actual Consumed</th><th style="text-align: right;">Deviation</th></tr></thead>
                     <tbody>${materialsHtml}</tbody>
                 </table>
-                <script>
-                    window.onload = function() { window.print(); window.onafterprint = function() { window.close(); }; };
-                </script>
             </body>
             </html>
         `);
@@ -1298,7 +1303,7 @@ export function JobOrderShiftLogModal({
                                                 <h4 className="font-bold text-foreground/90 uppercase tracking-wider text-[10px]">
                                                      Exact WIP Reservation Consumption
                                                  </h4>
-                                                 <p className="text-[9px] text-muted-foreground mt-0.5">Select the reserved lot, inventory lot, batch, and UOM that were consumed for this session.</p>
+                                                 <p className="text-[9px] text-muted-foreground mt-0.5">Review the reserved MM lot, batch, and UOM used for this session.</p>
                                              </div>
                                          </div>
                                          <div className="flex w-full items-center gap-2 xl:w-auto">
@@ -1427,9 +1432,9 @@ export function JobOrderShiftLogModal({
 
                                                          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[9px] text-muted-foreground">
                                                              <span>MM Lot: <strong className="font-mono text-foreground">{m.mm_lot_name || "Lot name unavailable"}</strong></span>
-                                                             <span>Inventory Lot: <strong className="font-mono text-foreground">{m.inventory_lot_batch_no || m.batch_no || "Batch identifier unavailable"}</strong></span>
+                                                             <span>Batch: <strong className="font-mono text-foreground">{m.inventory_lot_batch_no || m.batch_no || "Batch identifier unavailable"}</strong></span>
                                                              {m.batch_no && m.batch_no !== (m.inventory_lot_batch_no || m.batch_no) && (
-                                                                 <span>Batch No.: <strong className="font-mono text-foreground">{m.batch_no}</strong></span>
+                                                                 <span>Reservation Batch: <strong className="font-mono text-foreground">{m.batch_no}</strong></span>
                                                              )}
                                                              <span>UOM: <strong className="font-mono text-foreground">{m.unit_shortcut || `#${m.uom_id || "—"}`}</strong></span>
                                                              <span>Status: <strong className="text-foreground">{m.reservation_status || "Not staged"}</strong></span>

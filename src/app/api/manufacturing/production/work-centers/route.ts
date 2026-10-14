@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { authorizeJobOrderModuleAccess, JOB_ORDER_MODULE_PATHS } from "@/app/api/manufacturing/job-orders/_module-access";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
-import { resolveApplicableRouteWorkCenters, resolveApplicableWorkCenterIds } from "../_applicable-work-centers";
+import { resolveApplicableRouteWorkCenters } from "../_applicable-work-centers";
 
 type DirectusRecord = Record<string, unknown>;
 
@@ -17,6 +17,7 @@ const WORK_CENTER_FIELDS = [
     "asset_id.rfid_code",
     "asset_id.serial",
     "asset_id.condition",
+    "asset_id.is_active",
     "asset_id.item_id.id",
     "asset_id.item_id.item_name",
     "department_id.department_id",
@@ -102,9 +103,9 @@ function normalizeWorkCenterRecord(workCenter: DirectusRecord) {
     };
 }
 
-async function fetchMappedWorkCenters(extraFilter = "") {
+async function fetchMappedWorkCenters() {
     const rows = await directusRows<DirectusRecord>(
-        `${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&sort=work_center_name&fields=${WORK_CENTER_FIELDS}${extraFilter}`,
+        `${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&sort=work_center_name&fields=${WORK_CENTER_FIELDS}`,
         "Work-center lookup"
     );
     return rows.map(normalizeWorkCenterRecord);
@@ -134,28 +135,13 @@ export async function GET(request: Request) {
             return NextResponse.json({ success: false, error: `Job Order ${joId} was not found.` }, { status: 404 });
         }
 
-        const [applicable, routeOptions] = await Promise.all([
-            resolveApplicableWorkCenterIds(jobOrder),
-            resolveApplicableRouteWorkCenters(jobOrder)
-        ]);
-        if (applicable.source === "NONE" || applicable.workCenterIds.length === 0) {
-            return NextResponse.json({
-                success: true,
-                data: [],
-                applicableWorkCenterIds: [],
-                source: "NONE",
-                routeOptions
-            });
-        }
-
-        const data = await fetchMappedWorkCenters(
-            `&filter[work_center_id][_in]=${applicable.workCenterIds.join(",")}&filter[is_active][_eq]=1`
-        );
+        const routeOptions = await resolveApplicableRouteWorkCenters(jobOrder);
+        const data = (await fetchMappedWorkCenters()).filter((workCenter) => workCenter.is_active);
         return NextResponse.json({
             success: true,
             data,
-            applicableWorkCenterIds: applicable.workCenterIds,
-            source: applicable.source,
+            applicableWorkCenterIds: data.map((workCenter) => Number((workCenter as DirectusRecord).work_center_id)),
+            source: "ALL",
             routeOptions
         });
     } catch (error) {

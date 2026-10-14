@@ -106,8 +106,8 @@ export function WorkstationBreakdownDialog({
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="w-[calc(100vw-1rem)] sm:max-w-[520px]">
-                <DialogHeader>
+            <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] min-w-0 max-w-[520px] flex-col overflow-hidden">
+                <DialogHeader className="shrink-0">
                     <DialogTitle className="flex items-center gap-2 text-destructive">
                         <AlertTriangle className="h-5 w-5" /> Report Workstation Breakdown
                     </DialogTitle>
@@ -116,7 +116,7 @@ export function WorkstationBreakdownDialog({
                     </DialogDescription>
                 </DialogHeader>
 
-                <div className="space-y-4 py-2">
+                <div className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden py-2">
                     <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs">
                         <div className="font-mono font-bold text-amber-700 dark:text-amber-400">{selectedJobOrder.jo_id}</div>
                         <div className="mt-1 text-muted-foreground">
@@ -147,7 +147,7 @@ export function WorkstationBreakdownDialog({
                         />
                     </div>
 
-                    <div className="space-y-3 rounded-xl border border-dashed border-amber-500/40 bg-amber-500/5 p-3">
+                    <div className="min-w-0 space-y-3 rounded-xl border border-dashed border-amber-500/40 bg-amber-500/5 p-3">
                         <EvidenceMediaInput
                             id="breakdown-evidence"
                             label="Breakdown evidence"
@@ -165,7 +165,7 @@ export function WorkstationBreakdownDialog({
                     </div>
                 </div>
 
-                <DialogFooter>
+                <DialogFooter className="shrink-0">
                     <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
                         Cancel
                     </Button>

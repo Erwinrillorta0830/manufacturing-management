@@ -9,7 +9,6 @@ import {
     JobOrderWorkflowEvidenceError,
     uploadJobOrderWorkflowEvidence
 } from "../../job-orders/_workflow-evidence";
-import { resolveApplicableRouteWorkCenters } from "../../production/_applicable-work-centers";
 import { committedGoodOutputOrAggregate, goodOutputAggregateFallback, hasReachedProductionTarget } from "@/modules/manufacturing-management/production-workflow/utils/production-output";
 import { accumulateHoursFromSeconds, elapsedSecondsBetween } from "@/modules/manufacturing-management/production-workflow/operator-time";
 import { MANUFACTURING_EVIDENCE_MAX_FILES, validateManufacturingEvidenceBatch } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
@@ -284,7 +283,7 @@ async function handleRouteWorkCenterAssignment(body: any): Promise<NextResponse>
     }
 
     const jobOrderResponse = await fetch(
-        `${DIRECTUS_URL}/items/manufacturing_job_orders/${jobOrderId}?fields=job_order_id,job_order_no,status,version_id`,
+        `${DIRECTUS_URL}/items/manufacturing_job_orders/${jobOrderId}?fields=job_order_id,job_order_no,status`,
         { headers, cache: "no-store" }
     );
     if (!jobOrderResponse.ok) {
@@ -344,8 +343,6 @@ async function handleRouteWorkCenterAssignment(body: any): Promise<NextResponse>
         parsedAssignments.push({ joRouteId, workCenterId });
     }
 
-    const routeOptions = await resolveApplicableRouteWorkCenters(jobOrder);
-    const routeOptionById = new Map(routeOptions.map((option) => [option.joRouteId, option]));
     const requestedWorkCenterIds = [...new Set(parsedAssignments.map((assignment) => assignment.workCenterId))];
     const workCentersResponse = await fetch(
         `${DIRECTUS_URL}/items/manufacturing_work_centers?filter[work_center_id][_in]=${requestedWorkCenterIds.join(",")}&fields=work_center_id,work_center_name,is_active&limit=-1`,
@@ -392,20 +389,6 @@ async function handleRouteWorkCenterAssignment(body: any): Promise<NextResponse>
             }, { status: 422 });
         }
 
-        const routeOption = routeOptionById.get(assignment.joRouteId);
-        if (!routeOption || routeOption.workCenterIds.length === 0) {
-            return NextResponse.json({
-                error: `Route ${route.sequence_order || assignment.joRouteId} has no configured workstation in the product version routing.`,
-                code: "ROUTE_WORKCENTER_NOT_CONFIGURED"
-            }, { status: 409 });
-        }
-        if (!routeOption.workCenterIds.includes(assignment.workCenterId)) {
-            return NextResponse.json({
-                error: `Work Center "${workCenter.work_center_name || `#${assignment.workCenterId}`}" is not configured for route ${route.sequence_order || assignment.joRouteId}.`,
-                code: "ROUTE_WORKCENTER_NOT_APPLICABLE",
-                applicableWorkCenterIds: routeOption.workCenterIds
-            }, { status: 422 });
-        }
     }
 
     const updatedRoutes: Array<Record<string, unknown>> = [];
