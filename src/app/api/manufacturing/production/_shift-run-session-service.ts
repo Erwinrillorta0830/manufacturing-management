@@ -1289,9 +1289,6 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
                 "The Job Order good-output target has been reached. No additional production sessions can be recorded."
             );
         }
-        if (!existingLedger && targetQuantity > EPSILON && existingGoodQuantity + input.goodQty > targetQuantity * 1.05 + EPSILON) {
-            throw new ProductionSessionError(422, "OUTPUT_OVER_TARGET", "This production session would exceed the Job Order target by more than the configured tolerance.");
-        }
         if (input.completeProductionAfterLog && !hasReachedProductionTarget(targetQuantity, projectedGoodQuantity)) {
             throw new ProductionSessionError(
                 422,

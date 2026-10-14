@@ -18,6 +18,16 @@ export interface MaterialConsumptionDefault {
 
 type EditableReservation = Pick<ProductionMaterialReservation, "jo_material_id" | "reservation_id" | "actual_qty">;
 
+export interface ConsumptionAllocationTarget {
+    reservationKey: string;
+    availableStock: number;
+}
+
+export interface ConsumptionAllocationResult {
+    allocations: Array<{ reservationKey: string; actualQuantity: string }>;
+    remainingQuantity: number;
+}
+
 export function materialConsumptionReservationKey(material: EditableReservation): string {
     return `${material.jo_material_id}:${material.reservation_id ?? "unreserved"}`;
 }
@@ -56,6 +66,33 @@ function finiteNonNegative(value: unknown): number {
 
 function roundQuantity(value: number): number {
     return Math.round(value * QUANTITY_SCALE) / QUANTITY_SCALE;
+}
+
+export function parseMaterialConsumptionInput(rawValue: string): number | null {
+    const value = rawValue.trim();
+    if (!/^(?:\d+(?:\.\d{0,6})?|\.\d{1,6})$/.test(value)) return null;
+
+    const quantity = Number(value);
+    return Number.isFinite(quantity) && quantity >= 0 ? quantity : null;
+}
+
+export function distributeConsumptionAcrossReservations(
+    requestedQuantity: number,
+    targets: ConsumptionAllocationTarget[]
+): ConsumptionAllocationResult {
+    let remainingQuantity = roundQuantity(finiteNonNegative(requestedQuantity));
+    const allocations = targets.map((target) => {
+        const available = roundQuantity(finiteNonNegative(target.availableStock));
+        const quantity = roundQuantity(Math.min(remainingQuantity, available));
+        remainingQuantity = roundQuantity(Math.max(0, remainingQuantity - quantity));
+        return { reservationKey: target.reservationKey, actualQuantity: quantity.toFixed(6) };
+    });
+
+    return { allocations, remainingQuantity };
+}
+
+export function calculateWipTopUpShortfall(requestedQuantity: number, availableWip: number): number {
+    return roundQuantity(Math.max(0, finiteNonNegative(requestedQuantity) - finiteNonNegative(availableWip)));
 }
 
 function reservationBasis(reservation: MaterialConsumptionReservation): number {
