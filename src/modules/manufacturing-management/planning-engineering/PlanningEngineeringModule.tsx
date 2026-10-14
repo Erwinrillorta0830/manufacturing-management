@@ -803,7 +803,7 @@ export default function PlanningEngineeringModule() {
 
         activeFamilyMaterials.forEach((m: any) => {
             const needed = Number(m.allocated_quantity || 0);
-            const onHand = Number(m.available_stock ?? m.reserved_quantity ?? 0);
+            const onHand = Number(m.main_store_on_hand || 0);
             const shortfall = needed - onHand;
             if (shortfall > 0) {
                 shortfallItems.push({
@@ -824,7 +824,7 @@ export default function PlanningEngineeringModule() {
                 const cMats = childJoMaterials[child.jo_id] || [];
                 cMats.forEach((m: any) => {
                     const needed = Number(m.allocated_quantity || 0);
-                    const onHand = Number(m.available_stock ?? m.reserved_quantity ?? 0);
+                    const onHand = Number(m.main_store_on_hand || 0);
                     const shortfall = needed - onHand;
                     if (shortfall > 0) {
                         shortfallItems.push({
@@ -903,7 +903,7 @@ export default function PlanningEngineeringModule() {
                             <th>Target Product</th>
                             <th>Material Required</th>
                             <th style="text-align: right;">Required</th>
-                            <th style="text-align: right;">On-Hand Stock</th>
+                            <th style="text-align: right;">Main Store On-Hand</th>
                             <th style="text-align: right;">Shortfall Qty</th>
                         </tr>
                     </thead>
@@ -995,8 +995,8 @@ export default function PlanningEngineeringModule() {
                 <tr>
                     <td style="padding: 8px; border: 1px solid #e5e7eb; font-weight: bold;">${m.product_name} ${m.is_sub_assembly ? '<span style="color: #0284c7;">(Sub-Assembly)</span>' : ''}</td>
                     <td style="padding: 8px; border: 1px solid #e5e7eb; text-align: right;">${Number(m.allocated_quantity || 0).toLocaleString()} ${m.unit_shortcut}</td>
-                    <td style="padding: 8px; border: 1px solid #e5e7eb; text-align: right; font-weight: bold; color: #059669;">${Number(m.available_stock ?? m.reserved_quantity ?? 0).toLocaleString()} ${m.unit_shortcut}</td>
-                    <td style="padding: 8px; border: 1px solid #e5e7eb; text-align: center;">${Number(m.allocated_quantity || 0) <= Number(m.available_stock ?? m.reserved_quantity ?? 0) ? '<span style="color:#059669; font-weight:bold;">✓ STOCK AVAILABLE</span>' : '<span style="color:#dc2626; font-weight:bold;">⚠ SHORTFALL</span>'}</td>
+                    <td style="padding: 8px; border: 1px solid #e5e7eb; text-align: right; font-weight: bold; color: #059669;">${Number(m.main_store_on_hand || 0).toLocaleString()} ${m.unit_shortcut}</td>
+                    <td style="padding: 8px; border: 1px solid #e5e7eb; text-align: center;">${Number(m.allocated_quantity || 0) <= Number(m.main_store_on_hand || 0) ? '<span style="color:#059669; font-weight:bold;">✓ STOCK AVAILABLE</span>' : '<span style="color:#dc2626; font-weight:bold;">⚠ SHORTFALL</span>'}</td>
                 </tr>
             `).join("");
 
@@ -1050,7 +1050,7 @@ export default function PlanningEngineeringModule() {
                             <tr style="background: #f9fafb;">
                                 <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: left;">Material</th>
                                 <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: right;">Required</th>
-                                <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: right;">On-Hand Stock</th>
+                                <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: right;">Main Store On-Hand</th>
                                 <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: center;">Status</th>
                             </tr>
                         </thead>
@@ -1981,7 +1981,7 @@ export default function PlanningEngineeringModule() {
                                                         <tr>
                                                             <th className="px-4 py-3">Raw Material / Component</th>
                                                             <th className="px-4 py-3 text-right">Required</th>
-                                                            <th className="px-4 py-3 text-right">On-Hand Stock</th>
+                                                            <th className="px-4 py-3 text-right">Main Store On-Hand</th>
                                                             <th className="px-4 py-3">Status</th>
                                                         </tr>
                                                     </thead>
@@ -2008,14 +2008,14 @@ export default function PlanningEngineeringModule() {
                                                         <tr>
                                                             <th className="px-4 py-3">Raw Material / Component</th>
                                                             <th className="px-4 py-3 text-right">Required</th>
-                                                            <th className="px-4 py-3 text-right">On-Hand Stock</th>
+                                                            <th className="px-4 py-3 text-right">Main Store On-Hand</th>
                                                             <th className="px-4 py-3">Status</th>
                                                         </tr>
                                                     </thead>
                                                     <tbody className="divide-y text-foreground/90">
                                                         {joMaterials.map((mat) => {
                                                             const needed = Number(mat.allocated_quantity || 0);
-                                                            const onHand = Number(mat.available_stock ?? mat.reserved_quantity ?? 0);
+                                                            const onHand = Number(mat.main_store_on_hand || 0);
                                                             const shortfall = needed - onHand;
                                                             const isMet = shortfall <= 0;
 
@@ -2111,7 +2111,7 @@ export default function PlanningEngineeringModule() {
                                                             <tr>
                                                                 <th className="px-4 py-3">Raw Material / Component</th>
                                                                 <th className="px-4 py-3 text-right">Required</th>
-                                                                <th className="px-4 py-3 text-right">On-Hand Stock</th>
+                                                                <th className="px-4 py-3 text-right">Main Store On-Hand</th>
                                                                 <th className="px-4 py-3">Status</th>
                                                             </tr>
                                                         </thead>
@@ -2142,7 +2142,7 @@ export default function PlanningEngineeringModule() {
                                                             ) : (
                                                                 cMaterials.map((cMat: any) => {
                                                                     const needed = Number(cMat.allocated_quantity || 0);
-                                                                    const onHand = Number(cMat.available_stock ?? cMat.reserved_quantity ?? 0);
+                                                                    const onHand = Number(cMat.main_store_on_hand || 0);
                                                                     const shortfall = needed - onHand;
                                                                     const isMet = shortfall <= 0;
 
@@ -2216,7 +2216,7 @@ export default function PlanningEngineeringModule() {
                                                         <tr>
                                                             <th className="px-4 py-3">Raw Material</th>
                                                             <th className="px-4 py-3 text-right">Required</th>
-                                                            <th className="px-4 py-3 text-right">On-Hand Stock</th>
+                                                            <th className="px-4 py-3 text-right">Main Store On-Hand</th>
                                                             <th className="px-4 py-3">Status</th>
                                                         </tr>
                                                     </thead>
@@ -2247,14 +2247,14 @@ export default function PlanningEngineeringModule() {
                                                     <tr>
                                                         <th className="px-4 py-3">Raw Material</th>
                                                         <th className="px-4 py-3 text-right">Required</th>
-                                                        <th className="px-4 py-3 text-right">On-Hand Stock</th>
+                                                        <th className="px-4 py-3 text-right">Main Store On-Hand</th>
                                                         <th className="px-4 py-3">Status</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody className="divide-y text-foreground/90">
                                                     {activeFamilyMaterials.map((mat) => {
                                                         const needed = Number(mat.allocated_quantity || 0);
-                                                        const onHand = Number(mat.available_stock ?? mat.reserved_quantity ?? 0);
+                                                        const onHand = Number(mat.main_store_on_hand || 0);
                                                         const shortfall = needed - onHand;
                                                         const isMet = shortfall <= 0;
 
