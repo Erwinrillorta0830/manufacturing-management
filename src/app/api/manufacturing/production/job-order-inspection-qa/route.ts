@@ -18,6 +18,10 @@ import { productionYieldImageUrl } from "@/modules/manufacturing-management/prod
 import { directusFileMetadata, fetchDirectusFileMetadata } from "@/app/api/manufacturing/_directus-file-metadata";
 import { getYieldOutputTotals } from "@/modules/manufacturing-management/manufacturing-job-order-inspection-qa/utils/yield-output-quantities";
 import { buildJobOrderDailyYieldSummaryPage } from "@/modules/manufacturing-management/manufacturing-job-order-inspection-qa/utils/summary-query";
+import {
+    dailyQAParameterAuditKey,
+    indexSavedDailyQAParameters,
+} from "@/modules/manufacturing-management/manufacturing-job-order-inspection-qa/utils/saved-daily-qa-parameters";
 import { buildYieldQAStatusCountIndex, buildYieldSummaryIndex } from "./_yield-summary-index";
 import type { JobOrderDailyYieldSummaryQuery } from "@/modules/manufacturing-management/manufacturing-job-order-inspection-qa/types";
 
@@ -345,13 +349,13 @@ function parseSummaryQuery(searchParams: URLSearchParams): JobOrderDailyYieldSum
 }
 
 async function loadJobOrderDetails(id: number) {
-    const [jobOrder, yields, inspections, routes] = await Promise.all([
+    const [jobOrder, yields, inspections, routes, qaParameterRows] = await Promise.all([
         readRecord(
             `/items/manufacturing_job_orders/${encodeURIComponent(String(id))}?fields=job_order_id,job_order_no,status,product_id,branch_id,target_quantity,completed_quantity`,
             `Job Order ${id} lookup`
         ),
         readRows(
-            `/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(id))}&limit=-1&sort=-logged_at&fields=ledger_id,job_order_id,commit_status,yield_quantity,rejected_quantity,qa_accepted_quantity,qa_rejected_quantity,scrap_quantity,mm_lot_id,lot_number,manufacturing_date,expiry_date,rejected_mm_lot_id,rejected_lot_number,rejected_manufacturing_date,rejected_expiry_date,daily_qa_image_id,shift_name,session_key,production_date,logged_at`,
+            `/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(id))}&limit=-1&sort=-logged_at&fields=ledger_id,job_order_id,commit_status,yield_quantity,rejected_quantity,qa_accepted_quantity,qa_rejected_quantity,scrap_quantity,mm_lot_id,lot_number,manufacturing_date,expiry_date,rejected_mm_lot_id,rejected_lot_number,rejected_manufacturing_date,rejected_expiry_date,daily_qa_image_id,shift_name,session_key,production_date,logged_at,logged_by`,
             `Yield ledger lookup for Job Order ${id}`
         ),
         readRows(
@@ -361,6 +365,10 @@ async function loadJobOrderDetails(id: number) {
         readRows(
             `/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${encodeURIComponent(String(id))}&limit=-1&fields=jo_route_id,job_order_id,operation_id,sequence_order,qa_template_id,status`,
             `Routing lookup for Job Order ${id}`
+        ),
+        readRows(
+            `/items/manufacturing_job_order_qa_records?filter[job_order_id][_eq]=${encodeURIComponent(String(id))}&limit=-1&sort=-inspected_at&fields=jo_route_id,parameter_id,value_text,value_numeric,value_boolean,is_passed,remarks`,
+            `QA parameter lookup for Job Order ${id}`
         ),
     ]);
 
@@ -416,9 +424,17 @@ async function loadJobOrderDetails(id: number) {
         .filter((route) => route.id > 0)
         .sort((left, right) => left.sequenceOrder - right.sequenceOrder || left.id - right.id);
 
+    const savedParametersByAudit = indexSavedDailyQAParameters(qaParameterRows);
+    const inspectionsWithParameters = inspections.map((inspection) => ({
+        ...inspection,
+        qaParameters: savedParametersByAudit.get(
+            dailyQAParameterAuditKey(ledgerId(inspection), routeId(inspection))
+        ) || [],
+    }));
+
     const committedYields = yields.filter(isCommittedYieldLedger);
     const assessmentsByLedger = new Map(
-        buildQAYieldAssessments(committedYields, inspections, routes)
+        buildQAYieldAssessments(committedYields, inspectionsWithParameters, routes)
             .map((assessment) => [assessment.ledgerId, assessment] as const)
     );
     const evidenceFilesById = await fetchDirectusFileMetadata(committedYields.map((yieldRow) => directusFileId(yieldRow.daily_qa_image_id)));
@@ -452,6 +468,7 @@ async function loadJobOrderDetails(id: number) {
                 sessionKey: textValue(yieldRow.session_key) || null,
                 productionDate: dateValue(yieldRow.production_date),
                 loggedAt: timestampValue(yieldRow.logged_at),
+                loggedById: relationId(yieldRow.logged_by, ["user_id", "id"]) || null,
                 goodQuantity,
                 rejectedQuantity,
                 qaAcceptedQuantity,

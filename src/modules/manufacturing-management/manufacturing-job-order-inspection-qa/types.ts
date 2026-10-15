@@ -62,6 +62,7 @@ export interface JobOrderDailyYieldRecord {
     sessionKey: string | null;
     productionDate: string | null;
     loggedAt: string | null;
+    loggedById: number | null;
     goodQuantity: number;
     rejectedQuantity: number;
     qaAcceptedQuantity: number;
@@ -91,7 +92,19 @@ export interface JobOrderDailyYieldRecord {
         hasFailure: boolean;
         isComplete: boolean;
     };
-    audits: Record<string, unknown>[];
+    audits: JobOrderDailyYieldAudit[];
+}
+
+export interface JobOrderDailyYieldAuditParameter {
+    parameter_id: number;
+    value: string;
+    is_passed: boolean | null;
+}
+
+export interface JobOrderDailyYieldAudit {
+    [key: string]: unknown;
+    jo_route_id?: number | string | null;
+    qaParameters?: JobOrderDailyYieldAuditParameter[];
 }
 
 export interface JobOrderClosureBlocker {

@@ -14,6 +14,7 @@ import { fetchJobOrderDailyYieldDetails } from "../services/job-order-inspection
 import { parseQAOutputQuantity, qaOutputAllocationMatchesLoggedTotal } from "../../manufacturing-qa/qa-output-allocation";
 import { expiryDateFromShelfLife } from "../utils/shelf-life-date";
 import { getCachedPromise } from "../utils/cached-promise";
+import { dailyQAParameterValueKey } from "../utils/saved-daily-qa-parameters";
 import type {
     DailyYieldQALog,
     DailyYieldQATemplate,
@@ -73,7 +74,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
     const [dailyRejectedOutputLotsLoading, setDailyRejectedOutputLotsLoading] = useState(false);
     const [dailyRejectedOutputLotsError, setDailyRejectedOutputLotsError] = useState<string | null>(null);
     const [selectedRouteId, setSelectedRouteId] = useState<number | null>(null);
-    const [qaParamValues, setQaParamValues] = useState<Record<number, string>>({});
+    const [qaParamValues, setQaParamValues] = useState<Record<string, string>>({});
     const lotRequestId = useRef(0);
     const rejectedLotRequestId = useRef(0);
     const operatorRequestId = useRef(0);
@@ -181,7 +182,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
     );
 
     const hasFailedParam = useMemo(() => activeParameters.some((parameter: DailyYieldQAParameter) => {
-        const value = qaParamValues[parameter.parameter_id];
+        const value = qaParamValues[dailyQAParameterValueKey(selectedRouteId ?? 0, parameter.parameter_id)];
         if (!value) return false;
         if (parameter.test_type === "Numeric") {
             const numeric = Number(value);
@@ -193,7 +194,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
             return ["Fail", "false", "No"].includes(value);
         }
         return false;
-    }), [activeParameters, qaParamValues]);
+    }), [activeParameters, qaParamValues, selectedRouteId]);
 
     const matchingLogs = useMemo(() => {
         if (!selectedYield) return [];
@@ -424,7 +425,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         setDailyAcceptedOutputQuantity(String(yieldRecord.qaAcceptedQuantity ?? yieldRecord.goodQuantity));
         setDailyRejectedOutputQuantity(String(yieldRecord.qaRejectedQuantity ?? yieldRecord.rejectedQuantity));
         setDailyOutputBatchNo(yieldRecord.batchNo || "");
-        setDailyOutputMmLotId("");
+        setDailyOutputMmLotId(yieldRecord.mmLotId ? String(yieldRecord.mmLotId) : "");
         const outputManufacturingDate = yieldRecord.manufacturingDate || "";
         setDailyOutputManufacturingDate(outputManufacturingDate);
         setDailyOutputExpiryDate(yieldRecord.expiryDate || (
@@ -449,7 +450,18 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         setDailyRejectedOutputLotsLoading(false);
         setDailyRejectedOutputLotsError(null);
         rejectedLotSelectionInitialized.current = false;
-        setQaParamValues({});
+        const savedValues = yieldRecord.audits.reduce<Record<string, string>>((values, audit) => {
+            const savedRouteId = routeId(audit.jo_route_id);
+            if (!savedRouteId || !Array.isArray(audit.qaParameters)) return values;
+            for (const parameter of audit.qaParameters) {
+                const parameterId = routeId(parameter.parameter_id);
+                if (parameterId) {
+                    values[dailyQAParameterValueKey(savedRouteId, parameterId)] = String(parameter.value ?? "");
+                }
+            }
+            return values;
+        }, {});
+        setQaParamValues(savedValues);
         setSelectedRouteId(preferredRoute?.id || pendingRoutes[0]?.id || sortedRoutes[0]?.id || null);
         setRouteOperatorsByRouteId({});
         lotRequestId.current += 1;
@@ -580,7 +592,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
     }, [buildRejectedOutputMetadata, dailyAcceptedOutputQuantity, dailyRejectedOutputQuantity, onSaved, selectedDetails, selectedYield]);
 
     const submitAudit = useCallback(async () => {
-        if (!selectedYield || !selectedDetails || auditSubmitInFlight.current) return;
+        if (!selectedYield || !selectedDetails || auditSubmitInFlight.current || selectedYield.qaStatus === "Passed") return;
 
         const jobOrderId = selectedDetails.jobOrderId;
         const ledgerId = selectedYield.ledgerId;
@@ -656,7 +668,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
                 : null;
             const parameters = Array.isArray(template?.parameters) ? template.parameters : [];
             const qaParameters = parameters.map((parameter: DailyYieldQAParameter) => {
-                const value = qaParamValues[parameter.parameter_id] || "";
+                const value = qaParamValues[dailyQAParameterValueKey(route?.id ?? 0, parameter.parameter_id)] || "";
                 let failed = false;
                 if (parameter.test_type === "Numeric" && value) {
                     const numeric = Number(value);
@@ -678,7 +690,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
             let resolvedMoisture = "";
             let resolvedAcidity = "";
             parameters.forEach((parameter: DailyYieldQAParameter) => {
-                const value = qaParamValues[parameter.parameter_id];
+                const value = qaParamValues[dailyQAParameterValueKey(route?.id ?? 0, parameter.parameter_id)];
                 if (!value) return;
                 const name = String(parameter.test_name || "").toLowerCase();
                 if (name.includes("moisture")) resolvedMoisture = value;

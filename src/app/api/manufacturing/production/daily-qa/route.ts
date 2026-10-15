@@ -750,10 +750,17 @@ export async function POST(request: Request) {
         validateSubmittedQARoutes(jobOrderId, routes, inspectionsList);
 
         const existingInspectionsResponse = await fetch(
-            `${DIRECTUS_URL}/items/manufacturing_daily_qa_inspections?filter[ledger_id][_eq]=${ledgerId}&limit=-1&fields=ledger_id,jo_route_id`,
+            `${DIRECTUS_URL}/items/manufacturing_daily_qa_inspections?filter[ledger_id][_eq]=${ledgerId}&limit=-1&fields=ledger_id,jo_route_id,sensory_status,lab_status,action_taken,weight_check_passed`,
             { headers, cache: "no-store", signal: saveSignal }
         );
         const existingInspections = await readDirectusRows(existingInspectionsResponse, "Existing daily QA inspection lookup");
+        const existingOutcome = deriveDailyQAOutcome(
+            existingInspections,
+            routes.map((route: any) => relationId(route.jo_route_id, ["jo_route_id", "id"]))
+        );
+        if (existingOutcome.status === "Passed") {
+            throw new DailyQAValidationError(409, "QA_AUDIT_ALREADY_VERIFIED", "This daily yield has already been verified and cannot be audited again.");
+        }
         const savedRouteIds = new Set(existingInspections
             .map((inspection: any) => relationId(inspection.jo_route_id, ["jo_route_id", "id"]))
             .filter((id: number) => id > 0));
@@ -820,7 +827,7 @@ export async function POST(request: Request) {
                 weight_check_passed: weightCheckPassed ? 1 : 0,
                 lab_status: labStatus || "Passed",
                 action_taken: actionTaken || "Released",
-                inspected_at: timestampInstant,
+                inspected_at: timestamp,
                 remarks: remarks || ""
             };
 
