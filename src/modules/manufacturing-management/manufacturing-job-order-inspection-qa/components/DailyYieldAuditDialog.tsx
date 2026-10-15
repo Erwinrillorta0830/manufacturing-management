@@ -41,8 +41,16 @@ import { FinishedGoodsLotSelect } from "../../shared/FinishedGoodsLotSelect";
 import { formatPhtTimestamp12Hour, phtTimestampToEpoch } from "../../shared/pht-date";
 import { isManufacturingEvidenceVideo } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
 import { parseQAOutputQuantity } from "@/modules/manufacturing-management/manufacturing-qa/qa-output-allocation";
+import { dailyQAParameterValueKey } from "../utils/saved-daily-qa-parameters";
 import type { DailyYieldAuditController } from "../hooks/useDailyYieldAudit";
 import type { DailyYieldQALog, DailyYieldQAParameter } from "../types";
+
+function auditActorName(actorId: number | null, actorLabel: string, namesById: Record<number, string> | undefined) {
+    if (!actorId) return "Not recorded";
+    const name = namesById?.[actorId];
+    if (name && name !== `Inspector #${actorId}`) return name;
+    return `${actorLabel === "Logged By" ? "User" : "Inspector"} #${actorId}`;
+}
 
 interface DailyYieldAuditDialogProps {
     controller: DailyYieldAuditController;
@@ -118,7 +126,8 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
             routeName: string | null;
             detail: string | null;
             timestamp: unknown;
-            inspectorId: number | null;
+            actorId: number | null;
+            actorLabel: "Logged By" | "Inspector";
             remarks: string | null;
         };
         const textValue = (record: Record<string, unknown>, keys: string[]): string | null => {
@@ -143,7 +152,8 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                 routeName: null,
                 detail: null,
                 timestamp: yieldRecord.loggedAt,
-                inspectorId: null,
+                actorId: yieldRecord.loggedById,
+                actorLabel: "Logged By",
                 remarks: null
             });
         }
@@ -171,7 +181,8 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                 routeName: route ? `Step ${route.sequenceOrder}: ${route.name}` : null,
                 detail: readings.length > 0 ? readings.join(" · ") : null,
                 timestamp: record.inspected_at ?? record.created_at ?? null,
-                inspectorId: numberValue(record, ["inspector_id", "inspectorId", "created_by", "user_id"]),
+                actorId: numberValue(record, ["inspector_id", "inspectorId", "created_by", "user_id"]),
+                actorLabel: "Inspector",
                 remarks: textValue(record, ["remarks"])
             });
         });
@@ -515,9 +526,7 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                 ) : (
                                     <ol className="space-y-2 overflow-hidden">
                                         {auditTrailEntries.slice(0, 2).map((entry) => {
-                                            const inspectorLabel = entry.inspectorId
-                                                ? controller.inspectorNamesById?.[entry.inspectorId] || `Inspector #${entry.inspectorId}`
-                                                : "—";
+                                            const actorName = auditActorName(entry.actorId, entry.actorLabel, controller.inspectorNamesById);
                                             return (
                                                 <li key={entry.key} className="rounded-lg border border-border bg-muted/20 p-2.5 space-y-1 overflow-hidden">
                                                     <div className="flex items-center justify-between gap-2">
@@ -527,7 +536,7 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                                         </p>
                                                         <span className="font-mono text-[10px] text-muted-foreground shrink-0">{formatAuditTimestamp(entry.timestamp)}</span>
                                                     </div>
-                                                    <p className="text-[10px] text-muted-foreground">Inspector: <span className="font-semibold text-foreground">{inspectorLabel}</span></p>
+                                                    <p className="text-[10px] text-muted-foreground">{entry.actorLabel}: <span className="font-semibold text-foreground">{actorName}</span></p>
                                                     {entry.detail && (
                                                         <p className="text-[10px] text-foreground/80">{entry.detail}</p>
                                                     )}
@@ -613,8 +622,16 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                                     </Badge>
                                                 </div>
                                                 {parameters.length > 0 ? parameters.map((parameter) => {
-                                                    const value = controller.qaParamValues[parameter.parameter_id] || "";
-                                                    const failed = isParameterFailed(parameter, value);
+                                                    const parameterValueKey = dailyQAParameterValueKey(route.id, parameter.parameter_id);
+                                                    const value = controller.qaParamValues[parameterValueKey] || "";
+                                                    const savedParameter = controller.selectedYield?.audits
+                                                        .find((audit) => Number(audit.jo_route_id) === route.id)
+                                                        ?.qaParameters?.find((item) => item.parameter_id === parameter.parameter_id);
+                                                    const hasSavedPassState = typeof savedParameter?.is_passed === "boolean";
+                                                    const failed = isVerified
+                                                        ? savedParameter?.is_passed === false
+                                                        : isParameterFailed(parameter, value);
+                                                    const hasResult = isVerified ? hasSavedPassState : Boolean(value);
                                                     return (
                                                         <div key={parameter.parameter_id} className="flex flex-col gap-1.5 py-1.5 border-b border-border/40 last:border-b-0">
                                                             <div className="flex flex-col">
@@ -625,14 +642,14 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                                                 {parameter.test_type === "Numeric" && <span className="text-[10px] text-muted-foreground font-medium">Limit: [{parameter.min_value ?? "-∞"} – {parameter.max_value ?? "+∞"}]</span>}
                                                             </div>
                                                             <div className="flex items-center gap-2 shrink-0">
-                                                                {value && <span className={`text-[10px] font-bold px-1 py-0.5 rounded ${failed ? "bg-red-500/10 text-red-400 border border-red-500/20" : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"}`}>{failed ? "FAIL" : "PASS"}</span>}
+                                                                {hasResult && <span className={`text-[10px] font-bold px-1 py-0.5 rounded ${failed ? "bg-red-500/10 text-red-400 border border-red-500/20" : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"}`}>{failed ? "FAIL" : "PASS"}</span>}
                                                                 {["Boolean", "Pass/Fail", "Yes/No"].includes(parameter.test_type || "") ? (
                                                                     <div className="flex gap-2.5 text-[10px]">
-                                                                        <label className="flex items-center gap-1 cursor-pointer text-foreground"><input type="radio" name={`daily-yield-param-${parameter.parameter_id}`} checked={value === "Pass"} disabled={isVerified} onChange={() => controller.setQaParamValues({ ...controller.qaParamValues, [parameter.parameter_id]: "Pass" })} />Pass</label>
-                                                                        <label className="flex items-center gap-1 cursor-pointer text-foreground"><input type="radio" name={`daily-yield-param-${parameter.parameter_id}`} checked={value === "Fail"} disabled={isVerified} onChange={() => controller.setQaParamValues({ ...controller.qaParamValues, [parameter.parameter_id]: "Fail" })} />Fail</label>
+                                                                        <label className="flex items-center gap-1 cursor-pointer text-foreground"><input type="radio" name={`daily-yield-param-${route.id}-${parameter.parameter_id}`} checked={value === "Pass"} disabled={isVerified} onChange={() => controller.setQaParamValues({ ...controller.qaParamValues, [parameterValueKey]: "Pass" })} />Pass</label>
+                                                                        <label className="flex items-center gap-1 cursor-pointer text-foreground"><input type="radio" name={`daily-yield-param-${route.id}-${parameter.parameter_id}`} checked={value === "Fail"} disabled={isVerified} onChange={() => controller.setQaParamValues({ ...controller.qaParamValues, [parameterValueKey]: "Fail" })} />Fail</label>
                                                                     </div>
                                                                 ) : (
-                                                                    <Input type={parameter.test_type === "Numeric" ? "number" : "text"} step={parameter.test_type === "Numeric" ? "any" : undefined} required placeholder={parameter.test_type === "Numeric" ? `Target: ${parameter.target_value || "N/A"}` : "Reading..."} className="h-7 text-[11px] font-mono w-full bg-background border-border text-foreground py-0" disabled={isVerified} value={value} onChange={(event) => controller.setQaParamValues({ ...controller.qaParamValues, [parameter.parameter_id]: event.target.value })} />
+                                                                    <Input type={parameter.test_type === "Numeric" ? "number" : "text"} step={parameter.test_type === "Numeric" ? "any" : undefined} required placeholder={parameter.test_type === "Numeric" ? `Target: ${parameter.target_value || "N/A"}` : "Reading..."} className="h-7 text-[11px] font-mono w-full bg-background border-border text-foreground py-0" disabled={isVerified} value={value} onChange={(event) => controller.setQaParamValues({ ...controller.qaParamValues, [parameterValueKey]: event.target.value })} />
                                                                 )}
                                                             </div>
                                                         </div>
@@ -734,7 +751,16 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                         <Label htmlFor="daily-yield-storage-lot" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
                                             <MapPin className="h-3.5 w-3.5 text-emerald-500" /> Storage Lot <span className="text-destructive">*</span>
                                         </Label>
-                                        {controller.dailyOutputLotsLoading ? (
+                                        {isVerified ? (
+                                            <Input
+                                                id="daily-yield-storage-lot"
+                                                type="text"
+                                                value={yieldRecord?.lotName?.trim() || (yieldRecord?.mmLotId ? `Lot #${yieldRecord.mmLotId}` : "Not recorded")}
+                                                disabled
+                                                readOnly
+                                                className="h-9 rounded-lg bg-background border-border/80 text-foreground text-xs font-semibold"
+                                            />
+                                        ) : controller.dailyOutputLotsLoading ? (
                                             <div role="status" aria-label="Loading finished-goods storage lots" aria-busy="true" className="space-y-1">
                                                 <span className="sr-only">Loading finished-goods storage lots...</span>
                                                 <Skeleton aria-hidden="true" className="h-9 w-full rounded-lg" />
@@ -831,7 +857,7 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
 
                                         <div className="space-y-1">
                                             <Label htmlFor="daily-yield-rejected-output-batch" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
-                                                <Tag className="h-3.5 w-3.5 text-rose-500" /> Rejected Batch / Lot No <span className="text-destructive">*</span>
+                                                <Tag className="h-3.5 w-3.5 text-rose-500" /> Rejected Batch / Lot No {requiresRejectedOutputTraceability && <span className="text-destructive">*</span>}
                                             </Label>
                                             <Input
                                                 id="daily-yield-rejected-output-batch"
@@ -848,7 +874,7 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
 
                                         <div className="space-y-1">
                                             <Label htmlFor="daily-yield-rejected-storage-lot" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
-                                                <MapPin className="h-3.5 w-3.5 text-rose-500" /> Bad-stock Storage Lot <span className="text-destructive">*</span>
+                                                <MapPin className="h-3.5 w-3.5 text-rose-500" /> Bad-stock Storage Lot {requiresRejectedOutputTraceability && <span className="text-destructive">*</span>}
                                             </Label>
                                             {controller.dailyRejectedOutputLotsLoading ? (
                                                 <div role="status" aria-label="Loading bad-stock storage lots" aria-busy="true" className="space-y-1">
@@ -871,7 +897,7 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
 
                                         <div className="space-y-1">
                                             <Label htmlFor="daily-yield-rejected-manufacturing-date" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
-                                                <Calendar className="h-3.5 w-3.5 text-rose-500" /> Manufacturing Date <span className="text-destructive">*</span>
+                                                <Calendar className="h-3.5 w-3.5 text-rose-500" /> Manufacturing Date {requiresRejectedOutputTraceability && <span className="text-destructive">*</span>}
                                             </Label>
                                             <Input
                                                 id="daily-yield-rejected-manufacturing-date"
@@ -886,7 +912,7 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
 
                                         <div className="space-y-1">
                                             <Label htmlFor="daily-yield-rejected-expiry-date" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
-                                                <Calendar className="h-3.5 w-3.5 text-rose-500" /> Expiry Date <span className="text-destructive">*</span>
+                                                <Calendar className="h-3.5 w-3.5 text-rose-500" /> Expiry Date {requiresRejectedOutputTraceability && <span className="text-destructive">*</span>}
                                             </Label>
                                             <Input
                                                 id="daily-yield-rejected-expiry-date"
@@ -992,15 +1018,17 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
 
                     {/* Dialog Footer */}
                     <DialogFooter className="shrink-0 pt-3 mt-1 border-t border-border gap-2 flex items-center justify-end bg-background">
-                        <Button type="button" variant="outline" onClick={controller.closeAudit} disabled={controller.actionLoading} title={controller.actionLoading ? "Wait for the save to finish or time out." : undefined} className="border-border hover:bg-muted text-foreground min-h-10 text-xs font-semibold">Cancel</Button>
-                        <Button type="submit" disabled={controller.actionLoading || controller.referenceLoading || isVerified || controller.saveOutcomeUnclear} title={controller.referenceLoading ? "Wait for the audit reference data to finish loading." : isVerified ? "This yield has been verified and can no longer be edited." : controller.saveOutcomeUnclear ? "Close and reopen this yield to check its latest saved status before retrying." : undefined} className="bg-primary hover:bg-primary/95 text-white font-bold min-h-10 text-xs px-4">
-                            {controller.actionLoading ? (
-                                <span role="status" className="inline-flex items-center gap-2">
-                                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                                    Saving audit...
-                                </span>
-                            ) : "Save Audit & Authorize"}
-                        </Button>
+                        <Button type="button" variant="outline" onClick={controller.closeAudit} disabled={controller.actionLoading} title={controller.actionLoading ? "Wait for the save to finish or time out." : undefined} className="border-border hover:bg-muted text-foreground min-h-10 text-xs font-semibold">{isVerified ? "Close" : "Cancel"}</Button>
+                        {!isVerified && (
+                            <Button type="submit" disabled={controller.actionLoading || controller.referenceLoading || controller.saveOutcomeUnclear} title={controller.referenceLoading ? "Wait for the audit reference data to finish loading." : controller.saveOutcomeUnclear ? "Close and reopen this yield to check its latest saved status before retrying." : undefined} className="bg-primary hover:bg-primary/95 text-white font-bold min-h-10 text-xs px-4">
+                                {controller.actionLoading ? (
+                                    <span role="status" className="inline-flex items-center gap-2">
+                                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                                        Saving audit...
+                                    </span>
+                                ) : "Save Audit & Authorize"}
+                            </Button>
+                        )}
                     </DialogFooter>
                     </fieldset>
                 </form>
@@ -1098,9 +1126,7 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                     </DialogHeader>
                     <div className="space-y-2.5 max-h-[65vh] overflow-y-auto pr-1 scrollbar-thin">
                         {auditTrailEntries.map((entry, index) => {
-                            const inspectorLabel = entry.inspectorId
-                                ? controller.inspectorNamesById?.[entry.inspectorId] || `Inspector #${entry.inspectorId}`
-                                : "—";
+                            const actorName = auditActorName(entry.actorId, entry.actorLabel, controller.inspectorNamesById);
                             return (
                                 <div key={`full-${entry.key}-${index}`} className="rounded-xl border border-border bg-muted/20 p-3 space-y-1.5">
                                     <div className="flex items-center justify-between gap-2 border-b border-border/40 pb-1">
@@ -1110,7 +1136,7 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                         </p>
                                         <span className="font-mono text-[11px] text-muted-foreground shrink-0">{formatAuditTimestamp(entry.timestamp)}</span>
                                     </div>
-                                    <p className="text-[11px] text-muted-foreground">Inspector: <span className="font-semibold text-foreground">{inspectorLabel}</span></p>
+                                    <p className="text-[11px] text-muted-foreground">{entry.actorLabel}: <span className="font-semibold text-foreground">{actorName}</span></p>
                                     {entry.detail && (
                                         <p className="text-xs text-foreground/90 font-medium">{entry.detail}</p>
                                     )}
