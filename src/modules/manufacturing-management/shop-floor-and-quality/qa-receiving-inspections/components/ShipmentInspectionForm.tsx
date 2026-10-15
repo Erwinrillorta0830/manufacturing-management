@@ -201,7 +201,7 @@ export default function ShipmentInspectionForm({
 
     const activeReceiptLines = React.useMemo(() => {
         if (isReplacement) return lineItems;
-        return lineItems.filter(line => {
+        const filtered = lineItems.filter(line => {
             const row = inspectionRows[line.line_id];
             const received = Number(row?.receivedQty || 0);
             if (selectedReceipt?.readOnly) {
@@ -213,6 +213,18 @@ export default function ShipmentInspectionForm({
                 : null;
             return (currentQty !== null && Number.isFinite(currentQty) && currentQty > 0) || received > 0;
         });
+        // If an active handoff receipt is selected in QA Receiving or awaiting QA inspection,
+        // do not let lines collapse to empty if initial line quantities were 0/omitted in draft.
+        if (filtered.length === 0 && (!selectedReceipt || selectedReceipt.isCurrent)) {
+            const linesWithIntakeOrRemaining = lineItems.filter(line => {
+                const row = inspectionRows[line.line_id];
+                const received = Number(row?.receivedQty || 0);
+                const remaining = Number(line.remaining_quantity ?? line.remaining_accepted_quantity ?? 0);
+                return received > 0 || remaining > 0;
+            });
+            return linesWithIntakeOrRemaining.length > 0 ? linesWithIntakeOrRemaining : lineItems;
+        }
+        return filtered;
     }, [lineItems, isReplacement, selectedReceipt, inspectionRows]);
 
     const siblingFormAllocations = React.useMemo<FormSiblingAllocation[]>(() => {
