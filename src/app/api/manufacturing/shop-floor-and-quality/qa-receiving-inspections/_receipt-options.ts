@@ -165,8 +165,9 @@ function mapHeaderOption(
         || null;
     const postingStatus = String(header.posting_status || "Posted").trim() || "Posted";
     const workflowRevision = Number(header.workflow_revision || 0);
-    const isUnpostedWarehouse = (postingStatus === "Reserved" || postingStatus === "Failed")
-        && linkedRows.some(isUnpostedWarehouseRow);
+    const isUnpostedStatus = postingStatus === "Reserved" || postingStatus === "Failed";
+    const isUnpostedWarehouse = isUnpostedStatus
+        && (linkedRows.length === 0 || linkedRows.some(isUnpostedWarehouseRow));
     const isCurrent = isUnpostedWarehouse;
     const displayPostingStatus = isUnpostedWarehouse ? "Awaiting QA" : postingStatus;
     const totals = receiptTotals(linkedRows);

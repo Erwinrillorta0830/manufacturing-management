@@ -9,7 +9,6 @@ import {
  */
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 const API_BASE = `${API_BASE_URL}/items`;
-const SUPPLIER_ELIGIBLE_PRODUCT_TYPES = "389,390";
 
 /**
  * Get headers with authentication token
@@ -68,7 +67,7 @@ export async function fetchSupplierProducts(
     const fields =
       "id,supplier_id,product_id,discount_type,product_id.product_id,product_id.product_name,product_id.product_code,product_id.short_description,product_id.unit_of_measurement.*";
 
-    const url = `${API_BASE}/product_per_supplier?limit=-1&fields=${fields}&filter[supplier_id][_eq]=${supplierId}&filter[product_id][product_type][_in]=${SUPPLIER_ELIGIBLE_PRODUCT_TYPES}`;
+    const url = `${API_BASE}/product_per_supplier?limit=-1&fields=${fields}&filter[supplier_id][_eq]=${supplierId}`;
 
     const [response, unitsMap] = await Promise.all([
       fetch(url, {
