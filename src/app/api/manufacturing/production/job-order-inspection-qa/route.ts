@@ -440,6 +440,8 @@ async function loadJobOrderDetails(id: number) {
     );
     const evidenceLedgerIds = committedYields.map(ledgerId).filter(Boolean);
     let yieldEvidenceRows: DirectusRow[] = [];
+    let yieldEvidenceAvailable = true;
+    let yieldEvidenceWarning: string | null = null;
     if (evidenceLedgerIds.length > 0) {
         try {
             yieldEvidenceRows = await readRows(
@@ -448,6 +450,8 @@ async function loadJobOrderDetails(id: number) {
             );
         } catch (error) {
             // The legacy ledger image remains readable while the evidence migration is being rolled out.
+            yieldEvidenceAvailable = false;
+            yieldEvidenceWarning = "Yield evidence is temporarily unavailable. Only legacy shift evidence is displayed.";
             console.warn("Yield evidence collection is unavailable; displaying legacy shift evidence only:", error);
         }
     }
@@ -623,6 +627,8 @@ async function loadJobOrderDetails(id: number) {
         discrepancyYieldCount: qaStatusCounts?.discrepancyYieldCount || 0,
         unresolvedYieldCount: qaStatusCounts?.unresolvedYieldCount || 0,
         latestYieldAt: timestampValue(dailyYields[0]?.loggedAt || dailyYields[0]?.productionDate),
+        yieldEvidenceAvailable,
+        yieldEvidenceWarning,
         routes: routeModels,
         dailyYields,
         closeReadiness

@@ -30,6 +30,7 @@ import {
     loadYieldEvidenceRows,
     validateYieldEvidenceUploads,
     YieldEvidencePersistenceError,
+    type YieldEvidenceRow,
     type YieldEvidenceUpload
 } from "../_yield-evidence";
 import { yieldEvidenceRequirements } from "@/modules/manufacturing-management/manufacturing-job-order-inspection-qa/utils/yield-evidence";
@@ -774,12 +775,31 @@ export async function POST(request: Request) {
         const goodOutputQuantity = outputAllocation.acceptedQuantity;
         const rejectedOutputQuantity = outputAllocation.rejectedQuantity;
         const evidenceRequirements = yieldEvidenceRequirements(goodOutputQuantity, rejectedOutputQuantity);
-        const acceptedEvidenceRows = isJobOrderYieldAudit && evidenceRequirements.acceptedStock && requestData.acceptedEvidenceFiles.length === 0
-            ? await loadYieldEvidenceRows(ledgerId, "QA_ACCEPTED_STOCK", saveSignal)
-            : [];
-        const rejectedEvidenceRows = isJobOrderYieldAudit && evidenceRequirements.rejectedStock && requestData.rejectedEvidenceFiles.length === 0
-            ? await loadYieldEvidenceRows(ledgerId, "QA_REJECTED_STOCK", saveSignal)
-            : [];
+        let acceptedEvidenceRows: YieldEvidenceRow[] = [];
+        let rejectedEvidenceRows: YieldEvidenceRow[] = [];
+        if (isJobOrderYieldAudit) {
+            operationForLog = "load existing yield evidence";
+            try {
+                [acceptedEvidenceRows, rejectedEvidenceRows] = await Promise.all([
+                    evidenceRequirements.acceptedStock && requestData.acceptedEvidenceFiles.length === 0
+                        ? loadYieldEvidenceRows(ledgerId, "QA_ACCEPTED_STOCK", saveSignal)
+                        : Promise.resolve([]),
+                    evidenceRequirements.rejectedStock && requestData.rejectedEvidenceFiles.length === 0
+                        ? loadYieldEvidenceRows(ledgerId, "QA_REJECTED_STOCK", saveSignal)
+                        : Promise.resolve([])
+                ]);
+            } catch (error) {
+                if (error instanceof YieldEvidencePersistenceError) {
+                    console.error("Yield evidence lookup failed.", {
+                        operation: operationForLog,
+                        upstreamStatus: error.upstreamStatus,
+                        message: error.message
+                    });
+                    throw new DailyQAValidationError(error.status, "YIELD_EVIDENCE_SAVE_FAILED", error.message);
+                }
+                throw error;
+            }
+        }
         const acceptedEvidenceValidation = validateYieldEvidenceUploads(
             requestData.acceptedEvidenceFiles,
             isEnvelope ? body.acceptedEvidenceKeys : undefined,
@@ -907,6 +927,17 @@ export async function POST(request: Request) {
 
         if (isJobOrderYieldAudit) {
             try {
+                operationForLog = "preflight yield evidence access";
+                const [acceptedEvidenceRowsForPersistence, rejectedEvidenceRowsForPersistence] = await Promise.all([
+                    acceptedEvidenceValidation.uploads.length > 0
+                        ? loadYieldEvidenceRows(ledgerId, "QA_ACCEPTED_STOCK", saveSignal)
+                        : Promise.resolve(undefined),
+                    rejectedEvidenceValidation.uploads.length > 0
+                        ? loadYieldEvidenceRows(ledgerId, "QA_REJECTED_STOCK", saveSignal)
+                        : Promise.resolve(undefined)
+                ]);
+
+                operationForLog = "persist yield evidence uploads";
                 await Promise.all([
                     persistYieldEvidenceUploads({
                         ledgerId,
@@ -914,7 +945,8 @@ export async function POST(request: Request) {
                         uploads: acceptedEvidenceValidation.uploads,
                         uploaderId: authenticatedInspectorId,
                         title: `JO-${jobOrderId} accepted stock QA evidence`,
-                        signal: saveSignal
+                        signal: saveSignal,
+                        existingRows: acceptedEvidenceRowsForPersistence
                     }),
                     persistYieldEvidenceUploads({
                         ledgerId,
@@ -922,11 +954,17 @@ export async function POST(request: Request) {
                         uploads: rejectedEvidenceValidation.uploads,
                         uploaderId: authenticatedInspectorId,
                         title: `JO-${jobOrderId} rejected stock QA evidence`,
-                        signal: saveSignal
+                        signal: saveSignal,
+                        existingRows: rejectedEvidenceRowsForPersistence
                     })
                 ]);
             } catch (error) {
                 if (error instanceof YieldEvidencePersistenceError) {
+                    console.error("Yield evidence persistence failed.", {
+                        operation: operationForLog,
+                        upstreamStatus: error.upstreamStatus,
+                        message: error.message
+                    });
                     throw new DailyQAValidationError(error.status, "YIELD_EVIDENCE_SAVE_FAILED", error.message);
                 }
                 throw error;

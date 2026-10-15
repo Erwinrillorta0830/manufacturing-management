@@ -20,7 +20,7 @@ export interface YieldEvidenceRow {
 }
 
 export class YieldEvidencePersistenceError extends Error {
-    constructor(message: string, readonly status = 502) {
+    constructor(message: string, readonly status = 502, readonly upstreamStatus?: number) {
         super(message);
         this.name = "YieldEvidencePersistenceError";
     }
@@ -69,16 +69,27 @@ export async function uploadYieldEvidenceFile(file: File, title: string, signal?
     const formData = new FormData();
     formData.set("file", file, file.name);
     formData.set("title", title.slice(0, 180));
-    const response = await fetch(`${DIRECTUS_URL}/files`, {
-        method: "POST",
-        headers: directusFileHeaders(),
-        body: formData,
-        cache: "no-store",
-        signal
-    });
+    let response: Response;
+    try {
+        response = await fetch(`${DIRECTUS_URL}/files`, {
+            method: "POST",
+            headers: directusFileHeaders(),
+            body: formData,
+            cache: "no-store",
+            signal
+        });
+    } catch (error) {
+        if (signal?.aborted) throw error;
+        throw new YieldEvidencePersistenceError(
+            `Evidence upload could not reach Directus: ${error instanceof Error ? error.message : "network error"}.`
+        );
+    }
     const payload = await response.json().catch(() => null) as { data?: { id?: unknown } } | null;
-    if (!response.ok || !payload?.data?.id) {
-        throw new YieldEvidencePersistenceError(`Evidence upload failed with HTTP ${response.status}.`, response.status >= 400 && response.status < 500 ? response.status : 502);
+    if (!response.ok) {
+        throw new YieldEvidencePersistenceError(`Evidence upload failed with HTTP ${response.status}.`, 502, response.status);
+    }
+    if (!payload?.data?.id) {
+        throw new YieldEvidencePersistenceError("Evidence upload returned an invalid response.");
     }
     return String(payload.data.id);
 }
@@ -95,14 +106,25 @@ export async function loadYieldEvidenceRows(
         limit: "-1",
         sort: "sort_order,evidence_id"
     });
-    const response = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_evidence?${query}`, {
-        headers,
-        cache: "no-store",
-        signal
-    });
+    let response: Response;
+    try {
+        response = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_evidence?${query}`, {
+            headers,
+            cache: "no-store",
+            signal
+        });
+    } catch (error) {
+        if (signal?.aborted) throw error;
+        throw new YieldEvidencePersistenceError(
+            `Load ${channel.toLowerCase()} could not reach Directus: ${error instanceof Error ? error.message : "network error"}.`
+        );
+    }
     const payload = await response.json().catch(() => null) as { data?: unknown } | null;
-    if (!response.ok || !Array.isArray(payload?.data)) {
-        throw new YieldEvidencePersistenceError(`Load ${channel.toLowerCase()} failed with HTTP ${response.status}.`);
+    if (!response.ok) {
+        throw new YieldEvidencePersistenceError(`Load ${channel.toLowerCase()} failed with HTTP ${response.status}.`, 502, response.status);
+    }
+    if (!Array.isArray(payload?.data)) {
+        throw new YieldEvidencePersistenceError(`Load ${channel.toLowerCase()} returned an invalid response.`);
     }
     return payload.data as YieldEvidenceRow[];
 }
@@ -117,24 +139,32 @@ async function createYieldEvidenceRow(
     uploaderId: number,
     signal?: AbortSignal
 ): Promise<void> {
-    const response = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_evidence`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-            ledger_id: ledgerId,
-            directus_file_id: fileId,
-            evidence_type: channel,
-            client_evidence_key: clientEvidenceKey,
-            uploaded_by: uploaderId,
-            uploaded_at: formatPhtDateTime(),
-            sort_order: sortOrder,
-            file_size: fileSize
-        }),
-        cache: "no-store",
-        signal
-    });
+    let response: Response;
+    try {
+        response = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_evidence`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+                ledger_id: ledgerId,
+                directus_file_id: fileId,
+                evidence_type: channel,
+                client_evidence_key: clientEvidenceKey,
+                uploaded_by: uploaderId,
+                uploaded_at: formatPhtDateTime(),
+                sort_order: sortOrder,
+                file_size: fileSize
+            }),
+            cache: "no-store",
+            signal
+        });
+    } catch (error) {
+        if (signal?.aborted) throw error;
+        throw new YieldEvidencePersistenceError(
+            `Save ${channel.toLowerCase()} record could not reach Directus: ${error instanceof Error ? error.message : "network error"}.`
+        );
+    }
     if (!response.ok) {
-        throw new YieldEvidencePersistenceError(`Save ${channel.toLowerCase()} record failed with HTTP ${response.status}.`);
+        throw new YieldEvidencePersistenceError(`Save ${channel.toLowerCase()} record failed with HTTP ${response.status}.`, 502, response.status);
     }
 }
 
@@ -159,11 +189,12 @@ export async function persistYieldEvidenceUploads(options: {
     signal?: AbortSignal;
     primaryExistingFileId?: string | null;
     preuploadedFileIds?: Map<string, string>;
+    existingRows?: YieldEvidenceRow[];
 }): Promise<string[]> {
     const { ledgerId, channel, uploads, uploaderId, title, signal, primaryExistingFileId, preuploadedFileIds } = options;
     if (uploads.length === 0) return [];
 
-    const existingRows = await loadYieldEvidenceRows(ledgerId, channel, signal);
+    const existingRows = options.existingRows ?? await loadYieldEvidenceRows(ledgerId, channel, signal);
     const existingByKey = new Map(existingRows.map((row) => [row.client_evidence_key, row]));
     const newUploads = uploads.filter((upload) => !existingByKey.has(upload.clientEvidenceKey));
     const existingBytes = existingRows.reduce((total, row) => total + Math.max(0, Number(row.file_size) || 0), 0);

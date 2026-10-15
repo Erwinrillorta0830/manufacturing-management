@@ -227,6 +227,12 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                         Record physicochemical specifications and sensory audits for {details?.jobOrderNo || "the selected Job Order"} ({shiftName}).
                     </DialogDescription>
                 </DialogHeader>
+                {details?.yieldEvidenceAvailable === false && (
+                    <div role="status" className="flex shrink-0 items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-800 dark:text-amber-200">
+                        <AlertCircle className="h-4 w-4 shrink-0" />
+                        {details.yieldEvidenceWarning || "Yield evidence is temporarily unavailable. Only legacy shift evidence is displayed."}
+                    </div>
+                )}
                 {isVerified && (
                     <div role="status" className="flex shrink-0 items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
                         <ClipboardCheck className="h-4 w-4 shrink-0" />

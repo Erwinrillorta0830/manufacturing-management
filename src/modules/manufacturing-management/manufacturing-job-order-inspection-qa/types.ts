@@ -139,6 +139,8 @@ export interface JobOrderClosureReadiness {
 export interface JobOrderDailyYieldDetails extends JobOrderDailyYieldSummary {
     productShelfLifeDays: number | null;
     completedQuantity: number;
+    yieldEvidenceAvailable: boolean;
+    yieldEvidenceWarning: string | null;
     routes: JobOrderDailyYieldRoute[];
     dailyYields: JobOrderDailyYieldRecord[];
     closeReadiness: JobOrderClosureReadiness;
