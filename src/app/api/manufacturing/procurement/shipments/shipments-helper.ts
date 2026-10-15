@@ -444,13 +444,18 @@ function matchesReceiptSelection(
     selection: QaReceiptSelection
 ): boolean {
     if (selection.receivingHeaderId !== null) {
-        return relationId(row.receiving_header_id, "id") === selection.receivingHeaderId;
+        const rowHeaderId = relationId(row.receiving_header_id, "id") ?? (
+            typeof row.receiving_header_id === "number" ? row.receiving_header_id : null
+        );
+        return rowHeaderId === selection.receivingHeaderId;
     }
     return normalizedReceiptNumber(row.receipt_no, lineId) === selection.receiptNumber;
 }
 
 function warehouseReceiptIdentity(row: DirectusReceivingRecord): string {
-    const headerId = relationId(row.receiving_header_id, "id");
+    const headerId = relationId(row.receiving_header_id, "id") ?? (
+        typeof row.receiving_header_id === "number" ? row.receiving_header_id : null
+    );
     if (headerId) return `header:${headerId}`;
     const receiptNumber = String(row.receipt_no || "").trim();
     if (receiptNumber) return `receipt:${receiptNumber}`;
