@@ -574,7 +574,7 @@ async function loadJobOrderDetails(id: number) {
         .filter((row) => row.ledgerId > 0)
         .sort((left, right) => sortTimestamp(right.loggedAt || right.productionDate) - sortTimestamp(left.loggedAt || left.productionDate) || right.ledgerId - left.ledgerId);
 
-    const mmLotIds = Array.from(new Set(yieldRows.map((row) => row.mmLotId).filter((value): value is number => Boolean(value))));
+    const mmLotIds = Array.from(new Set(yieldRows.flatMap((row) => [row.mmLotId, row.rejectedMmLotId]).filter((value): value is number => Boolean(value))));
     const mmLots = mmLotIds.length > 0
         ? await readRows(
             `/items/mm_lots?filter[lot_id][_in]=${mmLotIds.join(",")}&limit=-1&fields=lot_id,lot_name`,
@@ -586,7 +586,10 @@ async function loadJobOrderDetails(id: number) {
     );
     const dailyYields = yieldRows.map((row) => ({
         ...row,
-        lotName: row.mmLotId ? textValue(mmLotsById.get(row.mmLotId)?.lot_name) || `Lot #${row.mmLotId}` : null
+        lotName: row.mmLotId ? textValue(mmLotsById.get(row.mmLotId)?.lot_name) || `Lot #${row.mmLotId}` : null,
+        rejectedLotName: row.rejectedMmLotId
+            ? textValue(mmLotsById.get(row.rejectedMmLotId)?.lot_name) || null
+            : null
     }));
     const qaStatusCounts = buildYieldQAStatusCountIndex(
         dailyYields,

@@ -917,7 +917,16 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                             <Label htmlFor="daily-yield-rejected-storage-lot" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
                                                 <MapPin className="h-3.5 w-3.5 text-rose-500" /> Bad-stock Storage Lot {requiresRejectedOutputTraceability && <span className="text-destructive">*</span>}
                                             </Label>
-                                            {controller.dailyRejectedOutputLotsLoading ? (
+                                            {isVerified || rejectedOutputRegistered ? (
+                                                <Input
+                                                    id="daily-yield-rejected-storage-lot"
+                                                    type="text"
+                                                    value={yieldRecord?.rejectedLotName?.trim() || "Not recorded"}
+                                                    disabled
+                                                    readOnly
+                                                    className="h-9 rounded-lg bg-background border-rose-500/30 text-foreground text-xs font-semibold"
+                                                />
+                                            ) : controller.dailyRejectedOutputLotsLoading ? (
                                                 <div role="status" aria-label="Loading bad-stock storage lots" aria-busy="true" className="space-y-1">
                                                     <span className="sr-only">Loading bad-stock storage lots...</span>
                                                     <Skeleton aria-hidden="true" className="h-9 w-full rounded-lg" />

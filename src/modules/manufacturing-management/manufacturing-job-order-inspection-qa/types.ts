@@ -75,6 +75,7 @@ export interface JobOrderDailyYieldRecord {
     manufacturingDate: string | null;
     expiryDate: string | null;
     rejectedMmLotId: number | null;
+    rejectedLotName: string | null;
     rejectedBatchNo: string | null;
     rejectedManufacturingDate: string | null;
     rejectedExpiryDate: string | null;

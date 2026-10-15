@@ -4,6 +4,7 @@ import {
     loadMmLots,
     loadMmInventoryLots,
     mmInventoryLotId,
+    mmBranchId,
     mmLotId,
     resolveProductUnitId,
     lotUnitId,
@@ -18,7 +19,7 @@ interface BranchRow {
     branch_name?: string;
     branch_code?: string;
     isBadStock?: number | null;
-    bad_stock_branch_id?: number | null;
+    bad_stock_branch_id?: unknown;
 }
 
 interface UnitRow {
@@ -65,18 +66,20 @@ export async function GET(request: Request) {
                 `/items/branches/${branchId}?fields=id,branch_name,branch_code,isBadStock,bad_stock_branch_id`,
                 "production branch"
             );
-            const badStockBranchId = productionBranch?.bad_stock_branch_id;
+            const badStockBranchId = mmBranchId(productionBranch?.bad_stock_branch_id);
             if (!badStockBranchId) {
                 return NextResponse.json(
                     { error: "No bad-stock holding branch is configured for this production branch." },
                     { status: 409 }
                 );
             }
-            lotBranchId = Number(badStockBranchId);
+            lotBranchId = badStockBranchId;
         }
 
         const [lots, branch, unit] = await Promise.all([
-            loadMmLots({ branchId: lotBranchId, unitId: expectedUnitId, onlyActive: true }),
+            // Filter UOMs in memory so legacy rows using uom_id are not
+            // excluded by Directus' canonical unit_id filter.
+            loadMmLots({ branchId: lotBranchId, onlyActive: true }),
             readOptionalRow<BranchRow>(`/items/branches/${lotBranchId}?fields=id,branch_name,branch_code,isBadStock`, "branch"),
             readOptionalRow<UnitRow>(`/items/units/${expectedUnitId}?fields=unit_id,unit_name,unit_shortcut`, "unit")
         ]);
