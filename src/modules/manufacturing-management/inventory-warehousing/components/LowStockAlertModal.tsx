@@ -221,6 +221,28 @@ const rowVariants = {
     }),
 };
 
+const tabContentVariants: Variants = {
+    enter: (direction: number) => ({
+        x: direction > 0 ? 24 : -24,
+        opacity: 0,
+    }),
+    center: {
+        x: 0,
+        opacity: 1,
+        transition: {
+            x: { type: "spring", stiffness: 380, damping: 32 },
+            opacity: { duration: 0.18 },
+        },
+    },
+    exit: (direction: number) => ({
+        x: direction > 0 ? -24 : 24,
+        opacity: 0,
+        transition: {
+            duration: 0.12,
+        },
+    }),
+};
+
 function StockStatusBadge({
     status,
     physicalOnHand,
@@ -346,6 +368,8 @@ export function LowStockAlertModal() {
     const [searchQuery, setSearchQuery] = React.useState("");
     const [expandedFamilies, setExpandedFamilies] = React.useState<Set<number>>(new Set());
     const isFetchingRef = React.useRef(false);
+    const [direction, setDirection] = React.useState<number>(1);
+    const contentScrollRef = React.useRef<HTMLDivElement>(null);
 
     // Prevent ESC key from closing the alert modal without explicit acknowledgment
     React.useEffect(() => {
@@ -460,6 +484,14 @@ export function LowStockAlertModal() {
         markAlertDismissed();
         setOpen(false);
     }
+
+    const goToTab = React.useCallback((nextTab: AlertTab, dir: number) => {
+        setDirection(dir);
+        setActiveTab(nextTab);
+        if (contentScrollRef.current) {
+            contentScrollRef.current.scrollTo({ top: 0, behavior: "smooth" });
+        }
+    }, []);
 
     const toggleFamily = (rootId: number) => {
         setExpandedFamilies((prev) => {
@@ -624,7 +656,16 @@ export function LowStockAlertModal() {
             return false;
         }) || null;
 
-    const prevTabConfig = currentIndex > 0 ? TAB_SEQUENCE[currentIndex - 1] : null;
+    const prevTabConfig =
+        TAB_SEQUENCE.slice(0, currentIndex)
+            .reverse()
+            .find((t) => {
+                if (t.key === "critical") return criticalDeficitCount > 0;
+                if (t.key === "packaging") return packagingShortageCount > 0;
+                if (t.key === "expired") return expiredBatchesCount > 0;
+                if (t.key === "near_expiry") return nearExpiryBatchesCount > 0;
+                return false;
+            }) || null;
 
     // Suppress rendering entirely when there's nothing to show and not loading
     if (!loading && items.length === 0 && expiryBatches.length === 0) return null;
@@ -1202,234 +1243,180 @@ export function LowStockAlertModal() {
                         <div className="h-1.5 w-full bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 shrink-0" />
 
                         {/* Header */}
-                        <div className="flex flex-col gap-3 border-b border-border/50 bg-amber-500/[0.03] px-6 py-4">
-                            <div className="flex items-start justify-between gap-4">
-                                <div className="flex items-center gap-3">
-                                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500/10 ring-1 ring-amber-500/25 shadow-sm">
-                                        <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-border/50 bg-amber-500/[0.03] px-6 py-4 gap-4">
+                            <div className="flex items-center gap-3">
+                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500/10 ring-1 ring-amber-500/25 shadow-sm">
+                                    <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+                                </div>
+                                <div>
+                                    <div className="flex items-center gap-2.5">
+                                        <h2
+                                            id="low-stock-title"
+                                            className="text-base font-black tracking-wide text-foreground"
+                                        >
+                                            Inventory Alert
+                                        </h2>
+                                        <span className="rounded-full bg-amber-500/15 px-2.5 py-0.5 text-[11px] font-bold text-amber-700 dark:text-amber-300 ring-1 ring-amber-500/30">
+                                            {stockItems.length} {stockItems.length === 1 ? "Stock Deficit" : "Stock Deficits"} &bull; {totalExpiryBatches} Expired & Near Expiry
+                                        </span>
                                     </div>
-                                    <div>
-                                        <div className="flex items-center gap-2.5">
-                                            <h2
-                                                id="low-stock-title"
-                                                className="text-base font-black tracking-wide text-foreground"
-                                            >
-                                                Inventory Alert
-                                            </h2>
-                                            <span className="rounded-full bg-amber-500/15 px-2.5 py-0.5 text-[11px] font-bold text-amber-700 dark:text-amber-300 ring-1 ring-amber-500/30">
-                                                {stockItems.length} {stockItems.length === 1 ? "Stock Deficit" : "Stock Deficits"} &bull; {totalExpiryBatches} Expired & Near Expiry
-                                            </span>
-                                        </div>
-                                        <p className="mt-0.5 text-xs text-muted-foreground">
-                                            Live on-hand deficit, expired stock, and near-expiry raw materials monitoring across active good branches (FEFO priority).
-                                        </p>
-                                    </div>
+                                    <p className="mt-0.5 text-xs text-muted-foreground">
+                                        Live on-hand deficit, expired stock, and near-expiry raw materials monitoring across active good branches (FEFO priority).
+                                    </p>
                                 </div>
                             </div>
 
-                            {/* Summary Chips & Search Input */}
-                            <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-                                <div className="flex flex-wrap items-center gap-2">
+                            {/* Search Input */}
+                            <div className="relative w-full sm:w-72 shrink-0">
+                                <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+                                <input
+                                    type="text"
+                                    placeholder={
+                                        activeTab === "critical" || activeTab === "packaging"
+                                            ? "Search product, SKU, or packaging..."
+                                            : "Search batch, lot, or product..."
+                                    }
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    className="h-8 w-full rounded-lg border border-border/60 bg-background/80 pl-8 pr-7 text-xs text-foreground placeholder:text-muted-foreground focus:border-amber-500/50 focus:outline-none focus:ring-2 focus:ring-amber-500/20 transition-all"
+                                />
+                                {searchQuery && (
                                     <button
-                                        type="button"
-                                        onClick={() => setActiveTab("critical")}
-                                        className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold ring-1 transition-all ${
-                                            activeTab === "critical"
-                                                ? "bg-rose-500/15 text-rose-600 ring-rose-500/30 shadow-xs dark:text-rose-400"
-                                                : "bg-rose-500/5 text-rose-600/80 ring-rose-500/20 hover:bg-rose-500/10 dark:text-rose-400/80"
-                                        }`}
+                                        onClick={() => setSearchQuery("")}
+                                        className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
+                                        aria-label="Clear search"
                                     >
-                                        <PackageX className="h-3.5 w-3.5 shrink-0" />
-                                        <span>{criticalDeficitCount} Critical Deficits</span>
+                                        <X className="h-3.5 w-3.5" />
                                     </button>
-
-                                    <button
-                                        type="button"
-                                        onClick={() => setActiveTab("packaging")}
-                                        className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold ring-1 transition-all ${
-                                            activeTab === "packaging"
-                                                ? "bg-amber-500/15 text-amber-600 ring-amber-500/30 shadow-xs dark:text-amber-400"
-                                                : "bg-amber-500/5 text-amber-600/80 ring-amber-500/20 hover:bg-amber-500/10 dark:text-amber-400/80"
-                                        }`}
-                                    >
-                                        <Boxes className="h-3.5 w-3.5 shrink-0" />
-                                        <span>{packagingShortageCount} Packaging Shortages</span>
-                                    </button>
-
-                                    <button
-                                        type="button"
-                                        onClick={() => setActiveTab("expired")}
-                                        className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold ring-1 transition-all ${
-                                            activeTab === "expired"
-                                                ? "bg-red-500/15 text-red-600 ring-red-500/30 shadow-xs dark:text-red-400"
-                                                : "bg-red-500/5 text-red-600/80 ring-red-500/20 hover:bg-red-500/10 dark:text-red-400/80"
-                                        }`}
-                                    >
-                                        <PackageX className="h-3.5 w-3.5 shrink-0" />
-                                        <span>{expiredBatchesCount} Expired Batches</span>
-                                    </button>
-
-                                    <button
-                                        type="button"
-                                        onClick={() => setActiveTab("near_expiry")}
-                                        className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold ring-1 transition-all ${
-                                            activeTab === "near_expiry"
-                                                ? "bg-orange-500/15 text-orange-600 ring-orange-500/30 shadow-xs dark:text-orange-400"
-                                                : "bg-orange-500/5 text-orange-600/80 ring-orange-500/20 hover:bg-orange-500/10 dark:text-orange-400/80"
-                                        }`}
-                                    >
-                                        <Clock className="h-3.5 w-3.5 shrink-0" />
-                                        <span>{nearExpiryBatchesCount} Near Expiry Batches</span>
-                                    </button>
-                                </div>
-
-                                <div className="relative w-72">
-                                    <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-                                    <input
-                                        type="text"
-                                        placeholder={
-                                            activeTab === "critical" || activeTab === "packaging"
-                                                ? "Search product, SKU, or packaging..."
-                                                : "Search batch, lot, or product..."
-                                        }
-                                        value={searchQuery}
-                                        onChange={(e) => setSearchQuery(e.target.value)}
-                                        className="h-8 w-full rounded-lg border border-border/60 bg-background/80 pl-8 pr-7 text-xs text-foreground placeholder:text-muted-foreground focus:border-amber-500/50 focus:outline-none focus:ring-2 focus:ring-amber-500/20 transition-all"
-                                    />
-                                    {searchQuery && (
-                                        <button
-                                            onClick={() => setSearchQuery("")}
-                                            className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
-                                            aria-label="Clear search"
-                                        >
-                                            <X className="h-3.5 w-3.5" />
-                                        </button>
-                                    )}
-                                </div>
+                                )}
                             </div>
                         </div>
 
-                        {/* Navigation Tabs (4 Tabs) */}
-                        <div className="flex items-center gap-1 border-b border-border/50 bg-muted/15 px-6 pt-2 shrink-0 overflow-x-auto">
-                            {/* Tab 1: Critical Deficits */}
-                            <button
-                                id="critical-tab-btn"
-                                type="button"
-                                onClick={() => setActiveTab("critical")}
-                                className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold transition-all border-b-2 -mb-[1px] whitespace-nowrap ${
-                                    activeTab === "critical"
-                                        ? "border-rose-500 text-rose-600 dark:text-rose-400 bg-background rounded-t-lg shadow-xs"
-                                        : "border-transparent text-muted-foreground hover:text-foreground hover:border-border/60"
-                                }`}
-                            >
-                                <PackageX className="h-3.5 w-3.5 shrink-0 text-rose-500" />
-                                <span>Critical Deficits</span>
-                                <span
-                                    className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-                                        activeTab === "critical"
-                                            ? "bg-rose-500/15 text-rose-700 dark:text-rose-300"
-                                            : "bg-muted text-muted-foreground"
-                                    }`}
-                                >
-                                    {criticalDeficitCount}
-                                </span>
-                            </button>
+                        {/* Navigation Tabs (4 Step Progress Indicators - Strict Lockstep with Smooth Glide) */}
+                        <div
+                            role="tablist"
+                            aria-label="Alert Review Steps"
+                            className="flex items-center gap-1 border-b border-border/50 bg-muted/15 px-6 pt-2 shrink-0 overflow-x-auto select-none pointer-events-none relative"
+                        >
+                            {[
+                                {
+                                    key: "critical" as const,
+                                    label: "Critical Deficits",
+                                    count: criticalDeficitCount,
+                                    icon: PackageX,
+                                    activeColorClass: "text-rose-600 dark:text-rose-400",
+                                    activeBorderClass: "border-rose-500",
+                                    badgeActiveClass: "bg-rose-500/15 text-rose-700 dark:text-rose-300",
+                                },
+                                {
+                                    key: "packaging" as const,
+                                    label: "Packaging Shortages",
+                                    count: packagingShortageCount,
+                                    icon: Boxes,
+                                    activeColorClass: "text-amber-600 dark:text-amber-400",
+                                    activeBorderClass: "border-amber-500",
+                                    badgeActiveClass: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+                                },
+                                {
+                                    key: "expired" as const,
+                                    label: "Expired Batches",
+                                    count: expiredBatchesCount,
+                                    icon: PackageX,
+                                    activeColorClass: "text-red-600 dark:text-red-400",
+                                    activeBorderClass: "border-red-600",
+                                    badgeActiveClass: "bg-red-600/15 text-red-700 dark:text-red-300",
+                                },
+                                {
+                                    key: "near_expiry" as const,
+                                    label: "Near Expiry Batches",
+                                    count: nearExpiryBatchesCount,
+                                    icon: Clock,
+                                    activeColorClass: "text-orange-600 dark:text-orange-400",
+                                    activeBorderClass: "border-orange-500",
+                                    badgeActiveClass: "bg-orange-500/15 text-orange-700 dark:text-orange-300",
+                                },
+                            ].map((tab) => {
+                                const isActive = activeTab === tab.key;
+                                const IconComponent = tab.icon;
 
-                            {/* Tab 2: Packaging Shortages */}
-                            <button
-                                id="packaging-tab-btn"
-                                type="button"
-                                onClick={() => setActiveTab("packaging")}
-                                className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold transition-all border-b-2 -mb-[1px] whitespace-nowrap ${
-                                    activeTab === "packaging"
-                                        ? "border-amber-500 text-amber-600 dark:text-amber-400 bg-background rounded-t-lg shadow-xs"
-                                        : "border-transparent text-muted-foreground hover:text-foreground hover:border-border/60"
-                                }`}
-                            >
-                                <Boxes className="h-3.5 w-3.5 shrink-0 text-amber-500" />
-                                <span>Packaging Shortages</span>
-                                <span
-                                    className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-                                        activeTab === "packaging"
-                                            ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
-                                            : "bg-muted text-muted-foreground"
-                                    }`}
-                                >
-                                    {packagingShortageCount}
-                                </span>
-                            </button>
-
-                            {/* Tab 3: Expired Batches */}
-                            <button
-                                id="expired-tab-btn"
-                                type="button"
-                                onClick={() => setActiveTab("expired")}
-                                className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold transition-all border-b-2 -mb-[1px] whitespace-nowrap ${
-                                    activeTab === "expired"
-                                        ? "border-red-600 text-red-600 dark:text-red-400 bg-background rounded-t-lg shadow-xs"
-                                        : "border-transparent text-muted-foreground hover:text-foreground hover:border-border/60"
-                                }`}
-                            >
-                                <PackageX className="h-3.5 w-3.5 shrink-0 text-red-600" />
-                                <span>Expired Batches</span>
-                                <span
-                                    className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-                                        activeTab === "expired"
-                                            ? "bg-red-600/15 text-red-700 dark:text-red-300"
-                                            : "bg-muted text-muted-foreground"
-                                    }`}
-                                >
-                                    {expiredBatchesCount}
-                                </span>
-                            </button>
-
-                            {/* Tab 4: Near Expiry Batches */}
-                            <button
-                                id="near-expiry-tab-btn"
-                                type="button"
-                                onClick={() => setActiveTab("near_expiry")}
-                                className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold transition-all border-b-2 -mb-[1px] whitespace-nowrap ${
-                                    activeTab === "near_expiry"
-                                        ? "border-orange-500 text-orange-600 dark:text-orange-400 bg-background rounded-t-lg shadow-xs"
-                                        : "border-transparent text-muted-foreground hover:text-foreground hover:border-border/60"
-                                }`}
-                            >
-                                <Clock className="h-3.5 w-3.5 shrink-0 text-orange-500" />
-                                <span>Near Expiry Batches</span>
-                                <span
-                                    className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-                                        activeTab === "near_expiry"
-                                            ? "bg-orange-500/15 text-orange-700 dark:text-orange-300"
-                                            : "bg-muted text-muted-foreground"
-                                    }`}
-                                >
-                                    {nearExpiryBatchesCount}
-                                </span>
-                            </button>
+                                return (
+                                    <div
+                                        key={tab.key}
+                                        id={`${tab.key}-tab-indicator`}
+                                        role="tab"
+                                        aria-selected={isActive}
+                                        className={`relative flex items-center gap-2 px-4 py-2.5 text-xs font-bold -mb-[1px] whitespace-nowrap cursor-default transition-colors duration-200 ${
+                                            isActive
+                                                ? tab.activeColorClass
+                                                : "text-muted-foreground/70"
+                                        }`}
+                                    >
+                                        {isActive && (
+                                            <motion.div
+                                                layoutId="activeAlertTabHighlight"
+                                                className={`absolute inset-0 rounded-t-lg bg-background border-b-2 shadow-xs ${tab.activeBorderClass}`}
+                                                transition={{ type: "spring", stiffness: 400, damping: 32 }}
+                                            />
+                                        )}
+                                        <div className="relative z-10 flex items-center gap-2">
+                                            <IconComponent
+                                                className={`h-3.5 w-3.5 shrink-0 transition-colors ${
+                                                    isActive ? "" : "text-muted-foreground/60"
+                                                }`}
+                                            />
+                                            <span>{tab.label}</span>
+                                            <span
+                                                className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold transition-colors ${
+                                                    isActive
+                                                        ? tab.badgeActiveClass
+                                                        : "bg-muted text-muted-foreground/70"
+                                                }`}
+                                            >
+                                                {tab.count}
+                                            </span>
+                                        </div>
+                                    </div>
+                                );
+                            })}
                         </div>
 
                         {/* Content Body */}
-                        <div className="flex-1 overflow-y-auto overflow-x-auto overscroll-contain">
-                            {activeTab === "critical" &&
-                                renderStockTable(
-                                    criticalStockFamilies,
-                                    "No critical deficits detected. All active monitored products meet warehouse maintaining targets."
-                                )}
-                            {activeTab === "packaging" &&
-                                renderStockTable(
-                                    packagingStockFamilies,
-                                    "No packaging shortages detected. All SKU packaging variants have sufficient stock."
-                                )}
-                            {activeTab === "expired" &&
-                                renderBatchTable(
-                                    filteredExpiredBatches,
-                                    "No expired batches detected across active good branches."
-                                )}
-                            {activeTab === "near_expiry" &&
-                                renderBatchTable(
-                                    filteredNearExpiryBatches,
-                                    "No near-expiry batches detected within the FEFO shelf-life monitoring window."
-                                )}
+                        <div
+                            ref={contentScrollRef}
+                            className="flex-1 overflow-y-auto overflow-x-auto overscroll-contain relative"
+                        >
+                            <AnimatePresence mode="wait" custom={direction} initial={false}>
+                                <motion.div
+                                    key={activeTab}
+                                    custom={direction}
+                                    variants={tabContentVariants}
+                                    initial="enter"
+                                    animate="center"
+                                    exit="exit"
+                                    className="w-full min-w-full"
+                                >
+                                    {activeTab === "critical" &&
+                                        renderStockTable(
+                                            criticalStockFamilies,
+                                            "No critical deficits detected. All active monitored products meet warehouse maintaining targets."
+                                        )}
+                                    {activeTab === "packaging" &&
+                                        renderStockTable(
+                                            packagingStockFamilies,
+                                            "No packaging shortages detected. All SKU packaging variants have sufficient stock."
+                                        )}
+                                    {activeTab === "expired" &&
+                                        renderBatchTable(
+                                            filteredExpiredBatches,
+                                            "No expired batches detected across active good branches."
+                                        )}
+                                    {activeTab === "near_expiry" &&
+                                        renderBatchTable(
+                                            filteredNearExpiryBatches,
+                                            "No near-expiry batches detected within the FEFO shelf-life monitoring window."
+                                        )}
+                                </motion.div>
+                            </AnimatePresence>
                         </div>
 
                         {/* Footer */}
@@ -1445,7 +1432,7 @@ export function LowStockAlertModal() {
                                     <button
                                         id="low-stock-back-btn"
                                         type="button"
-                                        onClick={() => setActiveTab(prevTabConfig.key)}
+                                        onClick={() => goToTab(prevTabConfig.key, -1)}
                                         className="inline-flex items-center gap-1.5 rounded-xl border border-border/80 bg-background hover:bg-muted text-foreground font-semibold text-xs px-4 py-2.5 transition-all cursor-pointer"
                                     >
                                         <ArrowLeft className="h-3.5 w-3.5" />
@@ -1457,7 +1444,7 @@ export function LowStockAlertModal() {
                                     <button
                                         id="low-stock-next-btn"
                                         type="button"
-                                        onClick={() => setActiveTab(nextTabConfig.key)}
+                                        onClick={() => goToTab(nextTabConfig.key, 1)}
                                         className="inline-flex items-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-bold text-xs uppercase tracking-wider px-5 py-2.5 shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 cursor-pointer"
                                     >
                                         <span>Next: {nextTabConfig.label}</span>
