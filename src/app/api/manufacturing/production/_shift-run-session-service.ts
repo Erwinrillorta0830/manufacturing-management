@@ -13,13 +13,15 @@ import {
     JOB_ORDER_STATUS,
     normalizeJobOrderStatus
 } from "@/modules/manufacturing-management/job-order-status";
-import {
-    productionYieldImageUrl,
-    validateProductionYieldImage
-} from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
+import { productionYieldImageUrl } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
 import { hasCompletedTimer } from "@/modules/manufacturing-management/production-workflow/operator-time";
 import { committedGoodOutputOrAggregate, goodOutputAggregateFallback, hasReachedProductionTarget, sumCommittedGoodOutput } from "@/modules/manufacturing-management/production-workflow/utils/production-output";
 import { executeJobOrderWorkflow, JobOrderWorkflowError } from "@/app/api/manufacturing/job-orders/_workflow-service";
+import {
+    persistYieldEvidenceUploads,
+    validateYieldEvidenceUploads,
+    YieldEvidencePersistenceError
+} from "./_yield-evidence";
 
 const EPSILON = 0.000001;
 
@@ -301,7 +303,7 @@ function normalizeSessionInput(body: any): SessionInput {
     };
 }
 
-function sessionPayload(input: SessionInput): Record<string, unknown> {
+function sessionPayload(input: SessionInput, inspectorEvidenceKeys?: string[]): Record<string, unknown> {
     return {
         sessionScope: input.sessionScope,
         sessionKey: input.sessionKey,
@@ -330,7 +332,8 @@ function sessionPayload(input: SessionInput): Record<string, unknown> {
             batchNo: line.batchNo,
             uomId: line.uomId,
             actualQty: line.actualQty
-        }))
+        })),
+        ...(inspectorEvidenceKeys ? { inspectorEvidenceKeys } : {})
     };
 }
 
@@ -356,7 +359,8 @@ function isCommittedLedger(row: any): boolean {
 
 interface ShiftRunRequestData {
     body: Record<string, unknown>;
-    image: File | null;
+    evidenceFiles: File[];
+    evidenceKeys: unknown;
 }
 
 function isFileValue(value: FormDataEntryValue | null): value is File {
@@ -383,12 +387,28 @@ async function readShiftRunRequest(request: Request): Promise<ShiftRunRequestDat
             throw new ProductionSessionError(400, "SHIFT_RUN_PAYLOAD_INVALID", "The production session payload must be an object.");
         }
 
-        const imageValue = formData.get("image");
-        if (imageValue !== null && !isFileValue(imageValue)) {
-            throw new ProductionSessionError(400, "SHIFT_RUN_IMAGE_INVALID", "The shift evidence file is invalid.");
+        let evidenceFiles = formData.getAll("inspectorEvidence");
+        if (evidenceFiles.length === 0) {
+            const legacyImageValue = formData.get("image");
+            if (legacyImageValue !== null) evidenceFiles = [legacyImageValue];
         }
-
-        return { body: body as Record<string, unknown>, image: isFileValue(imageValue) ? imageValue : null };
+        if (evidenceFiles.some((value) => !isFileValue(value))) {
+            throw new ProductionSessionError(400, "SHIFT_RUN_IMAGE_INVALID", "An Inspector / Shift evidence file is invalid.");
+        }
+        const keysValue = formData.get("inspectorEvidenceKeys");
+        let evidenceKeys: unknown;
+        if (typeof keysValue === "string") {
+            try {
+                evidenceKeys = JSON.parse(keysValue);
+            } catch {
+                throw new ProductionSessionError(400, "SHIFT_RUN_EVIDENCE_KEYS_INVALID", "Inspector / Shift evidence identifiers are invalid.");
+            }
+        }
+        return {
+            body: body as Record<string, unknown>,
+            evidenceFiles: evidenceFiles.filter(isFileValue),
+            evidenceKeys
+        };
     }
 
     let body: unknown;
@@ -401,7 +421,7 @@ async function readShiftRunRequest(request: Request): Promise<ShiftRunRequestDat
         throw new ProductionSessionError(400, "SHIFT_RUN_PAYLOAD_INVALID", "The production session payload must be an object.");
     }
 
-    return { body: body as Record<string, unknown>, image: null };
+    return { body: body as Record<string, unknown>, evidenceFiles: [], evidenceKeys: undefined };
 }
 
 function sessionSourceKey(input: SessionInput): string {
@@ -1113,7 +1133,7 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
     try {
         const requestData = await readShiftRunRequest(request);
         let body = requestData.body;
-        const image = requestData.image;
+        const submittedEvidenceFiles = requestData.evidenceFiles;
         const actor = await getSessionActor();
         let resumedLedger: any | null = null;
 
@@ -1158,17 +1178,20 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
             body = persistedPayload;
         }
 
-        if (!image && !resumedLedger) {
-            throw new ProductionSessionError(400, "SHIFT_RUN_IMAGE_REQUIRED", "A shift evidence image or video is required.");
+        const evidenceValidation = validateYieldEvidenceUploads(
+            submittedEvidenceFiles,
+            requestData.evidenceKeys,
+            "Inspector / Shift evidence",
+            !resumedLedger,
+            "legacy-shift"
+        );
+        if (evidenceValidation.error) {
+            throw new ProductionSessionError(422, "SHIFT_RUN_EVIDENCE_INVALID", evidenceValidation.error);
         }
         if (resumedLedger && !directusFileId(resumedLedger.daily_qa_image_id)) {
             throw new ProductionSessionError(409, "SESSION_EVIDENCE_UNAVAILABLE", "This pending session has no saved evidence attachment and needs supervisor reconciliation before it can be resumed.", {
                 ledgerId: numberId(resumedLedger.ledger_id ?? resumedLedger.id)
             });
-        }
-        const imageError = image ? validateProductionYieldImage(image) : null;
-        if (imageError) {
-            throw new ProductionSessionError(422, "SHIFT_RUN_IMAGE_INVALID", imageError);
         }
         const input = normalizeSessionInput(body);
         const actorId = actor.actorId;
@@ -1219,7 +1242,7 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
                 await directusRequest(
                     `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(sessionLedgerId))}`,
                     `Save recovery payload for production session ${input.sessionKey}`,
-                    { method: "PATCH", body: JSON.stringify({ session_payload: sessionPayload(input) }) }
+                    { method: "PATCH", body: JSON.stringify({ session_payload: sessionPayload(input, evidenceValidation.uploads.map((upload) => upload.clientEvidenceKey)) }) }
                 );
             } catch (error) {
                 if (!(error instanceof DirectusSessionPersistenceError) || error.status !== 403) throw error;
@@ -1485,8 +1508,21 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
 
         const persistedFinishedBatchNo = existingLedger ? textValue(existingLedger.lot_number) || null : null;
         const existingImageId = directusFileId(existingLedger?.daily_qa_image_id);
-        if (image && !existingImageId) {
-            uploadedImageId = await uploadProductionYieldImage(image, input.joId, input.sessionKey);
+        const priorSessionPayload = storedSessionPayload(existingLedger?.session_payload);
+        const priorEvidenceKeys = Array.isArray(priorSessionPayload?.inspectorEvidenceKeys)
+            ? priorSessionPayload.inspectorEvidenceKeys.map((key) => String(key))
+            : [];
+        const primaryEvidenceKey = evidenceValidation.uploads[0]?.clientEvidenceKey;
+        const primaryFileMatchesSubmittedEvidence = Boolean(
+            existingImageId
+            && primaryEvidenceKey
+            && (priorEvidenceKeys[0] === primaryEvidenceKey || primaryEvidenceKey === "legacy-shift-1")
+        );
+        const preuploadedEvidenceFileIds = new Map<string, string>();
+        if (!existingLedger && evidenceValidation.uploads.length > 0) {
+            const primaryEvidence = evidenceValidation.uploads[0];
+            uploadedImageId = await uploadProductionYieldImage(primaryEvidence.file, input.joId, input.sessionKey);
+            preuploadedEvidenceFileIds.set(primaryEvidence.clientEvidenceKey, uploadedImageId);
         }
 
         let ledger = existingLedger;
@@ -1523,7 +1559,7 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
                 ledger = await directusRequest<any>(
                     ledgerUrl,
                     `Create production session for Job Order ${input.joId}`,
-                    { method: "POST", body: JSON.stringify({ ...ledgerData, session_payload: sessionPayload(input) }) }
+                    { method: "POST", body: JSON.stringify({ ...ledgerData, session_payload: sessionPayload(input, evidenceValidation.uploads.map((upload) => upload.clientEvidenceKey)) }) }
                 );
             } catch (error) {
                 if (!(error instanceof DirectusSessionPersistenceError) || error.status !== 403) throw error;
@@ -1537,17 +1573,37 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
         const ledgerId = numberId(ledger.ledger_id ?? ledger.id);
         if (!ledgerId) throw new DirectusSessionPersistenceError("Production session insert returned no ledger identifier.");
         sessionLedgerId = ledgerId;
-        if (uploadedImageId && !existingLedger) {
-            imageAttached = true;
-        }
+        if (uploadedImageId && !existingLedger) imageAttached = true;
 
-        if (uploadedImageId && existingLedger) {
+        let savedShiftEvidenceIds: string[] = [];
+        if (evidenceValidation.uploads.length > 0) {
+            try {
+                savedShiftEvidenceIds = await persistYieldEvidenceUploads({
+                    ledgerId,
+                    channel: "INSPECTOR_SHIFT",
+                    uploads: evidenceValidation.uploads,
+                    uploaderId: actorId,
+                    title: `JO-${input.joId} Inspector / Shift evidence`,
+                    primaryExistingFileId: primaryFileMatchesSubmittedEvidence ? existingImageId : null,
+                    preuploadedFileIds: preuploadedEvidenceFileIds
+                });
+            } catch (error) {
+                if (error instanceof YieldEvidencePersistenceError) {
+                    throw new ProductionSessionError(error.status, "SHIFT_RUN_EVIDENCE_SAVE_FAILED", error.message);
+                }
+                throw error;
+            }
+        }
+        const primaryEvidenceFileId = existingImageId || uploadedImageId || savedShiftEvidenceIds[0] || null;
+        if (primaryEvidenceFileId && !existingImageId) {
             await directusRequest(
                 `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(ledgerId))}`,
-                `Attach shift evidence image to production session ${ledgerId}`,
-                { method: "PATCH", body: JSON.stringify({ daily_qa_image_id: uploadedImageId }) }
+                `Attach Inspector / Shift evidence to production session ${ledgerId}`,
+                { method: "PATCH", body: JSON.stringify({ daily_qa_image_id: primaryEvidenceFileId }) }
             );
-            ledger = { ...existingLedger, daily_qa_image_id: uploadedImageId };
+            ledger = { ...ledger, daily_qa_image_id: primaryEvidenceFileId };
+            imageAttached = true;
+        } else if (primaryEvidenceFileId) {
             imageAttached = true;
         }
 

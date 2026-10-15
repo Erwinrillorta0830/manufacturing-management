@@ -85,6 +85,11 @@ export interface JobOrderDailyYieldRecord {
         fileSize: number | null;
         url: string;
     } | null;
+    evidence?: {
+        inspectorShift: JobOrderDailyYieldEvidence[];
+        acceptedStock: JobOrderDailyYieldEvidence[];
+        rejectedStock: JobOrderDailyYieldEvidence[];
+    };
     qaStatus: DailyQAOutcomeStatus;
     processQaStatus: DailyQAOutcomeStatus;
     outcome: {
@@ -93,6 +98,19 @@ export interface JobOrderDailyYieldRecord {
         isComplete: boolean;
     };
     audits: JobOrderDailyYieldAudit[];
+}
+
+export interface JobOrderDailyYieldEvidence {
+    evidenceId: number | string;
+    channel: "INSPECTOR_SHIFT" | "QA_ACCEPTED_STOCK" | "QA_REJECTED_STOCK";
+    fileId: string;
+    fileName: string | null;
+    mimeType: string | null;
+    fileSize: number | null;
+    url: string;
+    uploadedById: number | null;
+    uploadedAt: string | null;
+    sortOrder: number;
 }
 
 export interface JobOrderDailyYieldAuditParameter {

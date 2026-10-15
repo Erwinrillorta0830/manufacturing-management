@@ -24,6 +24,7 @@ import {
 } from "@/modules/manufacturing-management/manufacturing-job-order-inspection-qa/utils/saved-daily-qa-parameters";
 import { buildYieldQAStatusCountIndex, buildYieldSummaryIndex } from "./_yield-summary-index";
 import type { JobOrderDailyYieldSummaryQuery } from "@/modules/manufacturing-management/manufacturing-job-order-inspection-qa/types";
+import type { YieldEvidenceChannel } from "@/modules/manufacturing-management/manufacturing-job-order-inspection-qa/utils/yield-evidence";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -437,7 +438,32 @@ async function loadJobOrderDetails(id: number) {
         buildQAYieldAssessments(committedYields, inspectionsWithParameters, routes)
             .map((assessment) => [assessment.ledgerId, assessment] as const)
     );
-    const evidenceFilesById = await fetchDirectusFileMetadata(committedYields.map((yieldRow) => directusFileId(yieldRow.daily_qa_image_id)));
+    const evidenceLedgerIds = committedYields.map(ledgerId).filter(Boolean);
+    let yieldEvidenceRows: DirectusRow[] = [];
+    if (evidenceLedgerIds.length > 0) {
+        try {
+            yieldEvidenceRows = await readRows(
+                `/items/manufacturing_job_order_yield_evidence?filter[ledger_id][_in]=${evidenceLedgerIds.join(",")}&limit=-1&sort=sort_order,evidence_id&fields=evidence_id,ledger_id,directus_file_id,evidence_type,uploaded_by,uploaded_at,sort_order,file_size`,
+                "Yield evidence lookup"
+            );
+        } catch (error) {
+            // The legacy ledger image remains readable while the evidence migration is being rolled out.
+            console.warn("Yield evidence collection is unavailable; displaying legacy shift evidence only:", error);
+        }
+    }
+    const evidenceFileIds = [
+        ...committedYields.map((yieldRow) => directusFileId(yieldRow.daily_qa_image_id)),
+        ...yieldEvidenceRows.map((row) => directusFileId(row.directus_file_id))
+    ];
+    const evidenceFilesById = await fetchDirectusFileMetadata(evidenceFileIds);
+    const evidenceRowsByLedger = new Map<number, DirectusRow[]>();
+    for (const evidenceRow of yieldEvidenceRows) {
+        const currentLedgerId = relationId(evidenceRow.ledger_id, ["ledger_id", "id"]);
+        if (!currentLedgerId) continue;
+        const existing = evidenceRowsByLedger.get(currentLedgerId) || [];
+        existing.push(evidenceRow);
+        evidenceRowsByLedger.set(currentLedgerId, existing);
+    }
 
     const yieldRows = committedYields
         .map((yieldRow) => {
@@ -460,6 +486,44 @@ async function loadJobOrderDetails(id: number) {
             const evidenceImageFileId = directusFileId(yieldRow.daily_qa_image_id);
             const evidenceImageMetadata = directusFileMetadata(yieldRow.daily_qa_image_id)
                 || (evidenceImageFileId ? evidenceFilesById.get(evidenceImageFileId) : null);
+            const evidenceByChannel: Record<YieldEvidenceChannel, any[]> = {
+                INSPECTOR_SHIFT: [],
+                QA_ACCEPTED_STOCK: [],
+                QA_REJECTED_STOCK: []
+            };
+            for (const evidenceRow of evidenceRowsByLedger.get(currentLedgerId) || []) {
+                const channel = textValue(evidenceRow.evidence_type) as YieldEvidenceChannel;
+                const fileId = directusFileId(evidenceRow.directus_file_id);
+                if (!fileId || !Object.hasOwn(evidenceByChannel, channel)) continue;
+                const fileMetadata = directusFileMetadata(evidenceRow.directus_file_id)
+                    || evidenceFilesById.get(fileId);
+                evidenceByChannel[channel].push({
+                    evidenceId: evidenceRow.evidence_id,
+                    channel,
+                    fileId,
+                    fileName: fileMetadata?.fileName || null,
+                    mimeType: fileMetadata?.mimeType || null,
+                    fileSize: fileMetadata?.fileSize ?? null,
+                    url: productionYieldImageUrl(fileId),
+                    uploadedById: relationId(evidenceRow.uploaded_by, ["user_id", "id"]) || null,
+                    uploadedAt: timestampValue(evidenceRow.uploaded_at),
+                    sortOrder: numberValue(evidenceRow.sort_order)
+                });
+            }
+            if (evidenceImageFileId && !evidenceByChannel.INSPECTOR_SHIFT.some((item) => item.fileId === evidenceImageFileId)) {
+                evidenceByChannel.INSPECTOR_SHIFT.unshift({
+                    evidenceId: `legacy-${currentLedgerId}`,
+                    channel: "INSPECTOR_SHIFT",
+                    fileId: evidenceImageFileId,
+                    fileName: evidenceImageMetadata?.fileName || null,
+                    mimeType: evidenceImageMetadata?.mimeType || null,
+                    fileSize: evidenceImageMetadata?.fileSize ?? null,
+                    url: productionYieldImageUrl(evidenceImageFileId),
+                    uploadedById: relationId(yieldRow.logged_by, ["user_id", "id"]) || null,
+                    uploadedAt: timestampValue(yieldRow.logged_at),
+                    sortOrder: -1
+                });
+            }
 
             return {
                 ledgerId: currentLedgerId,
@@ -492,6 +556,11 @@ async function loadJobOrderDetails(id: number) {
                         url: productionYieldImageUrl(evidenceImageFileId)
                     }
                     : null,
+                evidence: {
+                    inspectorShift: evidenceByChannel.INSPECTOR_SHIFT,
+                    acceptedStock: evidenceByChannel.QA_ACCEPTED_STOCK,
+                    rejectedStock: evidenceByChannel.QA_REJECTED_STOCK
+                },
                 qaStatus: assessment?.qaStatus || outcome.status,
                 processQaStatus: assessment?.qaStatus || outcome.status,
                 outcome,

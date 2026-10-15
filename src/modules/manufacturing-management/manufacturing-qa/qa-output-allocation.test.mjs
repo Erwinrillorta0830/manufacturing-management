@@ -13,6 +13,9 @@ assert.equal(parseQAOutputQuantity(""), null);
 assert.equal(qaOutputAllocationMatchesLoggedTotal({ acceptedQuantity: 6000, rejectedQuantity: 10 }, 6000, 10), true);
 assert.equal(qaOutputAllocationMatchesLoggedTotal({ acceptedQuantity: 5999, rejectedQuantity: 11 }, 6000, 10), true);
 assert.equal(qaOutputAllocationMatchesLoggedTotal({ acceptedQuantity: 6000, rejectedQuantity: 9 }, 6000, 10), false);
+assert.equal(qaOutputAllocationMatchesLoggedTotal({ acceptedQuantity: 2, rejectedQuantity: 0 }, 2, 0), true);
+assert.equal(qaOutputAllocationMatchesLoggedTotal({ acceptedQuantity: 1, rejectedQuantity: 1 }, 2, 0), true);
+assert.equal(qaOutputAllocationMatchesLoggedTotal({ acceptedQuantity: 2, rejectedQuantity: 1 }, 2, 0), false);
 assert.equal(qaOutputAllocationMatchesLoggedTotal({ acceptedQuantity: 0, rejectedQuantity: 0 }, 0, 0), true);
 
 console.log("QA output allocation assertions passed");

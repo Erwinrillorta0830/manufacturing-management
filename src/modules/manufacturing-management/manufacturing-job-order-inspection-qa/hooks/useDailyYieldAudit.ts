@@ -15,6 +15,11 @@ import { parseQAOutputQuantity, qaOutputAllocationMatchesLoggedTotal } from "../
 import { expiryDateFromShelfLife } from "../utils/shelf-life-date";
 import { getCachedPromise } from "../utils/cached-promise";
 import { dailyQAParameterValueKey } from "../utils/saved-daily-qa-parameters";
+import { yieldEvidenceRequirements } from "../utils/yield-evidence";
+import {
+    validateManufacturingEvidenceBatch,
+    validateManufacturingEvidenceChannelBatch
+} from "../../production-workflow/services/production-yield-image";
 import type {
     DailyYieldQALog,
     DailyYieldQATemplate,
@@ -23,6 +28,8 @@ import type {
     JobOrderDailyYieldRoute,
     JobOrderDailyYieldRecord,
 } from "../types";
+
+const OUTPUT_ALLOCATION_ERROR = "The Good and Bad quantities must add up to the total output recorded by the operator.";
 
 interface UseDailyYieldAuditOptions {
     onSaved?: () => Promise<void> | void;
@@ -49,6 +56,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
     const [referenceError, setReferenceError] = useState<string | null>(null);
     const [actionLoading, setActionLoading] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
+    const [quantityAllocationError, setQuantityAllocationError] = useState<string | null>(null);
     const [saveOutcomeUnclear, setSaveOutcomeUnclear] = useState(false);
     const [moisturePct, setMoisturePct] = useState("");
     const [acidityPh, setAcidityPh] = useState("");
@@ -70,6 +78,10 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
     const [dailyRejectedOutputMmLotId, setDailyRejectedOutputMmLotId] = useState("");
     const [dailyRejectedOutputManufacturingDate, setDailyRejectedOutputManufacturingDate] = useState("");
     const [dailyRejectedOutputExpiryDate, setDailyRejectedOutputExpiryDate] = useState("");
+    const [acceptedEvidenceFiles, setAcceptedEvidenceFiles] = useState<File[]>([]);
+    const [acceptedEvidenceError, setAcceptedEvidenceError] = useState<string | null>(null);
+    const [rejectedEvidenceFiles, setRejectedEvidenceFiles] = useState<File[]>([]);
+    const [rejectedEvidenceError, setRejectedEvidenceError] = useState<string | null>(null);
     const [dailyRejectedOutputEligibleLots, setDailyRejectedOutputEligibleLots] = useState<EligibleFinishedGoodsLot[]>([]);
     const [dailyRejectedOutputLotsLoading, setDailyRejectedOutputLotsLoading] = useState(false);
     const [dailyRejectedOutputLotsError, setDailyRejectedOutputLotsError] = useState<string | null>(null);
@@ -88,6 +100,33 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
     const badStockLotRequests = useRef(new Map<string, Promise<EligibleFinishedGoodsLot[]>>());
     const outputLotSelectionInitialized = useRef(false);
     const rejectedLotSelectionInitialized = useRef(false);
+    const evidenceKeysByFile = useRef(new WeakMap<File, string>());
+
+    const evidenceKeysFor = useCallback((files: File[]) => files.map((file) => {
+        let key = evidenceKeysByFile.current.get(file);
+        if (!key) {
+            key = crypto.randomUUID();
+            evidenceKeysByFile.current.set(file, key);
+        }
+        return key;
+    }), []);
+
+    const clearAllocationErrorWhenBalanced = useCallback((acceptedValue: string, rejectedValue: string) => {
+        if (!quantityAllocationError || !selectedYield) return;
+        const acceptedQuantity = parseQAOutputQuantity(acceptedValue);
+        const rejectedQuantity = parseQAOutputQuantity(rejectedValue);
+        if (
+            acceptedQuantity !== null
+            && rejectedQuantity !== null
+            && qaOutputAllocationMatchesLoggedTotal(
+                { acceptedQuantity, rejectedQuantity },
+                selectedYield.goodQuantity,
+                selectedYield.rejectedQuantity
+            )
+        ) {
+            setQuantityAllocationError(null);
+        }
+    }, [quantityAllocationError, selectedYield]);
 
     const updateDailyOutputManufacturingDate = useCallback((manufacturingDate: string) => {
         setDailyOutputManufacturingDate(manufacturingDate);
@@ -108,6 +147,30 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         const expiryDate = expiryDateFromShelfLife(manufacturingDate, selectedDetails?.productShelfLifeDays);
         if (expiryDate) setDailyRejectedOutputExpiryDate(expiryDate);
     }, [selectedDetails?.productShelfLifeDays]);
+
+    const updateAcceptedEvidence = useCallback((files: File[], error: string | null) => {
+        const savedEvidence = selectedYield?.evidence?.acceptedStock || [];
+        const limitError = validateManufacturingEvidenceChannelBatch(
+            savedEvidence.length,
+            savedEvidence.reduce((total, item) => total + (item.fileSize || 0), 0),
+            files,
+            "QA accepted stock evidence"
+        );
+        setAcceptedEvidenceFiles(files);
+        setAcceptedEvidenceError(error || limitError);
+    }, [selectedYield]);
+
+    const updateRejectedEvidence = useCallback((files: File[], error: string | null) => {
+        const savedEvidence = selectedYield?.evidence?.rejectedStock || [];
+        const limitError = validateManufacturingEvidenceChannelBatch(
+            savedEvidence.length,
+            savedEvidence.reduce((total, item) => total + (item.fileSize || 0), 0),
+            files,
+            "QA rejected stock evidence"
+        );
+        setRejectedEvidenceFiles(files);
+        setRejectedEvidenceError(error || limitError);
+    }, [selectedYield]);
 
     const loadAuditReferences = useCallback(async (details: JobOrderDailyYieldDetails) => {
         const requestId = ++referenceRequestId.current;
@@ -368,6 +431,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         const previousQuantity = parseQAOutputQuantity(dailyAcceptedOutputQuantity) ?? 0;
         const nextQuantity = parseQAOutputQuantity(value);
         setDailyAcceptedOutputQuantity(value);
+        clearAllocationErrorWhenBalanced(value, dailyRejectedOutputQuantity);
         if (
             previousQuantity <= 0
             && nextQuantity !== null
@@ -379,12 +443,13 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         ) {
             void loadOutputLots(selectedDetails, selectedYield);
         }
-    }, [dailyAcceptedOutputQuantity, loadOutputLots, selectedDetails, selectedYield]);
+    }, [clearAllocationErrorWhenBalanced, dailyAcceptedOutputQuantity, dailyRejectedOutputQuantity, loadOutputLots, selectedDetails, selectedYield]);
 
     const updateDailyRejectedOutputQuantity = useCallback((value: string) => {
         const previousQuantity = parseQAOutputQuantity(dailyRejectedOutputQuantity) ?? 0;
         const nextQuantity = parseQAOutputQuantity(value);
         setDailyRejectedOutputQuantity(value);
+        clearAllocationErrorWhenBalanced(dailyAcceptedOutputQuantity, value);
         if (
             previousQuantity <= 0
             && nextQuantity !== null
@@ -397,7 +462,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         ) {
             void loadRejectedOutputLots(selectedDetails, selectedYield);
         }
-    }, [dailyRejectedOutputQuantity, loadRejectedOutputLots, selectedDetails, selectedYield]);
+    }, [clearAllocationErrorWhenBalanced, dailyAcceptedOutputQuantity, dailyRejectedOutputQuantity, loadRejectedOutputLots, selectedDetails, selectedYield]);
 
     const openAudit = useCallback((
         yieldRecord: JobOrderDailyYieldRecord,
@@ -413,6 +478,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         setSelectedYield(yieldRecord);
         setSelectedDetails(details);
         setSaveError(null);
+        setQuantityAllocationError(null);
         setSaveOutcomeUnclear(false);
         setAuditStartedAt(new Date().toISOString());
         setMoisturePct("");
@@ -424,6 +490,11 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         setDailyRemarks("");
         setDailyAcceptedOutputQuantity(String(yieldRecord.qaAcceptedQuantity ?? yieldRecord.goodQuantity));
         setDailyRejectedOutputQuantity(String(yieldRecord.qaRejectedQuantity ?? yieldRecord.rejectedQuantity));
+        setAcceptedEvidenceFiles([]);
+        setAcceptedEvidenceError(null);
+        setRejectedEvidenceFiles([]);
+        setRejectedEvidenceError(null);
+        evidenceKeysByFile.current = new WeakMap<File, string>();
         setDailyOutputBatchNo(yieldRecord.batchNo || "");
         setDailyOutputMmLotId(yieldRecord.mmLotId ? String(yieldRecord.mmLotId) : "");
         const outputManufacturingDate = yieldRecord.manufacturingDate || "";
@@ -488,8 +559,11 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         setDailyOutputLotsLoading(false);
         setDailyRejectedOutputLotsLoading(false);
         setReferenceLoading(false);
+        setAcceptedEvidenceFiles([]);
+        setRejectedEvidenceFiles([]);
         setIsOpen(false);
         setSaveError(null);
+        setQuantityAllocationError(null);
     }, [actionLoading]);
 
     const buildRejectedOutputMetadata = useCallback((): DailyQAInspectionRequest["rejectedOutputMetadata"] | false => {
@@ -559,7 +633,8 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
             selectedYield.goodQuantity,
             selectedYield.rejectedQuantity
         )) {
-            toast.error("The Good and Bad quantities must add up to the total output recorded by the operator.");
+            setQuantityAllocationError(OUTPUT_ALLOCATION_ERROR);
+            toast.error(OUTPUT_ALLOCATION_ERROR);
             return;
         }
         if (rejectedQuantity <= 0) {
@@ -572,6 +647,21 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         const rejectedOutputMetadata = buildRejectedOutputMetadata();
         if (!rejectedOutputMetadata) return;
 
+        const savedRejectedEvidence = selectedYield.evidence?.rejectedStock || [];
+        const rejectedEvidenceErrorValue = rejectedEvidenceError
+            || validateManufacturingEvidenceBatch(rejectedEvidenceFiles, "QA rejected stock evidence")
+            || validateManufacturingEvidenceChannelBatch(
+                savedRejectedEvidence.length,
+                savedRejectedEvidence.reduce((total, item) => total + (item.fileSize || 0), 0),
+                rejectedEvidenceFiles,
+                "QA rejected stock evidence"
+            );
+        const hasSavedRejectedEvidence = (selectedYield.evidence?.rejectedStock.length || 0) > 0;
+        if (rejectedEvidenceErrorValue || (rejectedEvidenceFiles.length === 0 && !hasSavedRejectedEvidence)) {
+            toast.error(rejectedEvidenceErrorValue || "QA rejected stock evidence is required.");
+            return;
+        }
+
         setActionLoading(true);
         try {
             await registerRejectedOutputAllocation({
@@ -580,16 +670,21 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
                 acceptedQuantity,
                 rejectedQuantity,
                 rejectedOutputMetadata
-            });
+            }, { files: rejectedEvidenceFiles, keys: evidenceKeysFor(rejectedEvidenceFiles) });
             toast.success("Rejected output was registered in the configured bad-stock branch.");
             setIsOpen(false);
             await onSaved?.();
         } catch (error) {
-            toast.error(error instanceof Error ? error.message : "Failed to register rejected output.");
+            if (error instanceof DailyQARequestError && error.code === "QA_OUTPUT_TOTAL_MISMATCH") {
+                setQuantityAllocationError(OUTPUT_ALLOCATION_ERROR);
+                toast.error(OUTPUT_ALLOCATION_ERROR);
+            } else {
+                toast.error(error instanceof Error ? error.message : "Failed to register rejected output.");
+            }
         } finally {
             setActionLoading(false);
         }
-    }, [buildRejectedOutputMetadata, dailyAcceptedOutputQuantity, dailyRejectedOutputQuantity, onSaved, selectedDetails, selectedYield]);
+    }, [buildRejectedOutputMetadata, dailyAcceptedOutputQuantity, dailyRejectedOutputQuantity, evidenceKeysFor, onSaved, rejectedEvidenceError, rejectedEvidenceFiles, selectedDetails, selectedYield]);
 
     const submitAudit = useCallback(async () => {
         if (!selectedYield || !selectedDetails || auditSubmitInFlight.current || selectedYield.qaStatus === "Passed") return;
@@ -607,9 +702,11 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
             selectedYield.goodQuantity,
             selectedYield.rejectedQuantity
         )) {
-            toast.error("The Good and Bad quantities must add up to the total output recorded by the operator.");
+            setQuantityAllocationError(OUTPUT_ALLOCATION_ERROR);
+            toast.error(OUTPUT_ALLOCATION_ERROR);
             return;
         }
+        setQuantityAllocationError(null);
         const goodOutputQuantity = acceptedQuantity;
         if (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0 || !Number.isSafeInteger(ledgerId) || ledgerId <= 0) {
             toast.error("This yield record is missing a valid Job Order or ledger reference.");
@@ -660,6 +757,36 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
 
         const rejectedOutputMetadata = buildRejectedOutputMetadata();
         if (rejectedOutputMetadata === false) return;
+
+        const evidenceRequirements = yieldEvidenceRequirements(acceptedQuantity, rejectedQuantity);
+        const savedAcceptedEvidence = selectedYield.evidence?.acceptedStock || [];
+        const savedRejectedEvidence = selectedYield.evidence?.rejectedStock || [];
+        const acceptedEvidenceErrorValue = acceptedEvidenceError
+            || validateManufacturingEvidenceBatch(acceptedEvidenceFiles, "QA accepted stock evidence")
+            || validateManufacturingEvidenceChannelBatch(
+                savedAcceptedEvidence.length,
+                savedAcceptedEvidence.reduce((total, item) => total + (item.fileSize || 0), 0),
+                acceptedEvidenceFiles,
+                "QA accepted stock evidence"
+            );
+        const rejectedEvidenceErrorValue = rejectedEvidenceError
+            || validateManufacturingEvidenceBatch(rejectedEvidenceFiles, "QA rejected stock evidence")
+            || validateManufacturingEvidenceChannelBatch(
+                savedRejectedEvidence.length,
+                savedRejectedEvidence.reduce((total, item) => total + (item.fileSize || 0), 0),
+                rejectedEvidenceFiles,
+                "QA rejected stock evidence"
+            );
+        const hasSavedAcceptedEvidence = (selectedYield.evidence?.acceptedStock.length || 0) > 0;
+        const hasSavedRejectedEvidence = (selectedYield.evidence?.rejectedStock.length || 0) > 0;
+        if (evidenceRequirements.acceptedStock && (acceptedEvidenceErrorValue || (acceptedEvidenceFiles.length === 0 && !hasSavedAcceptedEvidence))) {
+            toast.error(acceptedEvidenceErrorValue || "QA accepted stock evidence is required when accepted quantity is greater than zero.");
+            return;
+        }
+        if (evidenceRequirements.rejectedStock && (rejectedEvidenceErrorValue || (rejectedEvidenceFiles.length === 0 && !hasSavedRejectedEvidence))) {
+            toast.error(rejectedEvidenceErrorValue || "QA rejected stock evidence is required when rejected quantity is greater than zero.");
+            return;
+        }
 
         const auditRoutes: Array<JobOrderDailyYieldRoute | null> = routes.length > 0 ? routes : [null];
         const inspections = auditRoutes.map((route) => {
@@ -722,12 +849,18 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
             rejectedOutputMetadata,
             inspections
         };
+        const requestEvidence = {
+            acceptedFiles: evidenceRequirements.acceptedStock ? acceptedEvidenceFiles : [],
+            acceptedKeys: evidenceKeysFor(evidenceRequirements.acceptedStock ? acceptedEvidenceFiles : []),
+            rejectedFiles: evidenceRequirements.rejectedStock ? rejectedEvidenceFiles : [],
+            rejectedKeys: evidenceKeysFor(evidenceRequirements.rejectedStock ? rejectedEvidenceFiles : [])
+        };
 
         auditSubmitInFlight.current = true;
         setActionLoading(true);
         setSaveError(null);
         try {
-            await postDailyQAInspection(requestPayload);
+            await postDailyQAInspection(requestPayload, requestEvidence);
             toast.success("Daily yield QA audit saved.");
             setIsOpen(false);
             await onSaved?.();
@@ -780,7 +913,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
                 }
 
                 try {
-                    await postDailyQAInspection(requestPayload);
+                    await postDailyQAInspection(requestPayload, requestEvidence);
                 } catch (recoveryError) {
                     const recoveryMessage = recoveryError instanceof Error
                         ? recoveryError.message
@@ -799,14 +932,20 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
                     console.error("Daily QA was saved, but the queue could not be refreshed:", refreshError);
                 }
             } else {
-                setSaveError(message);
-                toast.error(message);
+                if (error instanceof DailyQARequestError && error.code === "QA_OUTPUT_TOTAL_MISMATCH") {
+                    setQuantityAllocationError(OUTPUT_ALLOCATION_ERROR);
+                    setSaveError(null);
+                    toast.error(OUTPUT_ALLOCATION_ERROR);
+                } else {
+                    setSaveError(message);
+                    toast.error(message);
+                }
             }
         } finally {
             auditSubmitInFlight.current = false;
             setActionLoading(false);
         }
-    }, [acidityPh, buildRejectedOutputMetadata, dailyAcceptedOutputQuantity, dailyActionTaken, dailyLabStatus, dailyOutputBatchNo, dailyOutputEligibleLots, dailyOutputExpiryDate, dailyOutputLotsError, dailyOutputLotsLoading, dailyOutputManufacturingDate, dailyOutputMmLotId, dailyRejectedOutputQuantity, dailyRemarks, moisturePct, onSaved, qaParamValues, qaTemplates, routes, selectedDetails, selectedYield, sensoryStatus, weightCheckPassed]);
+    }, [acceptedEvidenceError, acceptedEvidenceFiles, acidityPh, buildRejectedOutputMetadata, dailyAcceptedOutputQuantity, dailyActionTaken, dailyLabStatus, dailyOutputBatchNo, dailyOutputEligibleLots, dailyOutputExpiryDate, dailyOutputLotsError, dailyOutputLotsLoading, dailyOutputManufacturingDate, dailyOutputMmLotId, dailyRejectedOutputQuantity, dailyRemarks, evidenceKeysFor, moisturePct, onSaved, qaParamValues, qaTemplates, rejectedEvidenceError, rejectedEvidenceFiles, routes, selectedDetails, selectedYield, sensoryStatus, weightCheckPassed]);
 
     return {
         isOpen,
@@ -823,6 +962,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         referenceError,
         actionLoading,
         saveError,
+        quantityAllocationError,
         saveOutcomeUnclear,
         moisturePct,
         setMoisturePct,
@@ -861,6 +1001,12 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         setDailyRejectedOutputManufacturingDate: updateDailyRejectedOutputManufacturingDate,
         dailyRejectedOutputExpiryDate,
         setDailyRejectedOutputExpiryDate,
+        acceptedEvidenceFiles,
+        acceptedEvidenceError,
+        setAcceptedEvidence: updateAcceptedEvidence,
+        rejectedEvidenceFiles,
+        rejectedEvidenceError,
+        setRejectedEvidence: updateRejectedEvidence,
         dailyRejectedOutputEligibleLots,
         dailyRejectedOutputLotsLoading,
         dailyRejectedOutputLotsError,

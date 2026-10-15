@@ -24,6 +24,15 @@ import {
 } from "@/modules/manufacturing-management/manufacturing-qa/rejected-output";
 import { isCommittedYieldLedger } from "../_qa-accepted-output";
 import { parseQAOutputQuantity, qaOutputAllocationMatchesLoggedTotal, type QAOutputAllocation } from "@/modules/manufacturing-management/manufacturing-qa/qa-output-allocation";
+import { buildQaStartPatch } from "../_qa-start-fields";
+import {
+    persistYieldEvidenceUploads,
+    loadYieldEvidenceRows,
+    validateYieldEvidenceUploads,
+    YieldEvidencePersistenceError,
+    type YieldEvidenceUpload
+} from "../_yield-evidence";
+import { yieldEvidenceRequirements } from "@/modules/manufacturing-management/manufacturing-job-order-inspection-qa/utils/yield-evidence";
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "test";
@@ -412,6 +421,15 @@ async function registerRejectedOutputOnly(body: Record<string, any>, signal: Abo
     if (!(rejectedQuantity > 0)) {
         throw new DailyQAValidationError(409, "REJECTED_OUTPUT_NOT_PRESENT", "This yield ledger has no rejected quantity to allocate.");
     }
+    const rejectedEvidenceValidation = validateYieldEvidenceUploads(
+        body.__rejectedEvidenceFiles || [],
+        body.rejectedEvidenceKeys,
+        "QA rejected stock evidence",
+        false
+    );
+    if (rejectedEvidenceValidation.error) {
+        throw new DailyQAValidationError(422, "REJECTED_EVIDENCE_REQUIRED", rejectedEvidenceValidation.error);
+    }
     const metadata = normalizeOutputMetadata(body.rejectedOutputMetadata, true) as RejectedOutputMetadata;
     const [jobOrder, routes, inspections] = await Promise.all([
         readDirectusRecord(
@@ -445,6 +463,27 @@ async function registerRejectedOutputOnly(body: Record<string, any>, signal: Abo
         throw error;
     }
 
+    try {
+        if (rejectedEvidenceValidation.uploads.length > 0) {
+            await persistYieldEvidenceUploads({
+                ledgerId,
+                channel: "QA_REJECTED_STOCK",
+                uploads: rejectedEvidenceValidation.uploads,
+                uploaderId: actorId,
+                title: `JO-${jobOrderId} rejected stock QA evidence`,
+                signal
+            });
+        } else if ((await loadYieldEvidenceRows(ledgerId, "QA_REJECTED_STOCK", signal)).length === 0) {
+            throw new DailyQAValidationError(422, "REJECTED_EVIDENCE_REQUIRED", "QA rejected stock evidence is required when rejected quantity is greater than zero.");
+        }
+    } catch (error) {
+        if (error instanceof DailyQAValidationError) throw error;
+        if (error instanceof YieldEvidencePersistenceError) {
+            throw new DailyQAValidationError(error.status, "YIELD_EVIDENCE_SAVE_FAILED", error.message);
+        }
+        throw error;
+    }
+
     assertRejectedOutputTraceability(ledger, metadata);
     await persistQAOutputAllocation(ledgerId, ledger, allocation, signal);
     await resolveRejectedInventoryLot({
@@ -463,6 +502,47 @@ async function registerRejectedOutputOnly(body: Record<string, any>, signal: Abo
         message: "Rejected output was registered in the configured bad-stock branch.",
         rejectedOutputMetadata: metadata
     });
+}
+
+function multipartEvidenceFiles(formData: FormData, field: string): File[] {
+    const values = formData.getAll(field);
+    if (values.some((value) => typeof File === "undefined" || !(value instanceof File))) {
+        throw new DailyQAValidationError(400, "YIELD_EVIDENCE_INVALID", `The ${field} upload contains an invalid file.`);
+    }
+    return values as File[];
+}
+
+async function readDailyQARequest(request: Request): Promise<{
+    body: Record<string, any> | any[];
+    acceptedEvidenceFiles: File[];
+    rejectedEvidenceFiles: File[];
+}> {
+    if (request.headers.get("content-type")?.toLowerCase().includes("multipart/form-data")) {
+        const formData = await request.formData();
+        const payload = formData.get("payload");
+        if (typeof payload !== "string") {
+            throw new DailyQAValidationError(400, "DAILY_QA_PAYLOAD_REQUIRED", "The QA audit payload is required.");
+        }
+        let body: unknown;
+        try {
+            body = JSON.parse(payload);
+        } catch {
+            throw new DailyQAValidationError(400, "DAILY_QA_PAYLOAD_INVALID", "The QA audit payload is not valid JSON.");
+        }
+        if (!body || typeof body !== "object" || Array.isArray(body)) {
+            throw new DailyQAValidationError(400, "DAILY_QA_PAYLOAD_INVALID", "The QA audit payload must be an object.");
+        }
+        return {
+            body: body as Record<string, any>,
+            acceptedEvidenceFiles: multipartEvidenceFiles(formData, "acceptedEvidence"),
+            rejectedEvidenceFiles: multipartEvidenceFiles(formData, "rejectedEvidence")
+        };
+    }
+    return {
+        body: await request.json() as Record<string, any> | any[],
+        acceptedEvidenceFiles: [],
+        rejectedEvidenceFiles: []
+    };
 }
 
 function validateSubmittedQARoutes(
@@ -637,12 +717,21 @@ export async function POST(request: Request) {
         if (accessDenied) return accessDenied;
 
         operationForLog = "read request body";
-        const body = await request.json();
+        const requestData = await readDailyQARequest(request);
+        const body: any = requestData.body;
+        if (!Array.isArray(body) && body?.action === "registerRejectedOutput") {
+            body.__rejectedEvidenceFiles = requestData.rejectedEvidenceFiles;
+        }
         if (body?.action === "registerRejectedOutput") {
             jobOrderIdForLog = Number(body.jobOrderId) || 0;
             ledgerIdForLog = Number(body.ledgerId) || 0;
             operationForLog = "register rejected output";
             return await registerRejectedOutputOnly(body, saveSignal);
+        }
+
+        const isJobOrderYieldAudit = !Array.isArray(body) && body?.action === "jobOrderYieldAudit";
+        if (request.headers.get("content-type")?.toLowerCase().includes("multipart/form-data") && !isJobOrderYieldAudit) {
+            return NextResponse.json({ error: "Multipart uploads are supported only for Job Order yield audits." }, { status: 400 });
         }
 
         const isEnvelope = Boolean(body && !Array.isArray(body) && Array.isArray(body.inspections));
@@ -675,7 +764,7 @@ export async function POST(request: Request) {
 
         operationForLog = `load Job Order ${jobOrderId}`;
         const jobOrder = await readDirectusRecord(
-            `/items/manufacturing_job_orders/${encodeURIComponent(String(jobOrderId))}?fields=job_order_id,job_order_no,product_id,branch_id`,
+            `/items/manufacturing_job_orders/${encodeURIComponent(String(jobOrderId))}?fields=job_order_id,job_order_no,product_id,branch_id,qa_started_at,qa_started_by`,
             `Load Job Order ${jobOrderId}`,
             saveSignal
         );
@@ -684,6 +773,31 @@ export async function POST(request: Request) {
         const outputAllocation = normalizeQAOutputAllocation(isEnvelope ? body : {}, ledger);
         const goodOutputQuantity = outputAllocation.acceptedQuantity;
         const rejectedOutputQuantity = outputAllocation.rejectedQuantity;
+        const evidenceRequirements = yieldEvidenceRequirements(goodOutputQuantity, rejectedOutputQuantity);
+        const acceptedEvidenceRows = isJobOrderYieldAudit && evidenceRequirements.acceptedStock && requestData.acceptedEvidenceFiles.length === 0
+            ? await loadYieldEvidenceRows(ledgerId, "QA_ACCEPTED_STOCK", saveSignal)
+            : [];
+        const rejectedEvidenceRows = isJobOrderYieldAudit && evidenceRequirements.rejectedStock && requestData.rejectedEvidenceFiles.length === 0
+            ? await loadYieldEvidenceRows(ledgerId, "QA_REJECTED_STOCK", saveSignal)
+            : [];
+        const acceptedEvidenceValidation = validateYieldEvidenceUploads(
+            requestData.acceptedEvidenceFiles,
+            isEnvelope ? body.acceptedEvidenceKeys : undefined,
+            "QA accepted stock evidence",
+            isJobOrderYieldAudit && evidenceRequirements.acceptedStock && acceptedEvidenceRows.length === 0
+        );
+        const rejectedEvidenceValidation = validateYieldEvidenceUploads(
+            requestData.rejectedEvidenceFiles,
+            isEnvelope ? body.rejectedEvidenceKeys : undefined,
+            "QA rejected stock evidence",
+            isJobOrderYieldAudit && evidenceRequirements.rejectedStock && rejectedEvidenceRows.length === 0
+        );
+        if (acceptedEvidenceValidation.error) {
+            throw new DailyQAValidationError(422, "ACCEPTED_EVIDENCE_REQUIRED", acceptedEvidenceValidation.error);
+        }
+        if (rejectedEvidenceValidation.error) {
+            throw new DailyQAValidationError(422, "REJECTED_EVIDENCE_REQUIRED", rejectedEvidenceValidation.error);
+        }
         if ((goodOutputQuantity > 0 || rejectedOutputQuantity > 0) && (!productId || !branchId)) {
             throw new DailyQAValidationError(409, "OUTPUT_TRACEABILITY_CONTEXT_MISSING", "The Job Order is missing its finished-good product or branch, so output traceability cannot be saved.");
         }
@@ -791,6 +905,34 @@ export async function POST(request: Request) {
             }
         }
 
+        if (isJobOrderYieldAudit) {
+            try {
+                await Promise.all([
+                    persistYieldEvidenceUploads({
+                        ledgerId,
+                        channel: "QA_ACCEPTED_STOCK",
+                        uploads: acceptedEvidenceValidation.uploads,
+                        uploaderId: authenticatedInspectorId,
+                        title: `JO-${jobOrderId} accepted stock QA evidence`,
+                        signal: saveSignal
+                    }),
+                    persistYieldEvidenceUploads({
+                        ledgerId,
+                        channel: "QA_REJECTED_STOCK",
+                        uploads: rejectedEvidenceValidation.uploads,
+                        uploaderId: authenticatedInspectorId,
+                        title: `JO-${jobOrderId} rejected stock QA evidence`,
+                        signal: saveSignal
+                    })
+                ]);
+            } catch (error) {
+                if (error instanceof YieldEvidencePersistenceError) {
+                    throw new DailyQAValidationError(error.status, "YIELD_EVIDENCE_SAVE_FAILED", error.message);
+                }
+                throw error;
+            }
+        }
+
         operationForLog = "save output allocation and traceability";
         await persistQAOutputAllocation(ledgerId, ledger, outputAllocation, saveSignal);
 
@@ -881,6 +1023,29 @@ export async function POST(request: Request) {
             }
             if (routeIdentifier) savedRouteIds.add(routeIdentifier);
             else hasSavedGeneralInspection = true;
+        }
+
+        operationForLog = "reconcile Job Order QA start fields";
+        const firstInspectionQuery = new URLSearchParams({
+            "filter[job_order_id][_eq]": String(jobOrderId),
+            "filter[inspected_at][_nnull]": "true",
+            fields: "daily_qa_id,inspector_id,inspected_at",
+            sort: "inspected_at,daily_qa_id",
+            limit: "1"
+        });
+        const firstInspectionResponse = await fetch(
+            `${DIRECTUS_URL}/items/manufacturing_daily_qa_inspections?${firstInspectionQuery.toString()}`,
+            { headers, cache: "no-store", signal: saveSignal }
+        );
+        const firstInspections = await readDirectusRows(firstInspectionResponse, "Earliest Job Order QA inspection lookup");
+        const qaStartPatch = buildQaStartPatch(jobOrder, firstInspections);
+        if (qaStartPatch) {
+            await patchDirectusRecord(
+                `/items/manufacturing_job_orders/${encodeURIComponent(String(jobOrderId))}`,
+                qaStartPatch,
+                `Save QA start fields for Job Order ${jobOrderId}`,
+                saveSignal
+            );
         }
 
         // Fetch all daily QA inspections for this ledgerId

@@ -135,7 +135,7 @@ export function JobOrderShiftLogModal({
     const [isInsufficiencyOpen, setIsInsufficiencyOpen] = useState(false);
     const [topUpTarget, setTopUpTarget] = useState<TopUpTarget | null>(null);
     const [isTopUpOpen, setIsTopUpOpen] = useState(false);
-    const [evidenceImage, setEvidenceImage] = useState<File | null>(null);
+    const [evidenceImages, setEvidenceImages] = useState<File[]>([]);
     const [evidenceImageError, setEvidenceImageError] = useState<string | null>(null);
     const outputQuantitiesRef = useRef<OutputQuantities>({ good: "", rejected: "0" });
     const shiftMaterialsRef = useRef<ProductionMaterialReservation[]>([]);
@@ -334,7 +334,7 @@ export function JobOrderShiftLogModal({
         setRemarks("");
         setVarianceReason("");
         setApproveVariance(false);
-        setEvidenceImage(null);
+        setEvidenceImages([]);
         setEvidenceImageError(null);
         setShiftMaterials([]);
         setConsumptionInputDrafts({});
@@ -490,8 +490,8 @@ export function JobOrderShiftLogModal({
             return false;
         }
 
-        if (!evidenceImage || evidenceImageError) {
-            toast.error("A valid shift evidence image or video is required.");
+        if (evidenceImages.length === 0 || evidenceImageError) {
+            toast.error("At least one valid Inspector / Shift evidence image or video is required.");
             return false;
         }
 
@@ -611,8 +611,8 @@ export function JobOrderShiftLogModal({
 
         const newYield = Number(shiftYieldQty) || 0;
         const newRejected = Number(rejectedQty) || 0;
-        const evidenceImageToSubmit = evidenceImage;
-        if (!evidenceImageToSubmit || evidenceImageError) {
+        const evidenceImagesToSubmit = evidenceImages;
+        if (evidenceImagesToSubmit.length === 0 || evidenceImageError) {
             setIsConfirmationOpen(false);
             return;
         }
@@ -641,7 +641,7 @@ export function JobOrderShiftLogModal({
                 completeProductionAfterLog,
                 qaParameters: [],
                 remarks: remarks || undefined,
-                evidenceImage: evidenceImageToSubmit,
+                evidenceImages: evidenceImagesToSubmit,
                 materialsConsumed: materialsToSubmit.map((m) => ({
                     joMaterialId: Number(m.jo_material_id),
                     reservationId: Number(m.reservation_id),
@@ -885,9 +885,7 @@ export function JobOrderShiftLogModal({
                     sessionRemarks: remarks,
                     varianceReason,
                     outputBatchStatus: "Assigned during In-Process QA",
-                    currentEvidenceFiles: evidenceImage
-                        ? [evidenceImage.name + " · " + (evidenceImage.type || "unknown file type") + " · " + evidenceImage.size.toLocaleString() + " bytes"]
-                        : [],
+                    currentEvidenceFiles: evidenceImages.map((file) => file.name + " · " + (file.type || "unknown file type") + " · " + file.size.toLocaleString() + " bytes"),
                     routes: routeRows,
                     operators: operatorRows,
                     materials: shiftMaterials.map((material) => ({
@@ -1199,7 +1197,7 @@ export function JobOrderShiftLogModal({
         || hasIncompleteMaterialLine
         || hasMissingMaterialConsumption
         || missingVarianceApproval
-        || !evidenceImage
+        || evidenceImages.length === 0
         || Boolean(evidenceImageError)
         || !hasOutput
         || !hasCompletedJobOrderTimer
@@ -1433,7 +1431,7 @@ export function JobOrderShiftLogModal({
                                             <div className="flex items-center gap-1.5">
                                                 <ImageIcon className="h-4 w-4 text-sky-600 dark:text-sky-400" />
                                                 <h5 className="font-bold text-sky-800 dark:text-sky-300 uppercase tracking-wider text-[10px]">
-                                                    Shift Evidence Image or Video <span className="text-destructive">*</span>
+                                                    Inspector / Shift Evidence <span className="text-destructive">*</span>
                                                 </h5>
                                             </div>
                                             <Badge variant="outline" className="text-[9px] text-sky-700 dark:text-sky-300 border-sky-500/20">
@@ -1443,13 +1441,14 @@ export function JobOrderShiftLogModal({
                                         <EvidenceMediaInput
                                             id="production-evidence"
                                             label="Attach evidence file"
-                                            file={evidenceImage}
+                                            files={evidenceImages}
+                                            multiple
                                             error={evidenceImageError}
                                             required
                                             disabled={submittingShiftLog}
                                             active={open}
-                                            onChange={(file, validationError) => {
-                                                setEvidenceImage(file);
+                                            onFilesChange={(files, validationError) => {
+                                                setEvidenceImages(files);
                                                 setEvidenceImageError(validationError);
                                             }}
                                         />
