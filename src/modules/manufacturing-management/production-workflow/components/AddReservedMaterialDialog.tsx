@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { addReservedMaterial } from "../services/production-api";
 import { allocateTopUpQuantity, isEligibleRawMaterialTopUpLot, orderTopUpCandidates } from "../utils/wip-top-up-allocation";
-import type { MaterialCandidateLot, WipTopUpAllocation } from "../types";
+import type { MaterialCandidateLot, WipTopUpAllocation, WipTopUpResponse } from "../types";
 
 export interface TopUpTarget {
     jobOrderId: number;
@@ -21,6 +21,8 @@ export interface TopUpTarget {
     remainingWip: number;
     theoretical: number;
     shortfall: number;
+    requestedQuantity: number;
+    reservationKey: string;
     candidateLots: MaterialCandidateLot[];
     preferredLot: {
         mmLotId: number | null;
@@ -34,7 +36,8 @@ interface AddReservedMaterialDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     target: TopUpTarget | null;
-    onAdded: () => Promise<void> | void;
+    onAdded: (response: WipTopUpResponse) => Promise<void> | void;
+    onAllocationPreview: (reservationKey: string, quantity: number) => void;
 }
 
 function formatQuantity(value: number): string {
@@ -62,7 +65,8 @@ export function AddReservedMaterialDialog({
     open,
     onOpenChange,
     target,
-    onAdded
+    onAdded,
+    onAllocationPreview
 }: AddReservedMaterialDialogProps) {
     const [quantities, setQuantities] = useState<Record<string, string>>({});
     const [submitting, setSubmitting] = useState(false);
@@ -108,6 +112,10 @@ export function AddReservedMaterialDialog({
         || allocationTotal <= 0
         || hasInvalidAllocation
         || allocationTotal > Number(target?.shortfall || 0) + 0.000001;
+
+    useEffect(() => {
+        if (open && target) onAllocationPreview(target.reservationKey, allocationTotal);
+    }, [open, target, allocationTotal, onAllocationPreview]);
 
     const autoAllocate = () => {
         if (!target) return;
@@ -175,7 +183,7 @@ export function AddReservedMaterialDialog({
                 remarks: `WIP top-up from End-of-Shift session for ${target.productName}`
             });
             toast.success(response.message || "Reserved materials added to the WIP pool.");
-            await onAdded();
+            await onAdded(response);
             onOpenChange(false);
         } catch (err) {
             setError(err instanceof Error ? err.message : "Failed to add reserved materials.");

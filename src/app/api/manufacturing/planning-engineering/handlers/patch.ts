@@ -9,8 +9,6 @@ import {
     JobOrderWorkflowEvidenceError,
     uploadJobOrderWorkflowEvidence
 } from "../../job-orders/_workflow-evidence";
-import { resolveApplicableRouteWorkCenters } from "../../production/_applicable-work-centers";
-import { committedGoodOutputOrAggregate, goodOutputAggregateFallback, hasReachedProductionTarget } from "@/modules/manufacturing-management/production-workflow/utils/production-output";
 import { accumulateHoursFromSeconds, elapsedSecondsBetween } from "@/modules/manufacturing-management/production-workflow/operator-time";
 import { MANUFACTURING_EVIDENCE_MAX_FILES, validateManufacturingEvidenceBatch } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
 import {
@@ -24,6 +22,10 @@ import {
     readProjectedOperatorAssignments,
     synchronizeJobOrderOperatorAssignments
 } from "../../job-orders/_operator-assignment-service";
+import {
+    MachineDowntimeReportError,
+    recordWorkstationBreakdownMaintenance
+} from "../../reports/machine-downtime-report/_service";
 
 async function cancelledJobOrderResponse(jobOrderId: number | string): Promise<NextResponse | null> {
     const numericId = Number(jobOrderId);
@@ -56,38 +58,6 @@ async function productionMutationResponse(jobOrderId: number | string): Promise<
     }
     if (isJobOrderStatus(record.status, JOB_ORDER_STATUS.PRODUCTION_COMPLETED, JOB_ORDER_STATUS.FOR_QA_RECONCILIATION, JOB_ORDER_STATUS.CLOSED)) {
         return NextResponse.json({ error: `Job Order ${record.job_order_no || jobOrderId} has completed production and cannot be updated.`, code: "PRODUCTION_COMPLETED" }, { status: 409 });
-    }
-    return null;
-}
-
-async function productionTargetResponse(jobOrderId: number | string): Promise<NextResponse | null> {
-    const numericId = positiveInteger(jobOrderId);
-    if (!numericId) return null;
-    const [jobOrderResponse, yieldResponse] = await Promise.all([
-        fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${numericId}?fields=job_order_id,job_order_no,target_quantity,completed_quantity,rejected_quantity,actual_quantity_produced`, { headers, cache: "no-store" }),
-        fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${numericId}&fields=yield_quantity,commit_status&limit=-1`, { headers, cache: "no-store" })
-    ]);
-    if (!jobOrderResponse.ok || !yieldResponse.ok) {
-        return NextResponse.json({ error: "The Job Order production target could not be verified. Refresh and try again." }, { status: 502 });
-    }
-    const [jobOrderPayload, yieldPayload] = await Promise.all([
-        jobOrderResponse.json().catch(() => ({})),
-        yieldResponse.json().catch(() => ({}))
-    ]);
-    const jobOrder = jobOrderPayload?.data;
-    if (!jobOrder) return NextResponse.json({ error: "The Job Order could not be loaded." }, { status: 404 });
-    if (!Array.isArray(yieldPayload?.data)) {
-        return NextResponse.json({ error: "The Job Order production output could not be verified. Refresh and try again." }, { status: 502 });
-    }
-    const yields = yieldPayload.data;
-    if (hasReachedProductionTarget(
-        jobOrder.target_quantity ?? 0,
-        committedGoodOutputOrAggregate(yields, goodOutputAggregateFallback(jobOrder.actual_quantity_produced, jobOrder.completed_quantity))
-    )) {
-        return NextResponse.json({
-            error: `Job Order ${jobOrder.job_order_no || numericId} has reached its good-output target. Only stopping active timers and completing open route steps are allowed.`,
-            code: "PRODUCTION_TARGET_REACHED"
-        }, { status: 409 });
     }
     return null;
 }
@@ -284,7 +254,7 @@ async function handleRouteWorkCenterAssignment(body: any): Promise<NextResponse>
     }
 
     const jobOrderResponse = await fetch(
-        `${DIRECTUS_URL}/items/manufacturing_job_orders/${jobOrderId}?fields=job_order_id,job_order_no,status,version_id`,
+        `${DIRECTUS_URL}/items/manufacturing_job_orders/${jobOrderId}?fields=job_order_id,job_order_no,status`,
         { headers, cache: "no-store" }
     );
     if (!jobOrderResponse.ok) {
@@ -307,9 +277,6 @@ async function handleRouteWorkCenterAssignment(body: any): Promise<NextResponse>
             code: "ROUTE_WORKCENTER_ASSIGNMENT_STATUS_NOT_ALLOWED"
         }, { status: 409 });
     }
-    const targetResponse = await productionTargetResponse(jobOrderId);
-    if (targetResponse) return targetResponse;
-
     const routesResponse = await fetch(
         `${DIRECTUS_URL}/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${jobOrderId}&fields=jo_route_id,job_order_id,sequence_order,operation_id,routing_id,work_center_id,status&sort=sequence_order&limit=-1`,
         { headers, cache: "no-store" }
@@ -344,8 +311,6 @@ async function handleRouteWorkCenterAssignment(body: any): Promise<NextResponse>
         parsedAssignments.push({ joRouteId, workCenterId });
     }
 
-    const routeOptions = await resolveApplicableRouteWorkCenters(jobOrder);
-    const routeOptionById = new Map(routeOptions.map((option) => [option.joRouteId, option]));
     const requestedWorkCenterIds = [...new Set(parsedAssignments.map((assignment) => assignment.workCenterId))];
     const workCentersResponse = await fetch(
         `${DIRECTUS_URL}/items/manufacturing_work_centers?filter[work_center_id][_in]=${requestedWorkCenterIds.join(",")}&fields=work_center_id,work_center_name,is_active&limit=-1`,
@@ -392,20 +357,6 @@ async function handleRouteWorkCenterAssignment(body: any): Promise<NextResponse>
             }, { status: 422 });
         }
 
-        const routeOption = routeOptionById.get(assignment.joRouteId);
-        if (!routeOption || routeOption.workCenterIds.length === 0) {
-            return NextResponse.json({
-                error: `Route ${route.sequence_order || assignment.joRouteId} has no configured workstation in the product version routing.`,
-                code: "ROUTE_WORKCENTER_NOT_CONFIGURED"
-            }, { status: 409 });
-        }
-        if (!routeOption.workCenterIds.includes(assignment.workCenterId)) {
-            return NextResponse.json({
-                error: `Work Center "${workCenter.work_center_name || `#${assignment.workCenterId}`}" is not configured for route ${route.sequence_order || assignment.joRouteId}.`,
-                code: "ROUTE_WORKCENTER_NOT_APPLICABLE",
-                applicableWorkCenterIds: routeOption.workCenterIds
-            }, { status: 422 });
-        }
     }
 
     const updatedRoutes: Array<Record<string, unknown>> = [];
@@ -493,13 +444,18 @@ export async function handlePATCH(request: Request) {
             const parsedRouteId = Number(joRouteId);
             const parsedReportedYield = Number(reportedYieldQuantity ?? yieldQty);
             const trimmedHaltReason = typeof haltReason === "string" ? haltReason.trim() : "";
+            const breakdownCategory = typeof body.breakdownCategory === "string" ? body.breakdownCategory.trim() : "";
+            const rootCause = typeof body.rootCause === "string" ? body.rootCause.trim() : trimmedHaltReason;
 
             if (!Number.isInteger(parsedJobOrderId) || parsedJobOrderId <= 0) {
                 return NextResponse.json({ error: "A valid jobOrderId is required." }, { status: 400 });
             }
 
             if (!trimmedHaltReason) {
-                return NextResponse.json({ error: "A meaningful halt reason is required." }, { status: 400 });
+                return NextResponse.json({ error: "A root cause is required." }, { status: 400 });
+            }
+            if (!breakdownCategory || breakdownCategory.length > 120 || !rootCause || rootCause.length > 5000) {
+                return NextResponse.json({ error: "A breakdown category and root cause are required." }, { status: 400 });
             }
             if (!Number.isSafeInteger(parsedRouteId) || parsedRouteId <= 0) {
                 return NextResponse.json({ error: "A valid route is required to report a breakdown." }, { status: 400 });
@@ -531,11 +487,18 @@ export async function handlePATCH(request: Request) {
                 ));
             }
 
+            await recordWorkstationBreakdownMaintenance({
+                jobOrderId: parsedJobOrderId,
+                routeId: parsedRouteId,
+                breakdownCategory,
+                rootCause
+            }, moduleUser.userId);
+
             const result = await executeJobOrderWorkflow(parsedJobOrderId, {
                 action: "place-on-hold",
                 actorUserId: moduleUser.userId,
                 idempotencyKey: String(body.idempotencyKey || `breakdown:${parsedJobOrderId}:${haltedStepId}:${Number(yieldQty || 0)}`).trim(),
-                remarks: `Halted at step ${haltedStepId}. Reported yield: ${parsedReportedYield}. Reason: ${trimmedHaltReason}`,
+                remarks: `Halted at step ${haltedStepId}. Reported yield: ${parsedReportedYield}. Breakdown category: ${breakdownCategory}. Root cause: ${rootCause}`,
                 evidenceImageId: uploadedBreakdownEvidenceImageIds[0],
                 evidenceImageIds: uploadedBreakdownEvidenceImageIds,
                 joRouteId: parsedRouteId,
@@ -565,10 +528,6 @@ export async function handlePATCH(request: Request) {
             const routeJobOrderId = Number(typeof routeJobOrderRef === "object"
                 ? routeJobOrderRef?.job_order_id ?? routeJobOrderRef?.id
                 : routeJobOrderRef);
-            const targetResponse = await productionTargetResponse(routeJobOrderId);
-            const allowedTargetRouteCompletion = normalizedTaskPatch?.status === "Completed"
-                && Object.keys(normalizedTaskPatch || {}).every((key) => ["status", "completed_at", "actual_run_hours"].includes(key));
-            if (targetResponse && !allowedTargetRouteCompletion) return targetResponse;
             let effectiveTaskPatch = normalizedTaskPatch;
             if (taskPatch?.status === "Completed") {
                 const actualRunHours = await stopRouteOperatorTimers(Number(taskId));
@@ -708,9 +667,6 @@ export async function handlePATCH(request: Request) {
             if (!Number.isSafeInteger(routeJobOrderId) || routeJobOrderId <= 0 || !Number.isSafeInteger(sequenceOrder) || sequenceOrder <= 0) {
                 return NextResponse.json({ error: "Routing task is missing its Job Order or sequence assignment." }, { status: 409 });
             }
-            const targetResponse = await productionTargetResponse(routeJobOrderId);
-            if (targetResponse) return targetResponse;
-
             const jobOrderResponse = await fetch(
                 `${DIRECTUS_URL}/items/manufacturing_job_orders/${routeJobOrderId}?fields=job_order_id,assigned_personnel`,
                 { headers, cache: "no-store" }
@@ -916,12 +872,12 @@ export async function handlePATCH(request: Request) {
             return NextResponse.json({ error: e.message, code: e.code }, { status: e.status });
         }
         const message = (e as { message?: string }).message || "Failed to update Job Order";
-        const status = e instanceof JobOrderOperatorAssignmentError || e instanceof JobOrderWorkflowEvidenceError
+        const status = e instanceof JobOrderOperatorAssignmentError || e instanceof JobOrderWorkflowEvidenceError || e instanceof MachineDowntimeReportError
             ? e.status
             : message.startsWith("Unknown Job Order status:") ? 400 : 500;
         return NextResponse.json({
             error: message,
-            ...(e instanceof JobOrderOperatorAssignmentError || e instanceof JobOrderWorkflowEvidenceError ? { code: e.code } : {})
+            ...(e instanceof JobOrderOperatorAssignmentError || e instanceof JobOrderWorkflowEvidenceError || e instanceof MachineDowntimeReportError ? { code: e.code } : {})
         }, { status });
     }
 }

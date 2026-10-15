@@ -12,11 +12,12 @@ import {
     fetchJobOrder
 } from "../production/_material-return";
 import { buildQAYieldAssessments } from "../production/_qa-accepted-output";
-import { committedGoodOutputOrAggregate, goodOutputAggregateFallback, hasReachedProductionTarget, sumCommittedGoodOutput } from "@/modules/manufacturing-management/production-workflow/utils/production-output";
+import { sumCommittedGoodOutput } from "@/modules/manufacturing-management/production-workflow/utils/production-output";
 import {
     JOB_ORDER_WORKFLOW_ACTIONS,
     type JobOrderWorkflowAction
 } from "@/modules/manufacturing-management/job-order-workflow";
+import { resolveWorkflowStationContext, type WorkflowStationContext } from "./_workflow-station-context";
 import { synchronizeJobOrderOperatorAssignments } from "./_operator-assignment-service";
 import {
     salesOrderStatusAfterJobOrderEnd,
@@ -27,6 +28,7 @@ import {
     salesOrderDetailIdsFromAllocations,
     salesOrderStatusAfterJobOrderInitialization
 } from "@/modules/manufacturing-management/job-order-initialization";
+import { getJobOrderMaintenanceClearance } from "../reports/machine-downtime-report/_service";
 
 const QUANTITY_EPSILON = 0.000001;
 
@@ -150,6 +152,9 @@ function workflowRequestHash(command: JobOrderWorkflowCommand): string {
                 joRouteId: command.joRouteId ?? null,
                 reportedYieldQuantity: command.reportedYieldQuantity ?? null
             }
+            : {}),
+        ...(command.action !== "place-on-hold" && command.joRouteId !== undefined && command.joRouteId !== null
+            ? { joRouteId: command.joRouteId }
             : {}),
         workCenterId: command.workCenterId ?? null,
         overrideReason: text(command.overrideReason),
@@ -276,6 +281,22 @@ async function findIdempotentHistory(jobOrderId: number, idempotencyKey: string)
         }
         throw error;
     }
+}
+
+async function resolveTransitionStation(jobOrderId: number, selectedRouteId?: number | null): Promise<WorkflowStationContext> {
+    const routes = await directusRows(
+        `/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${jobOrderId}&fields=jo_route_id,work_center_id,sequence_order,status&sort=sequence_order&limit=-1`,
+        `Load workstation assignment for Job Order ${jobOrderId}`
+    );
+    const context = resolveWorkflowStationContext(routes, selectedRouteId);
+    if (context.invalidRouteSelection) {
+        throw new JobOrderWorkflowError(
+            "The selected routing step does not belong to this Job Order. Refresh the Job Order and try again.",
+            422,
+            "WORKFLOW_ROUTE_MISMATCH"
+        );
+    }
+    return context;
 }
 
 async function loadMaterials(jobOrderId: number): Promise<DirectusRecord[]> {
@@ -815,25 +836,6 @@ async function assertProductionCanComplete(jobOrder: DirectusRecord): Promise<vo
     }
 }
 
-async function assertProductionTargetNotReached(jobOrder: DirectusRecord): Promise<void> {
-    const jobOrderId = numberValue(jobOrder.job_order_id);
-    const target = Number(jobOrder.target_quantity ?? jobOrder.quantity ?? 0);
-    const yields = await directusRows(
-        `/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${jobOrderId}&fields=yield_quantity,commit_status&limit=-1`,
-        `Check production target for Job Order ${jobOrderId}`
-    );
-    if (hasReachedProductionTarget(target, committedGoodOutputOrAggregate(
-        yields,
-        goodOutputAggregateFallback(jobOrder.actual_quantity_produced, jobOrder.completed_quantity)
-    ))) {
-        throw new JobOrderWorkflowError(
-            "The good-output target has been reached. Use Complete & Close JO to send this Job Order to QA.",
-            409,
-            "PRODUCTION_TARGET_REACHED"
-        );
-    }
-}
-
 export async function getJobOrderClosureReadiness(
     jobOrderId: number,
     snapshot?: JobOrderClosureReadinessSnapshot
@@ -956,7 +958,8 @@ async function writeTransition(
     jobOrder: DirectusRecord,
     command: JobOrderWorkflowCommand,
     previousStatus: CanonicalJobOrderStatus,
-    nextStatus: CanonicalJobOrderStatus
+    nextStatus: CanonicalJobOrderStatus,
+    stationContext: WorkflowStationContext
 ): Promise<JobOrderWorkflowResult> {
     const jobOrderId = numberValue(jobOrder.job_order_id);
     const jobOrderNo = text(jobOrder.job_order_no) || `JO-${jobOrderId}`;
@@ -1035,14 +1038,14 @@ async function writeTransition(
                     changed_by: command.actorUserId,
                     changed_at: changedAt,
                     remarks: transitionRemarks || `Workflow action: ${command.action}`,
+                    jo_route_id: stationContext.joRouteId,
+                    work_center_id: stationContext.workCenterId,
                     ...(command.action === "place-on-hold"
                         ? {
-                            jo_route_id: command.joRouteId ?? null,
                             reported_yield_quantity: command.reportedYieldQuantity ?? null,
                             evidence_image_id: command.evidenceImageId ?? null
                         }
-                        : {}),
-                    ...(command.workCenterId ? { work_center_id: command.workCenterId } : {})
+                        : {})
                 })
             }
         );
@@ -1217,10 +1220,6 @@ export async function executeJobOrderWorkflow(
         );
     }
 
-    if (["start-production", "place-on-hold", "resume-production", "terminate-production"].includes(command.action)) {
-        await assertProductionTargetNotReached(jobOrder);
-    }
-
     if (["place-on-hold", "cancel", "terminate-production"].includes(command.action) && !text(command.remarks)) {
         throw new JobOrderWorkflowError("A reason is required for this workflow action.", 400, "WORKFLOW_REASON_REQUIRED");
     }
@@ -1241,6 +1240,32 @@ export async function executeJobOrderWorkflow(
     if (command.action === "resume-production" && !text(command.resolutionRemarks)) {
         throw new JobOrderWorkflowError("A resolution remark is required before resuming production.", 400, "WORKFLOW_RESOLUTION_REQUIRED");
     }
+    if (command.action === "resume-production") {
+        let maintenanceClearance;
+        try {
+            maintenanceClearance = await getJobOrderMaintenanceClearance(jobOrderId);
+        } catch {
+            throw new JobOrderWorkflowError(
+                "Machine maintenance clearance could not be verified. Refresh the Job Order and try again.",
+                502,
+                "MAINTENANCE_CLEARANCE_CHECK_FAILED"
+            );
+        }
+        if (maintenanceClearance === "pending") {
+            throw new JobOrderWorkflowError(
+                "Complete and submit the Machine Downtime Report before resuming this Job Order.",
+                409,
+                "MAINTENANCE_CLEARANCE_REQUIRED"
+            );
+        }
+        if (maintenanceClearance === "unfit") {
+            throw new JobOrderWorkflowError(
+                "The machine has not been restored to Good condition and cannot be used for production.",
+                409,
+                "MACHINE_NOT_OPERATIONAL"
+            );
+        }
+    }
 
     if (command.force && !text(command.overrideReason)) {
         throw new JobOrderWorkflowError("An override reason is required for a forced workflow transition.", 400, "WORKFLOW_OVERRIDE_REASON_REQUIRED");
@@ -1252,10 +1277,19 @@ export async function executeJobOrderWorkflow(
     if (command.action === "pick") {
         await assertFullStaging(jobOrderId);
     }
+    const stationContext = await resolveTransitionStation(jobOrderId, command.joRouteId);
+
     if (command.action === "start-production") {
         const hasWorkCenterId = command.workCenterId !== undefined && command.workCenterId !== null;
         if (hasWorkCenterId && !positiveInteger(command.workCenterId)) {
             throw new JobOrderWorkflowError("The work center ID must be a positive integer.", 400, "WORK_CENTER_INVALID");
+        }
+        if (hasWorkCenterId && positiveInteger(command.workCenterId) !== stationContext.workCenterId) {
+            throw new JobOrderWorkflowError(
+                "The submitted work center does not match the selected routing step.",
+                422,
+                "WORK_CENTER_ROUTE_MISMATCH"
+            );
         }
         await assertFullStaging(jobOrderId);
     }
@@ -1298,7 +1332,7 @@ export async function executeJobOrderWorkflow(
         await markReservationsWip(jobOrderId, command.actorUserId, formatPhtDateTime());
     }
 
-    const result = await writeTransition(jobOrder, command, previousStatus, actionTarget(command.action));
+    const result = await writeTransition(jobOrder, command, previousStatus, actionTarget(command.action), stationContext);
     if (command.action === "terminate-production") {
         const warnings = await reconcileSalesOrderAfterJobOrderEnd(jobOrderId, command.action);
         if (warnings.length > 0) result.warnings = warnings;

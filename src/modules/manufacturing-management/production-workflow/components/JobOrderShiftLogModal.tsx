@@ -24,7 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { RoutingTask, JobOrder, User as UserType, RouteOperatorRecord, RejectionReason, ProductionMaterialReservation } from "../types";
+import { RoutingTask, JobOrder, User as UserType, RouteOperatorRecord, RejectionReason, ProductionMaterialReservation, WipTopUpResponse } from "../types";
 import {
     fetchRecoverableShiftRunSessions,
     fetchRejectionReasons,
@@ -32,6 +32,8 @@ import {
     resumeShiftRunLogSession,
     ShiftRunLogPayload,
     ShiftRunLogRequestError,
+    fetchJobOrderStatusHistory,
+    fetchWorkCenters,
     submitShiftRunLog
 } from "../services/production-api";
 import { EvidenceMediaInput } from "./EvidenceMediaInput";
@@ -40,14 +42,23 @@ import { toast } from "sonner";
 import { calculatePipelinedLineDurationHours } from "../../planning-engineering/utils/production-timing";
 import { exceedsAvailableStock, formatProductionQuantity, resolveJobOrderTargetQuantity, roundToInputStep } from "../utils/production-quantity";
 import {
+    calculateWipTopUpShortfall,
     calculateMaterialConsumptionDefaults,
+    distributeConsumptionAcrossReservations,
     materialConsumptionReservationKey,
+    parseMaterialConsumptionInput,
     preserveExistingActualQuantities,
     sumProductionOutputQuantities
 } from "../utils/material-consumption";
 import { hasCompletedTimer } from "../operator-time";
-import { getPhtDateInputValue } from "../../shared/pht-date";
-import { hasReachedProductionTarget } from "../utils/production-output";
+import { isTerminalRouteStatus } from "../route-status";
+import { formatPhtDate, formatPhtTimestamp, getPhtDateInputValue } from "../../shared/pht-date";
+import { calculateProductionOutputOverrun, calculateShiftOutputConfirmationSummary, committedGoodOutputOrAggregate, hasReachedProductionTarget } from "../utils/production-output";
+import {
+    buildShiftClosureReportErrorHtml,
+    buildShiftClosureReportHtml,
+    buildShiftClosureReportLoadingHtml
+} from "../utils/shift-closure-report";
 
 interface JobOrderShiftLogModalProps {
     open: boolean;
@@ -68,6 +79,10 @@ interface OutputQuantities {
 
 function formatExactMaterialQuantity(value: number): string {
     return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 6 });
+}
+
+function reservationKeyFor(joMaterialId: number, reservationId: number | null): string {
+    return materialConsumptionReservationKey({ jo_material_id: joMaterialId, reservation_id: reservationId, actual_qty: "0" });
 }
 
 function applyConsumptionDefaults(
@@ -104,6 +119,10 @@ export function JobOrderShiftLogModal({
     const [varianceReason, setVarianceReason] = useState("");
     const [approveVariance, setApproveVariance] = useState(false);
     const [shiftMaterials, setShiftMaterials] = useState<ProductionMaterialReservation[]>([]);
+    const [consumptionInputDrafts, setConsumptionInputDrafts] = useState<Record<string, string>>({});
+    const [consumptionInputErrors, setConsumptionInputErrors] = useState<Record<string, string>>({});
+    const [consumptionDrafts, setConsumptionDrafts] = useState<Record<string, string>>({});
+    const [topUpPreviews, setTopUpPreviews] = useState<Record<string, number>>({});
     const [reservationSearch, setReservationSearch] = useState("");
     const [materialsLoadError, setMaterialsLoadError] = useState<string | null>(null);
     const [loadingShiftMaterials, setLoadingShiftMaterials] = useState(false);
@@ -119,8 +138,28 @@ export function JobOrderShiftLogModal({
     const [evidenceImage, setEvidenceImage] = useState<File | null>(null);
     const [evidenceImageError, setEvidenceImageError] = useState<string | null>(null);
     const outputQuantitiesRef = useRef<OutputQuantities>({ good: "", rejected: "0" });
+    const shiftMaterialsRef = useRef<ProductionMaterialReservation[]>([]);
     const manuallyEditedMaterialKeysRef = useRef<Set<string>>(new Set());
+    const allocatedWipByReservationRef = useRef<Map<string, number>>(new Map());
+    const topUpReservationKeysByRootRef = useRef<Map<string, Set<string>>>(new Map());
+    const preserveTopUpDraftOnCloseRef = useRef(false);
     const autoResumeAttemptedRef = useRef<Set<string>>(new Set());
+
+    useEffect(() => {
+        shiftMaterialsRef.current = shiftMaterials;
+    }, [shiftMaterials]);
+
+    useEffect(() => {
+        if (open) return;
+        setConsumptionInputDrafts({});
+        setConsumptionInputErrors({});
+        setConsumptionDrafts({});
+        setTopUpPreviews({});
+        allocatedWipByReservationRef.current.clear();
+        topUpReservationKeysByRootRef.current.clear();
+        manuallyEditedMaterialKeysRef.current.clear();
+        preserveTopUpDraftOnCloseRef.current = false;
+    }, [open]);
 
     const filteredShiftMaterials = React.useMemo(() => {
         const query = reservationSearch.trim().toLowerCase();
@@ -150,6 +189,32 @@ export function JobOrderShiftLogModal({
         return `${fname} ${lname}`.trim() || `User #${uId}`;
     };
 
+    const formatCompletionResponseError = (result: any) => {
+        const details = result?.details || {};
+        const routeIds = Array.isArray(details.routeIds) ? details.routeIds : [];
+        const routeBlockers = routeIds.map((routeId: unknown) => {
+            const id = Number(routeId);
+            const task = sortedTasks.find((candidate) => Number(candidate.id) === id || Number(candidate.jo_route_id || 0) === id);
+            return task
+                ? `Step ${task.sequence_order || "-"}: ${task.name} (${task.status || "Not started"})`
+                : `Route #${id}`;
+        });
+        const operatorSessionIds = Array.isArray(details.operatorSessionIds) ? details.operatorSessionIds : [];
+        const timerBlockers = operatorSessionIds.map((sessionId: unknown) => {
+            const operator = allJobOperators.find((candidate) => Number(candidate.id) === Number(sessionId));
+            if (!operator) return `operator session #${Number(sessionId)}`;
+            const task = sortedTasks.find((candidate) => Number(candidate.id) === Number(operator.task_id));
+            return `${getUserLabel(operator.user_id)}${task ? ` on Step ${task.sequence_order || "-"}: ${task.name}` : ""}`;
+        });
+        const extraDetails = [
+            routeBlockers.length > 0 ? `Open route steps: ${routeBlockers.join("; ")}.` : "",
+            timerBlockers.length > 0 ? `Active timers: ${timerBlockers.join("; ")}.` : "",
+            result?.code === "PRODUCTION_TIMERS_ACTIVE" && timerBlockers.length === 0 ? "Stop all active operator timers and retry." : "",
+            result?.code === "PRODUCTION_OPERATIONS_INCOMPLETE" && routeBlockers.length === 0 ? "Complete every open route step and retry." : ""
+        ].filter(Boolean);
+        return [result?.error || "The Job Order could not be finalized.", ...extraDetails].join(" ");
+    };
+
     const activeOperator = allJobOperators.find((operator) => operator.started_at !== null && operator.stopped_at === null);
     const operatorLabel = activeOperator ? getUserLabel(activeOperator.user_id) : "Authenticated operator";
     const hasCompletedJobOrderTimer = allJobOperators.some((operator) =>
@@ -173,7 +238,7 @@ export function JobOrderShiftLogModal({
     }, [shiftHours]);
 
     const loadShiftMaterials = useCallback(async () => {
-        if (!jobOrderId) return;
+        if (!jobOrderId) return [];
 
         setLoadingShiftMaterials(true);
         setMaterialsLoadError(null);
@@ -216,7 +281,13 @@ export function JobOrderShiftLogModal({
                     reservation_status: null
                 }];
             });
-            setShiftMaterials((previous) => preserveExistingActualQuantities(
+            reservationRows.forEach((material: ProductionMaterialReservation) => {
+                const key = materialConsumptionReservationKey(material);
+                if (!allocatedWipByReservationRef.current.has(key)) {
+                    allocatedWipByReservationRef.current.set(key, Math.max(0, Number(material.available_stock || 0)));
+                }
+            });
+            const preservedRows = preserveExistingActualQuantities(
                 applyConsumptionDefaults(
                     reservationRows,
                     targetQuantity,
@@ -226,14 +297,17 @@ export function JobOrderShiftLogModal({
                         0
                     )
                 ),
-                previous,
+                shiftMaterialsRef.current,
                 manuallyEditedMaterialKeysRef.current
-            ));
+            );
+            setShiftMaterials(preservedRows);
+            return preservedRows;
         } catch (err) {
             const message = err instanceof Error ? err.message : "Failed to load Job Order materials";
             setShiftMaterials([]);
             setMaterialsLoadError(message);
             console.error("Error loading Job BOM materials for shift log:", err);
+            return [];
         } finally {
             setLoadingShiftMaterials(false);
         }
@@ -263,6 +337,9 @@ export function JobOrderShiftLogModal({
         setEvidenceImage(null);
         setEvidenceImageError(null);
         setShiftMaterials([]);
+        setConsumptionInputDrafts({});
+        setConsumptionInputErrors({});
+        setConsumptionDrafts({});
         manuallyEditedMaterialKeysRef.current.clear();
         setMaterialsLoadError(null);
         setProductionDay("1");
@@ -443,12 +520,19 @@ export function JobOrderShiftLogModal({
             toast.error(materialsLoadError);
             return false;
         }
-        if (hasTheoreticalShortage) {
-            setInsufficiencyError("The theoretical material requirement exceeds the remaining WIP reservation. Add raw materials before recording this production session.");
-            setIsInsufficiencyOpen(true);
+        const invalidConsumptionDrafts = Object.entries(consumptionInputDrafts)
+            .filter(([, rawValue]) => parseMaterialConsumptionInput(rawValue) === null);
+        if (invalidConsumptionDrafts.length > 0) {
+            const message = "Enter a valid non-negative quantity with up to 6 decimal places.";
+            setConsumptionInputErrors((previous) => ({
+                ...previous,
+                ...Object.fromEntries(invalidConsumptionDrafts.map(([key]) => [key, message]))
+            }));
+            toast.error(message);
             return false;
         }
         if (hasInsufficiency) {
+            setInsufficiencyError("The entered actual material quantity exceeds the available WIP. Add raw materials before recording this production session.");
             setIsInsufficiencyOpen(true);
             return false;
         }
@@ -460,12 +544,7 @@ export function JobOrderShiftLogModal({
             toast.error("Complete the lot, batch, and unit details for every WIP reservation before recording production.");
             return false;
         }
-        const consumedByMaterial = new Map<number, number>();
-        shiftMaterials.forEach((material) => {
-            const materialId = Number(material.jo_material_id || 0);
-            consumedByMaterial.set(materialId, (consumedByMaterial.get(materialId) || 0) + Number(material.actual_qty || 0));
-        });
-        if (hasMissingMaterialConsumption || shiftMaterials.some((material) => (consumedByMaterial.get(Number(material.jo_material_id || 0)) || 0) <= 0)) {
+        if (hasMissingMaterialConsumption) {
             toast.error("Enter an actual consumed quantity against at least one exact WIP reservation for every material.");
             return false;
         }
@@ -541,6 +620,7 @@ export function JobOrderShiftLogModal({
         setSubmittingShiftLog(true);
         try {
             const fullShiftName = `Day ${productionDay} - ${shiftName}`;
+            const materialsToSubmit = materialsForSubmission();
             
             const payload: ShiftRunLogPayload = {
                 sessionScope: "JOB_ORDER",
@@ -562,7 +642,7 @@ export function JobOrderShiftLogModal({
                 qaParameters: [],
                 remarks: remarks || undefined,
                 evidenceImage: evidenceImageToSubmit,
-                materialsConsumed: shiftMaterials.map((m) => ({
+                materialsConsumed: materialsToSubmit.map((m) => ({
                     joMaterialId: Number(m.jo_material_id),
                     reservationId: Number(m.reservation_id),
                     productId: Number(m.product_id),
@@ -583,13 +663,21 @@ export function JobOrderShiftLogModal({
                     ?? 0);
                 const producedAfter = producedBefore + newYield;
                 const reachedTarget = hasReachedProductionTarget(targetQty, producedAfter);
+                const outputOverrun = calculateProductionOutputOverrun(targetQty, producedAfter);
+                const overrunNotice = outputOverrun > 0
+                    ? ` Good output exceeded the target by ${formatProductionQuantity(outputOverrun)} pcs (${formatProductionQuantity(producedAfter)}/${formatProductionQuantity(targetQty)} pcs); this excess is shown as a QA variance.`
+                    : "";
 
                 if (completeProductionAfterLog && res.jobOrderCompletion?.success) {
-                    toast.success(`Shift saved. Production completed and ${selectedJobOrder.order_no || selectedJobOrder.jo_id} was sent to QA and reconciliation.`);
+                    const message = `Shift saved. Production completed and ${selectedJobOrder.order_no || selectedJobOrder.jo_id} was sent to QA and reconciliation.${overrunNotice}`;
+                    if (outputOverrun > 0) toast.warning(message);
+                    else toast.success(message);
                 } else if (completeProductionAfterLog) {
-                    toast.warning(`Shift saved and output target reached (${formatProductionQuantity(producedAfter)}/${formatProductionQuantity(targetQty)} pcs), but the QA handoff did not complete: ${res.jobOrderCompletion?.error || "Retry Complete & Close JO after resolving the blockers."}`);
+                    toast.warning(`Shift saved and output target reached (${formatProductionQuantity(producedAfter)}/${formatProductionQuantity(targetQty)} pcs).${overrunNotice} The QA handoff did not complete: ${formatCompletionResponseError(res.jobOrderCompletion)}`);
                 } else if (reachedTarget) {
-                    toast.success(`Shift saved for ${fullShiftName}. Good-output target reached (${formatProductionQuantity(producedAfter)}/${formatProductionQuantity(targetQty)} pcs); finalize the Job Order for QA.`);
+                    const message = `Shift saved for ${fullShiftName}. Good-output target reached (${formatProductionQuantity(producedAfter)}/${formatProductionQuantity(targetQty)} pcs).${overrunNotice} The Job Order remains In Production until you explicitly close it.`;
+                    if (outputOverrun > 0) toast.warning(message);
+                    else toast.success(message);
                 } else {
                     toast.success(`Shift closed for ${fullShiftName} across ${sortedTasks.length || "all"} routing steps; staging materials backflushed.`);
                 }
@@ -602,7 +690,7 @@ export function JobOrderShiftLogModal({
                     setInsufficiencyError(res.error);
                     setIsInsufficiencyOpen(true);
                 } else {
-                    toast.error(res.error || "Failed to log shift run.");
+                    toast.error(formatCompletionResponseError(res));
                 }
             }
         } catch (err: any) {
@@ -634,84 +722,201 @@ export function JobOrderShiftLogModal({
     };
 
     const handlePrintShiftReport = () => {
-        const fullShiftName = `Day ${productionDay} - ${shiftName}`;
-        
-        const operatorsHtml = groupedJobOperators.length === 0 
-            ? "<tr><td colspan='2' style='text-align: center; font-style: italic; padding: 12px;'>No personnel logged on this shift.</td></tr>"
-            : groupedJobOperators.map(op => `
-                <tr>
-                    <td style="padding: 10px; border-bottom: 1px solid #eee; font-weight: bold; font-size: 13px;">${getUserLabel(op.user_id)}</td>
-                    <td style="padding: 10px; border-bottom: 1px solid #eee; color: #555; font-size: 13px;">${op.user_position || "Shop Floor Tech"}</td>
-                </tr>
-            `).join("");
-
-        const materialsHtml = shiftMaterials.length === 0
-            ? "<tr><td colspan='4' style='text-align: center; font-style: italic; padding: 12px;'>No raw materials consumed.</td></tr>"
-            : shiftMaterials.map(m => {
-                const theoretical = materialTheoretical(m);
-                const actual = Number(m.actual_qty || 0);
-                const deviation = actual - theoretical;
-                return `
-                    <tr>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee; font-weight: bold; font-size: 13px;">${m.product_name}</td>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee; font-family: monospace; text-align: right; font-size: 13px;">${theoretical.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee; font-family: monospace; text-align: right; font-weight: bold; font-size: 13px;">${actual.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-                        <td style="padding: 10px; border-bottom: 1px solid #eee; font-family: monospace; text-align: right; color: ${deviation > 0 ? '#d9534f' : '#5cb85c'}; font-weight: bold; font-size: 13px;">${deviation > 0 ? '+' : ''}${deviation.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-                    </tr>
-                `;
-            }).join("");
-
         const printWindow = window.open("", "_blank");
-        if (!printWindow) return;
+        if (!printWindow) {
+            toast.error("Please allow popups to preview the shift closure report.");
+            return;
+        }
 
-        printWindow.document.write(`
-            <html>
-            <head>
-                <title>Shift Closure Report - JO #${selectedJobOrder.order_no || selectedJobOrder.jo_id}</title>
-                <style>
-                    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 40px; color: #222; }
-                    .header { border-bottom: 2px solid #222; padding-bottom: 15px; margin-bottom: 25px; }
-                    .header h1 { margin: 0; font-size: 24px; text-transform: uppercase; }
-                    .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px; background: #fcfcfc; padding: 18px; border-radius: 8px; border: 1px solid #e2e8f0; font-size: 13px; }
-                    table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 20px; }
-                    th { background: #f7fafc; text-align: left; padding: 10px; border-bottom: 2px solid #e2e8f0; }
-                </style>
-            </head>
-            <body>
-                <div class="header">
-                    <h1>Shift Run Closure & Backflushing Report</h1>
-                    <p>Antigravity Manufacturing Management System • JO #${selectedJobOrder.order_no || selectedJobOrder.jo_id}</p>
-                </div>
-                <div class="meta-grid">
-                    <div>
-                        <div><strong>Job Order No:</strong> ${selectedJobOrder.order_no || selectedJobOrder.jo_id}</div>
-                        <div><strong>Product:</strong> ${selectedJobOrder.product_name}</div>
-                    </div>
-                    <div>
-                        <div><strong>Shift Run:</strong> ${fullShiftName}</div>
-                        <div><strong>Good Yield:</strong> ${formatProductionQuantity(Number(shiftYieldQty))} pcs • <strong>Rejected Units:</strong> ${formatProductionQuantity(Number(rejectedQty))} pcs</div>
-                        <div><strong>Output Traceability:</strong> Assigned during In-Process QA</div>
-                    </div>
-                </div>
-                <h3>Personnel Present on Shift</h3>
-                <table>
-                    <thead><tr><th>Name</th><th>Role</th></tr></thead>
-                    <tbody>${operatorsHtml}</tbody>
-                </table>
-                <h3>Exact WIP Reservation Consumption</h3>
-                <table>
-                    <thead><tr><th>Material</th><th style="text-align: right;">Std Qty</th><th style="text-align: right;">Actual Consumed</th><th style="text-align: right;">Deviation</th></tr></thead>
-                    <tbody>${materialsHtml}</tbody>
-                </table>
-                <script>
-                    window.onload = function() { window.print(); window.onafterprint = function() { window.close(); }; };
-                </script>
-            </body>
-            </html>
-        `);
+        const jobOrderNo = String(selectedJobOrder.order_no || selectedJobOrder.job_order_no || selectedJobOrder.jo_id);
+        printWindow.document.write(buildShiftClosureReportLoadingHtml(jobOrderNo));
         printWindow.document.close();
-    };
 
+        void (async () => {
+            try {
+                const jobOrderId = Number(selectedJobOrder.order_id || selectedJobOrder.job_order_id || 0);
+                if (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0) {
+                    throw new Error("A valid Job Order ID is required to load breakdown history.");
+                }
+
+                const [statusHistory, workCenterLookup] = await Promise.all([
+                    fetchJobOrderStatusHistory(jobOrderId),
+                    fetchWorkCenters().then((response) => response.data).catch(() => null)
+                ]);
+                const workCenterById = new Map((workCenterLookup || []).map((workCenter) => [
+                    Number(workCenter.work_center_id),
+                    workCenter
+                ]));
+                const routeById = new Map<number, RoutingTask>();
+                sortedTasks.forEach((task) => {
+                    routeById.set(Number(task.id), task);
+                    if (task.jo_route_id) routeById.set(Number(task.jo_route_id), task);
+                });
+                const getRouteWorkCenter = (task?: RoutingTask | null) => {
+                    const workCenterId = Number(task?.work_center_id || 0);
+                    return workCenterById.get(workCenterId) || task?.work_center || null;
+                };
+                const routeLabel = (task?: RoutingTask | null) => task
+                    ? "Step " + (task.sequence_order || "-") + " · " + task.name
+                    : "Route step not recorded";
+                const workCenterLabel = (task?: RoutingTask | null) => {
+                    const workCenter = getRouteWorkCenter(task);
+                    return workCenter?.work_center_name
+                        || task?.work_center_name
+                        || (task?.work_center_id ? "Work Center #" + task.work_center_id : "Unassigned");
+                };
+                const assetIdForWorkCenter = (workCenter: ReturnType<typeof getRouteWorkCenter>) => {
+                    const assetId = workCenter?.asset?.id
+                        || (typeof workCenter?.asset_id === "number" ? workCenter.asset_id : null);
+                    return assetId ? String(assetId) : "";
+                };
+                const machineDetailsFor = (task?: RoutingTask | null) => {
+                    const asset = getRouteWorkCenter(task)?.asset;
+                    return [
+                        asset?.serial ? "S/N " + asset.serial : "",
+                        asset?.barcode ? "Barcode " + asset.barcode : "",
+                        asset?.rfid_code ? "RFID " + asset.rfid_code : ""
+                    ].filter(Boolean).join(" · ");
+                };
+                const machineNameFor = (task?: RoutingTask | null) => {
+                    const workCenter = getRouteWorkCenter(task);
+                    const assetId = assetIdForWorkCenter(workCenter);
+                    return workCenter?.asset?.item_name
+                        || workCenter?.asset?.item_id?.item_name
+                        || (assetId ? "Asset #" + assetId : "");
+                };
+
+                const routeRows = sortedTasks.map((task, index) => ({
+                    sequence: Number(task.sequence_order || index + 1),
+                    operation: task.name,
+                    status: task.status,
+                    qaStatus: task.qa_status || "Not recorded",
+                    workCenterId: task.work_center_id ? "WC-" + task.work_center_id : "Unassigned",
+                    workCenterName: workCenterLabel(task),
+                    machineId: assetIdForWorkCenter(getRouteWorkCenter(task)),
+                    machineName: machineNameFor(task),
+                    machineDetails: machineDetailsFor(task),
+                    plannedSetupHours: Number(task.planned_setup_hours || 0),
+                    plannedRunHours: Number(task.planned_run_hours || 0),
+                    actualSetupHours: Number(task.actual_setup_hours || 0),
+                    actualRunHours: Number(task.actual_run_hours || 0)
+                }));
+
+                const operatorRows = allJobOperators
+                    .filter((operator) => !operator.is_placeholder)
+                    .map((operator) => {
+                        const task = routeById.get(Number(operator.task_id)) || routeById.get(Number(operator.routing_id));
+                        const isActive = Boolean(operator.started_at && !operator.stopped_at);
+                        return {
+                            name: getUserLabel(operator.user_id),
+                            role: operator.user_position || "Shop Floor Tech",
+                            route: routeLabel(task),
+                            workstation: workCenterLabel(task),
+                            timeIn: operator.started_at ? formatPhtTimestamp(operator.started_at) : "Not recorded",
+                            timeOut: operator.stopped_at
+                                ? formatPhtTimestamp(operator.stopped_at)
+                                : isActive ? "Active at report time" : "Not recorded",
+                            durationHours: Number(operator.actual_hours || 0),
+                            isActive
+                        };
+                    });
+
+                const routeNameById = new Map<number, string>();
+                sortedTasks.forEach((task) => {
+                    routeNameById.set(Number(task.id), routeLabel(task));
+                    if (task.jo_route_id) routeNameById.set(Number(task.jo_route_id), routeLabel(task));
+                });
+                const breakdownRows = statusHistory
+                    .filter((record) => /^\s*Halted at step\b/i.test(String(record.remarks || "")))
+                    .map((record) => {
+                        const remarksText = String(record.remarks || "");
+                        const stepFromRemarks = remarksText.match(/^\s*Halted at step\s+(.+?)\.\s*Reported yield:/i)?.[1];
+                        const reason = remarksText.match(/Reason:\s*(.*)$/i)?.[1] || "";
+                        const routeId = Number(record.jo_route_id || 0);
+                        const task = routeById.get(routeId);
+                        const centerId = Number(record.work_center_id || task?.work_center_id || 0);
+                        const workCenter = workCenterById.get(centerId) || task?.work_center || null;
+                        const reportedYieldValue = record.reported_yield_quantity;
+                        return {
+                            timestamp: formatPhtTimestamp(record.changed_at),
+                            step: routeNameById.get(routeId) || stepFromRemarks || "Route step not recorded",
+                            workstation: workCenter?.work_center_name
+                                || record.work_center_name
+                                || task?.work_center_name
+                                || (centerId ? "Work Center #" + centerId : "Unassigned"),
+                            machineId: assetIdForWorkCenter(workCenter)
+                                ? "Asset #" + assetIdForWorkCenter(workCenter)
+                                : "",
+                            reportedYield: reportedYieldValue === null || reportedYieldValue === undefined
+                                || !Number.isFinite(Number(reportedYieldValue))
+                                ? null
+                                : Number(reportedYieldValue),
+                            reason,
+                            reportedBy: record.changed_by_name
+                                || (record.changed_by ? getUserLabel(Number(record.changed_by)) : "System"),
+                            evidenceFiles: (record.evidence_files || [])
+                                .map((file) => file.file_name || file.directus_file_id)
+                                .filter((file): file is string => Boolean(file))
+                        };
+                    });
+                const selectedReason = rejectionReasons.find((reason) =>
+                    String(reason.id ?? reason.reason_id ?? "") === selectedReasonId
+                );
+                const branchName = (selectedJobOrder as JobOrder & { branch_name?: string }).branch_name
+                    || (selectedJobOrder.branch_id ? "Branch #" + selectedJobOrder.branch_id : "Not recorded");
+                const reportHtml = buildShiftClosureReportHtml({
+                    jobOrderNo,
+                    productName: selectedJobOrder.product_name,
+                    branch: branchName,
+                    jobOrderStatus: String(selectedJobOrder.status || "Not recorded"),
+                    printedAt: formatPhtTimestamp(new Date()),
+                    documentNo: "SC-" + jobOrderNo,
+                    revision: "1.0",
+                    sessionKey,
+                    productionDay,
+                    shiftName,
+                    productionDate: formatPhtDate(productionDate),
+                    targetQuantity,
+                    outputUnit: selectedJobOrder.uom_shortcut || selectedJobOrder.uom_name || "units",
+                    goodQuantity: Number(shiftYieldQty || 0),
+                    rejectedQuantity: Number(rejectedQty || 0),
+                    rejectionReason: selectedReason ? selectedReason.code + " · " + selectedReason.reason_name : "No defect / standard run",
+                    rejectionRemarks,
+                    sessionRemarks: remarks,
+                    varianceReason,
+                    outputBatchStatus: "Assigned during In-Process QA",
+                    currentEvidenceFiles: evidenceImage
+                        ? [evidenceImage.name + " · " + (evidenceImage.type || "unknown file type") + " · " + evidenceImage.size.toLocaleString() + " bytes"]
+                        : [],
+                    routes: routeRows,
+                    operators: operatorRows,
+                    materials: shiftMaterials.map((material) => ({
+                        productName: material.product_name,
+                        unit: material.unit_shortcut || "units",
+                        mmLot: material.mm_lot_name || "",
+                        inventoryLot: material.inventory_lot_batch_no || "",
+                        batchNo: material.batch_no || "",
+                        standardQuantity: materialTheoretical(material),
+                        actualQuantity: requestedConsumption(material)
+                    })),
+                    breakdowns: breakdownRows,
+                    workstationMetadataUnavailable: workCenterLookup === null
+                });
+
+                if (!printWindow.closed) {
+                    printWindow.document.open();
+                    printWindow.document.write(reportHtml);
+                    printWindow.document.close();
+                }
+            } catch (error) {
+                if (printWindow.closed) return;
+                const message = error instanceof Error ? error.message : "Required Job Order history could not be loaded.";
+                printWindow.document.open();
+                printWindow.document.write(buildShiftClosureReportErrorHtml(jobOrderNo, message));
+                printWindow.document.close();
+            }
+        })();
+    };
     const materialConsumptionDefaults = React.useMemo(
         () => calculateMaterialConsumptionDefaults(shiftMaterials, targetQuantity, totalOutputQuantity),
         [shiftMaterials, targetQuantity, totalOutputQuantity]
@@ -721,9 +926,181 @@ export function JobOrderShiftLogModal({
         return index >= 0 ? materialConsumptionDefaults[index]?.theoreticalQuantity || 0 : 0;
     };
 
+    const requestedConsumption = (material: ProductionMaterialReservation) => {
+        const key = materialConsumptionReservationKey(material);
+        const inputDraft = consumptionInputDrafts[key];
+        if (inputDraft !== undefined) return parseMaterialConsumptionInput(inputDraft) ?? 0;
+        return Number(consumptionDrafts[key] ?? material.actual_qty ?? 0) || 0;
+    };
+
+    const currentWipForRequest = (material: ProductionMaterialReservation) => {
+        const rootKey = materialConsumptionReservationKey(material);
+        const keys = new Set([rootKey, ...(topUpReservationKeysByRootRef.current.get(rootKey) || [])]);
+        return [...keys].reduce((total, key) => {
+            const reservation = shiftMaterials.find((row) => materialConsumptionReservationKey(row) === key);
+            return total + Math.max(0, Number(reservation?.available_stock || 0));
+        }, 0);
+    };
+
+    const allocateConsumptionRequest = (
+        materials: ProductionMaterialReservation[],
+        rootKey: string,
+        requested: number
+    ): ProductionMaterialReservation[] => {
+        const relatedKeys = new Set([rootKey, ...(topUpReservationKeysByRootRef.current.get(rootKey) || [])]);
+        const targets = [...relatedKeys].flatMap((key) => {
+            const reservation = materials.find((material) => materialConsumptionReservationKey(material) === key);
+            return reservation ? [{ reservationKey: key, availableStock: Number(reservation.available_stock || 0) }] : [];
+        });
+        const allocation = distributeConsumptionAcrossReservations(requested, targets);
+        const quantitiesByKey = new Map(allocation.allocations.map((entry) => [entry.reservationKey, entry.actualQuantity]));
+        return materials.map((material) => {
+            const key = materialConsumptionReservationKey(material);
+            const actualQuantity = quantitiesByKey.get(key);
+            return actualQuantity === undefined ? material : { ...material, actual_qty: actualQuantity };
+        });
+    };
+
+    const commitConsumptionInputDraft = (material: ProductionMaterialReservation, materialIndex: number) => {
+        const key = materialConsumptionReservationKey(material);
+        const rawValue = consumptionInputDrafts[key];
+        if (rawValue === undefined) return;
+
+        const requested = parseMaterialConsumptionInput(rawValue);
+        if (requested === null) {
+            setConsumptionInputErrors((previous) => ({
+                ...previous,
+                [key]: "Enter a valid non-negative quantity with up to 6 decimal places."
+            }));
+            return;
+        }
+
+        manuallyEditedMaterialKeysRef.current.add(key);
+        const availableStock = roundToInputStep(material.available_stock);
+        const relatedKeys = topUpReservationKeysByRootRef.current.get(key);
+        const needsAllocation = requested > availableStock + 0.000001 || Boolean(relatedKeys?.size);
+        if (needsAllocation) {
+            setShiftMaterials((previous) => allocateConsumptionRequest(previous, key, requested));
+        } else {
+            setShiftMaterials((previous) => previous.map((item, index) =>
+                index === materialIndex ? { ...item, actual_qty: String(requested) } : item
+            ));
+        }
+        setConsumptionDrafts((previous) => {
+            const next = { ...previous };
+            if (requested > availableStock + 0.000001) next[key] = String(requested);
+            else delete next[key];
+            return next;
+        });
+        setConsumptionInputDrafts((previous) => {
+            const next = { ...previous };
+            delete next[key];
+            return next;
+        });
+        setConsumptionInputErrors((previous) => {
+            const next = { ...previous };
+            delete next[key];
+            return next;
+        });
+    };
+
+    const materialsForSubmission = (): ProductionMaterialReservation[] => {
+        let resolvedMaterials = shiftMaterials.map((material) => ({ ...material }));
+        Object.entries(consumptionInputDrafts).forEach(([key, rawValue]) => {
+            const requested = parseMaterialConsumptionInput(rawValue);
+            const root = resolvedMaterials.find((material) => materialConsumptionReservationKey(material) === key);
+            if (requested === null || !root) return;
+
+            const availableStock = roundToInputStep(root.available_stock);
+            const relatedKeys = topUpReservationKeysByRootRef.current.get(key);
+            if (requested > availableStock + 0.000001 || Boolean(relatedKeys?.size)) {
+                resolvedMaterials = allocateConsumptionRequest(resolvedMaterials, key, requested);
+            } else {
+                resolvedMaterials = resolvedMaterials.map((material) =>
+                    materialConsumptionReservationKey(material) === key
+                        ? { ...material, actual_qty: String(requested) }
+                        : material
+                );
+            }
+        });
+        return resolvedMaterials;
+    };
+
+    const handleAllocationPreview = useCallback((reservationKey: string, quantity: number) => {
+        setTopUpPreviews((previous) => ({ ...previous, [reservationKey]: quantity }));
+    }, []);
+
+    const handleTopUpAdded = useCallback(async (response: WipTopUpResponse) => {
+        const target = topUpTarget;
+        if (!target) {
+            await loadShiftMaterials();
+            return;
+        }
+
+        const rootKey = target.reservationKey;
+        const addedKeys = (response.allocations || [])
+            .filter((allocation) => allocation.reservationId !== null && allocation.reservationId !== undefined)
+            .map((allocation) => reservationKeyFor(target.joMaterialId, allocation.reservationId));
+        addedKeys.forEach((key) => {
+            if (!allocatedWipByReservationRef.current.has(key)) allocatedWipByReservationRef.current.set(key, 0);
+        });
+
+        const relatedKeys = topUpReservationKeysByRootRef.current.get(rootKey) || new Set<string>();
+        relatedKeys.add(rootKey);
+        addedKeys.forEach((key) => relatedKeys.add(key));
+        topUpReservationKeysByRootRef.current.set(rootKey, relatedKeys);
+
+        const refreshedMaterials = await loadShiftMaterials();
+        const originalRootExists = refreshedMaterials.some((material) => materialConsumptionReservationKey(material) === rootKey);
+        const effectiveRootKey = originalRootExists
+            ? rootKey
+            : addedKeys.find((key) => refreshedMaterials.some((material) => materialConsumptionReservationKey(material) === key)) || rootKey;
+        const inputDraft = consumptionInputDrafts[rootKey];
+        const requested = Math.max(0, inputDraft === undefined
+            ? Number(consumptionDrafts[rootKey] ?? target.requestedQuantity) || 0
+            : parseMaterialConsumptionInput(inputDraft) ?? target.requestedQuantity);
+
+        if (effectiveRootKey !== rootKey) {
+            topUpReservationKeysByRootRef.current.delete(rootKey);
+            topUpReservationKeysByRootRef.current.set(effectiveRootKey, relatedKeys);
+        }
+
+        const orderedKeys = [...new Set([effectiveRootKey, ...addedKeys])];
+        const availableTargets = orderedKeys.flatMap((key) => {
+            const reservation = refreshedMaterials.find((material) => materialConsumptionReservationKey(material) === key);
+            return reservation ? [{ reservationKey: key, availableStock: Number(reservation.available_stock || 0) }] : [];
+        });
+        const distribution = distributeConsumptionAcrossReservations(requested, availableTargets);
+        const distributedByKey = new Map(distribution.allocations.map((allocation) => [allocation.reservationKey, allocation.actualQuantity]));
+        distributedByKey.forEach((_quantity, key) => manuallyEditedMaterialKeysRef.current.add(key));
+        setShiftMaterials((previous) => previous.map((material) => {
+            const key = materialConsumptionReservationKey(material);
+            const actualQuantity = distributedByKey.get(key);
+            return actualQuantity === undefined ? material : { ...material, actual_qty: actualQuantity };
+        }));
+
+        const keepDraft = distribution.remainingQuantity > 0.000001;
+        setConsumptionDrafts((previous) => {
+            const next = { ...previous };
+            delete next[rootKey];
+            if (effectiveRootKey !== rootKey) delete next[effectiveRootKey];
+            if (keepDraft) next[effectiveRootKey] = String(requested);
+            return next;
+        });
+        setTopUpPreviews((previous) => {
+            const next = { ...previous };
+            delete next[rootKey];
+            delete next[effectiveRootKey];
+            return next;
+        });
+        preserveTopUpDraftOnCloseRef.current = true;
+    }, [consumptionDrafts, consumptionInputDrafts, loadShiftMaterials, topUpTarget]);
+
     const openTopUp = (material: ProductionMaterialReservation) => {
         const theoretical = materialTheoretical(material);
-        const available = Number(material.available_stock || 0);
+        const available = currentWipForRequest(material);
+        const requested = requestedConsumption(material);
+        const reservationKey = materialConsumptionReservationKey(material);
         setTopUpTarget({
             jobOrderId: Number(selectedJobOrder.order_id || selectedJobOrder.job_order_id || 0),
             joMaterialId: Number(material.jo_material_id),
@@ -733,7 +1110,9 @@ export function JobOrderShiftLogModal({
             uomId: material.uom_id ?? null,
             remainingWip: available,
             theoretical,
-            shortfall: Math.max(0, theoretical - available),
+            shortfall: calculateWipTopUpShortfall(requested, available),
+            requestedQuantity: requested,
+            reservationKey,
             candidateLots: material.candidate_lots || [],
             preferredLot: {
                 mmLotId: material.mm_lot_id,
@@ -745,7 +1124,9 @@ export function JobOrderShiftLogModal({
         setIsTopUpOpen(true);
     };
 
-    const hasInsufficiency = shiftMaterials.some((m) => Boolean(m.reservation_id) && exceedsAvailableStock(m.actual_qty, m.available_stock));
+    const hasInsufficiency = shiftMaterials.some((material) =>
+        exceedsAvailableStock(requestedConsumption(material), currentWipForRequest(material))
+    );
     const hasTheoreticalShortage = shiftMaterials.some((material) =>
         exceedsAvailableStock(materialTheoretical(material), material.available_stock)
     );
@@ -756,11 +1137,32 @@ export function JobOrderShiftLogModal({
         || !m.uom_id
         || !String(m.batch_no || "").trim()
     );
+    const hasInvalidMaterialConsumptionDraft = Object.values(consumptionInputDrafts)
+        .some((rawValue) => parseMaterialConsumptionInput(rawValue) === null);
     const consumedByMaterial = shiftMaterials.reduce((totals, material) => {
         const materialId = Number(material.jo_material_id || 0);
         totals.set(materialId, (totals.get(materialId) || 0) + Number(material.actual_qty || 0));
         return totals;
     }, new Map<number, number>());
+    const consumptionRequests = new Map(Object.entries(consumptionDrafts));
+    Object.entries(consumptionInputDrafts).forEach(([key, rawValue]) => consumptionRequests.set(key, rawValue));
+    consumptionRequests.forEach((rawRequest, rootKey) => {
+        const isActiveInput = Object.prototype.hasOwnProperty.call(consumptionInputDrafts, rootKey);
+        const requested = isActiveInput
+            ? parseMaterialConsumptionInput(rawRequest)
+            : Number(rawRequest);
+        const rootMaterial = shiftMaterials.find((material) => materialConsumptionReservationKey(material) === rootKey);
+        if (requested === null || !Number.isFinite(requested) || requested < 0 || !rootMaterial) return;
+        if (!isActiveInput && requested <= 0) return;
+
+        const relatedKeys = new Set([rootKey, ...(topUpReservationKeysByRootRef.current.get(rootKey) || [])]);
+        const distributed = shiftMaterials.reduce((total, material) =>
+            total + (relatedKeys.has(materialConsumptionReservationKey(material)) ? Number(material.actual_qty || 0) : 0), 0);
+        const materialId = Number(rootMaterial.jo_material_id || 0);
+        const current = consumedByMaterial.get(materialId) || 0;
+        const adjustment = isActiveInput ? requested - distributed : Math.max(0, requested - distributed);
+        consumedByMaterial.set(materialId, current + adjustment);
+    });
     const hasMissingMaterialConsumption = shiftMaterials.length === 0 || shiftMaterials.some((material) =>
         (consumedByMaterial.get(Number(material.jo_material_id || 0)) || 0) <= 0
     );
@@ -772,9 +1174,12 @@ export function JobOrderShiftLogModal({
     const varianceGroups = new Map<number, { theoretical: number; actual: number; unit: string }>();
     shiftMaterials.forEach((material) => {
         const materialId = Number(material.jo_material_id || 0);
-        const current = varianceGroups.get(materialId) || { theoretical: 0, actual: 0, unit: material.unit_shortcut || "units" };
+        const current = varianceGroups.get(materialId) || {
+            theoretical: 0,
+            actual: consumedByMaterial.get(materialId) || 0,
+            unit: material.unit_shortcut || "units"
+        };
         current.theoretical += materialTheoretical(material);
-        current.actual += Number(material.actual_qty || 0);
         varianceGroups.set(materialId, current);
     });
     const varianceExceptions = [...varianceGroups.entries()]
@@ -789,8 +1194,8 @@ export function JobOrderShiftLogModal({
     const isSubmitDisabled = submittingShiftLog
         || loadingShiftMaterials
         || Boolean(materialsLoadError)
+        || hasInvalidMaterialConsumptionDraft
         || hasInsufficiency
-        || hasTheoreticalShortage
         || hasIncompleteMaterialLine
         || hasMissingMaterialConsumption
         || missingVarianceApproval
@@ -802,16 +1207,38 @@ export function JobOrderShiftLogModal({
         || !productionDate
         || !shiftName.trim();
     const isPrintDisabled = loadingShiftMaterials || Boolean(materialsLoadError) || hasInsufficiency || !hasOutput || !shiftName.trim();
-    const goodOutputBeforeShift = Number(selectedJobOrder.producedQty
+    const priorYieldRows = selectedJobOrder.yield_logs || [];
+    const goodOutputBeforeShift = committedGoodOutputOrAggregate(priorYieldRows, selectedJobOrder.producedQty
         ?? selectedJobOrder.completed_quantity
         ?? selectedJobOrder.productionOutputQuantity
         ?? 0);
-    const projectedGoodOutput = goodOutputBeforeShift + (Number(shiftYieldQty) || 0);
+    const outputSummary = calculateShiftOutputConfirmationSummary(
+        goodOutputBeforeShift,
+        shiftYieldQty,
+        priorYieldRows,
+        rejectedQty
+    );
+    const projectedGoodOutput = outputSummary.projectedGoodQuantity;
+    const currentShiftRejectedQuantity = outputSummary.sessionRejectedQuantity;
+    const cumulativeRejectedQuantity = outputSummary.cumulativeRejectedQuantity;
+    const totalManufacturedRunQuantity = outputSummary.totalManufacturedRunQuantity;
     const finalShiftReachesTarget = hasReachedProductionTarget(targetQuantity, projectedGoodOutput);
-    const hasActiveJobOrderTimer = allJobOperators.some((operator) => Boolean(operator.started_at) && !operator.stopped_at);
-    const allRoutesReadyForCompletion = !hasActiveJobOrderTimer
-        && sortedTasks.length > 0
-        && sortedTasks.every((task) => ["completed", "done", "closed"].includes(String(task.status || "").trim().toLowerCase()));
+    const projectedOutputOverrun = calculateProductionOutputOverrun(targetQuantity, projectedGoodOutput);
+    const incompleteRouteTasks = sortedTasks.filter((task) => !isTerminalRouteStatus(task.status));
+    const activeJobOrderTimerOperators = allJobOperators.filter((operator) => Boolean(operator.started_at) && !operator.stopped_at);
+    const completionBlockers = [
+        ...(sortedTasks.length === 0 ? ["No routing steps are configured for this Job Order."] : []),
+        ...incompleteRouteTasks.map((task, index) =>
+            `Step ${task.sequence_order || index + 1}: ${task.name || "Unnamed operation"} is ${task.status || "Not started"}.`
+        ),
+        ...activeJobOrderTimerOperators.map((operator) => {
+            const task = sortedTasks.find((candidate) => Number(candidate.id) === Number(operator.task_id));
+            return task
+                ? `Stop ${getUserLabel(operator.user_id)}'s active timer on Step ${task.sequence_order || "-"}: ${task.name} before finalizing.`
+                : `Stop ${getUserLabel(operator.user_id)}'s active timer before finalizing.`;
+        })
+    ];
+    const allRoutesReadyForCompletion = completionBlockers.length === 0;
 
     return (
         <>
@@ -1043,7 +1470,7 @@ export function JobOrderShiftLogModal({
                                                 <h4 className="font-bold text-foreground/90 uppercase tracking-wider text-[10px]">
                                                      Exact WIP Reservation Consumption
                                                  </h4>
-                                                 <p className="text-[9px] text-muted-foreground mt-0.5">Select the reserved lot, inventory lot, batch, and UOM that were consumed for this session.</p>
+                                                 <p className="text-[9px] text-muted-foreground mt-0.5">Review the reserved MM lot, batch, and UOM used for this session.</p>
                                              </div>
                                          </div>
                                          <div className="flex w-full items-center gap-2 xl:w-auto">
@@ -1116,20 +1543,26 @@ export function JobOrderShiftLogModal({
                                             {filteredShiftMaterials.map((m, index) => {
                                                  const materialIndex = shiftMaterials.indexOf(m);
                                                  const theoretical = materialConsumptionDefaults[materialIndex]?.theoreticalQuantity || 0;
-                                                 const actual = Number(m.actual_qty || 0);
+                                                 const reservationKey = materialConsumptionReservationKey(m);
+                                                 const actual = requestedConsumption(m);
                                                  const variance = actual - theoretical;
                                                  const isExceeded = Math.abs(variance) > Math.max(0.000001, Math.abs(theoretical) * varianceTolerancePct / 100);
-                                                 const isInsufficient = exceedsAvailableStock(actual, m.available_stock);
+                                                 const availableForRequest = currentWipForRequest(m);
+                                                 const isInsufficient = exceedsAvailableStock(actual, availableForRequest);
                                                 const availableStock = roundToInputStep(m.available_stock);
-                                                const shortfall = Math.max(0, theoretical - availableStock);
-                                                const hasTheoreticalShortfall = exceedsAvailableStock(theoretical, availableStock);
+                                                const shortfall = calculateWipTopUpShortfall(actual, availableForRequest);
+                                                const allocated = allocatedWipByReservationRef.current.get(reservationKey) ?? availableStock;
+                                                const confirmedAdditional = Math.max(0, availableStock - allocated);
+                                                const previewAdditional = Math.max(0, Number(topUpPreviews[reservationKey] || 0));
+                                                const additional = confirmedAdditional + previewAdditional;
+                                                const projectedRemainingWip = allocated + additional;
                                                  const percentage = Math.min(200, theoretical > 0 ? (actual / theoretical) * 100 : 0);
-                                                const barColor = isInsufficient || hasTheoreticalShortfall
+                                                const barColor = isInsufficient
                                                     ? "bg-red-500" 
                                                     : isExceeded 
                                                     ? "bg-amber-500" 
                                                     : "bg-emerald-500";
-                                                const needsTopUp = !m.reservation_id || hasTheoreticalShortfall;
+                                                const needsTopUp = isInsufficient;
 
                                                 return (
                                                      <div key={m.reservation_id || `${m.jo_material_id}-${index}`} className="p-3.5 bg-background rounded-xl border border-border/80 hover:border-primary/20 hover:shadow-sm transition-all duration-200 space-y-3">
@@ -1152,27 +1585,26 @@ export function JobOrderShiftLogModal({
                                                                 <Badge
                                                                     variant="outline"
                                                                     className={`font-bold text-[8px] uppercase tracking-wider px-2 py-0.5 shrink-0 border ${
-                                                                        isInsufficient || hasTheoreticalShortfall
+                                                                        isInsufficient
                                                                             ? "bg-red-500/10 text-red-600 border-red-500/20"
                                                                             : isExceeded
                                                                             ? "bg-amber-500/10 text-amber-600 border-amber-500/20" 
                                                                             : "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
                                                                     }`}
                                                                 >
-                                                                     {!m.reservation_id ? "Unavailable" : isInsufficient || hasTheoreticalShortfall ? "Shortfall" : isExceeded ? "Outside tolerance" : "Normal"}
+                                                                     {!m.reservation_id ? "No WIP" : isInsufficient ? "Shortfall" : isExceeded ? "Outside tolerance" : "Normal"}
                                                                  </Badge>
                                                              </div>
                                                          </div>
 
                                                          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[9px] text-muted-foreground">
                                                              <span>MM Lot: <strong className="font-mono text-foreground">{m.mm_lot_name || "Lot name unavailable"}</strong></span>
-                                                             <span>Inventory Lot: <strong className="font-mono text-foreground">{m.inventory_lot_batch_no || m.batch_no || "Batch identifier unavailable"}</strong></span>
+                                                             <span>Batch: <strong className="font-mono text-foreground">{m.inventory_lot_batch_no || m.batch_no || "Batch identifier unavailable"}</strong></span>
                                                              {m.batch_no && m.batch_no !== (m.inventory_lot_batch_no || m.batch_no) && (
-                                                                 <span>Batch No.: <strong className="font-mono text-foreground">{m.batch_no}</strong></span>
+                                                                 <span>Reservation Batch: <strong className="font-mono text-foreground">{m.batch_no}</strong></span>
                                                              )}
                                                              <span>UOM: <strong className="font-mono text-foreground">{m.unit_shortcut || `#${m.uom_id || "—"}`}</strong></span>
                                                              <span>Status: <strong className="text-foreground">{m.reservation_status || "Not staged"}</strong></span>
-                                                             <span>Remaining WIP: <strong className="font-mono text-foreground">{formatExactMaterialQuantity(Number(m.available_stock || 0))}</strong></span>
                                                          </div>
 
                                                         {/* Progress bar */}
@@ -1197,9 +1629,21 @@ export function JobOrderShiftLogModal({
                                                                     </span>
                                                                 </div>
                                                                 <div className="flex items-center gap-1.5">
-                                                                     <span className="text-muted-foreground">Remaining WIP:</span>
+                                                                    <span className="text-muted-foreground">Remaining WIP{previewAdditional > 0 ? " (projected)" : ""}:</span>
                                                                     <span className={`font-mono font-bold ${isInsufficient ? "text-red-500" : "text-foreground/85"}`}>
-                                                                         {formatExactMaterialQuantity(Number(m.available_stock || 0))} {m.unit_shortcut}
+                                                                        {formatExactMaterialQuantity(projectedRemainingWip)} {m.unit_shortcut}
+                                                                    </span>
+                                                                </div>
+                                                                <div className="flex items-center gap-1.5">
+                                                                    <span className="text-muted-foreground">Allocated:</span>
+                                                                    <span className="font-mono font-bold text-foreground/85">
+                                                                        {formatExactMaterialQuantity(allocated)} {m.unit_shortcut}
+                                                                    </span>
+                                                                </div>
+                                                                <div className="flex items-center gap-1.5">
+                                                                    <span className="text-muted-foreground">Additional:</span>
+                                                                    <span className={`font-mono font-bold ${additional > 0 ? "text-amber-600" : "text-foreground/85"}`}>
+                                                                        {formatExactMaterialQuantity(additional)} {m.unit_shortcut}{previewAdditional > 0 ? " selected" : ""}
                                                                     </span>
                                                                 </div>
                                                                 <div className="flex items-center gap-1.5">
@@ -1215,53 +1659,49 @@ export function JobOrderShiftLogModal({
                                                                     <label htmlFor={`actual-material-used-${m.jo_material_id}-${index}`} className="text-muted-foreground">
                                                                         Actual Material Used:
                                                                     </label>
-                                                                    <div className="flex items-center gap-1.5">
+                                                                    <div className="flex flex-col items-end gap-1">
+                                                                        <div className="flex items-center gap-1.5">
                                                                         <Input
                                                                              id={`actual-material-used-${m.jo_material_id}-${index}`}
-                                                                             type="number"
-                                                                             min="0"
-                                                                             step="0.000001"
-                                                                             max={m.reservation_id ? availableStock : undefined}
-                                                                             value={m.actual_qty}
+                                                                             type="text"
+                                                                             inputMode="decimal"
+                                                                             value={consumptionInputDrafts[reservationKey] ?? consumptionDrafts[reservationKey] ?? m.actual_qty}
+                                                                             aria-invalid={Boolean(consumptionInputErrors[reservationKey])}
+                                                                             aria-describedby={consumptionInputErrors[reservationKey] ? `actual-material-used-error-${m.jo_material_id}-${index}` : undefined}
                                                                             onChange={(e) => {
                                                                                 const raw = e.target.value;
-                                                                                manuallyEditedMaterialKeysRef.current.add(materialConsumptionReservationKey(m));
-                                                                                if (raw === "") {
-                                                                                    setShiftMaterials((prev) =>
-                                                                                        prev.map((item, idx) => idx === materialIndex ? { ...item, actual_qty: "" } : item)
-                                                                                    );
-                                                                                    return;
-                                                                                }
-                                                                                const parsed = Number(raw);
-                                                                                if (!Number.isFinite(parsed)) return;
-                                                                                const clamped = Math.min(Math.max(0, parsed), availableStock);
-                                                                                setShiftMaterials((prev) =>
-                                                                                    prev.map((item, idx) => idx === materialIndex ? { ...item, actual_qty: String(clamped) } : item)
-                                                                                );
+                                                                                manuallyEditedMaterialKeysRef.current.add(reservationKey);
+                                                                                setConsumptionInputDrafts((previous) => ({ ...previous, [reservationKey]: raw }));
+                                                                                setConsumptionInputErrors((previous) => {
+                                                                                    const next = { ...previous };
+                                                                                    delete next[reservationKey];
+                                                                                    return next;
+                                                                                });
                                                                              }}
-                                                                             onBlur={(e) => {
-                                                                                const parsed = Number(e.target.value);
-                                                                                 if (e.target.value === "" || !Number.isFinite(parsed)) return;
-                                                                                 const clamped = Math.min(Math.max(0, parsed), availableStock);
-                                                                                 setShiftMaterials((prev) =>
-                                                                                     prev.map((item, idx) => idx === materialIndex ? { ...item, actual_qty: String(clamped) } : item)
-                                                                                 );
-                                                                             }}
-                                                                             disabled={!m.reservation_id}
-                                                                             className="h-8 w-36 text-right bg-background px-2 py-1.5 rounded-lg font-bold font-mono text-xs disabled:opacity-50"
+                                                                             onBlur={() => commitConsumptionInputDraft(m, materialIndex)}
+                                                                             disabled={loadingShiftMaterials}
+                                                                             className={`h-8 w-36 text-right bg-background px-2 py-1.5 rounded-lg font-bold font-mono text-xs disabled:opacity-50 ${consumptionInputErrors[reservationKey] ? "border-red-500 focus-visible:ring-red-500" : ""}`}
                                                                          />
                                                                         <span className="shrink-0 rounded-md border border-border bg-muted/60 px-1.5 py-1 text-[9px] font-semibold text-muted-foreground">
                                                                             {m.unit_shortcut}
                                                                         </span>
+                                                                        </div>
+                                                                        {consumptionInputErrors[reservationKey] && (
+                                                                            <span
+                                                                                id={`actual-material-used-error-${m.jo_material_id}-${index}`}
+                                                                                role="alert"
+                                                                                className="text-right text-[9px] text-red-600"
+                                                                            >
+                                                                                {consumptionInputErrors[reservationKey]}
+                                                                            </span>
+                                                                        )}
                                                                     </div>
                                                                 </div>
                                                             </div>
                                                             {needsTopUp && (
                                                                 <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
                                                                     <span className="text-[10px] font-semibold text-amber-700 dark:text-amber-400">
-                                                                        {m.reservation_id
-                                                                            ? `Short by ${shortfall.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${m.unit_shortcut} against the theoretical requirement.`
-                                                                            : "No WIP reservation is staged for this material."}
+                                                                        {`Short by ${shortfall.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${m.unit_shortcut} against entered actual consumption.`}
                                                                     </span>
                                                                     <Button
                                                                         type="button"
@@ -1424,10 +1864,31 @@ export function JobOrderShiftLogModal({
                     open={isTopUpOpen}
                     onOpenChange={(nextOpen) => {
                         setIsTopUpOpen(nextOpen);
-                        if (!nextOpen) setTopUpTarget(null);
+                        if (nextOpen) {
+                            preserveTopUpDraftOnCloseRef.current = false;
+                            return;
+                        }
+                        if (topUpTarget) {
+                            const key = topUpTarget.reservationKey;
+                            setTopUpPreviews((previous) => {
+                                const next = { ...previous };
+                                delete next[key];
+                                return next;
+                            });
+                            if (!preserveTopUpDraftOnCloseRef.current) {
+                                setConsumptionDrafts((previous) => {
+                                    const next = { ...previous };
+                                    delete next[key];
+                                    return next;
+                                });
+                            }
+                        }
+                        preserveTopUpDraftOnCloseRef.current = false;
+                        setTopUpTarget(null);
                     }}
                     target={topUpTarget}
-                    onAdded={loadShiftMaterials}
+                    onAdded={handleTopUpAdded}
+                    onAllocationPreview={handleAllocationPreview}
                 />
             </Dialog>
 
@@ -1456,26 +1917,44 @@ export function JobOrderShiftLogModal({
                         </div>
                         <div>
                             <p className="text-xs text-muted-foreground">Good Output</p>
-                            <p className="font-semibold">{formatProductionQuantity(Number(shiftYieldQty) || 0)}</p>
+                            <p className="font-semibold">{formatProductionQuantity(outputSummary.sessionGoodQuantity)} pcs</p>
+                            <p className="text-[11px] text-muted-foreground">
+                                Projected Total: {formatProductionQuantity(projectedGoodOutput)} / {formatProductionQuantity(targetQuantity)} pcs
+                            </p>
                         </div>
                         <div>
                             <p className="text-xs text-muted-foreground">Rejected Units</p>
-                            <p className="font-semibold">{formatProductionQuantity(Number(rejectedQty) || 0)}</p>
+                            <p className="font-semibold">{formatProductionQuantity(currentShiftRejectedQuantity)} pcs</p>
+                            <p className="text-[11px] text-muted-foreground">
+                                Cumulative Rejects: {formatProductionQuantity(cumulativeRejectedQuantity)} pcs
+                            </p>
                         </div>
                         <div className="col-span-2 rounded-md border border-border/60 bg-background/70 px-3 py-2">
-                            <p className="text-xs text-muted-foreground">Projected Good Output / Target</p>
+                            <p className="text-xs text-muted-foreground">Total Manufactured Run</p>
                             <p className="font-semibold">
-                                {formatProductionQuantity(projectedGoodOutput)} / {formatProductionQuantity(targetQuantity)} pcs
+                                {formatProductionQuantity(totalManufacturedRunQuantity)} pcs
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                                {formatProductionQuantity(projectedGoodOutput)} Good + {formatProductionQuantity(cumulativeRejectedQuantity)} Rejected
                             </p>
                         </div>
                     </div>
                     {finalShiftReachesTarget && (
-                        <p className="mt-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-800 dark:text-emerald-300">
-                            This shift reaches the good-output target. Completing the Job Order sends production to QA and locks new floor activity.
-                            {!allRoutesReadyForCompletion && (hasActiveJobOrderTimer
-                                ? " Stop active timers and complete every route step before finalizing."
-                                : " Complete every route step before finalizing.")}
+                        <p className={`mt-3 rounded-md border px-3 py-2 text-xs ${projectedOutputOverrun > 0
+                            ? "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300"
+                            : "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300"}`}>
+                            {projectedOutputOverrun > 0
+                                ? `Projected good output exceeds the target by ${formatProductionQuantity(projectedOutputOverrun)} pcs. Save the actual quantity; the excess is shown as a QA variance, and remaining quantity stays at 0.`
+                                : "This shift reaches the good-output target. Production can continue while the Job Order remains In Production; close it explicitly when ready for QA."}
                         </p>
+                    )}
+                    {finalShiftReachesTarget && !allRoutesReadyForCompletion && (
+                        <div role="alert" aria-live="polite" className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
+                            <p className="font-semibold">Complete these requirements before closing the Job Order:</p>
+                            <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                                {completionBlockers.map((blocker, index) => <li key={`${index}-${blocker}`}>{blocker}</li>)}
+                            </ul>
+                        </div>
                     )}
 
                     <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
@@ -1500,7 +1979,7 @@ export function JobOrderShiftLogModal({
                                 <Button
                                     type="button"
                                     disabled={submittingShiftLog || !allRoutesReadyForCompletion}
-                                    title={!allRoutesReadyForCompletion ? "Complete every route step before finalizing production." : undefined}
+                                    title={!allRoutesReadyForCompletion ? completionBlockers.join(" ") : undefined}
                                     onClick={() => void handleConfirmShiftLog(true)}
                                     className="bg-emerald-600 text-white hover:bg-emerald-500"
                                 >
@@ -1552,11 +2031,9 @@ export function JobOrderShiftLogModal({
                                 type="button"
                                 variant="outline"
                                 onClick={() => {
-                                    const shortMaterial =
-                                        shiftMaterials.find((m) => exceedsAvailableStock(m.actual_qty, m.available_stock))
-                                        || shiftMaterials.find((m) => exceedsAvailableStock(materialTheoretical(m), m.available_stock))
-                                        || shiftMaterials.find((m) => !m.reservation_id)
-                                        || shiftMaterials[0];
+                                    const shortMaterial = shiftMaterials.find((material) =>
+                                        exceedsAvailableStock(requestedConsumption(material), currentWipForRequest(material))
+                                    );
                                     if (!shortMaterial) return;
                                     setIsInsufficiencyOpen(false);
                                     openTopUp(shortMaterial);

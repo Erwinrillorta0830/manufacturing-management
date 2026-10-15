@@ -27,6 +27,7 @@ export function WorkstationBreakdownDialog({
     onSuccess
 }: WorkstationBreakdownDialogProps) {
     const [yieldQty, setYieldQty] = useState("0");
+    const [breakdownCategory, setBreakdownCategory] = useState("");
     const [haltReason, setHaltReason] = useState("");
     const [evidenceImages, setEvidenceImages] = useState<File[]>([]);
     const [evidenceImageError, setEvidenceImageError] = useState<string | null>(null);
@@ -35,6 +36,7 @@ export function WorkstationBreakdownDialog({
     useEffect(() => {
         if (!open) return;
         setYieldQty("0");
+        setBreakdownCategory("");
         setHaltReason("");
         setEvidenceImages([]);
         setEvidenceImageError(null);
@@ -51,8 +53,12 @@ export function WorkstationBreakdownDialog({
             toast.error("Select a routing step before reporting a breakdown.");
             return;
         }
+        if (!breakdownCategory.trim()) {
+            toast.error("A breakdown category is required.");
+            return;
+        }
         if (!reason) {
-            toast.error("A breakdown reason is required.");
+            toast.error("A root cause is required.");
             return;
         }
         if (evidenceImages.length === 0 || evidenceImageError) {
@@ -75,6 +81,8 @@ export function WorkstationBreakdownDialog({
                 haltedStepId: task.name,
                 yieldQty: parsedYield,
                 reportedYieldQuantity: parsedYield,
+                breakdownCategory: breakdownCategory.trim(),
+                rootCause: reason,
                 haltReason: reason,
                 idempotencyKey: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
                     ? crypto.randomUUID()
@@ -106,8 +114,8 @@ export function WorkstationBreakdownDialog({
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="w-[calc(100vw-1rem)] sm:max-w-[520px]">
-                <DialogHeader>
+            <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] min-w-0 max-w-[520px] flex-col overflow-hidden">
+                <DialogHeader className="shrink-0">
                     <DialogTitle className="flex items-center gap-2 text-destructive">
                         <AlertTriangle className="h-5 w-5" /> Report Workstation Breakdown
                     </DialogTitle>
@@ -116,7 +124,7 @@ export function WorkstationBreakdownDialog({
                     </DialogDescription>
                 </DialogHeader>
 
-                <div className="space-y-4 py-2">
+                <div className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden py-2">
                     <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs">
                         <div className="font-mono font-bold text-amber-700 dark:text-amber-400">{selectedJobOrder.jo_id}</div>
                         <div className="mt-1 text-muted-foreground">
@@ -137,17 +145,28 @@ export function WorkstationBreakdownDialog({
                     </div>
 
                     <div className="space-y-1.5">
-                        <Label htmlFor="breakdown-reason">Breakdown reason <span className="text-destructive">*</span></Label>
+                        <Label htmlFor="breakdown-category">Breakdown category <span className="text-destructive">*</span></Label>
+                        <Input
+                            id="breakdown-category"
+                            value={breakdownCategory}
+                            onChange={(event) => setBreakdownCategory(event.target.value)}
+                            maxLength={120}
+                            placeholder="e.g. Mechanical, electrical, controls"
+                        />
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <Label htmlFor="breakdown-reason">Root cause <span className="text-destructive">*</span></Label>
                         <Textarea
                             id="breakdown-reason"
                             value={haltReason}
                             onChange={(event) => setHaltReason(event.target.value)}
-                            placeholder="Describe the equipment issue, material issue, or other production halt..."
+                            placeholder="Describe the equipment failure or other technical cause..."
                             className="min-h-[110px]"
                         />
                     </div>
 
-                    <div className="space-y-3 rounded-xl border border-dashed border-amber-500/40 bg-amber-500/5 p-3">
+                    <div className="min-w-0 space-y-3 rounded-xl border border-dashed border-amber-500/40 bg-amber-500/5 p-3">
                         <EvidenceMediaInput
                             id="breakdown-evidence"
                             label="Breakdown evidence"
@@ -165,11 +184,11 @@ export function WorkstationBreakdownDialog({
                     </div>
                 </div>
 
-                <DialogFooter>
+                <DialogFooter className="shrink-0">
                     <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
                         Cancel
                     </Button>
-                    <Button type="button" variant="destructive" onClick={handleSubmit} disabled={submitting || !task || !haltReason.trim() || evidenceImages.length === 0 || Boolean(evidenceImageError)}>
+                    <Button type="button" variant="destructive" onClick={handleSubmit} disabled={submitting || !task || !breakdownCategory.trim() || !haltReason.trim() || evidenceImages.length === 0 || Boolean(evidenceImageError)}>
                         {submitting ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> Reporting...</> : "Report Breakdown"}
                     </Button>
                 </DialogFooter>

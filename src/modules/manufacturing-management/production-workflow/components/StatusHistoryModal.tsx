@@ -193,9 +193,9 @@ export function StatusHistoryModal({
                                         )}
 
                                         <div className="flex flex-wrap items-center gap-4 text-[11px] text-muted-foreground pt-1 border-t border-border/30 font-medium">
-                                            {rec.work_center_name && (
+                                            {(rec.work_center_names?.length || rec.work_center_name) && (
                                                 <span className="flex items-center gap-1">
-                                                    <Building2 className="h-3.5 w-3.5 text-primary/80" /> Station: <strong className="text-foreground">{rec.work_center_name}</strong>
+                                                    <Building2 className="h-3.5 w-3.5 text-primary/80" /> {rec.work_center_names && rec.work_center_names.length > 1 ? "Stations" : "Station"}: <strong className="text-foreground">{rec.work_center_names?.length ? rec.work_center_names.join(" · ") : rec.work_center_name}</strong>
                                                 </span>
                                             )}
                                             <span className="flex items-center gap-1">

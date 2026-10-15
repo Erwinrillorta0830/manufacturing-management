@@ -322,7 +322,7 @@ export function EvidenceMediaInput({
     };
 
     return (
-        <div className="space-y-2">
+        <div className="min-w-0 space-y-2">
             <Label htmlFor={`${id}-file`}>
                 {label} {required && <span className="text-destructive">*</span>}
             </Label>
@@ -453,7 +453,7 @@ export function EvidenceMediaInput({
                 const previewUrl = previewUrls[index];
                 const isVideo = isManufacturingEvidenceVideo(selectedFile.type);
                 return (
-                    <div key={`${selectedFile.name}-${selectedFile.lastModified}-${index}`} className="flex flex-col gap-3 rounded-lg border bg-background p-2 sm:flex-row sm:items-center">
+                    <div key={`${selectedFile.name}-${selectedFile.lastModified}-${index}`} className="flex w-full min-w-0 max-w-full flex-col gap-3 rounded-lg border bg-background p-2 sm:flex-row sm:items-center">
                         {previewUrl && (isVideo ? (
                             <video src={previewUrl} controls playsInline preload="metadata" className="max-h-40 w-full max-w-xs rounded-md border bg-black object-contain" aria-label={`${label} video preview`} />
                         ) : (

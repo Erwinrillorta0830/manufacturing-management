@@ -4,6 +4,7 @@ import {
     elapsedSecondsBetween,
     elapsedSecondsSince,
     formatElapsedDuration,
+    formatElapsedHours,
     hasCompletedTimer,
     hoursFromSeconds
 } from "./operator-time";
@@ -27,3 +28,8 @@ assert.equal(Math.round(accumulateHoursFromSeconds(0.5, 1) * 3600), 1801);
 assert.ok(accumulateHoursFromSeconds(0, 1) > 0 && accumulateHoursFromSeconds(0, 1) < 0.01);
 assert.equal(formatElapsedDuration(0), "00:00:00");
 assert.equal(formatElapsedDuration(360001), "100:00:01");
+assert.equal(formatElapsedHours(0.05), "00:03:00");
+assert.equal(formatElapsedHours(1.5), "01:30:00");
+assert.equal(formatElapsedHours(0), "00:00:00");
+assert.equal(formatElapsedHours(Number.NaN), "00:00:00");
+assert.equal(formatElapsedHours(-1), "00:00:00");

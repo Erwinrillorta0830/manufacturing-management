@@ -37,10 +37,10 @@ const ACTION_COPY: Record<ProductionWorkflowAction, {
     destructive?: boolean;
 }> = {
     "place-on-hold": {
-        title: "Place Production on Hold",
-        description: "Stop new production activity until the issue has been resolved. A reason is required for the audit trail.",
-        fieldLabel: "Hold reason",
-        placeholder: "Describe the issue requiring production to stop...",
+        title: "Record Operational Stoppage",
+        description: "Pause production for a non-maintenance stoppage. For a technical machine breakdown, use Report Workstation Breakdown so maintenance clearance is required before resuming.",
+        fieldLabel: "Stoppage reason",
+        placeholder: "Describe the operational stoppage requiring production to pause...",
         submitLabel: "Place on Hold",
         icon: <PauseCircle className="h-5 w-5 text-amber-600" />
     },

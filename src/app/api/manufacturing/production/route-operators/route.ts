@@ -9,7 +9,6 @@ import {
     JOB_ORDER_STATUS,
     normalizeJobOrderStatus
 } from "@/modules/manufacturing-management/job-order-status";
-import { committedGoodOutputOrAggregate, goodOutputAggregateFallback, hasReachedProductionTarget } from "@/modules/manufacturing-management/production-workflow/utils/production-output";
 import { formatPhtDateTime, parsePhtDateTime } from "../../directus-api";
 import {
     accumulateHoursFromSeconds,
@@ -28,6 +27,10 @@ import {
     swapJobOrderOperatorAssignment,
     updateJobOrderOperatorAssignment
 } from "../../job-orders/_operator-assignment-service";
+import {
+    assertProductionAssetOperational,
+    MachineDowntimeReportError
+} from "../../reports/machine-downtime-report/_service";
 
 // Directus configuration
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
@@ -334,14 +337,15 @@ interface RouteJobOrderContext {
     jobOrderId: number;
     jobOrderNo: string;
     sequenceOrder: number;
+    workCenterId: number;
     routeStatus: string;
     status: string;
     assignedPersonnel: ReturnType<typeof normalizeOperatorAssignments>;
 }
 
 async function getRouteJobOrderContext(taskId: number): Promise<RouteJobOrderContext> {
-    const routePayload = await directusRequest<{ data?: { job_order_id?: unknown; sequence_order?: unknown; status?: unknown } }>(
-        `/items/manufacturing_job_order_routes/${taskId}?fields=jo_route_id,job_order_id,sequence_order,status`,
+    const routePayload = await directusRequest<{ data?: { job_order_id?: unknown; sequence_order?: unknown; status?: unknown; work_center_id?: unknown } }>(
+        `/items/manufacturing_job_order_routes/${taskId}?fields=jo_route_id,job_order_id,sequence_order,status,work_center_id`,
     );
     const jobOrderId = relationId(routePayload?.data?.job_order_id);
     if (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0) {
@@ -363,35 +367,27 @@ async function getRouteJobOrderContext(taskId: number): Promise<RouteJobOrderCon
         jobOrderId,
         jobOrderNo: String(jobOrder.job_order_no || `JO-${jobOrderId}`),
         sequenceOrder,
+        workCenterId: relationId(routePayload?.data?.work_center_id),
         routeStatus: String(routePayload?.data?.status || ""),
         status: String(jobOrder.status || ""),
         assignedPersonnel: normalizeOperatorAssignments(jobOrder.assigned_personnel)
     };
 }
 
-async function assertProductionTargetNotReached(jobOrderId: number, jobOrderNo: string): Promise<void> {
-    const [jobOrderPayload, yieldPayload] = await Promise.all([
-        directusRequest<{ data?: { target_quantity?: unknown; actual_quantity_produced?: unknown; completed_quantity?: unknown; rejected_quantity?: unknown } }>(
-            `/items/manufacturing_job_orders/${jobOrderId}?fields=job_order_id,target_quantity,completed_quantity,rejected_quantity,actual_quantity_produced`
-        ),
-        directusRequest<{ data?: Array<{ yield_quantity?: unknown; commit_status?: unknown }> }>(
-            `/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${jobOrderId}&fields=yield_quantity,commit_status&limit=-1`
-        )
-    ]);
-    const target = Number(jobOrderPayload?.data?.target_quantity ?? 0);
-    if (!jobOrderPayload?.data || !Array.isArray(yieldPayload?.data)) {
-        throw new DirectusRouteOperatorError(502, "The Job Order production target could not be verified.", "PRODUCTION_TARGET_UNAVAILABLE");
-    }
-    const yields = yieldPayload.data;
-    if (hasReachedProductionTarget(target, committedGoodOutputOrAggregate(
-        yields,
-        goodOutputAggregateFallback(jobOrderPayload.data.actual_quantity_produced, jobOrderPayload.data.completed_quantity)
-    ))) {
-        throw new DirectusRouteOperatorError(
-            409,
-            `Job Order ${jobOrderNo} has reached its good-output target. Only stopping active timers and completing open route steps are allowed.`,
-            "PRODUCTION_TARGET_REACHED"
-        );
+async function assertRouteMachineOperational(context: RouteJobOrderContext): Promise<void> {
+    if (!context.workCenterId) return;
+    const workCenterPayload = await directusRequest<{ data?: { asset_id?: unknown } }>(
+        `/items/manufacturing_work_centers/${context.workCenterId}?fields=work_center_id,asset_id.id`
+    );
+    const assetId = relationId(workCenterPayload?.data?.asset_id);
+    if (!assetId) return;
+    try {
+        await assertProductionAssetOperational(assetId);
+    } catch (error) {
+        if (error instanceof MachineDowntimeReportError) {
+            throw new DirectusRouteOperatorError(error.status, error.message, error.code);
+        }
+        throw error;
     }
 }
 
@@ -426,13 +422,11 @@ async function assertProductionMutationAllowed(
         throw new DirectusRouteOperatorError(409, `Job Order ${jobOrder?.job_order_no || jobOrderId} has completed production and cannot be changed.`, "PRODUCTION_COMPLETED");
     }
     if (allowPreProductionRosterChanges && canChangeJobOrderOperatorRoster(status)) {
-        await assertProductionTargetNotReached(jobOrderId, jobOrderNo);
         return context;
     }
     if (!isJobOrderStatus(status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
         throw new DirectusRouteOperatorError(409, `Job Order ${jobOrder?.job_order_no || jobOrderId} must be In Production before operator activity can be changed.`, "JOB_ORDER_NOT_IN_PRODUCTION");
     }
-    if (action !== "edit-times") await assertProductionTargetNotReached(jobOrderId, jobOrderNo);
     return context;
 }
 
@@ -634,6 +628,9 @@ export async function POST(request: Request) {
 
         if (joId !== String(context.jobOrderId) && joId !== context.jobOrderNo) {
             return NextResponse.json({ error: "The route does not belong to the supplied Job Order." }, { status: 409 });
+        }
+        if (action === "start-timer") {
+            await assertRouteMachineOperational(context);
         }
 
         if (rosterAction) {

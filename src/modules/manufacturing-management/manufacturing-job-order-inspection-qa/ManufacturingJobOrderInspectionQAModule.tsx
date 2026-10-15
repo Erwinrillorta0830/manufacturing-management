@@ -47,6 +47,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatPhtDate, formatPhtTime12Hour, formatPhtTimestamp12Hour } from "../shared/pht-date";
+import { buildShiftYieldRunLabels } from "../manufacturing-qa/shift-yield-run-labels";
 import { useDailyYieldAudit } from "./hooks/useDailyYieldAudit";
 import { useJobOrderInspectionQA } from "./hooks/useJobOrderInspectionQA";
 import { DailyYieldAuditDialog } from "./components/DailyYieldAuditDialog";
@@ -224,9 +225,11 @@ function JobOrderSummaryCard({
 
 function DailyYieldCard({
     record,
+    shiftLabel,
     onAction,
 }: {
     record: JobOrderDailyYieldRecord;
+    shiftLabel: string;
     onAction: (record: JobOrderDailyYieldRecord, mode: AuditActionMode) => void;
 }) {
     const isDiscrepancy = record.qaStatus === "QA Hold";
@@ -241,7 +244,7 @@ function DailyYieldCard({
         <article className={`min-w-0 rounded-xl border p-3 ${isDiscrepancy ? "border-red-500/30 bg-red-500/5" : "bg-card"}`}>
             <div className="flex min-w-0 items-start justify-between gap-3">
                 <div className="min-w-0">
-                    <h4 className="break-words text-sm font-semibold">{record.shiftName}</h4>
+                    <h4 className="break-words text-sm font-semibold">{shiftLabel}</h4>
                     <p className="mt-1 font-mono text-xs text-muted-foreground">Ledger #{record.ledgerId}</p>
                     {record.sessionKey && <p className="mt-0.5 break-all font-mono text-[10px] text-muted-foreground">{record.sessionKey}</p>}
                 </div>
@@ -289,9 +292,11 @@ function DailyYieldCard({
 
 function DailyYieldRow({
     record,
+    shiftLabel,
     onAction,
 }: {
     record: JobOrderDailyYieldRecord;
+    shiftLabel: string;
     onAction: (record: JobOrderDailyYieldRecord, mode: AuditActionMode) => void;
 }) {
     const isVerified = record.qaStatus === "Passed";
@@ -306,7 +311,7 @@ function DailyYieldRow({
     return (
         <TableRow className={isDiscrepancy ? "bg-red-500/10 hover:bg-red-500/15" : undefined}>
             <TableCell className="min-w-[180px] align-top">
-                <div className="font-semibold text-foreground">{record.shiftName}</div>
+                <div className="font-semibold text-foreground">{shiftLabel}</div>
                 <div className="mt-1 text-[11px] text-muted-foreground font-mono">Ledger #{record.ledgerId}</div>
                 {record.sessionKey && <div className="text-[10px] text-muted-foreground truncate max-w-[180px]" title={record.sessionKey}>{record.sessionKey}</div>}
             </TableCell>
@@ -346,6 +351,21 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
     const [closeConfirmOpen, setCloseConfirmOpen] = React.useState(false);
     const [additionalFiltersOpen, setAdditionalFiltersOpen] = React.useState(false);
     const details = jobOrderState.selectedDetails;
+    const shiftDisplayLabels = React.useMemo(() => {
+        const records = details?.dailyYields || [];
+        const entries = records.map((record) => ({
+            ledger_id: record.ledgerId,
+            job_order_id: record.jobOrderId,
+            shift_name: record.shiftName,
+            logged_at: record.loggedAt,
+        }));
+        const labels = buildShiftYieldRunLabels(entries);
+
+        return new Map(records.map((record, index) => [
+            record.ledgerId,
+            labels.get(entries[index]) || record.shiftName || "Shift not specified",
+        ]));
+    }, [details?.dailyYields]);
     const canClose = details?.status === "For QA and Reconciliation";
     const isClosed = details?.status === "Closed";
     const closeSubmitting = details
@@ -932,6 +952,7 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                                 <DailyYieldCard
                                                     key={record.ledgerId}
                                                     record={record}
+                                                    shiftLabel={shiftDisplayLabels.get(record.ledgerId) || record.shiftName || "Shift not specified"}
                                                     onAction={(yieldRecord) => auditState.openAudit(yieldRecord, details)}
                                                 />
                                             ))}
@@ -974,7 +995,12 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                             {details.dailyYields.length === 0 ? (
                                                 <TableRow><TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">No daily yields recorded for this Job Order.</TableCell></TableRow>
                                             ) : details.dailyYields.map((record) => (
-                                                <DailyYieldRow key={record.ledgerId} record={record} onAction={(yieldRecord) => auditState.openAudit(yieldRecord, details)} />
+                                                <DailyYieldRow
+                                                    key={record.ledgerId}
+                                                    record={record}
+                                                    shiftLabel={shiftDisplayLabels.get(record.ledgerId) || record.shiftName || "Shift not specified"}
+                                                    onAction={(yieldRecord) => auditState.openAudit(yieldRecord, details)}
+                                                />
                                             ))}
                                             {details.dailyYields.length > 0 && (
                                                 <TableRow className="font-semibold">
@@ -1026,7 +1052,12 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                 </AlertDialogContent>
             </AlertDialog>
 
-            <DailyYieldAuditDialog controller={auditState} />
+            <DailyYieldAuditDialog
+                controller={auditState}
+                displayShiftName={auditState.selectedYield
+                    ? shiftDisplayLabels.get(auditState.selectedYield.ledgerId)
+                    : undefined}
+            />
         </div>
     );
 }
