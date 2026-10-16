@@ -11,7 +11,11 @@ import {
     cancelJobOrderAndReturnMaterials,
     fetchJobOrder
 } from "../production/_material-return";
-import { buildQAYieldAssessments } from "../production/_qa-accepted-output";
+import { buildQAYieldAssessments, isCommittedYieldLedger } from "../production/_qa-accepted-output";
+import {
+    classifyClosureDispositions,
+    commitClosureWithDispositionResolution
+} from "./_closure-dispositions";
 import { sumCommittedGoodOutput } from "@/modules/manufacturing-management/production-workflow/utils/production-output";
 import {
     JOB_ORDER_WORKFLOW_ACTIONS,
@@ -86,6 +90,7 @@ export interface JobOrderClosureBlocker {
 export interface JobOrderClosureReadiness {
     ready: boolean;
     blockers: JobOrderClosureBlocker[];
+    autoResolvableDispositionCount: number;
 }
 
 export interface JobOrderClosureReadinessSnapshot {
@@ -836,10 +841,15 @@ async function assertProductionCanComplete(jobOrder: DirectusRecord): Promise<vo
     }
 }
 
-export async function getJobOrderClosureReadiness(
+interface JobOrderClosureEvaluation {
+    readiness: JobOrderClosureReadiness;
+    autoResolvableDispositions: DirectusRecord[];
+}
+
+async function evaluateJobOrderClosure(
     jobOrderId: number,
     snapshot?: JobOrderClosureReadinessSnapshot
-): Promise<JobOrderClosureReadiness> {
+): Promise<JobOrderClosureEvaluation> {
     const [yields, inspections, routes, dispositions] = await Promise.all([
         snapshot
             ? Promise.resolve(snapshot.yields)
@@ -860,18 +870,19 @@ export async function getJobOrderClosureReadiness(
                 `Load QA routes for Job Order ${jobOrderId}`
             ),
         directusRows(
-            `/items/manufacturing_qa_dispositions?filter[job_order_id][_eq]=${jobOrderId}&fields=id,disposition_status&limit=-1`,
+            `/items/manufacturing_qa_dispositions?filter[job_order_id][_eq]=${jobOrderId}&fields=id,task_id,disposition_status,decision,supervisor_comments,resolved_at,resolved_by&limit=-1`,
             `Load QA dispositions for Job Order ${jobOrderId}`
         )
     ]);
 
     const blockers: JobOrderClosureBlocker[] = [];
-    const assessments = buildQAYieldAssessments(yields, inspections, routes);
+    const committedYields = yields.filter(isCommittedYieldLedger);
+    const assessments = buildQAYieldAssessments(committedYields, inspections, routes);
     const assessmentsByLedger = new Map(assessments.map((assessment) => [assessment.ledgerId, assessment] as const));
-    const yieldLedgerIds = yields
+    const yieldLedgerIds = committedYields
         .map((yieldRow) => numberValue(yieldRow.ledger_id ?? yieldRow.id))
         .filter((id) => id > 0);
-    const incompleteAssessments = yields
+    const incompleteAssessments = committedYields
         .map((yieldRow) => {
             const ledgerId = numberValue(yieldRow.ledger_id ?? yieldRow.id);
             const assessment = assessmentsByLedger.get(ledgerId);
@@ -903,17 +914,24 @@ export async function getJobOrderClosureReadiness(
         });
     }
 
-    const unresolvedDispositions = dispositions.filter((disposition) =>
-        text(disposition.disposition_status).toLowerCase() !== "resolved"
+    const dispositionReview = classifyClosureDispositions(
+        dispositions,
+        routes.map((route) => numberValue(route.jo_route_id ?? route.id)).filter((id) => id > 0),
+        yieldLedgerIds.length > 0 && incompleteAssessments.length === 0
     );
-    if (unresolvedDispositions.length > 0) {
+    for (const unresolved of dispositionReview.unresolved) {
+        const dispositionId = text(unresolved.disposition.id) || "Unknown";
+        const taskId = numberValue(unresolved.disposition.task_id);
+        const status = text(unresolved.disposition.disposition_status) || "Unknown";
+        const message = unresolved.reason === "route-not-linked"
+            ? `QA disposition ${dispositionId} is not linked to a route on this Job Order and must be resolved manually.`
+            : unresolved.reason === "yield-audits-incomplete"
+                ? `QA disposition ${dispositionId} remains pending until all committed yield audits have Passed outcomes.`
+                : `QA disposition ${dispositionId} has status "${status}" and must be resolved manually.`;
         blockers.push({
             code: "QA_DISPOSITIONS_UNRESOLVED",
-            message: "Resolve all QA dispositions before closing the Job Order.",
-            details: {
-                dispositionIds: unresolvedDispositions.map((disposition) => disposition.id),
-                statuses: unresolvedDispositions.map((disposition) => text(disposition.disposition_status) || "Unknown")
-            }
+            message,
+            details: { dispositionId, taskId: taskId || null, status }
         });
     }
 
@@ -938,12 +956,26 @@ export async function getJobOrderClosureReadiness(
         });
     }
 
-    return { ready: blockers.length === 0, blockers };
+    return {
+        readiness: {
+            ready: blockers.length === 0,
+            blockers,
+            autoResolvableDispositionCount: dispositionReview.autoResolvable.length
+        },
+        autoResolvableDispositions: dispositionReview.autoResolvable
+    };
 }
 
-async function assertClosurePrerequisites(jobOrderId: number): Promise<void> {
-    const readiness = await getJobOrderClosureReadiness(jobOrderId);
-    if (readiness.ready) return;
+export async function getJobOrderClosureReadiness(
+    jobOrderId: number,
+    snapshot?: JobOrderClosureReadinessSnapshot
+): Promise<JobOrderClosureReadiness> {
+    return (await evaluateJobOrderClosure(jobOrderId, snapshot)).readiness;
+}
+
+async function assertClosurePrerequisites(jobOrderId: number): Promise<DirectusRecord[]> {
+    const { readiness, autoResolvableDispositions } = await evaluateJobOrderClosure(jobOrderId);
+    if (readiness.ready) return autoResolvableDispositions;
 
     const firstBlocker = readiness.blockers[0];
     throw new JobOrderWorkflowError(
@@ -952,6 +984,80 @@ async function assertClosurePrerequisites(jobOrderId: number): Promise<void> {
         firstBlocker.code,
         { blockers: readiness.blockers }
     );
+}
+
+function originalDispositionFields(disposition: DirectusRecord): DirectusRecord {
+    return {
+        disposition_status: disposition.disposition_status ?? null,
+        decision: disposition.decision ?? null,
+        supervisor_comments: disposition.supervisor_comments ?? null,
+        resolved_at: disposition.resolved_at ?? null,
+        resolved_by: disposition.resolved_by ?? null
+    };
+}
+
+async function restoreClosureDispositions(dispositions: DirectusRecord[]): Promise<string[]> {
+    const failures: string[] = [];
+    for (const disposition of [...dispositions].reverse()) {
+        const id = text(disposition.id);
+        if (!id) {
+            failures.push("A disposition had no identifier.");
+            continue;
+        }
+        try {
+            await directusRequest(
+                `/items/manufacturing_qa_dispositions/${encodeURIComponent(id)}`,
+                `Restore QA disposition ${id}`,
+                { method: "PATCH", body: JSON.stringify(originalDispositionFields(disposition)) }
+            );
+        } catch (error) {
+            console.error(`QA disposition ${id} rollback failed:`, error);
+            failures.push(id);
+        }
+    }
+    return failures;
+}
+
+async function resolveClosureDispositions(
+    dispositions: DirectusRecord[],
+    actorUserId: number
+): Promise<DirectusRecord[]> {
+    const attempted: DirectusRecord[] = [];
+    try {
+        for (const disposition of dispositions) {
+            const id = text(disposition.id);
+            if (!id) throw new JobOrderWorkflowError("A route-linked QA disposition has no identifier.", 502, "QA_DISPOSITION_ID_MISSING");
+            attempted.push({ id, ...originalDispositionFields(disposition) });
+            const supervisorComments = text(disposition.supervisor_comments);
+            const closureNote = "Automatically resolved during Job Order closure after all committed yield audits passed.";
+            await directusRequest(
+                `/items/manufacturing_qa_dispositions/${encodeURIComponent(id)}`,
+                `Resolve QA disposition ${id} for Job Order closure`,
+                {
+                    method: "PATCH",
+                    body: JSON.stringify({
+                        disposition_status: "Resolved",
+                        decision: "Passed Reinspection",
+                        supervisor_comments: supervisorComments ? `${supervisorComments}\n${closureNote}` : closureNote,
+                        resolved_at: new Date().toISOString(),
+                        resolved_by: actorUserId
+                    })
+                }
+            );
+        }
+        return attempted;
+    } catch (error) {
+        const failures = await restoreClosureDispositions(attempted);
+        if (failures.length > 0) {
+            throw new JobOrderWorkflowError(
+                "QA disposition updates failed and one or more dispositions could not be restored.",
+                502,
+                "QA_DISPOSITION_ROLLBACK_INCOMPLETE",
+                { dispositionIds: failures }
+            );
+        }
+        throw error;
+    }
 }
 
 async function writeTransition(
@@ -1295,7 +1401,9 @@ export async function executeJobOrderWorkflow(
     }
     if (command.action === "complete-production") await assertProductionCanComplete(jobOrder);
     if (command.action === "terminate-production") await loadCommittedProductionRecords(jobOrderId);
-    if (command.action === "close") await assertClosurePrerequisites(jobOrderId);
+    const closureDispositions = command.action === "close"
+        ? await assertClosurePrerequisites(jobOrderId)
+        : [];
 
     if (command.action === "cancel") {
         const cancellation = await cancelJobOrderAndReturnMaterials({
@@ -1332,7 +1440,30 @@ export async function executeJobOrderWorkflow(
         await markReservationsWip(jobOrderId, command.actorUserId, formatPhtDateTime());
     }
 
-    const result = await writeTransition(jobOrder, command, previousStatus, actionTarget(command.action), stationContext);
+    let result: JobOrderWorkflowResult;
+    const commitTransition = () => writeTransition(
+        jobOrder,
+        command,
+        previousStatus,
+        actionTarget(command.action),
+        stationContext
+    );
+    if (command.action === "close") {
+        result = await commitClosureWithDispositionResolution(
+            closureDispositions,
+            (rows) => resolveClosureDispositions(rows, command.actorUserId as number),
+            commitTransition,
+            restoreClosureDispositions,
+            (dispositionIds) => new JobOrderWorkflowError(
+                "Job Order closure failed and one or more QA dispositions could not be restored.",
+                502,
+                "CLOSE_DISPOSITION_ROLLBACK_INCOMPLETE",
+                { dispositionIds }
+            )
+        );
+    } else {
+        result = await writeTransition(jobOrder, command, previousStatus, actionTarget(command.action), stationContext);
+    }
     if (command.action === "terminate-production") {
         const warnings = await reconcileSalesOrderAfterJobOrderEnd(jobOrderId, command.action);
         if (warnings.length > 0) result.warnings = warnings;

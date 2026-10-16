@@ -11,11 +11,25 @@ import { fetchEligibleBadStockLots, fetchEligibleFinishedGoodsLots } from "../..
 import type { EligibleFinishedGoodsLot } from "../../shared/finished-goods-lots-api";
 import { fetchJobOrderOperatorSnapshot, fetchUsersList } from "../../production-workflow/services/production-api";
 import { fetchJobOrderDailyYieldDetails } from "../services/job-order-inspection-qa-api";
-import { parseQAOutputQuantity, qaOutputAllocationMatchesLoggedTotal } from "../../manufacturing-qa/qa-output-allocation";
+import {
+    parseQAOutputQuantity,
+    qaOutputAllocationCapacityErrorMessage,
+    qaOutputAllocationWithinCapacity
+} from "../../manufacturing-qa/qa-output-allocation";
+import { isRejectedOutputRegistered } from "../../manufacturing-qa/rejected-output";
 import { expiryDateFromShelfLife } from "../utils/shelf-life-date";
 import { getCachedPromise } from "../utils/cached-promise";
 import { dailyQAParameterValueKey } from "../utils/saved-daily-qa-parameters";
-import { yieldEvidenceRequirements } from "../utils/yield-evidence";
+import { yieldEvidenceRequirementsForLedger } from "../utils/yield-evidence";
+import {
+    dailyQAAuditStateError,
+    isDailyQALabStatus,
+    latestDailyQAAudit,
+    parseDailyQAActionTaken,
+    parseDailyQALabStatus,
+    type DailyQAActionTaken,
+    type DailyQALabStatus
+} from "../../manufacturing-qa/daily-qa-outcome";
 import {
     validateManufacturingEvidenceBatch,
     validateManufacturingEvidenceChannelBatch
@@ -28,8 +42,6 @@ import type {
     JobOrderDailyYieldRoute,
     JobOrderDailyYieldRecord,
 } from "../types";
-
-const OUTPUT_ALLOCATION_ERROR = "The Good and Bad quantities must add up to the total output recorded by the operator.";
 
 interface UseDailyYieldAuditOptions {
     onSaved?: () => Promise<void> | void;
@@ -62,8 +74,9 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
     const [acidityPh, setAcidityPh] = useState("");
     const [sensoryStatus, setSensoryStatus] = useState<"Passed" | "Failed">("Passed");
     const [weightCheckPassed, setWeightCheckPassed] = useState(true);
-    const [dailyLabStatus, setDailyLabStatus] = useState<"Pending" | "Passed" | "Failed">("Passed");
-    const [dailyActionTaken, setDailyActionTaken] = useState<"Released" | "Quarantined" | "Scrapped">("Released");
+    const [dailyLabStatus, setDailyLabStatus] = useState<DailyQALabStatus | "">("");
+    const [savedLabStatus, setSavedLabStatus] = useState<DailyQALabStatus | null>(null);
+    const [dailyActionTaken, setDailyActionTaken] = useState<DailyQAActionTaken>("Released");
     const [dailyRemarks, setDailyRemarks] = useState("");
     const [dailyAcceptedOutputQuantity, setDailyAcceptedOutputQuantity] = useState("");
     const [dailyRejectedOutputQuantity, setDailyRejectedOutputQuantity] = useState("");
@@ -111,22 +124,28 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         return key;
     }), []);
 
-    const clearAllocationErrorWhenBalanced = useCallback((acceptedValue: string, rejectedValue: string) => {
-        if (!quantityAllocationError || !selectedYield) return;
+    const validateAllocationCapacity = useCallback((acceptedValue: string, rejectedValue: string) => {
         const acceptedQuantity = parseQAOutputQuantity(acceptedValue);
         const rejectedQuantity = parseQAOutputQuantity(rejectedValue);
-        if (
-            acceptedQuantity !== null
-            && rejectedQuantity !== null
-            && qaOutputAllocationMatchesLoggedTotal(
-                { acceptedQuantity, rejectedQuantity },
-                selectedYield.goodQuantity,
-                selectedYield.rejectedQuantity
-            )
-        ) {
+        if (acceptedQuantity === null || rejectedQuantity === null || !selectedYield || !selectedDetails) {
             setQuantityAllocationError(null);
+            return null;
         }
-    }, [quantityAllocationError, selectedYield]);
+        if (qaOutputAllocationWithinCapacity(
+            { acceptedQuantity, rejectedQuantity },
+            selectedYield.qaAllocationLimit
+        )) {
+            setQuantityAllocationError(null);
+            return null;
+        }
+        const message = qaOutputAllocationCapacityErrorMessage(
+            selectedYield.qaAllocationLimit,
+            selectedDetails.totalProducedQuantity,
+            selectedDetails.productUom
+        );
+        setQuantityAllocationError(message);
+        return message;
+    }, [selectedDetails, selectedYield]);
 
     const updateDailyOutputManufacturingDate = useCallback((manufacturingDate: string) => {
         setDailyOutputManufacturingDate(manufacturingDate);
@@ -431,7 +450,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         const previousQuantity = parseQAOutputQuantity(dailyAcceptedOutputQuantity) ?? 0;
         const nextQuantity = parseQAOutputQuantity(value);
         setDailyAcceptedOutputQuantity(value);
-        clearAllocationErrorWhenBalanced(value, dailyRejectedOutputQuantity);
+        validateAllocationCapacity(value, dailyRejectedOutputQuantity);
         if (
             previousQuantity <= 0
             && nextQuantity !== null
@@ -443,13 +462,13 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         ) {
             void loadOutputLots(selectedDetails, selectedYield);
         }
-    }, [clearAllocationErrorWhenBalanced, dailyAcceptedOutputQuantity, dailyRejectedOutputQuantity, loadOutputLots, selectedDetails, selectedYield]);
+    }, [dailyAcceptedOutputQuantity, dailyRejectedOutputQuantity, loadOutputLots, selectedDetails, selectedYield, validateAllocationCapacity]);
 
     const updateDailyRejectedOutputQuantity = useCallback((value: string) => {
         const previousQuantity = parseQAOutputQuantity(dailyRejectedOutputQuantity) ?? 0;
         const nextQuantity = parseQAOutputQuantity(value);
         setDailyRejectedOutputQuantity(value);
-        clearAllocationErrorWhenBalanced(dailyAcceptedOutputQuantity, value);
+        validateAllocationCapacity(dailyAcceptedOutputQuantity, value);
         if (
             previousQuantity <= 0
             && nextQuantity !== null
@@ -462,7 +481,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         ) {
             void loadRejectedOutputLots(selectedDetails, selectedYield);
         }
-    }, [clearAllocationErrorWhenBalanced, dailyAcceptedOutputQuantity, dailyRejectedOutputQuantity, loadRejectedOutputLots, selectedDetails, selectedYield]);
+    }, [dailyAcceptedOutputQuantity, dailyRejectedOutputQuantity, loadRejectedOutputLots, selectedDetails, selectedYield, validateAllocationCapacity]);
 
     const openAudit = useCallback((
         yieldRecord: JobOrderDailyYieldRecord,
@@ -474,6 +493,9 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         const preferredRoute = preferredRouteId
             ? pendingRoutes.find((route) => route.id === preferredRouteId)
             : null;
+        const savedAudit = latestDailyQAAudit(yieldRecord.audits);
+        const restoredLabStatus = parseDailyQALabStatus(savedAudit?.lab_status ?? savedAudit?.labStatus);
+        const restoredAction = parseDailyQAActionTaken(savedAudit?.action_taken ?? savedAudit?.actionTaken);
 
         setSelectedYield(yieldRecord);
         setSelectedDetails(details);
@@ -485,11 +507,12 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         setAcidityPh("");
         setSensoryStatus("Passed");
         setWeightCheckPassed(true);
-        setDailyLabStatus("Passed");
-        setDailyActionTaken("Released");
+        setDailyLabStatus(restoredLabStatus || "");
+        setSavedLabStatus(restoredLabStatus);
+        setDailyActionTaken(restoredAction || "Released");
         setDailyRemarks("");
         setDailyAcceptedOutputQuantity(String(yieldRecord.qaAcceptedQuantity ?? yieldRecord.goodQuantity));
-        setDailyRejectedOutputQuantity(String(yieldRecord.qaRejectedQuantity ?? yieldRecord.rejectedQuantity));
+        setDailyRejectedOutputQuantity(String(yieldRecord.qaRejectedQuantity ?? (yieldRecord.rejectedQuantity + yieldRecord.scrapQuantity)));
         setAcceptedEvidenceFiles([]);
         setAcceptedEvidenceError(null);
         setRejectedEvidenceFiles([]);
@@ -568,6 +591,11 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
 
     const buildRejectedOutputMetadata = useCallback((): DailyQAInspectionRequest["rejectedOutputMetadata"] | false => {
         if (!selectedYield) return false;
+        // Rejected output already registered against this ledger: the
+        // bad-stock storage lot renders read-only, so demanding a fresh
+        // selection here would dead-end the audit save. The persisted
+        // traceability stays authoritative and must not be re-registered.
+        if (isRejectedOutputRegistered(selectedYield.rejectedMmLotId)) return null;
         const rejectedQuantity = parseQAOutputQuantity(dailyRejectedOutputQuantity);
         if (rejectedQuantity === null) {
             toast.error("Enter a valid nonnegative rejected quantity with no more than six decimal places.");
@@ -628,13 +656,9 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
             toast.error("Enter valid nonnegative Good and Bad quantities with no more than six decimal places.");
             return;
         }
-        if (!qaOutputAllocationMatchesLoggedTotal(
-            { acceptedQuantity, rejectedQuantity },
-            selectedYield.goodQuantity,
-            selectedYield.rejectedQuantity
-        )) {
-            setQuantityAllocationError(OUTPUT_ALLOCATION_ERROR);
-            toast.error(OUTPUT_ALLOCATION_ERROR);
+        const capacityError = validateAllocationCapacity(String(acceptedQuantity), String(rejectedQuantity));
+        if (capacityError) {
+            toast.error(capacityError);
             return;
         }
         if (rejectedQuantity <= 0) {
@@ -675,19 +699,26 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
             setIsOpen(false);
             await onSaved?.();
         } catch (error) {
-            if (error instanceof DailyQARequestError && error.code === "QA_OUTPUT_TOTAL_MISMATCH") {
-                setQuantityAllocationError(OUTPUT_ALLOCATION_ERROR);
-                toast.error(OUTPUT_ALLOCATION_ERROR);
+            if (error instanceof DailyQARequestError && error.code === "QA_OUTPUT_CAP_EXCEEDED") {
+                setQuantityAllocationError(error.message);
+                toast.error(error.message);
             } else {
                 toast.error(error instanceof Error ? error.message : "Failed to register rejected output.");
             }
         } finally {
             setActionLoading(false);
         }
-    }, [buildRejectedOutputMetadata, dailyAcceptedOutputQuantity, dailyRejectedOutputQuantity, evidenceKeysFor, onSaved, rejectedEvidenceError, rejectedEvidenceFiles, selectedDetails, selectedYield]);
+    }, [buildRejectedOutputMetadata, dailyAcceptedOutputQuantity, dailyRejectedOutputQuantity, evidenceKeysFor, onSaved, rejectedEvidenceError, rejectedEvidenceFiles, selectedDetails, selectedYield, validateAllocationCapacity]);
 
     const submitAudit = useCallback(async () => {
         if (!selectedYield || !selectedDetails || auditSubmitInFlight.current || selectedYield.qaStatus === "Passed") return;
+
+        const auditStateError = dailyQAAuditStateError(dailyLabStatus, dailyActionTaken);
+        if (auditStateError) {
+            toast.error(auditStateError);
+            return;
+        }
+        if (!isDailyQALabStatus(dailyLabStatus)) return;
 
         const jobOrderId = selectedDetails.jobOrderId;
         const ledgerId = selectedYield.ledgerId;
@@ -697,13 +728,9 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
             toast.error("Enter valid nonnegative Good and Bad quantities with no more than six decimal places.");
             return;
         }
-        if (!qaOutputAllocationMatchesLoggedTotal(
-            { acceptedQuantity, rejectedQuantity },
-            selectedYield.goodQuantity,
-            selectedYield.rejectedQuantity
-        )) {
-            setQuantityAllocationError(OUTPUT_ALLOCATION_ERROR);
-            toast.error(OUTPUT_ALLOCATION_ERROR);
+        const capacityError = validateAllocationCapacity(String(acceptedQuantity), String(rejectedQuantity));
+        if (capacityError) {
+            toast.error(capacityError);
             return;
         }
         setQuantityAllocationError(null);
@@ -758,7 +785,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         const rejectedOutputMetadata = buildRejectedOutputMetadata();
         if (rejectedOutputMetadata === false) return;
 
-        const evidenceRequirements = yieldEvidenceRequirements(acceptedQuantity, rejectedQuantity);
+        const evidenceRequirements = yieldEvidenceRequirementsForLedger(acceptedQuantity, rejectedQuantity, isRejectedOutputRegistered(selectedYield.rejectedMmLotId));
         const savedAcceptedEvidence = selectedYield.evidence?.acceptedStock || [];
         const savedRejectedEvidence = selectedYield.evidence?.rejectedStock || [];
         const acceptedEvidenceErrorValue = acceptedEvidenceError
@@ -833,7 +860,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
                 acidityPh: resolvedAcidity || acidityPh,
                 sensoryStatus: failed ? "Failed" : sensoryStatus,
                 weightCheckPassed,
-                labStatus: failed ? "Failed" : dailyLabStatus,
+                labStatus: dailyLabStatus,
                 actionTaken: failed ? "Quarantined" : dailyActionTaken,
                 remarks: failed ? `[Critical Specs Failed] ${dailyRemarks}` : dailyRemarks,
                 qaParameters
@@ -932,10 +959,10 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
                     console.error("Daily QA was saved, but the queue could not be refreshed:", refreshError);
                 }
             } else {
-                if (error instanceof DailyQARequestError && error.code === "QA_OUTPUT_TOTAL_MISMATCH") {
-                    setQuantityAllocationError(OUTPUT_ALLOCATION_ERROR);
+                if (error instanceof DailyQARequestError && error.code === "QA_OUTPUT_CAP_EXCEEDED") {
+                    setQuantityAllocationError(error.message);
                     setSaveError(null);
-                    toast.error(OUTPUT_ALLOCATION_ERROR);
+                    toast.error(error.message);
                 } else {
                     setSaveError(message);
                     toast.error(message);
@@ -945,7 +972,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
             auditSubmitInFlight.current = false;
             setActionLoading(false);
         }
-    }, [acceptedEvidenceError, acceptedEvidenceFiles, acidityPh, buildRejectedOutputMetadata, dailyAcceptedOutputQuantity, dailyActionTaken, dailyLabStatus, dailyOutputBatchNo, dailyOutputEligibleLots, dailyOutputExpiryDate, dailyOutputLotsError, dailyOutputLotsLoading, dailyOutputManufacturingDate, dailyOutputMmLotId, dailyRejectedOutputQuantity, dailyRemarks, evidenceKeysFor, moisturePct, onSaved, qaParamValues, qaTemplates, rejectedEvidenceError, rejectedEvidenceFiles, routes, selectedDetails, selectedYield, sensoryStatus, weightCheckPassed]);
+    }, [acceptedEvidenceError, acceptedEvidenceFiles, acidityPh, buildRejectedOutputMetadata, dailyAcceptedOutputQuantity, dailyActionTaken, dailyLabStatus, dailyOutputBatchNo, dailyOutputEligibleLots, dailyOutputExpiryDate, dailyOutputLotsError, dailyOutputLotsLoading, dailyOutputManufacturingDate, dailyOutputMmLotId, dailyRejectedOutputQuantity, dailyRemarks, evidenceKeysFor, moisturePct, onSaved, qaParamValues, qaTemplates, rejectedEvidenceError, rejectedEvidenceFiles, routes, selectedDetails, selectedYield, sensoryStatus, validateAllocationCapacity, weightCheckPassed]);
 
     return {
         isOpen,
@@ -973,6 +1000,7 @@ export function useDailyYieldAudit({ onSaved, inspectorName }: UseDailyYieldAudi
         weightCheckPassed,
         setWeightCheckPassed,
         dailyLabStatus,
+        savedLabStatus,
         setDailyLabStatus,
         dailyActionTaken,
         setDailyActionTaken,

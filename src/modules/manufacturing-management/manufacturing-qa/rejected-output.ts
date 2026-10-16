@@ -9,6 +9,10 @@ export function shouldRegisterRejectedOutput(quantity: number, auditComplete: bo
     return Number.isFinite(quantity) && quantity > 0 && auditComplete;
 }
 
+export function isRejectedOutputRegistered(rejectedMmLotId: number | null | undefined): boolean {
+    return typeof rejectedMmLotId === "number" && Number.isFinite(rejectedMmLotId) && rejectedMmLotId > 0;
+}
+
 export function rejectedOutputLedgerPatch(metadata: RejectedOutputMetadata): Record<string, unknown> {
     return {
         rejected_mm_lot_id: metadata.mmLotId,
