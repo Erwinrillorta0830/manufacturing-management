@@ -420,7 +420,7 @@ async function syncYieldOutputAllocations(
     const params = new URLSearchParams({
         "filter[ledger_id][_eq]": String(ledgerId),
         "filter[allocation_type][_eq]": outputType,
-        fields: "allocation_id,ledger_id,allocation_type,allocation_key,quantity,mm_lot_id,batch_no,manufacturing_date,expiry_date,rejection_reason_id",
+        fields: "allocation_id,ledger_id,allocation_type,allocation_key,quantity,mm_lot_id,batch_no,manufacturing_date,expiry_date,rejection_reason_id,posted_at,posting_movement_id",
         limit: "-1"
     });
     const existingResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_allocations?${params.toString()}`, {
@@ -432,6 +432,9 @@ async function syncYieldOutputAllocations(
     const existingByKey = new Map(existingRows.map((row) => [textValue(row.allocation_key), row]));
     const requestedKeys = new Set(rows.map((row) => row.allocationKey));
     const existingIds = existingRows.map((row) => relationId(row.allocation_id, ["allocation_id", "id"])).filter(Boolean);
+    let hasPostedAllocations = existingRows.some((existing) =>
+        Boolean(textValue(existing.posted_at)) || relationId(existing.posting_movement_id, ["movement_id", "id"]) > 0
+    );
     if (existingIds.length > 0) {
         const movementTypeId = outputType === "ACCEPTED"
             ? 2
@@ -449,19 +452,18 @@ async function syncYieldOutputAllocations(
             signal
         });
         const postedMovements = await readDirectusRows(movementResponse, "Posted output allocation movement lookup");
-        if (postedMovements.length > 0) {
-            if (rows.length !== existingRows.length || existingRows.some((existing) => {
-                const requested = rows.find((row) => row.allocationKey === textValue(existing.allocation_key));
-                return !requested
-                    || Number(existing.quantity) !== requested.quantity
-                    || relationId(existing.mm_lot_id, ["lot_id", "mm_lot_id", "id"]) !== requested.mmLotId
-                    || textValue(existing.batch_no) !== requested.batchNo
-                    || textValue(existing.manufacturing_date).slice(0, 10) !== requested.manufacturingDate
-                    || textValue(existing.expiry_date).slice(0, 10) !== requested.expiryDate;
-            })) {
-                throw new DailyQAValidationError(409, "OUTPUT_ALLOCATION_ALREADY_POSTED", "Inventory has already been posted for these allocations. Their quantities, lots, batches, and dates cannot be changed.");
-            }
-        }
+        hasPostedAllocations ||= postedMovements.length > 0;
+    }
+    if (hasPostedAllocations && (rows.length !== existingRows.length || existingRows.some((existing) => {
+        const requested = rows.find((row) => row.allocationKey === textValue(existing.allocation_key));
+        return !requested
+            || Number(existing.quantity) !== requested.quantity
+            || relationId(existing.mm_lot_id, ["lot_id", "mm_lot_id", "id"]) !== requested.mmLotId
+            || textValue(existing.batch_no) !== requested.batchNo
+            || textValue(existing.manufacturing_date).slice(0, 10) !== requested.manufacturingDate
+            || textValue(existing.expiry_date).slice(0, 10) !== requested.expiryDate;
+    }))) {
+        throw new DailyQAValidationError(409, "OUTPUT_ALLOCATION_ALREADY_POSTED", "Inventory has already been posted for these allocations. Their quantities, lots, batches, and dates cannot be changed.");
     }
     const savedRows: DailyQAOutputAllocation[] = [];
 
@@ -495,7 +497,7 @@ async function syncYieldOutputAllocations(
             const created = await writeDirectusRecord(
                 "/items/manufacturing_job_order_yield_allocations",
                 "POST",
-                body,
+                { ...body, created_at: formatPhtDateTime() },
                 `Create ${outputType.toLowerCase()} output allocation`,
                 signal
             );
@@ -543,6 +545,67 @@ async function loadTransactionTypeId(typeName: string, signal?: AbortSignal): Pr
     return id;
 }
 
+const postedOutputMovementFields = "movement_id,transaction_type_id,version_id,created_by,created_at,branch_id,inventory_lot_id,mm_lot_id,quantity,remarks";
+
+async function readPostedOutputMovement(movementId: number, signal?: AbortSignal): Promise<Record<string, any>> {
+    return readDirectusRecord(
+        `/items/inventory_movements/${encodeURIComponent(String(movementId))}?fields=${encodeURIComponent(postedOutputMovementFields)}`,
+        `Read posted output movement ${movementId}`,
+        signal
+    );
+}
+
+function phtWallClockFromUtcDatabaseValue(value: unknown): string {
+    const raw = textValue(value);
+    if (!raw) {
+        throw new DailyQAValidationError(502, "OUTPUT_MOVEMENT_TIMESTAMP_MISSING", "The posted inventory movement did not return its creation timestamp.");
+    }
+    const isoValue = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw)
+        ? raw
+        : `${raw.replace(" ", "T")}Z`;
+    const instant = new Date(isoValue);
+    if (Number.isNaN(instant.getTime())) {
+        throw new DailyQAValidationError(502, "OUTPUT_MOVEMENT_TIMESTAMP_INVALID", "The posted inventory movement returned an invalid creation timestamp.");
+    }
+    return formatPhtDateTime(instant);
+}
+
+async function saveOutputAllocationPostingSnapshot(
+    row: DailyQAOutputAllocation,
+    movement: Record<string, any>,
+    createdBy: number,
+    signal?: AbortSignal
+): Promise<void> {
+    if (!row.allocationId) {
+        throw new DailyQAValidationError(503, "OUTPUT_ALLOCATION_REFERENCE_MISSING", "The output allocation must be saved before its posting details are recorded.");
+    }
+    const movementId = relationId(movement.movement_id, ["movement_id", "id"]);
+    const transactionTypeId = relationId(movement.transaction_type_id, ["transaction_type_id", "id"]);
+    const branchId = relationId(movement.branch_id, ["branch_id", "id"]);
+    const inventoryLotId = relationId(movement.inventory_lot_id, ["inventory_lot_id", "id"]);
+    const quantity = Number(movement.quantity);
+    if (!movementId || !transactionTypeId || !branchId || !inventoryLotId || !Number.isFinite(quantity)) {
+        throw new DailyQAValidationError(502, "OUTPUT_MOVEMENT_SNAPSHOT_INVALID", "The posted inventory movement did not return its required posting details.");
+    }
+    await patchDirectusRecord(
+        `/items/manufacturing_job_order_yield_allocations/${encodeURIComponent(String(row.allocationId))}`,
+        {
+            posting_movement_id: movementId,
+            posting_transaction_type_id: transactionTypeId,
+            posting_version_id: relationId(movement.version_id, ["version_id", "id"]) || null,
+            posted_at: phtWallClockFromUtcDatabaseValue(movement.created_at),
+            posted_by: relationId(movement.created_by, ["user_id", "id"]) || createdBy,
+            posting_branch_id: branchId,
+            posting_inventory_lot_id: inventoryLotId,
+            posting_mm_lot_id: relationId(movement.mm_lot_id, ["lot_id", "mm_lot_id", "id"]) || null,
+            posting_quantity: quantity,
+            posting_remarks: movement.remarks ?? null
+        },
+        `Save posting details for output allocation ${row.allocationId}`,
+        signal
+    );
+}
+
 async function postOutputAllocationMovement(input: {
     jobOrderId: number;
     jobOrderNo: string;
@@ -557,7 +620,7 @@ async function postOutputAllocationMovement(input: {
     originalBatchNo?: string | null;
     originalYieldQuantity?: number;
     signal?: AbortSignal;
-}): Promise<void> {
+}): Promise<Record<string, any>> {
     if (!input.row.allocationId) {
         throw new DailyQAValidationError(503, "OUTPUT_ALLOCATION_REFERENCE_MISSING", "The output allocation must be saved before its inventory movement is posted.");
     }
@@ -567,7 +630,7 @@ async function postOutputAllocationMovement(input: {
         "filter[product_id][_eq]": String(input.productId),
         "filter[branch_id][_eq]": String(input.branchId),
         "filter[source_document_detail_id][_eq]": String(input.row.allocationId),
-        fields: "movement_id,source_document_detail_id,quantity",
+        fields: `movement_id,source_document_detail_id,${postedOutputMovementFields}`,
         limit: "2"
     });
     const existingResponse = await fetch(`${DIRECTUS_URL}/items/inventory_movements?${movementQuery.toString()}`, {
@@ -607,7 +670,7 @@ async function postOutputAllocationMovement(input: {
             `Reconcile output allocation movement ${movementId}`,
             input.signal
         );
-        return;
+        return readPostedOutputMovement(movementId, input.signal);
     }
 
     if (input.outputType === "ACCEPTED" && input.isFirstAcceptedRow && input.originalBatchNo && input.originalYieldQuantity !== undefined) {
@@ -644,7 +707,7 @@ async function postOutputAllocationMovement(input: {
                 `Reconcile original finished-goods movement ${movementId}`,
                 input.signal
             );
-            return;
+            return readPostedOutputMovement(movementId, input.signal);
         }
     }
 
@@ -682,17 +745,22 @@ async function postOutputAllocationMovement(input: {
                 `Reconcile original rejected-output movement ${movementId}`,
                 input.signal
             );
-            return;
+            return readPostedOutputMovement(movementId, input.signal);
         }
     }
 
-    await writeDirectusRecord(
+    const createdMovement = await writeDirectusRecord(
         "/items/inventory_movements",
         "POST",
         movementPayload,
         `${input.outputType.toLowerCase()} output inventory movement`,
         input.signal
     );
+    const createdMovementId = relationId(createdMovement?.movement_id ?? createdMovement?.id, ["movement_id", "id"]);
+    if (!createdMovementId) {
+        throw new DailyQAValidationError(502, "OUTPUT_MOVEMENT_WRITE_UNCONFIRMED", "Directus did not return the posted inventory movement reference.");
+    }
+    return readPostedOutputMovement(createdMovementId, input.signal);
 }
 
 function metadataMatches(current: Record<string, any>, requested: DailyQAOutputMetadata): boolean {
@@ -886,7 +954,7 @@ async function registerAcceptedOutputAllocations(input: {
             if (!inventoryLotId) {
                 throw new MmLotError("The finished-goods inventory lot could not be verified after creation.", 503, "MM_INVENTORY_LOT_WRITE_FAILED");
             }
-            await postOutputAllocationMovement({
+            const postedMovement = await postOutputAllocationMovement({
                 jobOrderId: input.jobOrderId,
                 jobOrderNo: input.jobOrderNo,
                 productId: input.productId,
@@ -901,6 +969,7 @@ async function registerAcceptedOutputAllocations(input: {
                 originalYieldQuantity: Number(input.ledger.yield_quantity ?? 0),
                 signal: input.signal
             });
+            await saveOutputAllocationPostingSnapshot(row, postedMovement, input.createdBy, input.signal);
         } catch (error) {
             if (error instanceof DailyQAValidationError) throw error;
             if (error instanceof MmLotError) {
@@ -932,7 +1001,7 @@ async function registerRejectedOutputAllocations(input: {
             createdBy: input.createdBy,
             signal: input.signal
         });
-        await postOutputAllocationMovement({
+        const postedMovement = await postOutputAllocationMovement({
             jobOrderId: input.jobOrderId,
             jobOrderNo: input.jobOrderNo,
             productId: input.productId,
@@ -944,6 +1013,7 @@ async function registerRejectedOutputAllocations(input: {
             outputType: "REJECTED",
             signal: input.signal
         });
+        await saveOutputAllocationPostingSnapshot(row, postedMovement, input.createdBy, input.signal);
     }
 }
 
