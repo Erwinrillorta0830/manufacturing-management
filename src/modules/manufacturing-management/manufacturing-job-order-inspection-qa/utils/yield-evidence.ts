@@ -14,6 +14,22 @@ export function yieldEvidenceRequirements(acceptedQuantity: number, rejectedQuan
     };
 }
 
+export function yieldEvidenceRequirementsForLedger(
+    acceptedQuantity: number,
+    rejectedQuantity: number,
+    rejectedOutputRegistered: boolean
+): YieldEvidenceRequirements {
+    const requirements = yieldEvidenceRequirements(acceptedQuantity, rejectedQuantity);
+    // Rejected evidence is required alongside the registration that releases
+    // the rejected stock. A ledger whose rejected output is already registered
+    // cannot re-attach or replace it, so the requirement must not block the
+    // remaining audit save.
+    if (rejectedOutputRegistered) {
+        return { ...requirements, rejectedStock: false };
+    }
+    return requirements;
+}
+
 export function yieldEvidenceChannelLabel(channel: YieldEvidenceChannel): string {
     switch (channel) {
         case "INSPECTOR_SHIFT": return "Inspector / Shift Evidence";

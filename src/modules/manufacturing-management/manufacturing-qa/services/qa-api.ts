@@ -696,8 +696,15 @@ export async function registerRejectedOutputAllocation(payload: {
         headers,
         body
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Failed to register rejected output.");
+    const data = await res.json().catch(() => null) as { error?: string; code?: string } | null;
+    if (!res.ok) {
+        throw new DailyQARequestError(
+            data?.error || `Failed to register rejected output (HTTP ${res.status}).`,
+            typeof data?.code === "string" ? data.code : null,
+            res.status >= 500,
+            res.status >= 500
+        );
+    }
     return data;
 }
 

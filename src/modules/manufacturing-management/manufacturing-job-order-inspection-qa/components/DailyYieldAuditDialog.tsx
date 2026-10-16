@@ -39,7 +39,17 @@ import {
 import { FinishedGoodsLotSelect } from "../../shared/FinishedGoodsLotSelect";
 import { formatPhtTimestamp12Hour, phtTimestampToEpoch } from "../../shared/pht-date";
 import { isManufacturingEvidenceVideo } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
-import { parseQAOutputQuantity } from "@/modules/manufacturing-management/manufacturing-qa/qa-output-allocation";
+import {
+    parseQAOutputQuantity,
+    qaOutputAllocationCapacityErrorMessage,
+    qaOutputAllocationMatchesLoggedTotal,
+    qaOutputAllocationWithinCapacity,
+    sumQAOutputQuantities
+} from "@/modules/manufacturing-management/manufacturing-qa/qa-output-allocation";
+import {
+    dailyQAAuditStateError,
+    type DailyQALabStatus
+} from "@/modules/manufacturing-management/manufacturing-qa/daily-qa-outcome";
 import { dailyQAParameterValueKey } from "../utils/saved-daily-qa-parameters";
 import type { DailyYieldAuditController } from "../hooks/useDailyYieldAudit";
 import type { DailyYieldQALog, DailyYieldQAParameter, JobOrderDailyYieldEvidence } from "../types";
@@ -83,9 +93,36 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
     const yieldRecord = controller.selectedYield;
     const details = controller.selectedDetails;
     const shiftName = displayShiftName || yieldRecord?.shiftName || "Shift not specified";
-    const acceptedOutputQuantity = parseQAOutputQuantity(controller.dailyAcceptedOutputQuantity) ?? 0;
-    const rejectedOutputQuantity = parseQAOutputQuantity(controller.dailyRejectedOutputQuantity) ?? 0;
-    const loggedOutputQuantity = Number(yieldRecord?.goodQuantity || 0) + Number(yieldRecord?.rejectedQuantity || 0);
+    const parsedAcceptedOutputQuantity = parseQAOutputQuantity(controller.dailyAcceptedOutputQuantity);
+    const parsedRejectedOutputQuantity = parseQAOutputQuantity(controller.dailyRejectedOutputQuantity);
+    const acceptedOutputQuantity = parsedAcceptedOutputQuantity ?? 0;
+    const rejectedOutputQuantity = parsedRejectedOutputQuantity ?? 0;
+    const loggedOutputQuantity = sumQAOutputQuantities(
+        yieldRecord?.goodQuantity,
+        yieldRecord?.rejectedQuantity,
+        yieldRecord?.scrapQuantity
+    ) ?? 0;
+    const auditedOutputQuantity = parsedAcceptedOutputQuantity !== null && parsedRejectedOutputQuantity !== null
+        ? sumQAOutputQuantities(parsedAcceptedOutputQuantity, parsedRejectedOutputQuantity)
+        : null;
+    const hasAllocationVariance = auditedOutputQuantity !== null && Boolean(yieldRecord)
+        && !qaOutputAllocationMatchesLoggedTotal(
+            { acceptedQuantity: acceptedOutputQuantity, rejectedQuantity: rejectedOutputQuantity },
+            yieldRecord?.goodQuantity,
+            sumQAOutputQuantities(yieldRecord?.rejectedQuantity, yieldRecord?.scrapQuantity)
+        );
+    const allocationExceedsCapacity = auditedOutputQuantity !== null && Boolean(yieldRecord)
+        && !qaOutputAllocationWithinCapacity(
+            { acceptedQuantity: acceptedOutputQuantity, rejectedQuantity: rejectedOutputQuantity },
+            yieldRecord?.qaAllocationLimit
+        );
+    const quantityAllocationError = controller.quantityAllocationError || (allocationExceedsCapacity
+        ? qaOutputAllocationCapacityErrorMessage(
+            yieldRecord?.qaAllocationLimit,
+            details?.totalProducedQuantity,
+            details?.productUom
+        )
+        : null);
     const hasOutput = loggedOutputQuantity > 0;
     const requiresOutputTraceability = acceptedOutputQuantity > 0;
     const requiresRejectedOutputTraceability = rejectedOutputQuantity > 0;
@@ -94,6 +131,8 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
     const shelfLifeDays = Number(details?.productShelfLifeDays);
     const hasValidShelfLifeDays = Number.isSafeInteger(shelfLifeDays) && shelfLifeDays > 0;
     const isVerified = yieldRecord?.qaStatus === "Passed";
+    const labDispositionError = dailyQAAuditStateError(controller.dailyLabStatus, controller.dailyActionTaken);
+    const confirmsLabVerification = controller.savedLabStatus === "Pending" && controller.dailyLabStatus === "Passed";
     const rejectedOutputRegistered = Boolean(yieldRecord?.rejectedMmLotId);
     const canRegisterRejectedOutput = Boolean(
         requiresRejectedOutputTraceability
@@ -733,14 +772,14 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                             step="0.000001"
                                             value={controller.dailyAcceptedOutputQuantity}
                                             onChange={(event) => controller.setDailyAcceptedOutputQuantity(event.target.value)}
-                                            className={`h-9 rounded-lg bg-background text-foreground text-xs font-mono ${controller.quantityAllocationError ? "border-destructive focus-visible:ring-destructive" : "border-border/80"}`}
-                                            aria-invalid={Boolean(controller.quantityAllocationError)}
-                                            aria-describedby={controller.quantityAllocationError ? "daily-yield-output-allocation-error" : undefined}
+                                            className={`h-9 rounded-lg bg-background text-foreground text-xs font-mono ${quantityAllocationError ? "border-destructive focus-visible:ring-destructive" : "border-border/80"}`}
+                                            aria-invalid={Boolean(quantityAllocationError)}
+                                            aria-describedby={quantityAllocationError ? "daily-yield-output-allocation-error" : undefined}
                                             disabled={controller.actionLoading || isVerified || !hasOutput}
                                             required={hasOutput}
                                         />
                                         <p className="text-[10px] text-muted-foreground">
-                                            Good + Bad must equal the logged output total of {numericText(loggedOutputQuantity)}.
+                                            Job Order production: {numericText(details?.totalProducedQuantity)} {details?.productUom || "units"}. Available for this audit: {numericText(yieldRecord?.qaAllocationLimit)} {details?.productUom || "units"}. Operator logged: {numericText(loggedOutputQuantity)}.
                                         </p>
                                     </div>
 
@@ -855,7 +894,9 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                                 Rejected Output Traceability
                                             </h4>
                                             <p className="text-[9px] text-muted-foreground mt-0.5">
-                                                {numericText(controller.dailyRejectedOutputQuantity)} rejected units will be registered in the configured bad-stock branch after this audit is complete.
+                                                {rejectedOutputRegistered
+                                                    ? `${numericText(controller.dailyRejectedOutputQuantity)} rejected units are already registered in the configured bad-stock branch.`
+                                                    : `${numericText(controller.dailyRejectedOutputQuantity)} rejected units will be registered in the configured bad-stock branch after this audit is complete.`}
                                             </p>
                                         </div>
                                     </div>
@@ -882,17 +923,23 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                                 step="0.000001"
                                                 value={controller.dailyRejectedOutputQuantity}
                                                 onChange={(event) => controller.setDailyRejectedOutputQuantity(event.target.value)}
-                                                className={`h-9 rounded-lg bg-background text-foreground text-xs font-mono ${controller.quantityAllocationError ? "border-destructive focus-visible:ring-destructive" : "border-rose-500/30"}`}
-                                                aria-invalid={Boolean(controller.quantityAllocationError)}
-                                                aria-describedby={controller.quantityAllocationError ? "daily-yield-output-allocation-error" : undefined}
+                                                className={`h-9 rounded-lg bg-background text-foreground text-xs font-mono ${quantityAllocationError ? "border-destructive focus-visible:ring-destructive" : "border-rose-500/30"}`}
+                                                aria-invalid={Boolean(quantityAllocationError)}
+                                                aria-describedby={quantityAllocationError ? "daily-yield-output-allocation-error" : undefined}
                                                 disabled={controller.actionLoading || isVerified || rejectedOutputRegistered || !hasOutput}
                                                 required={hasOutput}
                                             />
                                         </div>
 
-                                        {controller.quantityAllocationError && (
+                                        {hasAllocationVariance && auditedOutputQuantity !== null && (
+                                            <div role="status" className="sm:col-span-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+                                                Yield Variance Detected: QA Audited ({numericText(auditedOutputQuantity)} {details?.productUom || "units"}) vs. Supervisor Logged ({numericText(loggedOutputQuantity)} {details?.productUom || "units"}). Add an optional explanation in Inspector remarks / Lab Comments.
+                                            </div>
+                                        )}
+
+                                        {quantityAllocationError && (
                                             <div id="daily-yield-output-allocation-error" role="alert" className="sm:col-span-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                                                {controller.quantityAllocationError}
+                                                {quantityAllocationError}
                                             </div>
                                         )}
 
@@ -976,7 +1023,7 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                         </div>
                                     </div>
 
-                                    {requiresRejectedOutputTraceability && !isVerified && (
+                                    {requiresRejectedOutputTraceability && !isVerified && !rejectedOutputRegistered && (
                                         <div className="rounded-lg border border-rose-500/20 bg-rose-500/[0.03] p-3">
                                             <p className="mb-2 text-[10px] font-semibold text-rose-800 dark:text-rose-300">
                                                 QA Rejected Stock Evidence {!hasSavedRejectedEvidence && <span className="text-destructive">*</span>}
@@ -989,7 +1036,7 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                                 multiple
                                                 error={controller.rejectedEvidenceError}
                                                 required={!hasSavedRejectedEvidence}
-                                                disabled={controller.actionLoading || rejectedOutputRegistered}
+                                                disabled={controller.actionLoading}
                                                 active={controller.isOpen}
                                                 onFilesChange={controller.setRejectedEvidence}
                                             />
@@ -1044,7 +1091,7 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                             <SelectValue placeholder="Select action..." />
                                         </SelectTrigger>
                                         <SelectContent position="popper" className="z-[9999]">
-                                            <SelectItem value="Released" className="text-xs">Release Shift Yield</SelectItem>
+                                            <SelectItem value="Released" disabled={controller.dailyLabStatus === "Pending"} className="text-xs">Release Shift Yield</SelectItem>
                                             <SelectItem value="Quarantined" className="text-xs">Hold / Quarantine Yield</SelectItem>
                                             <SelectItem value="Scrapped" className="text-xs">Scrap Yield Lot</SelectItem>
                                         </SelectContent>
@@ -1054,8 +1101,8 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                     <Label htmlFor="daily-yield-lab" className="text-foreground font-bold text-xs">Lab Status</Label>
                                     <Select
                                         disabled={isVerified}
-                                        value={controller.dailyLabStatus}
-                                        onValueChange={(val) => controller.setDailyLabStatus(val as "Pending" | "Passed" | "Failed")}
+                                        value={controller.dailyLabStatus || ""}
+                                        onValueChange={(val) => controller.setDailyLabStatus(val as DailyQALabStatus)}
                                     >
                                         <SelectTrigger id="daily-yield-lab" className="h-9 w-full text-xs font-medium bg-background border-border">
                                             <SelectValue placeholder="Select lab status..." />
@@ -1069,6 +1116,17 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                 </div>
                             </div>
 
+                            {labDispositionError && (
+                                <div role="alert" className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-800 dark:text-amber-200">
+                                    {labDispositionError}
+                                </div>
+                            )}
+                            {confirmsLabVerification && (
+                                <div role="status" className="rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs font-semibold text-sky-800 dark:text-sky-200">
+                                    This changes the saved Lab Status from Pending Analysis to Passed. Saving confirms that the laboratory result has been verified.
+                                </div>
+                            )}
+
                             {/* Failed Parameter Warning Alert */}
                             {controller.hasFailedParam && (
                                 <div className="p-2.5 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive flex items-center gap-1.5 text-xs font-semibold">
@@ -1079,8 +1137,8 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
 
                             {/* Inspector Remarks / Notes */}
                             <div className="space-y-1">
-                                <Label htmlFor="daily-yield-remarks" className="text-foreground font-bold text-xs">Inspector remarks / Lab Comments</Label>
-                                <textarea id="daily-yield-remarks" disabled={isVerified} value={controller.dailyRemarks} onChange={(event) => controller.setDailyRemarks(event.target.value)} className="flex min-h-[52px] w-full rounded-md border border-border bg-background text-foreground px-3 py-1.5 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary" placeholder="Details about moisture logs, physicochemical traits or sensory notes..." />
+                                <Label htmlFor="daily-yield-remarks" className="text-foreground font-bold text-xs">Inspector remarks / Lab Comments (Optional)</Label>
+                                <textarea id="daily-yield-remarks" disabled={isVerified} value={controller.dailyRemarks} onChange={(event) => controller.setDailyRemarks(event.target.value)} className="flex min-h-[52px] w-full rounded-md border border-border bg-background text-foreground px-3 py-1.5 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary" placeholder="Details about the audit, including an optional yield variance explanation..." />
                             </div>
                         </div>
                     </div>
@@ -1090,7 +1148,7 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                     <DialogFooter className="shrink-0 pt-3 mt-1 border-t border-border gap-2 flex items-center justify-end bg-background">
                         <Button type="button" variant="outline" onClick={controller.closeAudit} disabled={controller.actionLoading} title={controller.actionLoading ? "Wait for the save to finish or time out." : undefined} className="border-border hover:bg-muted text-foreground min-h-10 text-xs font-semibold">{isVerified ? "Close" : "Cancel"}</Button>
                         {!isVerified && (
-                            <Button type="submit" disabled={controller.actionLoading || controller.referenceLoading || controller.saveOutcomeUnclear} title={controller.referenceLoading ? "Wait for the audit reference data to finish loading." : controller.saveOutcomeUnclear ? "Close and reopen this yield to check its latest saved status before retrying." : undefined} className="bg-primary hover:bg-primary/95 text-white font-bold min-h-10 text-xs px-4">
+                            <Button type="submit" disabled={controller.actionLoading || controller.referenceLoading || controller.saveOutcomeUnclear || Boolean(labDispositionError)} title={labDispositionError || (controller.referenceLoading ? "Wait for the audit reference data to finish loading." : controller.saveOutcomeUnclear ? "Close and reopen this yield to check its latest saved status before retrying." : undefined)} className="bg-primary hover:bg-primary/95 text-white font-bold min-h-10 text-xs px-4">
                                 {controller.actionLoading ? (
                                     <span role="status" className="inline-flex items-center gap-2">
                                         <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -1105,38 +1163,40 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
             </DialogContent>
             {previewEvidence && (
                 <Dialog open={evidenceExpanded} onOpenChange={setEvidenceExpanded}>
-                    <DialogContent className="w-[calc(100vw-2rem)] max-w-4xl p-4 sm:p-5 gap-3">
-                        <DialogHeader>
-                            <DialogTitle className="truncate text-sm font-bold" title={previewEvidence.fileName || undefined}>
+                    <DialogContent className="flex h-[calc(100dvh-2rem)] max-h-[52rem] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
+                        <DialogHeader className="min-w-0 shrink-0 px-4 pb-3 pr-14 pt-4 text-left">
+                            <DialogTitle className="block min-w-0 truncate text-sm font-bold" title={previewEvidence.fileName || undefined}>
                                 {previewEvidence.fileName || "Evidence file"}
                             </DialogTitle>
-                            <DialogDescription className="text-[11px]">
+                            <DialogDescription className="min-w-0 break-words text-[11px] leading-5">
                                 {previewEvidence.mimeType || "Evidence media"} · Uploaded by {auditActorName(previewEvidence.uploadedById, "Logged By", controller.inspectorNamesById)} · {formatAuditTimestamp(previewEvidence.uploadedAt)}
                                 {typeof previewEvidence.fileSize === "number"
                                     ? ` · ${(previewEvidence.fileSize / 1024 / 1024).toFixed(2)} MB`
                                     : ""}
                             </DialogDescription>
                         </DialogHeader>
-                        {isManufacturingEvidenceVideo(previewEvidence.mimeType, previewEvidence.fileName) ? (
-                            <video
-                                src={previewEvidence.url}
-                                controls
-                                playsInline
-                                preload="metadata"
-                                className="mx-auto max-h-[75vh] w-full rounded-lg border border-border bg-black object-contain"
-                            />
-                        ) : (
-                            <Image
-                                src={previewEvidence.url}
-                                alt={previewEvidence.fileName || "Evidence file"}
-                                width={1280}
-                                height={720}
-                                unoptimized
-                                className="mx-auto max-h-[75vh] w-auto max-w-full rounded-lg border border-border object-contain bg-muted/20"
-                            />
-                        )}
-                        <DialogFooter className="sm:justify-end">
-                            <Button type="button" variant="outline" onClick={() => setEvidenceExpanded(false)}>
+                        <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-muted/20 p-3 sm:p-4">
+                            {isManufacturingEvidenceVideo(previewEvidence.mimeType, previewEvidence.fileName) ? (
+                                <video
+                                    src={previewEvidence.url}
+                                    controls
+                                    playsInline
+                                    preload="metadata"
+                                    className="h-full max-h-full w-full max-w-full rounded-lg border border-border bg-black object-contain"
+                                />
+                            ) : (
+                                <Image
+                                    src={previewEvidence.url}
+                                    alt={previewEvidence.fileName || "Evidence file"}
+                                    width={1280}
+                                    height={720}
+                                    unoptimized
+                                    className="h-auto max-h-full w-auto max-w-full rounded-lg border border-border object-contain"
+                                />
+                            )}
+                        </div>
+                        <DialogFooter className="w-full shrink-0 flex-row justify-end border-t border-border bg-background px-4 py-3">
+                            <Button type="button" variant="outline" onClick={() => setEvidenceExpanded(false)} className="min-h-10 min-w-20">
                                 Close
                             </Button>
                         </DialogFooter>

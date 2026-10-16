@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { yieldEvidenceChannelLabel, yieldEvidenceRequirements } from "./yield-evidence.ts";
+import { yieldEvidenceChannelLabel, yieldEvidenceRequirements, yieldEvidenceRequirementsForLedger } from "./yield-evidence.ts";
 import { validateManufacturingEvidenceChannelBatch } from "../../production-workflow/services/production-yield-image.ts";
 
 test("accepted and rejected evidence are required only for positive quantities", () => {
@@ -18,6 +18,24 @@ test("accepted and rejected evidence are required only for positive quantities",
         inspectorShift: true,
         acceptedStock: false,
         rejectedStock: true
+    });
+});
+
+test("registered rejected output no longer requires rejected evidence", () => {
+    assert.deepEqual(yieldEvidenceRequirementsForLedger(1, 1, true), {
+        inspectorShift: true,
+        acceptedStock: true,
+        rejectedStock: false
+    });
+    assert.deepEqual(yieldEvidenceRequirementsForLedger(1, 1, false), {
+        inspectorShift: true,
+        acceptedStock: true,
+        rejectedStock: true
+    });
+    assert.deepEqual(yieldEvidenceRequirementsForLedger(0, 0, true), {
+        inspectorShift: true,
+        acceptedStock: false,
+        rejectedStock: false
     });
 });
 

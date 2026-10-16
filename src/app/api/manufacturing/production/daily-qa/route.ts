@@ -7,7 +7,11 @@ import {
     resolveDispositionMetadata,
     updateDisposition
 } from "@/app/api/manufacturing/qa/_dispositions";
-import { deriveDailyQAOutcome } from "@/modules/manufacturing-management/manufacturing-qa/daily-qa-outcome";
+import {
+    dailyQAAuditStateError,
+    deriveDailyQAOutcome,
+    latestDailyQAAuditsByRoute
+} from "@/modules/manufacturing-management/manufacturing-qa/daily-qa-outcome";
 import { hasPagination, paginate } from "../../_pagination";
 import { JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
 import { AuthenticatedActorError, requireManufacturingActorId } from "../_authenticated-actor";
@@ -19,11 +23,20 @@ import {
 import { formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 import {
     rejectedOutputLedgerPatch,
+    isRejectedOutputRegistered,
     shouldRegisterRejectedOutput,
     type RejectedOutputMetadata
 } from "@/modules/manufacturing-management/manufacturing-qa/rejected-output";
 import { isCommittedYieldLedger } from "../_qa-accepted-output";
-import { parseQAOutputQuantity, qaOutputAllocationMatchesLoggedTotal, type QAOutputAllocation } from "@/modules/manufacturing-management/manufacturing-qa/qa-output-allocation";
+import {
+    calculateQAOutputAllocationCapacity,
+    parseQAOutputQuantity,
+    qaOutputAllocationCapacityErrorMessage,
+    qaOutputAllocationWithinCapacity,
+    sumQAOutputQuantities,
+    type QAOutputAllocation,
+    type QAOutputAllocationCapacity
+} from "@/modules/manufacturing-management/manufacturing-qa/qa-output-allocation";
 import { buildQaStartPatch } from "../_qa-start-fields";
 import {
     persistYieldEvidenceUploads,
@@ -33,7 +46,7 @@ import {
     type YieldEvidenceRow,
     type YieldEvidenceUpload
 } from "../_yield-evidence";
-import { yieldEvidenceRequirements } from "@/modules/manufacturing-management/manufacturing-job-order-inspection-qa/utils/yield-evidence";
+import { yieldEvidenceRequirementsForLedger } from "@/modules/manufacturing-management/manufacturing-job-order-inspection-qa/utils/yield-evidence";
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "test";
@@ -138,23 +151,75 @@ function normalizeOutputMetadata(value: unknown, required: boolean): DailyQAOutp
 }
 
 function normalizeQAOutputAllocation(body: Record<string, any>, ledger: Record<string, any>): QAOutputAllocation {
+    const loggedRejectedQuantity = sumQAOutputQuantities(ledger.rejected_quantity, ledger.scrap_quantity);
     const acceptedQuantity = parseQAOutputQuantity(
         body?.acceptedQuantity ?? ledger.qa_accepted_quantity ?? ledger.yield_quantity ?? 0
     );
     const rejectedQuantity = parseQAOutputQuantity(
-        body?.rejectedQuantity ?? ledger.qa_rejected_quantity ?? ledger.rejected_quantity ?? 0
+        body?.rejectedQuantity ?? ledger.qa_rejected_quantity ?? loggedRejectedQuantity ?? 0
     );
     if (acceptedQuantity === null || rejectedQuantity === null) {
         throw new DailyQAValidationError(422, "INVALID_QA_OUTPUT_QUANTITY", "Accepted and rejected quantities must be nonnegative numbers with no more than six decimal places.");
     }
-    if (!qaOutputAllocationMatchesLoggedTotal(
-        { acceptedQuantity, rejectedQuantity },
-        ledger.yield_quantity ?? 0,
-        ledger.rejected_quantity ?? 0
-    )) {
-        throw new DailyQAValidationError(422, "QA_OUTPUT_TOTAL_MISMATCH", "Accepted and rejected quantities must add up to the total output recorded by the operator.");
-    }
     return { acceptedQuantity, rejectedQuantity };
+}
+
+function productUomValue(jobOrder: Record<string, any>): string {
+    const unit = jobOrder.product_id?.unit_of_measurement;
+    if (unit && typeof unit === "object") {
+        return textValue(unit.unit_shortcut) || textValue(unit.unit_name) || "units";
+    }
+    return textValue(unit) || "units";
+}
+
+async function loadQAOutputAllocationCapacity(
+    jobOrderId: number,
+    ledgerId: number,
+    signal?: AbortSignal
+): Promise<QAOutputAllocationCapacity> {
+    const query = new URLSearchParams({
+        "filter[job_order_id][_eq]": String(jobOrderId),
+        limit: "-1",
+        fields: "ledger_id,commit_status,yield_quantity,rejected_quantity,scrap_quantity,qa_accepted_quantity,qa_rejected_quantity"
+    });
+    let rows: any[];
+    try {
+        const response = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?${query.toString()}`, {
+            headers,
+            cache: "no-store",
+            signal
+        });
+        rows = await readDirectusRows(response, "Job Order production-capacity lookup");
+    } catch (error) {
+        throw new DailyQAValidationError(
+            502,
+            "QA_OUTPUT_CAPACITY_UNAVAILABLE",
+            error instanceof Error ? error.message : "Job Order production capacity could not be verified."
+        );
+    }
+
+    const capacity = calculateQAOutputAllocationCapacity(rows, ledgerId);
+    if (!capacity) {
+        throw new DailyQAValidationError(409, "QA_OUTPUT_CAPACITY_UNAVAILABLE", "Job Order production capacity could not be verified. Refresh the audit and try again.");
+    }
+    return capacity;
+}
+
+function validateQAOutputAllocationCapacity(
+    allocation: QAOutputAllocation,
+    capacity: QAOutputAllocationCapacity,
+    jobOrder: Record<string, any>
+): void {
+    if (qaOutputAllocationWithinCapacity(allocation, capacity.maxAuditQuantity)) return;
+    throw new DailyQAValidationError(
+        422,
+        "QA_OUTPUT_CAP_EXCEEDED",
+        qaOutputAllocationCapacityErrorMessage(
+            capacity.maxAuditQuantity,
+            capacity.totalProducedQuantity,
+            productUomValue(jobOrder)
+        )
+    );
 }
 
 async function persistQAOutputAllocation(
@@ -170,7 +235,9 @@ async function persistQAOutputAllocation(
         ? null
         : parseQAOutputQuantity(ledger.qa_rejected_quantity);
     const currentAcceptedQuantity = savedAcceptedQuantity ?? parseQAOutputQuantity(ledger.yield_quantity ?? 0) ?? 0;
-    const currentRejectedQuantity = savedRejectedQuantity ?? parseQAOutputQuantity(ledger.rejected_quantity ?? 0) ?? 0;
+    const currentRejectedQuantity = savedRejectedQuantity
+        ?? sumQAOutputQuantities(ledger.rejected_quantity, ledger.scrap_quantity)
+        ?? 0;
     const isVerified = textValue(ledger.qa_status).toUpperCase() === "PASSED";
 
     if (isVerified && (
@@ -410,14 +477,23 @@ async function registerRejectedOutputOnly(body: Record<string, any>, signal: Abo
     }
 
     const ledger = await readDirectusRecord(
-        `/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(ledgerId))}?fields=ledger_id,job_order_id,yield_quantity,rejected_quantity,qa_accepted_quantity,qa_rejected_quantity,qa_status,rejected_mm_lot_id,rejected_lot_number,rejected_manufacturing_date,rejected_expiry_date,rejected_inventory_condition`,
+        `/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(ledgerId))}?fields=ledger_id,job_order_id,commit_status,yield_quantity,rejected_quantity,scrap_quantity,qa_accepted_quantity,qa_rejected_quantity,qa_status,rejected_mm_lot_id,rejected_lot_number,rejected_manufacturing_date,rejected_expiry_date,rejected_inventory_condition`,
         `Load yield ledger ${ledgerId}`,
         signal
     );
     if (relationId(ledger.job_order_id, ["job_order_id", "id"]) !== jobOrderId) {
         throw new DailyQAValidationError(409, "LEDGER_JOB_ORDER_MISMATCH", "The selected yield ledger does not belong to this Job Order.");
     }
+    const [jobOrder, capacity] = await Promise.all([
+        readDirectusRecord(
+            `/items/manufacturing_job_orders/${encodeURIComponent(String(jobOrderId))}?fields=job_order_id,job_order_no,product_id.product_id,product_id.unit_of_measurement.unit_shortcut,product_id.unit_of_measurement.unit_name,branch_id`,
+            `Load Job Order ${jobOrderId}`,
+            signal
+        ),
+        loadQAOutputAllocationCapacity(jobOrderId, ledgerId, signal)
+    ]);
     const allocation = normalizeQAOutputAllocation(body, ledger);
+    validateQAOutputAllocationCapacity(allocation, capacity, jobOrder);
     const rejectedQuantity = allocation.rejectedQuantity;
     if (!(rejectedQuantity > 0)) {
         throw new DailyQAValidationError(409, "REJECTED_OUTPUT_NOT_PRESENT", "This yield ledger has no rejected quantity to allocate.");
@@ -432,12 +508,7 @@ async function registerRejectedOutputOnly(body: Record<string, any>, signal: Abo
         throw new DailyQAValidationError(422, "REJECTED_EVIDENCE_REQUIRED", rejectedEvidenceValidation.error);
     }
     const metadata = normalizeOutputMetadata(body.rejectedOutputMetadata, true) as RejectedOutputMetadata;
-    const [jobOrder, routes, inspections] = await Promise.all([
-        readDirectusRecord(
-            `/items/manufacturing_job_orders/${encodeURIComponent(String(jobOrderId))}?fields=job_order_id,job_order_no,product_id,branch_id`,
-            `Load Job Order ${jobOrderId}`,
-            signal
-        ),
+    const [routes, inspections] = await Promise.all([
         fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${encodeURIComponent(String(jobOrderId))}&fields=jo_route_id`, { headers, cache: "no-store", signal })
             .then((response) => readDirectusRows(response, "Job Order routing lookup")),
         fetch(`${DIRECTUS_URL}/items/manufacturing_daily_qa_inspections?filter[ledger_id][_eq]=${encodeURIComponent(String(ledgerId))}`, { headers, cache: "no-store", signal })
@@ -738,6 +809,15 @@ export async function POST(request: Request) {
         const isEnvelope = Boolean(body && !Array.isArray(body) && Array.isArray(body.inspections));
         const inspectionsList = isEnvelope ? body.inspections : (Array.isArray(body) ? body : [body]);
 
+        if (isJobOrderYieldAudit) {
+            for (const entry of inspectionsList) {
+                const stateError = dailyQAAuditStateError(entry?.labStatus, entry?.actionTaken);
+                if (stateError) {
+                    throw new DailyQAValidationError(422, "INVALID_LAB_DISPOSITION", stateError);
+                }
+            }
+        }
+
         if (inspectionsList.length === 0) {
             return NextResponse.json({ error: "No inspection data provided" }, { status: 400 });
         }
@@ -754,7 +834,7 @@ export async function POST(request: Request) {
 
         operationForLog = `load yield ledger ${ledgerId}`;
         const ledger = await readDirectusRecord(
-            `/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(ledgerId))}?fields=ledger_id,job_order_id,session_key,yield_quantity,rejected_quantity,qa_accepted_quantity,qa_rejected_quantity,qa_status,lot_number,mm_lot_id,manufacturing_date,expiry_date,rejected_mm_lot_id,rejected_lot_number,rejected_manufacturing_date,rejected_expiry_date,rejected_inventory_condition`,
+            `/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(ledgerId))}?fields=ledger_id,job_order_id,session_key,commit_status,yield_quantity,rejected_quantity,scrap_quantity,qa_accepted_quantity,qa_rejected_quantity,qa_status,lot_number,mm_lot_id,manufacturing_date,expiry_date,rejected_mm_lot_id,rejected_lot_number,rejected_manufacturing_date,rejected_expiry_date,rejected_inventory_condition`,
             `Load yield ledger ${ledgerId}`,
             saveSignal
         );
@@ -764,17 +844,25 @@ export async function POST(request: Request) {
         }
 
         operationForLog = `load Job Order ${jobOrderId}`;
-        const jobOrder = await readDirectusRecord(
-            `/items/manufacturing_job_orders/${encodeURIComponent(String(jobOrderId))}?fields=job_order_id,job_order_no,product_id,branch_id,qa_started_at,qa_started_by`,
-            `Load Job Order ${jobOrderId}`,
-            saveSignal
-        );
+        const [jobOrder, capacity] = await Promise.all([
+            readDirectusRecord(
+                `/items/manufacturing_job_orders/${encodeURIComponent(String(jobOrderId))}?fields=job_order_id,job_order_no,product_id.product_id,product_id.unit_of_measurement.unit_shortcut,product_id.unit_of_measurement.unit_name,branch_id,qa_started_at,qa_started_by`,
+                `Load Job Order ${jobOrderId}`,
+                saveSignal
+            ),
+            loadQAOutputAllocationCapacity(jobOrderId, ledgerId, saveSignal)
+        ]);
         const productId = relationId(jobOrder.product_id, ["product_id", "id"]);
         const branchId = relationId(jobOrder.branch_id, ["branch_id", "id"]);
         const outputAllocation = normalizeQAOutputAllocation(isEnvelope ? body : {}, ledger);
+        validateQAOutputAllocationCapacity(outputAllocation, capacity, jobOrder);
         const goodOutputQuantity = outputAllocation.acceptedQuantity;
         const rejectedOutputQuantity = outputAllocation.rejectedQuantity;
-        const evidenceRequirements = yieldEvidenceRequirements(goodOutputQuantity, rejectedOutputQuantity);
+        const evidenceRequirements = yieldEvidenceRequirementsForLedger(
+            goodOutputQuantity,
+            rejectedOutputQuantity,
+            isRejectedOutputRegistered(relationId(ledger.rejected_mm_lot_id, ["mm_lot_id", "lot_id", "id"]))
+        );
         let acceptedEvidenceRows: YieldEvidenceRow[] = [];
         let rejectedEvidenceRows: YieldEvidenceRow[] = [];
         if (isJobOrderYieldAudit) {
@@ -884,10 +972,16 @@ export async function POST(request: Request) {
         validateSubmittedQARoutes(jobOrderId, routes, inspectionsList);
 
         const existingInspectionsResponse = await fetch(
-            `${DIRECTUS_URL}/items/manufacturing_daily_qa_inspections?filter[ledger_id][_eq]=${ledgerId}&limit=-1&fields=ledger_id,jo_route_id,sensory_status,lab_status,action_taken,weight_check_passed`,
+            `${DIRECTUS_URL}/items/manufacturing_daily_qa_inspections?filter[ledger_id][_eq]=${ledgerId}&limit=-1&fields=daily_qa_id,inspected_at,ledger_id,jo_route_id,sensory_status,lab_status,action_taken,weight_check_passed`,
             { headers, cache: "no-store", signal: saveSignal }
         );
         const existingInspections = await readDirectusRows(existingInspectionsResponse, "Existing daily QA inspection lookup");
+        const latestInspections = latestDailyQAAuditsByRoute(existingInspections);
+        const savedInspectionByRoute = new Map<string, any>();
+        for (const inspection of latestInspections) {
+            const routeIdentifier = relationId(inspection.jo_route_id, ["jo_route_id", "id"]);
+            savedInspectionByRoute.set(routeIdentifier ? "route:" + routeIdentifier : "general", inspection);
+        }
         const existingOutcome = deriveDailyQAOutcome(
             existingInspections,
             routes.map((route: any) => relationId(route.jo_route_id, ["jo_route_id", "id"]))
@@ -895,11 +989,6 @@ export async function POST(request: Request) {
         if (existingOutcome.status === "Passed") {
             throw new DailyQAValidationError(409, "QA_AUDIT_ALREADY_VERIFIED", "This daily yield has already been verified and cannot be audited again.");
         }
-        const savedRouteIds = new Set(existingInspections
-            .map((inspection: any) => relationId(inspection.jo_route_id, ["jo_route_id", "id"]))
-            .filter((id: number) => id > 0));
-        let hasSavedGeneralInspection = existingInspections.some((inspection: any) => !relationId(inspection.jo_route_id, ["jo_route_id", "id"]));
-
         const submittedRouteIds = [...new Set(inspectionsList
             .map((entry: any) => relationId(entry?.joRouteId, ["joRouteId", "jo_route_id", "id"]))
             .filter((id: number) => id > 0))];
@@ -1005,8 +1094,8 @@ export async function POST(request: Request) {
                 acidity_ph: acidityPh !== undefined && acidityPh !== "" ? Number(acidityPh) : null,
                 sensory_status: sensoryStatus || "Passed",
                 weight_check_passed: weightCheckPassed ? 1 : 0,
-                lab_status: labStatus || "Passed",
-                action_taken: actionTaken || "Released",
+                lab_status: isJobOrderYieldAudit ? labStatus : labStatus || "Passed",
+                action_taken: isJobOrderYieldAudit ? actionTaken : actionTaken || "Released",
                 inspected_at: timestamp,
                 remarks: remarks || ""
             };
@@ -1047,7 +1136,12 @@ export async function POST(request: Request) {
             }
 
             const routeIdentifier = relationId(joRouteId, ["joRouteId", "jo_route_id", "id"]);
-            if (routeIdentifier ? savedRouteIds.has(routeIdentifier) : hasSavedGeneralInspection) continue;
+            const routeKey = routeIdentifier ? "route:" + routeIdentifier : "general";
+            const previousInspection = savedInspectionByRoute.get(routeKey);
+            const stateIsUnchanged = previousInspection
+                && textValue(previousInspection.lab_status) === String(payload.lab_status)
+                && textValue(previousInspection.action_taken) === String(payload.action_taken);
+            if (previousInspection && (!isJobOrderYieldAudit || stateIsUnchanged)) continue;
 
             const res = await fetch(`${DIRECTUS_URL}/items/manufacturing_daily_qa_inspections`, {
                 method: "POST",
@@ -1059,8 +1153,7 @@ export async function POST(request: Request) {
             if (!res.ok) {
                 throw new DailyQAValidationError(502, "INSPECTION_WRITE_FAILED", "Failed to write daily QA inspection record.");
             }
-            if (routeIdentifier) savedRouteIds.add(routeIdentifier);
-            else hasSavedGeneralInspection = true;
+            savedInspectionByRoute.set(routeKey, payload);
         }
 
         operationForLog = "reconcile Job Order QA start fields";

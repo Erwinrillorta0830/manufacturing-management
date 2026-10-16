@@ -918,11 +918,23 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                         <div className="min-w-0">
                                             <p className="font-semibold">{closeReady ? "Ready to mark as closed" : "Mark as Closed is blocked"}</p>
                                             {closeReady ? (
-                                                <p className="mt-1 text-xs text-muted-foreground">All daily yields have completed Passed QA outcomes, QA dispositions are resolved, and raw-material WIP is balanced.</p>
+                                                <p className="mt-1 text-xs text-muted-foreground">
+                                                    All committed yield audits have Passed outcomes and raw-material WIP is balanced.
+                                                    {details.closeReadiness.autoResolvableDispositionCount > 0
+                                                        ? ` ${details.closeReadiness.autoResolvableDispositionCount} route-linked pending QA disposition${details.closeReadiness.autoResolvableDispositionCount === 1 ? " will" : "s will"} be marked resolved when you close this Job Order.`
+                                                        : " QA dispositions are resolved."}
+                                                </p>
                                             ) : (
-                                                <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-muted-foreground">
-                                                    {details.closeReadiness.blockers.map((blocker, index) => <li key={`${blocker.code}-${index}`}>{blocker.message}</li>)}
-                                                </ul>
+                                                <>
+                                                    <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+                                                        {details.closeReadiness.blockers.map((blocker, index) => <li key={`${blocker.code}-${index}`}>{blocker.message}</li>)}
+                                                    </ul>
+                                                    {details.closeReadiness.autoResolvableDispositionCount > 0 && (
+                                                        <p className="mt-2 text-xs text-muted-foreground">
+                                                            {details.closeReadiness.autoResolvableDispositionCount} route-linked pending QA disposition{details.closeReadiness.autoResolvableDispositionCount === 1 ? " is" : "s are"} eligible for automatic resolution after the listed blockers are cleared.
+                                                        </p>
+                                                    )}
+                                                </>
                                             )}
                                         </div>
                                     </div>

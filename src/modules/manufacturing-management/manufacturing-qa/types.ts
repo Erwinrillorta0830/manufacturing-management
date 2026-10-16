@@ -185,7 +185,7 @@ export interface DispositionRecord {
         is_critical: boolean;
     }>;
     disposition_status: "Pending" | "Resolved";
-    decision: "Release with Deviation" | "Rework" | "Scrap" | null;
+    decision: "Release with Deviation" | "Rework" | "Scrap" | "Passed Reinspection" | null;
     supervisor_comments: string;
     inspection_remarks?: string;
     recorded_at: string;

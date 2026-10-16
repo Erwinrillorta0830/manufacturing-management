@@ -17,6 +17,7 @@ import {
 import { productionYieldImageUrl } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
 import { directusFileMetadata, fetchDirectusFileMetadata } from "@/app/api/manufacturing/_directus-file-metadata";
 import { getYieldOutputTotals } from "@/modules/manufacturing-management/manufacturing-job-order-inspection-qa/utils/yield-output-quantities";
+import { calculateQAOutputAllocationCapacities } from "@/modules/manufacturing-management/manufacturing-qa/qa-output-allocation";
 import { buildJobOrderDailyYieldSummaryPage } from "@/modules/manufacturing-management/manufacturing-job-order-inspection-qa/utils/summary-query";
 import {
     dailyQAParameterAuditKey,
@@ -360,7 +361,7 @@ async function loadJobOrderDetails(id: number) {
             `Yield ledger lookup for Job Order ${id}`
         ),
         readRows(
-            `/items/manufacturing_daily_qa_inspections?filter[job_order_id][_eq]=${encodeURIComponent(String(id))}&limit=-1&sort=-inspected_at&fields=daily_qa_id,job_order_id,ledger_id,jo_route_id,inspector_id,moisture_percentage,acidity_ph,sensory_status,weight_check_passed,lab_status,action_taken,inspected_at,remarks`,
+            `/items/manufacturing_daily_qa_inspections?filter[job_order_id][_eq]=${encodeURIComponent(String(id))}&limit=-1&sort=-inspected_at,-daily_qa_id&fields=daily_qa_id,job_order_id,ledger_id,jo_route_id,inspector_id,moisture_percentage,acidity_ph,sensory_status,weight_check_passed,lab_status,action_taken,inspected_at,remarks`,
             `Daily QA inspection lookup for Job Order ${id}`
         ),
         readRows(
@@ -434,6 +435,7 @@ async function loadJobOrderDetails(id: number) {
     }));
 
     const committedYields = yields.filter(isCommittedYieldLedger);
+    const qaAllocationCapacities = calculateQAOutputAllocationCapacities(committedYields);
     const assessmentsByLedger = new Map(
         buildQAYieldAssessments(committedYields, inspectionsWithParameters, routes)
             .map((assessment) => [assessment.ledgerId, assessment] as const)
@@ -481,10 +483,11 @@ async function loadJobOrderDetails(id: number) {
             };
             const goodQuantity = Math.max(0, numberValue(yieldRow.yield_quantity));
             const rejectedQuantity = Math.max(0, numberValue(yieldRow.rejected_quantity));
-            const qaAcceptedQuantity = Math.max(0, numberValue(yieldRow.qa_accepted_quantity ?? goodQuantity));
-            const qaRejectedQuantity = Math.max(0, numberValue(yieldRow.qa_rejected_quantity ?? rejectedQuantity));
             const scrapQuantity = Math.max(0, numberValue(yieldRow.scrap_quantity));
             const outputTotals = getYieldOutputTotals(goodQuantity, rejectedQuantity, scrapQuantity);
+            const qaAcceptedQuantity = Math.max(0, numberValue(yieldRow.qa_accepted_quantity ?? goodQuantity));
+            const qaRejectedQuantity = Math.max(0, numberValue(yieldRow.qa_rejected_quantity ?? outputTotals.rejectedQuantity));
+            const allocationCapacity = qaAllocationCapacities?.byLedgerId.get(currentLedgerId);
             const mmLotId = relationId(yieldRow.mm_lot_id, ["mm_lot_id", "lot_id", "id"]);
             const rejectedMmLotId = relationId(yieldRow.rejected_mm_lot_id, ["mm_lot_id", "lot_id", "id"]);
             const evidenceImageFileId = directusFileId(yieldRow.daily_qa_image_id);
@@ -541,6 +544,7 @@ async function loadJobOrderDetails(id: number) {
                 rejectedQuantity,
                 qaAcceptedQuantity,
                 qaRejectedQuantity,
+                qaAllocationLimit: allocationCapacity?.maxAuditQuantity ?? 0,
                 scrapQuantity,
                 totalQuantity: outputTotals.totalQuantity,
                 mmLotId: mmLotId || null,
@@ -604,6 +608,7 @@ async function loadJobOrderDetails(id: number) {
         console.error(`Unable to determine close readiness for Job Order ${id}:`, error);
         closeReadiness = {
             ready: false,
+            autoResolvableDispositionCount: 0,
             blockers: [{
                 code: "CLOSURE_VALIDATION_UNAVAILABLE",
                 message: "Close readiness could not be verified. Retry before closing this Job Order."
@@ -623,6 +628,7 @@ async function loadJobOrderDetails(id: number) {
         branchId: relationId(jobOrder.branch_id, ["branch_id", "id"]) || null,
         targetQuantity: numberValue(jobOrder.target_quantity),
         completedQuantity: numberValue(jobOrder.completed_quantity),
+        totalProducedQuantity: qaAllocationCapacities?.totalProducedQuantity ?? 0,
         producedQuantity: dailyYields.reduce((sum, row) => (
             sum + (row.qaStatus === "Passed" ? row.totalQuantity : 0)
         ), 0),

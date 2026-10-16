@@ -67,6 +67,7 @@ export interface JobOrderDailyYieldRecord {
     rejectedQuantity: number;
     qaAcceptedQuantity: number;
     qaRejectedQuantity: number;
+    qaAllocationLimit: number;
     scrapQuantity: number;
     totalQuantity: number;
     mmLotId: number | null;
@@ -135,11 +136,13 @@ export interface JobOrderClosureBlocker {
 export interface JobOrderClosureReadiness {
     ready: boolean;
     blockers: JobOrderClosureBlocker[];
+    autoResolvableDispositionCount: number;
 }
 
 export interface JobOrderDailyYieldDetails extends JobOrderDailyYieldSummary {
     productShelfLifeDays: number | null;
     completedQuantity: number;
+    totalProducedQuantity: number;
     yieldEvidenceAvailable: boolean;
     yieldEvidenceWarning: string | null;
     routes: JobOrderDailyYieldRoute[];
