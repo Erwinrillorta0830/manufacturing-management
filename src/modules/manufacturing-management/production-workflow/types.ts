@@ -549,6 +549,8 @@ export interface ShiftRunLogPayload {
     approveVariance?: boolean;
     /** Finalize the production lifecycle after this session is committed. */
     completeProductionAfterLog?: boolean;
-    /** Required photo captured at the end of the production shift. */
-    evidenceImage: File;
+    /** Required inspector/shift evidence captured during the production session. */
+    evidenceImages?: File[];
+    /** @deprecated Use evidenceImages. */
+    evidenceImage?: File;
 }

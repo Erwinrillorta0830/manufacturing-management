@@ -75,6 +75,7 @@ export interface JobOrderDailyYieldRecord {
     manufacturingDate: string | null;
     expiryDate: string | null;
     rejectedMmLotId: number | null;
+    rejectedLotName: string | null;
     rejectedBatchNo: string | null;
     rejectedManufacturingDate: string | null;
     rejectedExpiryDate: string | null;
@@ -85,6 +86,11 @@ export interface JobOrderDailyYieldRecord {
         fileSize: number | null;
         url: string;
     } | null;
+    evidence?: {
+        inspectorShift: JobOrderDailyYieldEvidence[];
+        acceptedStock: JobOrderDailyYieldEvidence[];
+        rejectedStock: JobOrderDailyYieldEvidence[];
+    };
     qaStatus: DailyQAOutcomeStatus;
     processQaStatus: DailyQAOutcomeStatus;
     outcome: {
@@ -93,6 +99,19 @@ export interface JobOrderDailyYieldRecord {
         isComplete: boolean;
     };
     audits: JobOrderDailyYieldAudit[];
+}
+
+export interface JobOrderDailyYieldEvidence {
+    evidenceId: number | string;
+    channel: "INSPECTOR_SHIFT" | "QA_ACCEPTED_STOCK" | "QA_REJECTED_STOCK";
+    fileId: string;
+    fileName: string | null;
+    mimeType: string | null;
+    fileSize: number | null;
+    url: string;
+    uploadedById: number | null;
+    uploadedAt: string | null;
+    sortOrder: number;
 }
 
 export interface JobOrderDailyYieldAuditParameter {
@@ -121,6 +140,8 @@ export interface JobOrderClosureReadiness {
 export interface JobOrderDailyYieldDetails extends JobOrderDailyYieldSummary {
     productShelfLifeDays: number | null;
     completedQuantity: number;
+    yieldEvidenceAvailable: boolean;
+    yieldEvidenceWarning: string | null;
     routes: JobOrderDailyYieldRoute[];
     dailyYields: JobOrderDailyYieldRecord[];
     closeReadiness: JobOrderClosureReadiness;

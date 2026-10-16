@@ -64,9 +64,27 @@ export function validateManufacturingEvidenceBatch(files: File[], label: string)
     }
 
     if (files.reduce((total, file) => total + file.size, 0) > MANUFACTURING_EVIDENCE_MAX_TOTAL_BYTES) {
-        return "Breakdown evidence must be no larger than 100 MB in total.";
+        return `${label} must be no larger than 100 MB in total.`;
     }
 
+    return null;
+}
+
+export function validateManufacturingEvidenceChannelBatch(
+    existingCount: number,
+    existingBytes: number,
+    incomingFiles: File[],
+    label: string
+): string | null {
+    const fileError = validateManufacturingEvidenceBatch(incomingFiles, label);
+    if (fileError) return fileError;
+    if (existingCount + incomingFiles.length > MANUFACTURING_EVIDENCE_MAX_FILES) {
+        return `No more than ${MANUFACTURING_EVIDENCE_MAX_FILES} ${label.toLowerCase()} files may be attached.`;
+    }
+    const incomingBytes = incomingFiles.reduce((total, file) => total + file.size, 0);
+    if (existingBytes + incomingBytes > MANUFACTURING_EVIDENCE_MAX_TOTAL_BYTES) {
+        return `${label} must be no larger than 100 MB in total.`;
+    }
     return null;
 }
 

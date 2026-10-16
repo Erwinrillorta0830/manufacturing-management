@@ -7,7 +7,6 @@ import {
     Calendar,
     ChevronRight,
     ClipboardCheck,
-    Expand,
     History,
     ImageIcon,
     Loader2,
@@ -43,7 +42,8 @@ import { isManufacturingEvidenceVideo } from "@/modules/manufacturing-management
 import { parseQAOutputQuantity } from "@/modules/manufacturing-management/manufacturing-qa/qa-output-allocation";
 import { dailyQAParameterValueKey } from "../utils/saved-daily-qa-parameters";
 import type { DailyYieldAuditController } from "../hooks/useDailyYieldAudit";
-import type { DailyYieldQALog, DailyYieldQAParameter } from "../types";
+import type { DailyYieldQALog, DailyYieldQAParameter, JobOrderDailyYieldEvidence } from "../types";
+import { EvidenceMediaInput } from "../../production-workflow/components/EvidenceMediaInput";
 
 function auditActorName(actorId: number | null, actorLabel: string, namesById: Record<number, string> | undefined) {
     if (!actorId) return "Not recorded";
@@ -89,6 +89,8 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
     const hasOutput = loggedOutputQuantity > 0;
     const requiresOutputTraceability = acceptedOutputQuantity > 0;
     const requiresRejectedOutputTraceability = rejectedOutputQuantity > 0;
+    const hasSavedAcceptedEvidence = (yieldRecord?.evidence?.acceptedStock.length || 0) > 0;
+    const hasSavedRejectedEvidence = (yieldRecord?.evidence?.rejectedStock.length || 0) > 0;
     const shelfLifeDays = Number(details?.productShelfLifeDays);
     const hasValidShelfLifeDays = Number.isSafeInteger(shelfLifeDays) && shelfLifeDays > 0;
     const isVerified = yieldRecord?.qaStatus === "Passed";
@@ -100,6 +102,7 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
     );
     const rejectedOutputLocked = controller.actionLoading || rejectedOutputRegistered;
     const [evidenceExpanded, setEvidenceExpanded] = React.useState(false);
+    const [previewEvidence, setPreviewEvidence] = React.useState<JobOrderDailyYieldEvidence | null>(null);
     const [showAllAuditTrail, setShowAllAuditTrail] = React.useState(false);
     const [showAllOperators, setShowAllOperators] = React.useState(false);
     const [checklistSectionOpen, setChecklistSectionOpen] = React.useState(false);
@@ -107,6 +110,7 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
     const [auditTrailSectionOpen, setAuditTrailSectionOpen] = React.useState(false);
     React.useEffect(() => {
         setEvidenceExpanded(false);
+        setPreviewEvidence(null);
         setShowAllAuditTrail(false);
         setShowAllOperators(false);
         const shouldStartOpen = window.matchMedia("(min-width: 64rem)").matches;
@@ -119,6 +123,26 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
         [controller.routes]
     );
     const inspectorDisplayName = controller.inspectorName?.trim() || "Current signed-in inspector";
+    const evidenceChannels: Array<{ key: string; label: string; items: JobOrderDailyYieldEvidence[] }> = [
+        {
+            key: "inspectorShift",
+            label: "Inspector / Shift Evidence",
+            items: yieldRecord?.evidence?.inspectorShift ?? (yieldRecord?.evidenceImage ? [{
+                evidenceId: `legacy-${yieldRecord.ledgerId}`,
+                channel: "INSPECTOR_SHIFT",
+                fileId: yieldRecord.evidenceImage.fileId,
+                fileName: yieldRecord.evidenceImage.fileName,
+                mimeType: yieldRecord.evidenceImage.mimeType,
+                fileSize: yieldRecord.evidenceImage.fileSize,
+                url: yieldRecord.evidenceImage.url,
+                uploadedById: yieldRecord.loggedById,
+                uploadedAt: yieldRecord.loggedAt,
+                sortOrder: -1
+            }] : [])
+        },
+        { key: "acceptedStock", label: "QA Accepted Stock Evidence", items: yieldRecord?.evidence?.acceptedStock ?? [] },
+        { key: "rejectedStock", label: "QA Rejected Stock Evidence", items: yieldRecord?.evidence?.rejectedStock ?? [] }
+    ];
     const auditTrailEntries = React.useMemo(() => {
         type TrailEntry = {
             key: string;
@@ -203,6 +227,12 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                         Record physicochemical specifications and sensory audits for {details?.jobOrderNo || "the selected Job Order"} ({shiftName}).
                     </DialogDescription>
                 </DialogHeader>
+                {details?.yieldEvidenceAvailable === false && (
+                    <div role="status" className="flex shrink-0 items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-800 dark:text-amber-200">
+                        <AlertCircle className="h-4 w-4 shrink-0" />
+                        {details.yieldEvidenceWarning || "Yield evidence is temporarily unavailable. Only legacy shift evidence is displayed."}
+                    </div>
+                )}
                 {isVerified && (
                     <div role="status" className="flex shrink-0 items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
                         <ClipboardCheck className="h-4 w-4 shrink-0" />
@@ -436,8 +466,8 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                 </details>
                             </div>
 
-                            {/* End-of-shift Evidence Image */}
-                            {yieldRecord?.evidenceImage && (
+                            {/* Role-separated yield evidence */}
+                            {yieldRecord && (
                                 <details
                                     className="group rounded-xl border border-sky-500/20 bg-sky-500/[0.03] p-3 shadow-sm"
                                     open={evidenceSectionOpen}
@@ -448,60 +478,42 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                         <div className="p-1 bg-sky-500/10 rounded-lg text-sky-600 dark:text-sky-400">
                                             <ImageIcon className="h-3.5 w-3.5" />
                                         </div>
-                                            <span className="truncate uppercase tracking-wider">End-of-Shift Evidence</span>
+                                            <span className="truncate uppercase tracking-wider">Yield Evidence by Stage</span>
                                         </span>
                                         <span className="shrink-0 text-[10px] font-semibold text-primary">{evidenceSectionOpen ? "Hide" : "Show"}</span>
                                     </summary>
-                                    <div className="mt-2 flex items-center gap-3 rounded-lg border border-sky-500/20 bg-background/70 p-2">
-                                        {isManufacturingEvidenceVideo(yieldRecord.evidenceImage.mimeType, yieldRecord.evidenceImage.fileName) ? (
-                                            <video
-                                                src={yieldRecord.evidenceImage.url}
-                                                controls
-                                                playsInline
-                                                preload="metadata"
-                                                aria-label="End-of-shift evidence video"
-                                                className="max-h-40 w-full max-w-xs shrink-0 rounded-md border border-border bg-black"
-                                            />
-                                        ) : (
-                                            <button
-                                                type="button"
-                                                onClick={() => setEvidenceExpanded(true)}
-                                                aria-label="Expand end-of-shift evidence image"
-                                                title="Expand image"
-                                                className="group relative shrink-0 cursor-zoom-in rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                                            >
-                                                <Image
-                                                    src={yieldRecord.evidenceImage.url}
-                                                    alt={yieldRecord.evidenceImage.fileName || "End-of-shift evidence"}
-                                                    width={80}
-                                                    height={80}
-                                                    unoptimized
-                                                    className="h-20 w-20 rounded-md object-cover border border-border"
-                                                />
-                                                <span className="absolute bottom-1 right-1 rounded-md bg-background/90 p-1 text-muted-foreground opacity-0 shadow-sm transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
-                                                    <Expand className="h-3 w-3" />
-                                                </span>
-                                            </button>
-                                        )}
-                                        <div className="min-w-0 space-y-1 text-[10px]">
-                                            <p className="truncate font-semibold text-foreground" title={yieldRecord.evidenceImage.fileName || undefined}>
-                                                {yieldRecord.evidenceImage.fileName || "End-of-shift evidence"}
-                                            </p>
-                                            {yieldRecord.evidenceImage.mimeType && (
-                                                <p className="text-muted-foreground">{yieldRecord.evidenceImage.mimeType}</p>
-                                            )}
-                                            {yieldRecord.evidenceImage.fileSize && (
-                                                <p className="text-muted-foreground">{(yieldRecord.evidenceImage.fileSize / 1024 / 1024).toFixed(2)} MB</p>
-                                            )}
-                                            <a
-                                                href={yieldRecord.evidenceImage.url}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                className="inline-flex font-semibold text-primary hover:underline"
-                                            >
-                                                Open file
-                                            </a>
-                                        </div>
+                                    <div className="mt-2 space-y-2">
+                                        {evidenceChannels.map((channel) => (
+                                            <section key={channel.key} className="rounded-lg border border-border bg-background/70 p-2.5">
+                                                <div className="mb-2 flex items-center justify-between gap-2">
+                                                    <h5 className="text-[10px] font-bold uppercase tracking-wide text-foreground">{channel.label}</h5>
+                                                    <span className="text-[10px] text-muted-foreground">{channel.items.length} {channel.items.length === 1 ? "file" : "files"}</span>
+                                                </div>
+                                                {channel.items.length === 0 ? (
+                                                    <p className="text-[10px] italic text-muted-foreground">No evidence recorded.</p>
+                                                ) : (
+                                                    <ul className="space-y-2">
+                                                        {channel.items.map((item) => (
+                                                            <li key={`${item.evidenceId}-${item.fileId}`} className="flex min-w-0 items-center gap-2.5 rounded-md border border-border/70 p-2">
+                                                                {isManufacturingEvidenceVideo(item.mimeType, item.fileName) ? (
+                                                                    <video src={item.url} controls playsInline preload="metadata" aria-label={`${channel.label} video`} className="max-h-20 w-28 shrink-0 rounded border border-border bg-black" />
+                                                                ) : (
+                                                                    <button type="button" onClick={() => { setPreviewEvidence(item); setEvidenceExpanded(true); }} aria-label={`Preview ${item.fileName || channel.label}`} className="shrink-0 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+                                                                        <Image src={item.url} alt={item.fileName || channel.label} width={64} height={64} unoptimized className="h-16 w-16 rounded border border-border object-cover" />
+                                                                    </button>
+                                                                )}
+                                                                <div className="min-w-0 space-y-0.5 text-[10px]">
+                                                                    <p className="truncate font-semibold text-foreground" title={item.fileName || undefined}>{item.fileName || "Evidence file"}</p>
+                                                                    <p className="truncate text-muted-foreground">Uploaded by {auditActorName(item.uploadedById, "Logged By", controller.inspectorNamesById)}</p>
+                                                                    <p className="text-muted-foreground">{formatAuditTimestamp(item.uploadedAt)}{item.fileSize ? ` · ${(item.fileSize / 1024 / 1024).toFixed(2)} MB` : ""}</p>
+                                                                    <a href={item.url} target="_blank" rel="noreferrer" className="inline-flex font-semibold text-primary hover:underline">Open file</a>
+                                                                </div>
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                )}
+                                            </section>
+                                        ))}
                                     </div>
                                 </details>
                             )}
@@ -721,7 +733,9 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                             step="0.000001"
                                             value={controller.dailyAcceptedOutputQuantity}
                                             onChange={(event) => controller.setDailyAcceptedOutputQuantity(event.target.value)}
-                                            className="h-9 rounded-lg bg-background border-border/80 text-foreground text-xs font-mono"
+                                            className={`h-9 rounded-lg bg-background text-foreground text-xs font-mono ${controller.quantityAllocationError ? "border-destructive focus-visible:ring-destructive" : "border-border/80"}`}
+                                            aria-invalid={Boolean(controller.quantityAllocationError)}
+                                            aria-describedby={controller.quantityAllocationError ? "daily-yield-output-allocation-error" : undefined}
                                             disabled={controller.actionLoading || isVerified || !hasOutput}
                                             required={hasOutput}
                                         />
@@ -809,6 +823,25 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                         />
                                     </div>
                                 </div>
+                                {requiresOutputTraceability && !isVerified && (
+                                    <div className="mt-3 rounded-lg border border-emerald-500/20 bg-emerald-500/[0.03] p-3">
+                                        <p className="mb-2 text-[10px] font-semibold text-emerald-800 dark:text-emerald-300">
+                                            QA Accepted Stock Evidence {!hasSavedAcceptedEvidence && <span className="text-destructive">*</span>}
+                                            <span className="ml-1 font-normal text-muted-foreground">{hasSavedAcceptedEvidence ? "Evidence already recorded." : "Required when accepted quantity is greater than zero."}</span>
+                                        </p>
+                                        <EvidenceMediaInput
+                                            id="daily-yield-accepted-evidence"
+                                            label="QA accepted stock evidence"
+                                            files={controller.acceptedEvidenceFiles}
+                                            multiple
+                                            error={controller.acceptedEvidenceError}
+                                            required={!hasSavedAcceptedEvidence}
+                                            disabled={controller.actionLoading}
+                                            active={controller.isOpen}
+                                            onFilesChange={controller.setAcceptedEvidence}
+                                        />
+                                    </div>
+                                )}
                             </div>
 
                             {hasOutput && (
@@ -849,11 +882,19 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                                 step="0.000001"
                                                 value={controller.dailyRejectedOutputQuantity}
                                                 onChange={(event) => controller.setDailyRejectedOutputQuantity(event.target.value)}
-                                                className="h-9 rounded-lg bg-background border-rose-500/30 text-foreground text-xs font-mono"
+                                                className={`h-9 rounded-lg bg-background text-foreground text-xs font-mono ${controller.quantityAllocationError ? "border-destructive focus-visible:ring-destructive" : "border-rose-500/30"}`}
+                                                aria-invalid={Boolean(controller.quantityAllocationError)}
+                                                aria-describedby={controller.quantityAllocationError ? "daily-yield-output-allocation-error" : undefined}
                                                 disabled={controller.actionLoading || isVerified || rejectedOutputRegistered || !hasOutput}
                                                 required={hasOutput}
                                             />
                                         </div>
+
+                                        {controller.quantityAllocationError && (
+                                            <div id="daily-yield-output-allocation-error" role="alert" className="sm:col-span-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                                                {controller.quantityAllocationError}
+                                            </div>
+                                        )}
 
                                         <div className="space-y-1">
                                             <Label htmlFor="daily-yield-rejected-output-batch" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
@@ -876,7 +917,16 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                             <Label htmlFor="daily-yield-rejected-storage-lot" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
                                                 <MapPin className="h-3.5 w-3.5 text-rose-500" /> Bad-stock Storage Lot {requiresRejectedOutputTraceability && <span className="text-destructive">*</span>}
                                             </Label>
-                                            {controller.dailyRejectedOutputLotsLoading ? (
+                                            {isVerified || rejectedOutputRegistered ? (
+                                                <Input
+                                                    id="daily-yield-rejected-storage-lot"
+                                                    type="text"
+                                                    value={yieldRecord?.rejectedLotName?.trim() || "Not recorded"}
+                                                    disabled
+                                                    readOnly
+                                                    className="h-9 rounded-lg bg-background border-rose-500/30 text-foreground text-xs font-semibold"
+                                                />
+                                            ) : controller.dailyRejectedOutputLotsLoading ? (
                                                 <div role="status" aria-label="Loading bad-stock storage lots" aria-busy="true" className="space-y-1">
                                                     <span className="sr-only">Loading bad-stock storage lots...</span>
                                                     <Skeleton aria-hidden="true" className="h-9 w-full rounded-lg" />
@@ -925,6 +975,26 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                             />
                                         </div>
                                     </div>
+
+                                    {requiresRejectedOutputTraceability && !isVerified && (
+                                        <div className="rounded-lg border border-rose-500/20 bg-rose-500/[0.03] p-3">
+                                            <p className="mb-2 text-[10px] font-semibold text-rose-800 dark:text-rose-300">
+                                                QA Rejected Stock Evidence {!hasSavedRejectedEvidence && <span className="text-destructive">*</span>}
+                                                <span className="ml-1 font-normal text-muted-foreground">{hasSavedRejectedEvidence ? "Evidence already recorded." : "Required when rejected quantity is greater than zero."}</span>
+                                            </p>
+                                            <EvidenceMediaInput
+                                                id="daily-yield-rejected-evidence"
+                                                label="QA rejected stock evidence"
+                                                files={controller.rejectedEvidenceFiles}
+                                                multiple
+                                                error={controller.rejectedEvidenceError}
+                                                required={!hasSavedRejectedEvidence}
+                                                disabled={controller.actionLoading || rejectedOutputRegistered}
+                                                active={controller.isOpen}
+                                                onFilesChange={controller.setRejectedEvidence}
+                                            />
+                                        </div>
+                                    )}
 
                                     {canRegisterRejectedOutput && (
                                         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-t border-rose-500/15 pt-3">
@@ -1033,23 +1103,23 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                     </fieldset>
                 </form>
             </DialogContent>
-            {yieldRecord?.evidenceImage && (
+            {previewEvidence && (
                 <Dialog open={evidenceExpanded} onOpenChange={setEvidenceExpanded}>
                     <DialogContent className="w-[calc(100vw-2rem)] max-w-4xl p-4 sm:p-5 gap-3">
                         <DialogHeader>
-                            <DialogTitle className="truncate text-sm font-bold" title={yieldRecord.evidenceImage.fileName || undefined}>
-                                {yieldRecord.evidenceImage.fileName || "End-of-shift evidence"}
+                            <DialogTitle className="truncate text-sm font-bold" title={previewEvidence.fileName || undefined}>
+                                {previewEvidence.fileName || "Evidence file"}
                             </DialogTitle>
                             <DialogDescription className="text-[11px]">
-                                {yieldRecord.evidenceImage.mimeType || "Evidence media"}
-                                {typeof yieldRecord.evidenceImage.fileSize === "number"
-                                    ? ` · ${(yieldRecord.evidenceImage.fileSize / 1024 / 1024).toFixed(2)} MB`
+                                {previewEvidence.mimeType || "Evidence media"} · Uploaded by {auditActorName(previewEvidence.uploadedById, "Logged By", controller.inspectorNamesById)} · {formatAuditTimestamp(previewEvidence.uploadedAt)}
+                                {typeof previewEvidence.fileSize === "number"
+                                    ? ` · ${(previewEvidence.fileSize / 1024 / 1024).toFixed(2)} MB`
                                     : ""}
                             </DialogDescription>
                         </DialogHeader>
-                        {isManufacturingEvidenceVideo(yieldRecord.evidenceImage.mimeType, yieldRecord.evidenceImage.fileName) ? (
+                        {isManufacturingEvidenceVideo(previewEvidence.mimeType, previewEvidence.fileName) ? (
                             <video
-                                src={yieldRecord.evidenceImage.url}
+                                src={previewEvidence.url}
                                 controls
                                 playsInline
                                 preload="metadata"
@@ -1057,8 +1127,8 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                             />
                         ) : (
                             <Image
-                                src={yieldRecord.evidenceImage.url}
-                                alt={yieldRecord.evidenceImage.fileName || "End-of-shift evidence"}
+                                src={previewEvidence.url}
+                                alt={previewEvidence.fileName || "Evidence file"}
                                 width={1280}
                                 height={720}
                                 unoptimized

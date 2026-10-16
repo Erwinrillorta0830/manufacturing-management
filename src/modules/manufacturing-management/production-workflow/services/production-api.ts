@@ -275,11 +275,22 @@ export async function submitQAVerification(payload: QAVerificationPayload): Prom
     return res.json();
 }
 
+const shiftEvidenceKeysByFile = new WeakMap<File, string>();
+
 export async function submitShiftRunLog(payload: ShiftRunLogPayload): Promise<any> {
-    const { evidenceImage, ...sessionPayload } = payload;
+    const { evidenceImage, evidenceImages, ...sessionPayload } = payload;
+    const files = evidenceImages ?? (evidenceImage ? [evidenceImage] : []);
     const formData = new FormData();
     formData.set("payload", JSON.stringify(sessionPayload));
-    formData.set("image", evidenceImage, evidenceImage.name);
+    formData.set("inspectorEvidenceKeys", JSON.stringify(files.map((file) => {
+        let key = shiftEvidenceKeysByFile.get(file);
+        if (!key) {
+            key = crypto.randomUUID();
+            shiftEvidenceKeysByFile.set(file, key);
+        }
+        return key;
+    })));
+    files.forEach((file) => formData.append("inspectorEvidence", file, file.name));
 
     const res = await fetch("/api/manufacturing/production/shift-run-log", {
         method: "POST",
