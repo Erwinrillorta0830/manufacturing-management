@@ -11,6 +11,8 @@ export interface JobOrderDailyYieldSummary {
     branchId: number | null;
     targetQuantity: number;
     producedQuantity: number;
+    verifiedRejectedQuantity: number;
+    verifiedTotalProducedQuantity: number;
     yieldCount: number;
     pendingYieldCount: number;
     discrepancyYieldCount: number;

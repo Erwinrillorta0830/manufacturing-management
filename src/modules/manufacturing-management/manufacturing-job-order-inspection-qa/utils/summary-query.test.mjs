@@ -12,6 +12,8 @@ const rows = [
         productCode: "OO-01",
         latestYieldAt: "2026-10-12 00:30:00",
         unresolvedYieldCount: 1,
+        pendingYieldCount: 1,
+        discrepancyYieldCount: 0,
     },
     {
         jobOrderId: 2,
@@ -22,6 +24,8 @@ const rows = [
         productCode: "PO-01",
         latestYieldAt: "2026-10-11T16:30:00.000Z",
         unresolvedYieldCount: 0,
+        pendingYieldCount: 0,
+        discrepancyYieldCount: 0,
     },
     {
         jobOrderId: 3,
@@ -32,6 +36,8 @@ const rows = [
         productCode: "OO-01",
         latestYieldAt: "2026-10-10 09:00:00",
         unresolvedYieldCount: 2,
+        pendingYieldCount: 0,
+        discrepancyYieldCount: 2,
     },
 ];
 
@@ -76,6 +82,12 @@ test("applies search, status, product, and flagged filters together", () => {
     assert.equal(result.meta.total, 1);
     assert.equal(result.facets.totalAvailable, 3);
     assert.equal(result.facets.unresolvedJobOrderCount, 2);
+});
+
+test("prioritizes discrepancy and pending counts in the needs-review queue", () => {
+    const result = buildJobOrderDailyYieldSummaryPage(rows, query({ flaggedOnly: true }));
+
+    assert.deepEqual(result.data.map((row) => row.jobOrderId), [3, 1]);
 });
 
 test("uses inclusive Philippine calendar dates for date filtering", () => {

@@ -78,7 +78,11 @@ export function buildJobOrderDailyYieldSummaryPage(
         const matchesFlagged = !query.flaggedOnly || row.unresolvedYieldCount > 0;
         return matchesSearch && matchesStatus && matchesProduct && matchesDate && matchesFlagged;
     }).sort((left, right) => (
-        phtTimestampEpoch(right.latestYieldAt) - phtTimestampEpoch(left.latestYieldAt)
+        (query.flaggedOnly
+            ? ((right.discrepancyYieldCount || 0) - (left.discrepancyYieldCount || 0))
+                || ((right.pendingYieldCount || 0) - (left.pendingYieldCount || 0))
+            : 0)
+        || phtTimestampEpoch(right.latestYieldAt) - phtTimestampEpoch(left.latestYieldAt)
         || right.jobOrderId - left.jobOrderId
     ));
 

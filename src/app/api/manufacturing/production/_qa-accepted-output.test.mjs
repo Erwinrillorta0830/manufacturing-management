@@ -20,7 +20,7 @@ registerHooks({
     }
 });
 
-const { buildQAYieldAssessments, isCommittedYieldLedger } = await import("./_qa-accepted-output.ts");
+const { buildQAYieldAssessments, isCommittedYieldLedger, verifiedYieldOutputTotalsByJobOrder } = await import("./_qa-accepted-output.ts");
 const { qaRecordAfterRevocation, releasedYieldGoodQuantity, releasedYieldQuantityDelta, yieldAuditRowsAfterRevocation } = await import("./qa-release.ts");
 
 assert.equal(isCommittedYieldLedger({ commit_status: "COMMITTED" }), true);
@@ -59,7 +59,7 @@ assert.equal(qaRecordAfterRevocation({ inspected_at: "2026-10-16 10:00:01" }, "2
 assert.equal(qaRecordAfterRevocation({ inspected_at: "2026-10-16 10:00:00" }, "2026-10-16 10:00:00"), false);
 
 const releaseAssessment = buildQAYieldAssessments([
-    { ledger_id: 4, job_order_id: 10, yield_quantity: 3, qa_accepted_quantity: 2, qa_status: "Passed" }
+    { ledger_id: 4, job_order_id: 10, yield_quantity: 3, qa_accepted_quantity: 2, qa_rejected_quantity: 1, qa_status: "Passed" }
 ], [{
     daily_qa_id: 14,
     ledger_id: 4,
@@ -69,6 +69,18 @@ const releaseAssessment = buildQAYieldAssessments([
     weight_check_passed: 1
 }], []);
 assert.equal(releaseAssessment[0].acceptedQuantity, 2);
+assert.equal(releaseAssessment[0].qaRejectedQuantity, 1);
+
+const verifiedTotals = verifiedYieldOutputTotalsByJobOrder([
+    releaseAssessment[0],
+    { ...releaseAssessment[0], ledgerId: 40, acceptedQuantity: 8, qaRejectedQuantity: 4, qaStatus: "Pending" },
+    { ...releaseAssessment[0], ledgerId: 41, acceptedQuantity: 6, qaRejectedQuantity: 2, qaStatus: "QA Hold" },
+]);
+assert.deepEqual(verifiedTotals.get(10), {
+    acceptedQuantity: 2,
+    rejectedQuantity: 1,
+    totalProducedQuantity: 3,
+});
 
 const revokedAssessment = buildQAYieldAssessments([
     { ledger_id: 5, job_order_id: 10, yield_quantity: 3, qa_accepted_quantity: 2, qa_status: "Pending", qa_revoked_through_audit_id: 10 }
