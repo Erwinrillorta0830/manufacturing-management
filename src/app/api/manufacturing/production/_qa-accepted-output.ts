@@ -5,6 +5,7 @@ import {
     type DailyQAOutcomeStatus,
 } from "@/modules/manufacturing-management/manufacturing-qa/daily-qa-outcome";
 import { isCancelledJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
+import { releasedYieldGoodQuantity, yieldAuditRowsAfterRevocation } from "./qa-release";
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "test";
@@ -129,7 +130,10 @@ export function buildQAYieldAssessments(
         .map((yieldRow) => {
             const currentLedgerId = ledgerId(yieldRow);
             const currentJobOrderId = jobOrderId(yieldRow);
-            const audits = inspectionsByLedger.get(currentLedgerId) || [];
+            const audits = yieldAuditRowsAfterRevocation(
+                yieldRow,
+                inspectionsByLedger.get(currentLedgerId) || []
+            );
             const outcome = deriveDailyQAOutcome(
                 audits,
                 routeIdsByJobOrder.get(currentJobOrderId) || []
@@ -146,8 +150,11 @@ export function buildQAYieldAssessments(
                 rejectedQuantity,
                 scrapQuantity,
                 totalQuantity,
-                acceptedQuantity:
-                    outcome.status === "Passed" ? goodQuantity + rejectedQuantity : 0,
+                acceptedQuantity: releasedYieldGoodQuantity({
+                    ...yieldRow,
+                    qa_status: outcome.status,
+                    qa_accepted_quantity: yieldRow.qa_accepted_quantity ?? goodQuantity
+                }),
                 qaStatus: outcome.status,
                 outcome,
                 audits,

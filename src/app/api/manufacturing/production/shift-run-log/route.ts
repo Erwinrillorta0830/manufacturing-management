@@ -460,7 +460,7 @@ async function legacyShiftRunPost(request: Request) {
             yield_quantity: goodYield,
             scrap_quantity: scrapUnits,
             lot_number: finalBatchNo,
-            qa_status: qaStatus === "Passed" ? "Passed" : qaStatus,
+            qa_status: "Pending",
             logged_at: phtMovementTimestamp,
             logged_by: effectiveEncoderId
         };
@@ -846,9 +846,9 @@ async function legacyShiftRunPost(request: Request) {
         const newRejectedQty = isRetryRun ? currentRejectedQty : currentRejectedQty + scrapUnits;
         const isJobFullyFinished = newCompletedQty >= targetQuantity;
 
-        // completed_quantity is the shift-run aggregate. Keep
-        // actual_quantity_produced owned by finished-goods receiving; this
-        // Directus field contains legacy nulls and rejects production-run writes.
+        // completed_quantity is the operator-reported shift-run aggregate.
+        // actual_quantity_produced counts QA-released good output and is
+        // maintained by yield-ledger QA status transitions.
         const joUpdatePayload: Record<string, any> = {
             completed_quantity: newCompletedQty,
             rejected_quantity: newRejectedQty,

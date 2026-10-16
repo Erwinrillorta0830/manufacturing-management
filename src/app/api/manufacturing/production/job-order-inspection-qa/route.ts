@@ -1,11 +1,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from "next/server";
-import { authorizeJobOrderModuleAccess, JOB_ORDER_MODULE_PATHS } from "@/app/api/manufacturing/job-orders/_module-access";
+import {
+    JOB_ORDER_MODULE_PATHS,
+    JobOrderModuleAccessError,
+    requireJobOrderModuleAccess
+} from "@/app/api/manufacturing/job-orders/_module-access";
 import {
     acceptedQuantityByJobOrder,
     buildQAYieldAssessments,
     isCommittedYieldLedger,
 } from "../_qa-accepted-output";
+import { qaRecordAfterRevocation, yieldAuditRowsAfterRevocation } from "../qa-release";
 import {
     isCancelledJobOrderStatus,
     normalizeJobOrderStatus,
@@ -78,6 +83,19 @@ function shelfLifeDaysValue(value: unknown): number | null {
 
 function textValue(value: unknown): string {
     return String(value ?? "").trim();
+}
+
+function activeParameterRowsForRevokedYields(
+    parameterRows: DirectusRow[],
+    yields: DirectusRow[]
+): DirectusRow[] {
+    const yieldsByLedger = new Map(yields.map((row) => [ledgerId(row), row]));
+    return parameterRows.filter((row) => {
+        const marker = textValue(row.remarks).match(/^Daily QA Audit \| Yield Log ID: (\d+) \|/);
+        const yieldRow = marker ? yieldsByLedger.get(Number(marker[1])) : undefined;
+        if (!yieldRow?.qa_revoked_at) return true;
+        return qaRecordAfterRevocation(row, yieldRow.qa_revoked_at);
+    });
 }
 
 function productUomValue(product: DirectusRow | undefined): string | null {
@@ -219,7 +237,7 @@ async function readRowsForIds(
 async function loadJobOrderSummaries(jobOrderIds?: number[]) {
     const yieldsQuery = new URLSearchParams({
         limit: "-1",
-        fields: "ledger_id,job_order_id,commit_status,yield_quantity,rejected_quantity,scrap_quantity,logged_at,production_date",
+        fields: "ledger_id,job_order_id,commit_status,yield_quantity,qa_accepted_quantity,qa_revoked_through_audit_id,rejected_quantity,scrap_quantity,logged_at,production_date",
     });
     if (jobOrderIds?.length) {
         yieldsQuery.set("filter[job_order_id][_in]", [...new Set(jobOrderIds)].join(","));
@@ -272,7 +290,7 @@ async function loadJobOrderSummaries(jobOrderIds?: number[]) {
             "manufacturing_daily_qa_inspections",
             "ledger_id",
             relevantLedgerIds,
-            "ledger_id,jo_route_id,sensory_status,lab_status,action_taken,weight_check_passed",
+            "daily_qa_id,ledger_id,jo_route_id,sensory_status,lab_status,action_taken,weight_check_passed,inspected_at",
             "Daily QA inspection lookup"
         ),
     ]);
@@ -350,14 +368,14 @@ function parseSummaryQuery(searchParams: URLSearchParams): JobOrderDailyYieldSum
     };
 }
 
-async function loadJobOrderDetails(id: number) {
+async function loadJobOrderDetails(id: number, canRevokeYieldAudit: boolean) {
     const [jobOrder, yields, inspections, routes, qaParameterRows] = await Promise.all([
         readRecord(
             `/items/manufacturing_job_orders/${encodeURIComponent(String(id))}?fields=job_order_id,job_order_no,status,product_id,branch_id,target_quantity,completed_quantity`,
             `Job Order ${id} lookup`
         ),
         readRows(
-            `/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(id))}&limit=-1&sort=-logged_at&fields=ledger_id,job_order_id,commit_status,yield_quantity,rejected_quantity,qa_accepted_quantity,qa_rejected_quantity,scrap_quantity,mm_lot_id,lot_number,manufacturing_date,expiry_date,rejected_mm_lot_id,rejected_lot_number,rejected_manufacturing_date,rejected_expiry_date,daily_qa_image_id,shift_name,session_key,production_date,logged_at,logged_by`,
+            `/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(id))}&limit=-1&sort=-logged_at&fields=ledger_id,job_order_id,commit_status,yield_quantity,rejected_quantity,qa_accepted_quantity,qa_rejected_quantity,qa_status,qa_revoked_at,qa_revoked_by,qa_revoke_reason,qa_revoked_through_audit_id,scrap_quantity,mm_lot_id,lot_number,manufacturing_date,expiry_date,rejected_mm_lot_id,rejected_lot_number,rejected_manufacturing_date,rejected_expiry_date,daily_qa_image_id,shift_name,session_key,production_date,logged_at,logged_by`,
             `Yield ledger lookup for Job Order ${id}`
         ),
         readRows(
@@ -369,7 +387,7 @@ async function loadJobOrderDetails(id: number) {
             `Routing lookup for Job Order ${id}`
         ),
         readRows(
-            `/items/manufacturing_job_order_qa_records?filter[job_order_id][_eq]=${encodeURIComponent(String(id))}&limit=-1&sort=-inspected_at&fields=jo_route_id,parameter_id,value_text,value_numeric,value_boolean,is_passed,remarks`,
+            `/items/manufacturing_job_order_qa_records?filter[job_order_id][_eq]=${encodeURIComponent(String(id))}&limit=-1&sort=-inspected_at&fields=jo_route_id,parameter_id,value_text,value_numeric,value_boolean,is_passed,inspected_at,remarks`,
             `QA parameter lookup for Job Order ${id}`
         ),
     ]);
@@ -380,6 +398,32 @@ async function loadJobOrderDetails(id: number) {
     }
     if (isCancelledJobOrderStatus(jobOrder.status)) {
         throw new JobOrderInspectionQAError(404, `Job Order ${id} is cancelled and is not available in this queue.`);
+    }
+
+    const revokedByIds = [...new Set(yields
+        .filter((row) => Boolean(row.qa_revoked_at))
+        .map((row) => relationId(row.qa_revoked_by, ["user_id", "id"]))
+        .filter((userId) => userId > 0))];
+    const revokedByNames = new Map<number, string>();
+    if (revokedByIds.length > 0) {
+        const userParams = new URLSearchParams({
+            "filter[user_id][_in]": revokedByIds.join(","),
+            fields: "user_id,user_fname,user_lname",
+            limit: "-1"
+        });
+        try {
+            const users = await readRows(`/items/user?${userParams.toString()}`, "QA revocation user lookup");
+            for (const user of users) {
+                const userId = relationId(user.user_id, ["user_id", "id"]);
+                const name = [user.user_fname, user.user_lname]
+                    .map(textValue)
+                    .filter(Boolean)
+                    .join(" ");
+                if (userId > 0 && name) revokedByNames.set(userId, name);
+            }
+        } catch (error) {
+            console.warn(`Unable to resolve QA revocation user names for Job Order ${id}:`, error);
+        }
     }
 
     const productId = relationId(jobOrder.product_id, ["product_id", "id"]);
@@ -426,16 +470,49 @@ async function loadJobOrderDetails(id: number) {
         .filter((route) => route.id > 0)
         .sort((left, right) => left.sequenceOrder - right.sequenceOrder || left.id - right.id);
 
-    const savedParametersByAudit = indexSavedDailyQAParameters(qaParameterRows);
-    const inspectionsWithParameters = inspections.map((inspection) => ({
+    const committedYields = yields.filter(isCommittedYieldLedger);
+    const yieldsByLedgerId = new Map(committedYields.map((row) => [ledgerId(row), row]));
+    const activeInspections = inspections.filter((inspection) => {
+        const yieldRow = yieldsByLedgerId.get(ledgerId(inspection));
+        return !yieldRow || yieldAuditRowsAfterRevocation(yieldRow, [inspection]).length > 0;
+    });
+    const currentQaParameterRows = activeParameterRowsForRevokedYields(qaParameterRows, committedYields);
+    const savedParametersByAudit = indexSavedDailyQAParameters(currentQaParameterRows);
+    const inspectionsWithParameters = activeInspections.map((inspection) => ({
         ...inspection,
         qaParameters: savedParametersByAudit.get(
             dailyQAParameterAuditKey(ledgerId(inspection), routeId(inspection))
         ) || [],
     }));
 
-    const committedYields = yields.filter(isCommittedYieldLedger);
     const qaAllocationCapacities = calculateQAOutputAllocationCapacities(committedYields);
+    const yieldLedgerIds = committedYields.map(ledgerId).filter(Boolean);
+    const outputAllocationRows = yieldLedgerIds.length > 0
+        ? await readRows(
+            `/items/manufacturing_job_order_yield_allocations?filter[ledger_id][_in]=${yieldLedgerIds.join(",")}&limit=-1&sort=sort_order,allocation_id&fields=allocation_id,ledger_id,allocation_type,allocation_key,quantity,mm_lot_id,batch_no,manufacturing_date,expiry_date,rejection_reason_id`,
+            "Yield output allocation lookup"
+        )
+        : [];
+    const rejectionReasonIds = [...new Set(outputAllocationRows
+        .map((row) => relationId(row.rejection_reason_id, ["id"]))
+        .filter(Boolean))];
+    const rejectionReasonRows = rejectionReasonIds.length > 0
+        ? await readRows(
+            `/items/qa_rejection_reasons?filter[id][_in]=${rejectionReasonIds.join(",")}&limit=-1&fields=id,reason_name`,
+            "QA rejection reason lookup"
+        )
+        : [];
+    const rejectionReasonNames = new Map<number, string>(
+        rejectionReasonRows.map((row) => [relationId(row.id), textValue(row.reason_name)])
+    );
+    const outputAllocationsByLedger = new Map<number, DirectusRow[]>();
+    for (const allocationRow of outputAllocationRows) {
+        const currentLedgerId = relationId(allocationRow.ledger_id, ["ledger_id", "id"]);
+        if (!currentLedgerId) continue;
+        const current = outputAllocationsByLedger.get(currentLedgerId) || [];
+        current.push(allocationRow);
+        outputAllocationsByLedger.set(currentLedgerId, current);
+    }
     const assessmentsByLedger = new Map(
         buildQAYieldAssessments(committedYields, inspectionsWithParameters, routes)
             .map((assessment) => [assessment.ledgerId, assessment] as const)
@@ -490,6 +567,22 @@ async function loadJobOrderDetails(id: number) {
             const allocationCapacity = qaAllocationCapacities?.byLedgerId.get(currentLedgerId);
             const mmLotId = relationId(yieldRow.mm_lot_id, ["mm_lot_id", "lot_id", "id"]);
             const rejectedMmLotId = relationId(yieldRow.rejected_mm_lot_id, ["mm_lot_id", "lot_id", "id"]);
+            const savedOutputAllocations = outputAllocationsByLedger.get(currentLedgerId) || [];
+            const mapOutputAllocation = (allocationRow: DirectusRow) => {
+                const rejectionReasonId = relationId(allocationRow.rejection_reason_id, ["id"]) || null;
+                return {
+                    allocationId: relationId(allocationRow.allocation_id, ["allocation_id", "id"]) || null,
+                    allocationKey: textValue(allocationRow.allocation_key),
+                    quantity: Math.max(0, numberValue(allocationRow.quantity)),
+                    mmLotId: relationId(allocationRow.mm_lot_id, ["lot_id", "mm_lot_id", "id"]) || null,
+                    lotName: null as string | null,
+                    batchNo: textValue(allocationRow.batch_no) || null,
+                    manufacturingDate: dateValue(allocationRow.manufacturing_date),
+                    expiryDate: dateValue(allocationRow.expiry_date),
+                    rejectionReasonId,
+                    rejectionReasonName: rejectionReasonId ? rejectionReasonNames.get(rejectionReasonId) || null : null
+                };
+            };
             const evidenceImageFileId = directusFileId(yieldRow.daily_qa_image_id);
             const evidenceImageMetadata = directusFileMetadata(yieldRow.daily_qa_image_id)
                 || (evidenceImageFileId ? evidenceFilesById.get(evidenceImageFileId) : null);
@@ -555,6 +648,12 @@ async function loadJobOrderDetails(id: number) {
                 rejectedBatchNo: textValue(yieldRow.rejected_lot_number) || null,
                 rejectedManufacturingDate: dateValue(yieldRow.rejected_manufacturing_date),
                 rejectedExpiryDate: dateValue(yieldRow.rejected_expiry_date),
+                acceptedAllocations: savedOutputAllocations
+                    .filter((row) => textValue(row.allocation_type).toUpperCase() === "ACCEPTED")
+                    .map(mapOutputAllocation),
+                rejectedAllocations: savedOutputAllocations
+                    .filter((row) => textValue(row.allocation_type).toUpperCase() === "REJECTED")
+                    .map(mapOutputAllocation),
                 evidenceImage: evidenceImageFileId
                     ? {
                         fileId: evidenceImageFileId,
@@ -571,6 +670,15 @@ async function loadJobOrderDetails(id: number) {
                 },
                 qaStatus: assessment?.qaStatus || outcome.status,
                 processQaStatus: assessment?.qaStatus || outcome.status,
+                qaRevocation: yieldRow.qa_revoked_at ? (() => {
+                    const revokedById = relationId(yieldRow.qa_revoked_by, ["user_id", "id"]);
+                    return {
+                        revokedAt: timestampValue(yieldRow.qa_revoked_at),
+                        revokedById: revokedById || null,
+                        revokedByName: revokedByNames.get(revokedById) || null,
+                        reason: textValue(yieldRow.qa_revoke_reason) || null
+                    };
+                })() : null,
                 outcome,
                 audits
             };
@@ -578,7 +686,10 @@ async function loadJobOrderDetails(id: number) {
         .filter((row) => row.ledgerId > 0)
         .sort((left, right) => sortTimestamp(right.loggedAt || right.productionDate) - sortTimestamp(left.loggedAt || left.productionDate) || right.ledgerId - left.ledgerId);
 
-    const mmLotIds = Array.from(new Set(yieldRows.flatMap((row) => [row.mmLotId, row.rejectedMmLotId]).filter((value): value is number => Boolean(value))));
+    const mmLotIds = Array.from(new Set([
+        ...yieldRows.flatMap((row) => [row.mmLotId, row.rejectedMmLotId]).filter((value): value is number => Boolean(value)),
+        ...outputAllocationRows.map((row) => relationId(row.mm_lot_id, ["lot_id", "mm_lot_id", "id"])).filter(Boolean)
+    ]));
     const mmLots = mmLotIds.length > 0
         ? await readRows(
             `/items/mm_lots?filter[lot_id][_in]=${mmLotIds.join(",")}&limit=-1&fields=lot_id,lot_name`,
@@ -593,7 +704,15 @@ async function loadJobOrderDetails(id: number) {
         lotName: row.mmLotId ? textValue(mmLotsById.get(row.mmLotId)?.lot_name) || `Lot #${row.mmLotId}` : null,
         rejectedLotName: row.rejectedMmLotId
             ? textValue(mmLotsById.get(row.rejectedMmLotId)?.lot_name) || null
-            : null
+            : null,
+        acceptedAllocations: row.acceptedAllocations.map((allocation) => ({
+            ...allocation,
+            lotName: allocation.mmLotId ? textValue(mmLotsById.get(allocation.mmLotId)?.lot_name) || `Lot #${allocation.mmLotId}` : null
+        })),
+        rejectedAllocations: row.rejectedAllocations.map((allocation) => ({
+            ...allocation,
+            lotName: allocation.mmLotId ? textValue(mmLotsById.get(allocation.mmLotId)?.lot_name) || `Lot #${allocation.mmLotId}` : null
+        }))
     }));
     const qaStatusCounts = buildYieldQAStatusCountIndex(
         dailyYields,
@@ -603,7 +722,7 @@ async function loadJobOrderDetails(id: number) {
 
     let closeReadiness: JobOrderClosureReadiness;
     try {
-        closeReadiness = await getJobOrderClosureReadiness(id, { yields, inspections, routes });
+        closeReadiness = await getJobOrderClosureReadiness(id, { yields, inspections: activeInspections, routes });
     } catch (error) {
         console.error(`Unable to determine close readiness for Job Order ${id}:`, error);
         closeReadiness = {
@@ -640,14 +759,14 @@ async function loadJobOrderDetails(id: number) {
         yieldEvidenceWarning,
         routes: routeModels,
         dailyYields,
+        canRevokeYieldAudit,
         closeReadiness
     };
 }
 
 export async function GET(request: Request) {
-    const accessDenied = await authorizeJobOrderModuleAccess(JOB_ORDER_MODULE_PATHS.inspectionQa);
-    if (accessDenied) return accessDenied;
     try {
+        const authorizedUser = await requireJobOrderModuleAccess(JOB_ORDER_MODULE_PATHS.inspectionQa);
         const { searchParams } = new URL(request.url);
         const rawJoId = textValue(searchParams.get("joId"));
         const rawJobOrderNo = textValue(searchParams.get("jobOrderNo"));
@@ -657,7 +776,7 @@ export async function GET(request: Request) {
             if (!Number.isSafeInteger(joId) || joId <= 0) {
                 throw new JobOrderInspectionQAError(400, "A valid Job Order identifier is required.");
             }
-            return NextResponse.json({ data: await loadJobOrderDetails(joId) });
+            return NextResponse.json({ data: await loadJobOrderDetails(joId, authorizedUser.canRevokeYieldAudit) });
         }
 
         if (rawJobOrderNo) {
@@ -668,9 +787,9 @@ export async function GET(request: Request) {
         const summaries = await loadJobOrderSummaries();
         return NextResponse.json({ data: buildJobOrderDailyYieldSummaryPage(summaries, query) });
     } catch (error) {
-        const status = error instanceof JobOrderInspectionQAError ? error.status : 500;
+        const status = error instanceof JobOrderInspectionQAError || error instanceof JobOrderModuleAccessError ? error.status : 500;
         const message = error instanceof Error ? error.message : "Failed to load JO Daily Yields.";
         console.error("JO Daily Yields API error:", error);
-        return NextResponse.json({ error: message }, { status });
+        return NextResponse.json({ error: message, code: error instanceof JobOrderModuleAccessError ? error.code : undefined }, { status });
     }
 }

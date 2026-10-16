@@ -34,6 +34,7 @@ import {
     returnJobOrderMaterialLeftovers,
     JobOrderCancellationExecution
 } from "@/app/api/manufacturing/production/_material-return";
+import { acquireJobOrderActualQuantityLock } from "@/app/api/manufacturing/production/_parent-yield-quantity-sync";
 import { materialReturnFingerprint, verifyMaterialReturnToken } from "./material-returns/_token";
 import { attachTemplateParameters } from "./_template-parameters";
 
@@ -619,7 +620,21 @@ export async function POST(request: Request) {
                 inventoryLotId: null as number | null
             };
 
+            const releaseParentQuantityLock = await acquireJobOrderActualQuantityLock(parentJoIdInt);
             try {
+                const latestParentJO = await directusMutation(
+                    `/items/manufacturing_job_orders/${parentJoIdInt}?fields=job_order_id,status,completed_quantity,actual_quantity_produced,rejected_quantity,modified_at`,
+                    { headers, cache: "no-store" },
+                    "Load current Job Order quantities before QA update"
+                );
+                Object.assign(transactionState.previousJobOrder, {
+                    status: latestParentJO.status ?? null,
+                    completed_quantity: Number(latestParentJO.completed_quantity) || 0,
+                    actual_quantity_produced: Number(latestParentJO.actual_quantity_produced) || 0,
+                    rejected_quantity: Number(latestParentJO.rejected_quantity) || 0,
+                    modified_at: latestParentJO.modified_at ?? null
+                });
+
                 // 3. Auto-spawn Standalone Rework Job Order if rejected_quantity > 0
                 if (rejQty > 0) {
                     // Find existing rework orders for this parent to determine suffix sequence.
@@ -810,12 +825,12 @@ export async function POST(request: Request) {
                 }
 
                 // 5b. Update Parent Job Order status and completed/rejected quantities.
-                const oldStatus = assertJobOrderStatus(parentJO.status || JOB_ORDER_STATUS.IN_PROGRESS);
+                const oldStatus = assertJobOrderStatus(latestParentJO.status || JOB_ORDER_STATUS.IN_PROGRESS);
                 const newStatus = JOB_ORDER_STATUS.COMPLETED; // Transitions to Completed on QA inspection signoff.
 
-                const newCompletedQty = (Number(parentJO.completed_quantity) || 0) + passQty;
-                const newProducedQty = (Number(parentJO.actual_quantity_produced) || 0) + passQty;
-                const newRejectedQty = (Number(parentJO.rejected_quantity) || 0) + rejQty;
+                const newCompletedQty = (Number(latestParentJO.completed_quantity) || 0) + passQty;
+                const newProducedQty = (Number(latestParentJO.actual_quantity_produced) || 0) + passQty;
+                const newRejectedQty = (Number(latestParentJO.rejected_quantity) || 0) + rejQty;
 
                 const qaCompletedAt = formatPhtDateTime();
                 const qaHistoryTimestamp = new Date().toISOString();
@@ -975,6 +990,8 @@ export async function POST(request: Request) {
                         ? `${message} Rollback was incomplete: ${rollbackFailures.join(" ")}`
                         : message
                 }, { status: error instanceof QAPersistenceError ? error.statusCode : 502 });
+            } finally {
+                releaseParentQuantityLock();
             }
         }
 

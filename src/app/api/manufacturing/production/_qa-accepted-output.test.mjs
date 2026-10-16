@@ -21,6 +21,7 @@ registerHooks({
 });
 
 const { buildQAYieldAssessments, isCommittedYieldLedger } = await import("./_qa-accepted-output.ts");
+const { qaRecordAfterRevocation, releasedYieldGoodQuantity, releasedYieldQuantityDelta, yieldAuditRowsAfterRevocation } = await import("./qa-release.ts");
 
 assert.equal(isCommittedYieldLedger({ commit_status: "COMMITTED" }), true);
 assert.equal(isCommittedYieldLedger({ commit_status: null }), true);
@@ -35,4 +36,71 @@ const assessments = buildQAYieldAssessments([
 
 assert.deepEqual(assessments.map((assessment) => assessment.ledgerId), [1, 3]);
 
-console.log("QA yield ledger commit-state checks passed.");
+assert.equal(releasedYieldGoodQuantity({ qa_status: "Passed", qa_accepted_quantity: 2, yield_quantity: 3 }), 2);
+assert.equal(releasedYieldGoodQuantity({ qa_status: "Passed", qa_accepted_quantity: null, yield_quantity: 3 }), 3);
+assert.equal(releasedYieldGoodQuantity({ qa_status: "Pending", qa_accepted_quantity: 2, yield_quantity: 3 }), 0);
+assert.equal(releasedYieldQuantityDelta(
+    { qa_status: "Pending", qa_accepted_quantity: 2 },
+    { qa_status: "Passed", qa_accepted_quantity: 2 }
+), 2);
+assert.equal(releasedYieldQuantityDelta(
+    { qa_status: "Passed", qa_accepted_quantity: 2 },
+    { qa_status: "Pending", qa_accepted_quantity: 2 }
+), -2);
+assert.equal(releasedYieldQuantityDelta(
+    { qa_status: "Passed", qa_accepted_quantity: 2 },
+    { qa_status: "Passed", qa_accepted_quantity: 2 }
+), 0);
+assert.deepEqual(yieldAuditRowsAfterRevocation(
+    { qa_revoked_through_audit_id: 12 },
+    [{ daily_qa_id: 10 }, { daily_qa_id: 13 }]
+), [{ daily_qa_id: 13 }]);
+assert.equal(qaRecordAfterRevocation({ inspected_at: "2026-10-16 10:00:01" }, "2026-10-16 10:00:00"), true);
+assert.equal(qaRecordAfterRevocation({ inspected_at: "2026-10-16 10:00:00" }, "2026-10-16 10:00:00"), false);
+
+const releaseAssessment = buildQAYieldAssessments([
+    { ledger_id: 4, job_order_id: 10, yield_quantity: 3, qa_accepted_quantity: 2, qa_status: "Passed" }
+], [{
+    daily_qa_id: 14,
+    ledger_id: 4,
+    sensory_status: "Passed",
+    lab_status: "Passed",
+    action_taken: "Released",
+    weight_check_passed: 1
+}], []);
+assert.equal(releaseAssessment[0].acceptedQuantity, 2);
+
+const revokedAssessment = buildQAYieldAssessments([
+    { ledger_id: 5, job_order_id: 10, yield_quantity: 3, qa_accepted_quantity: 2, qa_status: "Pending", qa_revoked_through_audit_id: 10 }
+], [{
+    daily_qa_id: 8,
+    ledger_id: 5,
+    sensory_status: "Passed",
+    lab_status: "Passed",
+    action_taken: "Released",
+    weight_check_passed: 1
+}], []);
+assert.equal(revokedAssessment[0].qaStatus, "Pending");
+assert.equal(revokedAssessment[0].acceptedQuantity, 0);
+
+const reauditedAssessment = buildQAYieldAssessments([
+    { ledger_id: 6, job_order_id: 10, yield_quantity: 3, qa_accepted_quantity: 2, qa_status: "Pending", qa_revoked_through_audit_id: 10 }
+], [{
+    daily_qa_id: 8,
+    ledger_id: 6,
+    sensory_status: "Passed",
+    lab_status: "Passed",
+    action_taken: "Released",
+    weight_check_passed: 1
+}, {
+    daily_qa_id: 11,
+    ledger_id: 6,
+    sensory_status: "Failed",
+    lab_status: "Failed",
+    action_taken: "Hold",
+    weight_check_passed: 0
+}], []);
+assert.equal(reauditedAssessment[0].qaStatus, "QA Hold");
+assert.equal(reauditedAssessment[0].acceptedQuantity, 0);
+
+console.log("QA released-good quantity and revocation-cycle checks passed.");
