@@ -903,14 +903,11 @@ async function verifyPersistedCompletion(options: {
         `${DIRECTUS_URL}/items/manufacturing_job_orders/${encodeURIComponent(String(jobOrder.jobOrderId))}`,
         `Job-order completion verification for ${jobOrder.jobOrderNo}`
     );
-    if (
-        !isTerminalJobOrderStatus(persistedJobOrder.status)
-        || Math.abs(Number(persistedJobOrder.actual_quantity_produced || 0) - quantityProduced) > EPSILON
-    ) {
+    if (!isTerminalJobOrderStatus(persistedJobOrder.status)) {
         throw new YieldCompletionError(
             502,
             "PERSISTENCE_VERIFICATION_FAILED",
-            `Job Order ${jobOrder.jobOrderNo} did not retain Completed status and produced quantity.`
+            `Job Order ${jobOrder.jobOrderNo} did not retain its completed status.`
         );
     }
 
@@ -1414,7 +1411,6 @@ async function completeYieldClosingInternal(
             jobOrder.jobOrderId,
             {
                 status: JOB_ORDER_STATUS.COMPLETED,
-                actual_quantity_produced: quantityProduced,
                 modified_at: completedAt
             },
             `Complete Job Order ${jobOrder.jobOrderNo}`
@@ -2101,7 +2097,7 @@ export async function finalizeHaltedJobOrder(input: FinalizeHaltedJobOrderInput)
         });
         const returnedQuantity = roundTo4(Number(leftoverExecution.response.returnedQuantity || 0));
 
-        const previousProduced = Number(jobOrder.actualQuantityProduced || 0);
+        const previousCompleted = Number(jobOrder.completedQuantity || 0);
         const completedAtInstant = new Date();
         const completedAt = formatPhtDateTime(completedAtInstant);
         const completedHistoryAt = completedAtInstant.toISOString();
@@ -2110,8 +2106,7 @@ export async function finalizeHaltedJobOrder(input: FinalizeHaltedJobOrderInput)
             jobOrder.jobOrderId,
             {
                 status: JOB_ORDER_STATUS.COMPLETED,
-                actual_quantity_produced: roundTo4(previousProduced + quantityProduced),
-                completed_quantity: roundTo4(previousProduced + quantityProduced),
+                completed_quantity: roundTo4(previousCompleted + quantityProduced),
                 modified_at: completedAt
             },
             `Complete halted Job Order ${jobOrder.jobOrderNo}`

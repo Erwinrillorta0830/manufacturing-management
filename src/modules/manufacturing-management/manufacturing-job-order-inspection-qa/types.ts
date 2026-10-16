@@ -80,6 +80,8 @@ export interface JobOrderDailyYieldRecord {
     rejectedBatchNo: string | null;
     rejectedManufacturingDate: string | null;
     rejectedExpiryDate: string | null;
+    acceptedAllocations: JobOrderYieldOutputAllocation[];
+    rejectedAllocations: JobOrderYieldOutputAllocation[];
     evidenceImage: {
         fileId: string;
         fileName: string | null;
@@ -94,12 +96,31 @@ export interface JobOrderDailyYieldRecord {
     };
     qaStatus: DailyQAOutcomeStatus;
     processQaStatus: DailyQAOutcomeStatus;
+    qaRevocation: {
+        revokedAt: string | null;
+        revokedById: number | null;
+        revokedByName: string | null;
+        reason: string | null;
+    } | null;
     outcome: {
         status: DailyQAOutcomeStatus;
         hasFailure: boolean;
         isComplete: boolean;
     };
     audits: JobOrderDailyYieldAudit[];
+}
+
+export interface JobOrderYieldOutputAllocation {
+    allocationId: number | null;
+    allocationKey: string;
+    quantity: number;
+    mmLotId: number | null;
+    lotName: string | null;
+    batchNo: string | null;
+    manufacturingDate: string | null;
+    expiryDate: string | null;
+    rejectionReasonId: number | null;
+    rejectionReasonName: string | null;
 }
 
 export interface JobOrderDailyYieldEvidence {
@@ -147,6 +168,7 @@ export interface JobOrderDailyYieldDetails extends JobOrderDailyYieldSummary {
     yieldEvidenceWarning: string | null;
     routes: JobOrderDailyYieldRoute[];
     dailyYields: JobOrderDailyYieldRecord[];
+    canRevokeYieldAudit: boolean;
     closeReadiness: JobOrderClosureReadiness;
 }
 

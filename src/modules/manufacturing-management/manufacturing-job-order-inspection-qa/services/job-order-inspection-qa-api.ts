@@ -57,6 +57,19 @@ export async function fetchJobOrderDailyYieldDetails(
     return readResponse<JobOrderDailyYieldDetails>(response, "Failed to load Job Order details.");
 }
 
+export async function revokeJobOrderYieldAudit(input: {
+    jobOrderId: number;
+    ledgerId: number;
+    reason: string;
+}): Promise<void> {
+    const response = await fetch("/api/manufacturing/production/daily-qa", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "revokeJobOrderYieldAudit", ...input })
+    });
+    await readResponse(response, "Failed to revoke the QA release.");
+}
+
 export async function closeJobOrder(
     jobOrderId: number,
     idempotencyKey: string

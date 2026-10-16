@@ -29,6 +29,7 @@ export class JobOrderModuleAccessError extends Error {
 export interface AuthorizedJobOrderUser {
     userId: number;
     admin: boolean;
+    canRevokeYieldAudit: boolean;
 }
 
 interface ModuleAccessRow {
@@ -170,7 +171,14 @@ export async function requireJobOrderModuleAccess(
         throw new JobOrderModuleAccessError(403, "MODULE_ACCESS_REQUIRED", "You do not have access to this Job Order module.");
     }
 
-    return { userId, admin };
+    return {
+        userId,
+        admin,
+        canRevokeYieldAudit: requestedPaths.some((path) =>
+            path === JOB_ORDER_MODULE_PATHS.qualityAssurance
+            || path === JOB_ORDER_MODULE_PATHS.inspectionQa
+        )
+    };
 }
 
 export async function authorizeJobOrderModuleAccess(

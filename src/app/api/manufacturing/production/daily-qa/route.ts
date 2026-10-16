@@ -1,6 +1,11 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
-import { authorizeJobOrderModuleAccess, JOB_ORDER_MODULE_PATHS } from "@/app/api/manufacturing/job-orders/_module-access";
+import {
+    authorizeJobOrderModuleAccess,
+    JOB_ORDER_MODULE_PATHS,
+    JobOrderModuleAccessError,
+    requireJobOrderModuleAccess
+} from "@/app/api/manufacturing/job-orders/_module-access";
 import {
     createDisposition,
     findPendingDisposition,
@@ -28,6 +33,12 @@ import {
     type RejectedOutputMetadata
 } from "@/modules/manufacturing-management/manufacturing-qa/rejected-output";
 import { isCommittedYieldLedger } from "../_qa-accepted-output";
+import { qaRecordAfterRevocation, releasedYieldQuantityDelta, yieldAuditRowsAfterRevocation } from "../qa-release";
+import {
+    applyParentQuantityDeltaWhileLocked,
+    ParentYieldQuantitySyncError,
+    withJobOrderActualQuantityLock
+} from "../_parent-yield-quantity-sync";
 import {
     calculateQAOutputAllocationCapacity,
     parseQAOutputQuantity,
@@ -101,6 +112,15 @@ interface DailyQAOutputMetadata {
     expiryDate: string;
 }
 
+interface DailyQAOutputAllocation extends DailyQAOutputMetadata {
+    allocationId?: number | null;
+    allocationKey: string;
+    quantity: number;
+    rejectionReasonId: number | null;
+}
+
+type DailyQAOutputType = "ACCEPTED" | "REJECTED";
+
 function textValue(value: unknown): string {
     return String(value ?? "").trim();
 }
@@ -148,6 +168,72 @@ function normalizeOutputMetadata(value: unknown, required: boolean): DailyQAOutp
     }
 
     return { mmLotId, batchNo, manufacturingDate, expiryDate };
+}
+
+function normalizeOutputAllocations(
+    value: unknown,
+    legacyMetadata: unknown,
+    targetQuantity: number,
+    outputType: DailyQAOutputType,
+    ledgerId: number
+): DailyQAOutputAllocation[] {
+    if (targetQuantity === 0) return [];
+    const sourceRows = Array.isArray(value) && value.length > 0
+        ? value
+        : legacyMetadata
+            ? [{ ...legacyMetadata as Record<string, unknown>, quantity: targetQuantity, allocationKey: `legacy-${outputType.toLowerCase()}-${ledgerId}` }]
+            : [];
+    if (sourceRows.length === 0) {
+        throw new DailyQAValidationError(422, "OUTPUT_ALLOCATION_REQUIRED", "At least one lot / batch allocation is required for positive output.");
+    }
+
+    const rows = sourceRows.map((item, index) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) {
+            throw new DailyQAValidationError(422, "OUTPUT_ALLOCATION_INVALID", "Every lot / batch allocation must be an object.");
+        }
+        const record = item as Record<string, unknown>;
+        const metadata = normalizeOutputMetadata(record, true) as DailyQAOutputMetadata;
+        const quantity = parseQAOutputQuantity(record.quantity);
+        if (quantity === null || quantity <= 0) {
+            throw new DailyQAValidationError(422, "OUTPUT_ALLOCATION_QUANTITY_INVALID", `Enter a positive quantity for ${outputType.toLowerCase()} allocation ${index + 1}.`);
+        }
+        const allocationKey = textValue(record.allocationKey ?? record.allocation_key);
+        if (!allocationKey || allocationKey.length > 100) {
+            throw new DailyQAValidationError(422, "OUTPUT_ALLOCATION_KEY_INVALID", `Allocation ${index + 1} is missing a valid allocation key.`);
+        }
+        const rawReasonId = record.rejectionReasonId ?? record.rejection_reason_id;
+        const rejectionReasonId = outputType === "REJECTED" ? relationId(rawReasonId, ["id"]) : null;
+        if (outputType === "REJECTED" && !rejectionReasonId) {
+            throw new DailyQAValidationError(422, "REJECTION_REASON_REQUIRED", `Select an active defect / rejection reason for rejected allocation ${index + 1}.`);
+        }
+        const allocationId = relationId(record.allocationId ?? record.allocation_id, ["allocation_id", "id"]) || null;
+        return { ...metadata, allocationId, allocationKey, quantity, rejectionReasonId };
+    });
+
+    const lineTotal = sumQAOutputQuantities(...rows.map((row) => row.quantity));
+    if (lineTotal !== targetQuantity) {
+        const quantityLabel = outputType === "ACCEPTED" ? "good" : "rejected";
+        throw new DailyQAValidationError(
+            422,
+            "OUTPUT_ALLOCATION_MISMATCH",
+            `Batch allocation mismatch: Total line allocations (${lineTotal ?? 0}) must equal total audited ${quantityLabel} quantity (${targetQuantity}).`
+        );
+    }
+    return rows;
+}
+
+async function validateActiveRejectionReasons(rows: DailyQAOutputAllocation[], signal?: AbortSignal): Promise<void> {
+    const reasonIds = [...new Set(rows.map((row) => row.rejectionReasonId).filter((id): id is number => Boolean(id)))];
+    if (reasonIds.length === 0) return;
+    const response = await fetch(
+        `${DIRECTUS_URL}/items/qa_rejection_reasons?filter[id][_in]=${reasonIds.join(",")}&fields=id,is_active&limit=-1`,
+        { headers, cache: "no-store", signal }
+    );
+    const reasonRows = await readDirectusRows(response, "QA rejection reason lookup");
+    const activeIds = new Set(reasonRows.filter((row) => enabled(row.is_active)).map((row) => relationId(row.id)));
+    if (reasonIds.some((id) => !activeIds.has(id))) {
+        throw new DailyQAValidationError(422, "REJECTION_REASON_INVALID", "Every rejected allocation must use an active QA rejection reason.");
+    }
 }
 
 function normalizeQAOutputAllocation(body: Record<string, any>, ledger: Record<string, any>): QAOutputAllocation {
@@ -283,6 +369,332 @@ async function patchDirectusRecord(path: string, body: Record<string, unknown>, 
     }
 }
 
+function parentQuantitySyncClient(jobOrderId: number, signal?: AbortSignal) {
+    return {
+        readCurrentQuantity: async () => {
+            const jobOrder = await readDirectusRecord(
+                `/items/manufacturing_job_orders/${encodeURIComponent(String(jobOrderId))}?fields=actual_quantity_produced`,
+                `Read Job Order ${jobOrderId} released-good quantity`,
+                signal
+            );
+            return jobOrder.actual_quantity_produced;
+        },
+        writeQuantity: async (quantity: number) => patchDirectusRecord(
+            `/items/manufacturing_job_orders/${encodeURIComponent(String(jobOrderId))}`,
+            { actual_quantity_produced: quantity },
+            `Sync Job Order ${jobOrderId} released-good quantity`,
+            signal
+        )
+    };
+}
+
+async function writeDirectusRecord(
+    path: string,
+    method: "POST" | "PATCH" | "DELETE",
+    body: Record<string, unknown> | undefined,
+    label: string,
+    signal?: AbortSignal
+): Promise<Record<string, any> | null> {
+    const response = await fetch(`${DIRECTUS_URL}${path}`, {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+        signal
+    });
+    if (!response.ok) {
+        throw new DailyQAValidationError(502, "DIRECTUS_WRITE_FAILED", `${label} failed with HTTP ${response.status}.`);
+    }
+    const payload = await response.json().catch(() => null);
+    return payload?.data && typeof payload.data === "object" && !Array.isArray(payload.data)
+        ? payload.data as Record<string, any>
+        : null;
+}
+
+async function syncYieldOutputAllocations(
+    ledgerId: number,
+    jobOrderId: number,
+    outputType: DailyQAOutputType,
+    rows: DailyQAOutputAllocation[],
+    signal?: AbortSignal
+): Promise<DailyQAOutputAllocation[]> {
+    const params = new URLSearchParams({
+        "filter[ledger_id][_eq]": String(ledgerId),
+        "filter[allocation_type][_eq]": outputType,
+        fields: "allocation_id,ledger_id,allocation_type,allocation_key,quantity,mm_lot_id,batch_no,manufacturing_date,expiry_date,rejection_reason_id",
+        limit: "-1"
+    });
+    const existingResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_allocations?${params.toString()}`, {
+        headers,
+        cache: "no-store",
+        signal
+    });
+    const existingRows = await readDirectusRows(existingResponse, "Existing yield output allocation lookup");
+    const existingByKey = new Map(existingRows.map((row) => [textValue(row.allocation_key), row]));
+    const requestedKeys = new Set(rows.map((row) => row.allocationKey));
+    const existingIds = existingRows.map((row) => relationId(row.allocation_id, ["allocation_id", "id"])).filter(Boolean);
+    if (existingIds.length > 0) {
+        const movementTypeId = outputType === "ACCEPTED"
+            ? 2
+            : await loadTransactionTypeId("QA Reject / Bad Order Receipt", signal);
+        const movementQuery = new URLSearchParams({
+            "filter[source_document_id][_eq]": String(jobOrderId),
+            "filter[transaction_type_id][_eq]": String(movementTypeId),
+            "filter[source_document_detail_id][_in]": existingIds.join(","),
+            fields: "movement_id,source_document_detail_id",
+            limit: "-1"
+        });
+        const movementResponse = await fetch(`${DIRECTUS_URL}/items/inventory_movements?${movementQuery.toString()}`, {
+            headers,
+            cache: "no-store",
+            signal
+        });
+        const postedMovements = await readDirectusRows(movementResponse, "Posted output allocation movement lookup");
+        if (postedMovements.length > 0) {
+            if (rows.length !== existingRows.length || existingRows.some((existing) => {
+                const requested = rows.find((row) => row.allocationKey === textValue(existing.allocation_key));
+                return !requested
+                    || Number(existing.quantity) !== requested.quantity
+                    || relationId(existing.mm_lot_id, ["lot_id", "mm_lot_id", "id"]) !== requested.mmLotId
+                    || textValue(existing.batch_no) !== requested.batchNo
+                    || textValue(existing.manufacturing_date).slice(0, 10) !== requested.manufacturingDate
+                    || textValue(existing.expiry_date).slice(0, 10) !== requested.expiryDate;
+            })) {
+                throw new DailyQAValidationError(409, "OUTPUT_ALLOCATION_ALREADY_POSTED", "Inventory has already been posted for these allocations. Their quantities, lots, batches, and dates cannot be changed.");
+            }
+        }
+    }
+    const savedRows: DailyQAOutputAllocation[] = [];
+
+    for (const [sortOrder, row] of rows.entries()) {
+        const existing = existingByKey.get(row.allocationKey);
+        const existingId = existing ? relationId(existing.allocation_id, ["allocation_id", "id"]) : 0;
+        if (row.allocationId && existingId !== row.allocationId) {
+            throw new DailyQAValidationError(409, "OUTPUT_ALLOCATION_REFERENCE_MISMATCH", "The selected allocation no longer belongs to this yield record. Refresh the audit and try again.");
+        }
+        const body = {
+            ledger_id: ledgerId,
+            allocation_type: outputType,
+            allocation_key: row.allocationKey,
+            quantity: row.quantity,
+            mm_lot_id: row.mmLotId,
+            batch_no: row.batchNo,
+            manufacturing_date: row.manufacturingDate,
+            expiry_date: row.expiryDate,
+            rejection_reason_id: row.rejectionReasonId,
+            sort_order: sortOrder
+        };
+        if (existingId) {
+            await patchDirectusRecord(
+                `/items/manufacturing_job_order_yield_allocations/${encodeURIComponent(String(existingId))}`,
+                body,
+                `Update ${outputType.toLowerCase()} output allocation ${existingId}`,
+                signal
+            );
+            savedRows.push({ ...row, allocationId: existingId });
+        } else {
+            const created = await writeDirectusRecord(
+                "/items/manufacturing_job_order_yield_allocations",
+                "POST",
+                body,
+                `Create ${outputType.toLowerCase()} output allocation`,
+                signal
+            );
+            const allocationId = relationId(created?.allocation_id ?? created?.id, ["allocation_id", "id"]);
+            if (!allocationId) {
+                throw new DailyQAValidationError(502, "OUTPUT_ALLOCATION_WRITE_UNCONFIRMED", "Directus did not return the new output allocation reference.");
+            }
+            savedRows.push({ ...row, allocationId });
+        }
+    }
+
+    for (const existing of existingRows) {
+        const allocationKey = textValue(existing.allocation_key);
+        if (requestedKeys.has(allocationKey)) continue;
+        const allocationId = relationId(existing.allocation_id, ["allocation_id", "id"]);
+        if (allocationId) {
+            await writeDirectusRecord(
+                `/items/manufacturing_job_order_yield_allocations/${encodeURIComponent(String(allocationId))}`,
+                "DELETE",
+                undefined,
+                `Remove ${outputType.toLowerCase()} output allocation ${allocationId}`,
+                signal
+            );
+        }
+    }
+    return savedRows;
+}
+
+async function loadTransactionTypeId(typeName: string, signal?: AbortSignal): Promise<number> {
+    const query = new URLSearchParams({
+        "filter[type_name][_eq]": typeName,
+        fields: "transaction_type_id,type_name",
+        limit: "1"
+    });
+    const response = await fetch(`${DIRECTUS_URL}/items/inventory_transaction_types?${query.toString()}`, {
+        headers,
+        cache: "no-store",
+        signal
+    });
+    const rows = await readDirectusRows(response, `Inventory transaction type ${typeName} lookup`);
+    const id = relationId(rows[0]?.transaction_type_id ?? rows[0]?.id, ["transaction_type_id", "id"]);
+    if (!id) {
+        throw new DailyQAValidationError(409, "INVENTORY_TRANSACTION_TYPE_MISSING", `The ${typeName} inventory transaction type is not configured.`);
+    }
+    return id;
+}
+
+async function postOutputAllocationMovement(input: {
+    jobOrderId: number;
+    jobOrderNo: string;
+    productId: number;
+    branchId: number;
+    transactionTypeId: number;
+    inventoryLotId: number;
+    row: DailyQAOutputAllocation;
+    createdBy: number;
+    outputType: DailyQAOutputType;
+    isFirstAcceptedRow?: boolean;
+    originalBatchNo?: string | null;
+    originalYieldQuantity?: number;
+    signal?: AbortSignal;
+}): Promise<void> {
+    if (!input.row.allocationId) {
+        throw new DailyQAValidationError(503, "OUTPUT_ALLOCATION_REFERENCE_MISSING", "The output allocation must be saved before its inventory movement is posted.");
+    }
+    const movementQuery = new URLSearchParams({
+        "filter[source_document_id][_eq]": String(input.jobOrderId),
+        "filter[transaction_type_id][_eq]": String(input.transactionTypeId),
+        "filter[product_id][_eq]": String(input.productId),
+        "filter[branch_id][_eq]": String(input.branchId),
+        "filter[source_document_detail_id][_eq]": String(input.row.allocationId),
+        fields: "movement_id,source_document_detail_id,quantity",
+        limit: "2"
+    });
+    const existingResponse = await fetch(`${DIRECTUS_URL}/items/inventory_movements?${movementQuery.toString()}`, {
+        headers,
+        cache: "no-store",
+        signal: input.signal
+    });
+    const existingMovements = await readDirectusRows(existingResponse, "Existing output allocation movement lookup");
+    if (existingMovements.length > 1) {
+        throw new DailyQAValidationError(409, "OUTPUT_ALLOCATION_MOVEMENT_DUPLICATED", "More than one inventory movement is linked to this output allocation.");
+    }
+    const movementPayload = {
+        product_id: input.productId,
+        mm_lot_id: input.row.mmLotId,
+        inventory_lot_id: input.inventoryLotId,
+        lot_id: null,
+        branch_id: input.branchId,
+        transaction_type_id: input.transactionTypeId,
+        source_document_id: input.jobOrderId,
+        source_document_detail_id: input.row.allocationId,
+        source_document_no: input.jobOrderNo,
+        batch_no: input.row.batchNo,
+        expiry_date: input.row.expiryDate,
+        manufacturing_date: input.row.manufacturingDate,
+        quantity: input.row.quantity,
+        created_by: input.createdBy,
+        remarks: input.outputType === "ACCEPTED"
+            ? `QA accepted output allocation from Job Order ${input.jobOrderNo}; allocation ${input.row.allocationKey}`
+            : `QA rejected output allocation from Job Order ${input.jobOrderNo}; allocation ${input.row.allocationKey}; reason ${input.row.rejectionReasonId}`
+    };
+
+    if (existingMovements[0]) {
+        const movementId = relationId(existingMovements[0].movement_id, ["movement_id", "id"]);
+        await patchDirectusRecord(
+            `/items/inventory_movements/${encodeURIComponent(String(movementId))}`,
+            movementPayload,
+            `Reconcile output allocation movement ${movementId}`,
+            input.signal
+        );
+        return;
+    }
+
+    if (input.outputType === "ACCEPTED" && input.isFirstAcceptedRow && input.originalBatchNo && input.originalYieldQuantity !== undefined) {
+        const candidateParams = new URLSearchParams({
+            "filter[source_document_id][_eq]": String(input.jobOrderId),
+            "filter[transaction_type_id][_eq]": String(input.transactionTypeId),
+            "filter[product_id][_eq]": String(input.productId),
+            "filter[branch_id][_eq]": String(input.branchId),
+            "filter[batch_no][_eq]": input.originalBatchNo,
+            fields: "movement_id,source_document_detail_id,quantity,batch_no",
+            limit: "-1"
+        });
+        const candidatesResponse = await fetch(`${DIRECTUS_URL}/items/inventory_movements?${candidateParams.toString()}`, {
+            headers,
+            cache: "no-store",
+            signal: input.signal
+        });
+        const candidates = await readDirectusRows(candidatesResponse, "Original finished-goods movement lookup");
+        const unallocatedCandidates = candidates.filter((row) => relationId(row.source_document_detail_id, ["id"]) === 0);
+        const exactCandidates = unallocatedCandidates.filter((row) => Number(row.quantity) === input.originalYieldQuantity);
+        const candidate = exactCandidates.length === 1
+            ? exactCandidates[0]
+            : exactCandidates.length === 0 && unallocatedCandidates.length === 1
+                ? unallocatedCandidates[0]
+                : null;
+        if (!candidate && unallocatedCandidates.length > 1) {
+            throw new DailyQAValidationError(409, "OUTPUT_MOVEMENT_RECONCILIATION_AMBIGUOUS", "Multiple unallocated finished-goods movements match this Job Order batch. Reconcile them before authorizing QA output.");
+        }
+        if (candidate) {
+            const movementId = relationId(candidate.movement_id, ["movement_id", "id"]);
+            await patchDirectusRecord(
+                `/items/inventory_movements/${encodeURIComponent(String(movementId))}`,
+                movementPayload,
+                `Reconcile original finished-goods movement ${movementId}`,
+                input.signal
+            );
+            return;
+        }
+    }
+
+    if (input.outputType === "REJECTED") {
+        const legacyParams = new URLSearchParams({
+            "filter[source_document_id][_eq]": String(input.jobOrderId),
+            "filter[transaction_type_id][_eq]": String(input.transactionTypeId),
+            "filter[product_id][_eq]": String(input.productId),
+            "filter[branch_id][_eq]": String(input.branchId),
+            "filter[batch_no][_eq]": input.row.batchNo,
+            fields: "movement_id,source_document_detail_id,quantity,batch_no",
+            limit: "-1"
+        });
+        const legacyResponse = await fetch(`${DIRECTUS_URL}/items/inventory_movements?${legacyParams.toString()}`, {
+            headers,
+            cache: "no-store",
+            signal: input.signal
+        });
+        const legacyRows = await readDirectusRows(legacyResponse, "Original rejected-output movement lookup");
+        const unallocatedRows = legacyRows.filter((row) => relationId(row.source_document_detail_id, ["id"]) === 0);
+        const exactLegacyRows = unallocatedRows.filter((row) => Number(row.quantity) === input.row.quantity);
+        const legacyMovement = exactLegacyRows.length === 1
+            ? exactLegacyRows[0]
+            : exactLegacyRows.length === 0 && unallocatedRows.length === 1
+                ? unallocatedRows[0]
+                : null;
+        if (!legacyMovement && unallocatedRows.length > 1) {
+            throw new DailyQAValidationError(409, "REJECTED_MOVEMENT_RECONCILIATION_AMBIGUOUS", "Multiple unallocated rejected-output movements match this Job Order batch. Reconcile them before authorizing QA output.");
+        }
+        if (legacyMovement) {
+            const movementId = relationId(legacyMovement.movement_id, ["movement_id", "id"]);
+            await patchDirectusRecord(
+                `/items/inventory_movements/${encodeURIComponent(String(movementId))}`,
+                movementPayload,
+                `Reconcile original rejected-output movement ${movementId}`,
+                input.signal
+            );
+            return;
+        }
+    }
+
+    await writeDirectusRecord(
+        "/items/inventory_movements",
+        "POST",
+        movementPayload,
+        `${input.outputType.toLowerCase()} output inventory movement`,
+        input.signal
+    );
+}
+
 function metadataMatches(current: Record<string, any>, requested: DailyQAOutputMetadata): boolean {
     return relationId(current.mm_lot_id, ["mm_lot_id", "lot_id", "id"]) === requested.mmLotId
         && textValue(current.lot_number || current.batch_no) === requested.batchNo
@@ -306,16 +718,6 @@ async function persistOutputTraceability(
     signal?: AbortSignal
 ): Promise<void> {
     if (!metadata) return;
-
-    const hasExistingMetadata = Boolean(
-        relationId(ledger.mm_lot_id, ["mm_lot_id", "lot_id", "id"])
-        || textValue(ledger.lot_number || ledger.batch_no)
-        || textValue(ledger.manufacturing_date)
-        || textValue(ledger.expiry_date)
-    );
-    if (hasExistingMetadata && !metadataMatches(ledger, metadata)) {
-        throw new DailyQAValidationError(409, "OUTPUT_TRACEABILITY_CONFLICT", "This yield ledger already has different finished-goods traceability values.");
-    }
 
     if (!metadataMatches(ledger, metadata)) {
         await patchDirectusRecord(
@@ -357,8 +759,6 @@ async function persistRejectedOutputTraceability(
     metadata: RejectedOutputMetadata,
     signal?: AbortSignal
 ): Promise<void> {
-    assertRejectedOutputTraceability(ledger, metadata);
-
     if (!rejectedMetadataMatches(ledger, metadata)) {
         await patchDirectusRecord(
             `/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(ledgerId))}`,
@@ -366,21 +766,6 @@ async function persistRejectedOutputTraceability(
             `Save rejected-output traceability for yield ledger ${ledgerId}`,
             signal
         );
-    }
-}
-
-function assertRejectedOutputTraceability(
-    ledger: Record<string, any>,
-    metadata: RejectedOutputMetadata
-): void {
-    const hasExistingMetadata = Boolean(
-        relationId(ledger.rejected_mm_lot_id, ["mm_lot_id", "lot_id", "id"])
-        || textValue(ledger.rejected_lot_number)
-        || textValue(ledger.rejected_manufacturing_date)
-        || textValue(ledger.rejected_expiry_date)
-    );
-    if (hasExistingMetadata && !rejectedMetadataMatches(ledger, metadata)) {
-        throw new DailyQAValidationError(409, "REJECTED_OUTPUT_TRACEABILITY_CONFLICT", "This yield ledger already has different rejected-output traceability values.");
     }
 }
 
@@ -438,7 +823,7 @@ async function resolveRejectedInventoryLot(input: {
     metadata: RejectedOutputMetadata;
     createdBy: number;
     signal?: AbortSignal;
-}): Promise<void> {
+}): Promise<number> {
     try {
         const inventoryLot = await resolveOrCreateMmInventoryLot({
             mmLotId: input.metadata.mmLotId,
@@ -460,12 +845,105 @@ async function resolveRejectedInventoryLot(input: {
         if (!["DAMAGED", "QUARANTINED", "EXPIRED"].includes(textValue(inventoryLot.qa_status).toUpperCase())) {
             throw new DailyQAValidationError(409, "REJECTED_LOT_STATUS_CONFLICT", "The selected rejected-output batch already exists with a GOOD inventory condition.");
         }
+        return Number(inventoryLot.inventory_lot_id);
     } catch (error) {
         if (error instanceof DailyQAValidationError) throw error;
         if (error instanceof MmLotError) {
             throw new DailyQAValidationError(error.status, error.code, error.message);
         }
         throw error;
+    }
+}
+
+async function registerAcceptedOutputAllocations(input: {
+    ledger: Record<string, any>;
+    jobOrderId: number;
+    jobOrderNo: string;
+    productId: number;
+    branchId: number;
+    rows: DailyQAOutputAllocation[];
+    createdBy: number;
+    signal?: AbortSignal;
+}): Promise<void> {
+    const transactionTypeId = 2;
+    for (const [index, row] of input.rows.entries()) {
+        try {
+            const inventoryLot = await resolveOrCreateMmInventoryLot({
+                mmLotId: row.mmLotId,
+                branchId: input.branchId,
+                productId: input.productId,
+                batchNo: row.batchNo,
+                manufacturingDate: row.manufacturingDate,
+                expiryDate: row.expiryDate,
+                qaStatus: "GOOD",
+                sourceType: "JOB_ORDER_YIELD",
+                sourceReference: input.jobOrderNo,
+                remarks: `QA-released finished yield from Job Order ${input.jobOrderNo}; allocation ${row.allocationKey}`,
+                createdBy: input.createdBy,
+                signal: input.signal
+            });
+            const inventoryLotId = Number(inventoryLot.inventory_lot_id) || 0;
+            if (!inventoryLotId) {
+                throw new MmLotError("The finished-goods inventory lot could not be verified after creation.", 503, "MM_INVENTORY_LOT_WRITE_FAILED");
+            }
+            await postOutputAllocationMovement({
+                jobOrderId: input.jobOrderId,
+                jobOrderNo: input.jobOrderNo,
+                productId: input.productId,
+                branchId: input.branchId,
+                transactionTypeId,
+                inventoryLotId,
+                row,
+                createdBy: input.createdBy,
+                outputType: "ACCEPTED",
+                isFirstAcceptedRow: index === 0,
+                originalBatchNo: textValue(input.ledger.lot_number) || null,
+                originalYieldQuantity: Number(input.ledger.yield_quantity ?? 0),
+                signal: input.signal
+            });
+        } catch (error) {
+            if (error instanceof DailyQAValidationError) throw error;
+            if (error instanceof MmLotError) {
+                throw new DailyQAValidationError(error.status, error.code, error.message);
+            }
+            throw error;
+        }
+    }
+}
+
+async function registerRejectedOutputAllocations(input: {
+    ledgerId: number;
+    jobOrderId: number;
+    jobOrderNo: string;
+    productId: number;
+    badStockBranchId: number;
+    rows: DailyQAOutputAllocation[];
+    createdBy: number;
+    signal?: AbortSignal;
+}): Promise<void> {
+    const transactionTypeId = await loadTransactionTypeId("QA Reject / Bad Order Receipt", input.signal);
+    for (const row of input.rows) {
+        const inventoryLotId = await resolveRejectedInventoryLot({
+            ledgerId: input.ledgerId,
+            jobOrderNo: input.jobOrderNo,
+            branchId: input.badStockBranchId,
+            productId: input.productId,
+            metadata: row,
+            createdBy: input.createdBy,
+            signal: input.signal
+        });
+        await postOutputAllocationMovement({
+            jobOrderId: input.jobOrderId,
+            jobOrderNo: input.jobOrderNo,
+            productId: input.productId,
+            branchId: input.badStockBranchId,
+            transactionTypeId,
+            inventoryLotId,
+            row,
+            createdBy: input.createdBy,
+            outputType: "REJECTED",
+            signal: input.signal
+        });
     }
 }
 
@@ -507,7 +985,14 @@ async function registerRejectedOutputOnly(body: Record<string, any>, signal: Abo
     if (rejectedEvidenceValidation.error) {
         throw new DailyQAValidationError(422, "REJECTED_EVIDENCE_REQUIRED", rejectedEvidenceValidation.error);
     }
-    const metadata = normalizeOutputMetadata(body.rejectedOutputMetadata, true) as RejectedOutputMetadata;
+    const rejectedAllocations = normalizeOutputAllocations(
+        body.rejectedAllocations,
+        body.rejectedOutputMetadata,
+        rejectedQuantity,
+        "REJECTED",
+        ledgerId
+    );
+    await validateActiveRejectionReasons(rejectedAllocations, signal);
     const [routes, inspections] = await Promise.all([
         fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${encodeURIComponent(String(jobOrderId))}&fields=jo_route_id`, { headers, cache: "no-store", signal })
             .then((response) => readDirectusRows(response, "Job Order routing lookup")),
@@ -524,7 +1009,14 @@ async function registerRejectedOutputOnly(body: Record<string, any>, signal: Abo
     if (!productId || !productionBranchId) {
         throw new DailyQAValidationError(409, "OUTPUT_TRACEABILITY_CONTEXT_MISSING", "The Job Order is missing its finished-good product or branch.");
     }
-    const badStockBranchId = await validateRejectedOutputLot(productionBranchId, productId, metadata, signal);
+    let badStockBranchId = 0;
+    for (const metadata of rejectedAllocations) {
+        const validatedBranchId = await validateRejectedOutputLot(productionBranchId, productId, metadata, signal);
+        if (badStockBranchId && validatedBranchId !== badStockBranchId) {
+            throw new DailyQAValidationError(409, "BAD_STOCK_BRANCH_CHANGED", "Rejected allocations must use the configured bad-stock branch.");
+        }
+        badStockBranchId = validatedBranchId;
+    }
     let actorId: number;
     try {
         actorId = await requireManufacturingActorId(signal);
@@ -556,23 +1048,25 @@ async function registerRejectedOutputOnly(body: Record<string, any>, signal: Abo
         throw error;
     }
 
-    assertRejectedOutputTraceability(ledger, metadata);
     await persistQAOutputAllocation(ledgerId, ledger, allocation, signal);
-    await resolveRejectedInventoryLot({
+    const savedAllocations = await syncYieldOutputAllocations(ledgerId, jobOrderId, "REJECTED", rejectedAllocations, signal);
+    await registerRejectedOutputAllocations({
         ledgerId,
+        jobOrderId,
         jobOrderNo: textValue(jobOrder.job_order_no) || `JO-${jobOrderId}`,
-        branchId: badStockBranchId,
         productId,
-        metadata,
+        badStockBranchId,
+        rows: savedAllocations,
         createdBy: actorId,
         signal
     });
-    await persistRejectedOutputTraceability(ledgerId, ledger, metadata, signal);
+    await persistRejectedOutputTraceability(ledgerId, ledger, savedAllocations[0], signal);
 
     return NextResponse.json({
         success: true,
         message: "Rejected output was registered in the configured bad-stock branch.",
-        rejectedOutputMetadata: metadata
+        rejectedOutputMetadata: savedAllocations[0],
+        rejectedAllocations: savedAllocations
     });
 }
 
@@ -615,6 +1109,95 @@ async function readDailyQARequest(request: Request): Promise<{
         acceptedEvidenceFiles: [],
         rejectedEvidenceFiles: []
     };
+}
+
+async function revokeJobOrderYieldAudit(body: Record<string, any>, signal: AbortSignal) {
+    let actor: Awaited<ReturnType<typeof requireJobOrderModuleAccess>>;
+    try {
+        actor = await requireJobOrderModuleAccess([
+            JOB_ORDER_MODULE_PATHS.qualityAssurance,
+            JOB_ORDER_MODULE_PATHS.inspectionQa
+        ], signal);
+    } catch (error) {
+        if (error instanceof JobOrderModuleAccessError) {
+            return NextResponse.json({ success: false, error: error.message, code: error.code }, { status: error.status });
+        }
+        throw error;
+    }
+
+    const jobOrderId = Number(body.jobOrderId);
+    const ledgerId = Number(body.ledgerId);
+    const reason = textValue(body.reason);
+    if (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0 || !Number.isSafeInteger(ledgerId) || ledgerId <= 0) {
+        throw new DailyQAValidationError(400, "QA_REVOCATION_REFERENCE_REQUIRED", "A valid Job Order and yield ledger are required.");
+    }
+    if (!reason || reason.length > 500) {
+        throw new DailyQAValidationError(422, "QA_REVOCATION_REASON_REQUIRED", "Enter a revocation reason of no more than 500 characters.");
+    }
+
+    return withJobOrderActualQuantityLock(jobOrderId, async () => {
+        const ledger = await readDirectusRecord(
+            `/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(ledgerId))}?fields=ledger_id,job_order_id,qa_status,qa_accepted_quantity,yield_quantity,qa_revoked_at,qa_revoked_through_audit_id`,
+            `Load yield ledger ${ledgerId} for QA release revocation`,
+            signal
+        );
+        if (relationId(ledger.job_order_id, ["job_order_id", "id"]) !== jobOrderId) {
+            throw new DailyQAValidationError(409, "LEDGER_JOB_ORDER_MISMATCH", "The selected yield ledger does not belong to this Job Order.");
+        }
+        if (textValue(ledger.qa_status).toUpperCase() !== "PASSED") {
+            if (ledger.qa_revoked_at && textValue(ledger.qa_status).toUpperCase() === "PENDING") {
+                return NextResponse.json({ success: true, idempotent: true, message: "This QA release was already revoked." });
+            }
+            throw new DailyQAValidationError(409, "QA_RELEASE_NOT_ACTIVE", "Only an active, Passed QA release can be revoked.");
+        }
+        const quantityDelta = releasedYieldQuantityDelta(ledger, { ...ledger, qa_status: "Pending" });
+
+        const inspectionsResponse = await fetch(
+            `${DIRECTUS_URL}/items/manufacturing_daily_qa_inspections?filter[ledger_id][_eq]=${encodeURIComponent(String(ledgerId))}&limit=-1&fields=daily_qa_id`,
+            { headers, cache: "no-store", signal }
+        );
+        const inspections = await readDirectusRows(inspectionsResponse, "Yield QA audit history lookup");
+        const revokedThroughAuditId = inspections.reduce(
+            (maximum, audit) => Math.max(maximum, relationId(audit.daily_qa_id, ["daily_qa_id", "id"])),
+            0
+        );
+        const timestamp = formatPhtDateTime();
+        const patchResponse = await fetch(
+            `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(ledgerId))}`,
+            {
+                method: "PATCH",
+                headers,
+                body: JSON.stringify({
+                    qa_status: "Pending",
+                    qa_revoked_at: timestamp,
+                    qa_revoked_by: actor.userId,
+                    qa_revoke_reason: reason,
+                    qa_revoked_through_audit_id: revokedThroughAuditId || null
+                }),
+                signal
+            }
+        );
+        if (!patchResponse.ok) {
+            throw new DailyQAValidationError(502, "QA_RELEASE_REVOCATION_FAILED", "The QA release could not be revoked. Confirm the QA revocation migration is installed and try again.");
+        }
+        await applyParentQuantityDeltaWhileLocked(
+            jobOrderId,
+            ledgerId,
+            quantityDelta,
+            parentQuantitySyncClient(jobOrderId, signal)
+        );
+
+        return NextResponse.json({
+            success: true,
+            message: "QA release revoked. Its accepted quantity has been removed from released output, and the yield can be audited again.",
+            data: {
+                jobOrderId,
+                ledgerId,
+                revokedGoodQuantity: Number(ledger.qa_accepted_quantity ?? ledger.yield_quantity ?? 0),
+                revokedAt: timestamp
+            }
+        });
+    });
 }
 
 function validateSubmittedQARoutes(
@@ -701,7 +1284,10 @@ async function fetchDailyQAQueue(searchParams: URLSearchParams): Promise<any[]> 
         const jobOrder = jobsById.get(jobOrderId);
         const productId = relationId(jobOrder?.product_id, ["product_id", "id"]);
         const product = productsById.get(productId);
-        const audits = inspectionsByLedger.get(ledgerId) || [];
+        const audits = yieldAuditRowsAfterRevocation(
+            yieldRow,
+            inspectionsByLedger.get(ledgerId) || []
+        );
         const routes = (routesByJobOrder.get(jobOrderId) || [])
             .slice()
             .sort((left, right) => Number(left.sequence_order || 0) - Number(right.sequence_order || 0));
@@ -800,6 +1386,12 @@ export async function POST(request: Request) {
             operationForLog = "register rejected output";
             return await registerRejectedOutputOnly(body, saveSignal);
         }
+        if (!Array.isArray(body) && body?.action === "revokeJobOrderYieldAudit") {
+            jobOrderIdForLog = Number(body.jobOrderId) || 0;
+            ledgerIdForLog = Number(body.ledgerId) || 0;
+            operationForLog = "revoke QA release";
+            return await revokeJobOrderYieldAudit(body, saveSignal);
+        }
 
         const isJobOrderYieldAudit = !Array.isArray(body) && body?.action === "jobOrderYieldAudit";
         if (request.headers.get("content-type")?.toLowerCase().includes("multipart/form-data") && !isJobOrderYieldAudit) {
@@ -834,7 +1426,7 @@ export async function POST(request: Request) {
 
         operationForLog = `load yield ledger ${ledgerId}`;
         const ledger = await readDirectusRecord(
-            `/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(ledgerId))}?fields=ledger_id,job_order_id,session_key,commit_status,yield_quantity,rejected_quantity,scrap_quantity,qa_accepted_quantity,qa_rejected_quantity,qa_status,lot_number,mm_lot_id,manufacturing_date,expiry_date,rejected_mm_lot_id,rejected_lot_number,rejected_manufacturing_date,rejected_expiry_date,rejected_inventory_condition`,
+            `/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(ledgerId))}?fields=ledger_id,job_order_id,session_key,commit_status,yield_quantity,rejected_quantity,scrap_quantity,qa_accepted_quantity,qa_rejected_quantity,qa_status,qa_revoked_at,qa_revoked_through_audit_id,lot_number,mm_lot_id,manufacturing_date,expiry_date,rejected_mm_lot_id,rejected_lot_number,rejected_manufacturing_date,rejected_expiry_date,rejected_inventory_condition`,
             `Load yield ledger ${ledgerId}`,
             saveSignal
         );
@@ -909,35 +1501,46 @@ export async function POST(request: Request) {
         if ((goodOutputQuantity > 0 || rejectedOutputQuantity > 0) && (!productId || !branchId)) {
             throw new DailyQAValidationError(409, "OUTPUT_TRACEABILITY_CONTEXT_MISSING", "The Job Order is missing its finished-good product or branch, so output traceability cannot be saved.");
         }
-        const outputMetadata = goodOutputQuantity > 0
-            ? normalizeOutputMetadata(isEnvelope ? body.outputMetadata : null, true)
-            : null;
-        const rejectedOutputMetadata = rejectedOutputQuantity > 0 && isEnvelope && body.rejectedOutputMetadata !== null && body.rejectedOutputMetadata !== undefined
-            ? normalizeOutputMetadata(body.rejectedOutputMetadata, true) as RejectedOutputMetadata
-            : null;
+        const acceptedAllocations = normalizeOutputAllocations(
+            isEnvelope ? body.acceptedAllocations : null,
+            isEnvelope ? body.outputMetadata : null,
+            goodOutputQuantity,
+            "ACCEPTED",
+            ledgerId
+        );
+        const rejectedAllocations = normalizeOutputAllocations(
+            isEnvelope ? body.rejectedAllocations : null,
+            isEnvelope ? body.rejectedOutputMetadata : null,
+            rejectedOutputQuantity,
+            "REJECTED",
+            ledgerId
+        );
+        await validateActiveRejectionReasons(rejectedAllocations, saveSignal);
+        const outputMetadata = acceptedAllocations[0] || null;
 
         let badStockBranchId: number | null = null;
-        if (rejectedOutputMetadata) {
+        for (const metadata of rejectedAllocations) {
             operationForLog = "validate rejected-output storage lot";
-            badStockBranchId = await validateRejectedOutputLot(branchId, productId, rejectedOutputMetadata, saveSignal);
-            assertRejectedOutputTraceability(ledger, rejectedOutputMetadata);
+            const validatedBranchId = await validateRejectedOutputLot(branchId, productId, metadata, saveSignal);
+            if (badStockBranchId && badStockBranchId !== validatedBranchId) {
+                throw new DailyQAValidationError(409, "BAD_STOCK_BRANCH_CHANGED", "Rejected allocations must use the configured bad-stock branch.");
+            }
+            badStockBranchId = validatedBranchId;
         }
 
-        if (outputMetadata) {
-            operationForLog = "validate finished-goods storage lot";
-            try {
-                await loadEligibleFinishedGoodsLot({
-                    mmLotId: outputMetadata.mmLotId,
-                    branchId,
-                    productId,
-                    signal: saveSignal
-                });
-            } catch (error) {
-                if (error instanceof MmLotError) {
-                    throw new DailyQAValidationError(error.status, error.code, error.message);
-                }
-                throw error;
+        operationForLog = "validate finished-goods storage lots";
+        try {
+            await Promise.all(acceptedAllocations.map((allocation) => loadEligibleFinishedGoodsLot({
+                mmLotId: allocation.mmLotId,
+                branchId,
+                productId,
+                signal: saveSignal
+            })));
+        } catch (error) {
+            if (error instanceof MmLotError) {
+                throw new DailyQAValidationError(error.status, error.code, error.message);
             }
+            throw error;
         }
 
         let authenticatedInspectorId: number;
@@ -949,9 +1552,11 @@ export async function POST(request: Request) {
             }
             throw error;
         }
-        const inventoryLotCreatedBy = goodOutputQuantity > 0 || rejectedOutputMetadata
+        const inventoryLotCreatedBy = goodOutputQuantity > 0 || rejectedAllocations.length > 0
             ? authenticatedInspectorId
             : null;
+        let savedAcceptedAllocations = acceptedAllocations;
+        let savedRejectedAllocations = rejectedAllocations;
         if (inspectionsList.some((entry: any) =>
             Number(entry.jobOrderId || jobOrderId) !== jobOrderId
             || Number(entry.ledgerId || ledgerId) !== ledgerId
@@ -975,7 +1580,10 @@ export async function POST(request: Request) {
             `${DIRECTUS_URL}/items/manufacturing_daily_qa_inspections?filter[ledger_id][_eq]=${ledgerId}&limit=-1&fields=daily_qa_id,inspected_at,ledger_id,jo_route_id,sensory_status,lab_status,action_taken,weight_check_passed`,
             { headers, cache: "no-store", signal: saveSignal }
         );
-        const existingInspections = await readDirectusRows(existingInspectionsResponse, "Existing daily QA inspection lookup");
+        const existingInspections = yieldAuditRowsAfterRevocation(
+            ledger,
+            await readDirectusRows(existingInspectionsResponse, "Existing daily QA inspection lookup")
+        );
         const latestInspections = latestDailyQAAuditsByRoute(existingInspections);
         const savedInspectionByRoute = new Map<string, any>();
         for (const inspection of latestInspections) {
@@ -998,7 +1606,7 @@ export async function POST(request: Request) {
                 "filter[job_order_id][_eq]": String(jobOrderId),
                 "filter[jo_route_id][_in]": submittedRouteIds.join(","),
                 limit: "-1",
-                fields: "jo_route_id,parameter_id,remarks"
+                fields: "jo_route_id,parameter_id,inspected_at,remarks"
             });
             const savedParametersResponse = await fetch(
                 `${DIRECTUS_URL}/items/manufacturing_job_order_qa_records?${parameterQuery.toString()}`,
@@ -1008,6 +1616,7 @@ export async function POST(request: Request) {
             const parameterMarker = `Daily QA Audit | Yield Log ID: ${ledgerId} |`;
             for (const parameter of savedParameters) {
                 if (!textValue(parameter.remarks).startsWith(parameterMarker)) continue;
+                if (!qaRecordAfterRevocation(parameter, ledger.qa_revoked_at)) continue;
                 const routeId = relationId(parameter.jo_route_id, ["jo_route_id", "id"]);
                 const parameterId = relationId(parameter.parameter_id, ["parameter_id", "id"]);
                 if (routeId && parameterId) savedParameterKeys.add(`${routeId}:${parameterId}`);
@@ -1062,6 +1671,8 @@ export async function POST(request: Request) {
 
         operationForLog = "save output allocation and traceability";
         await persistQAOutputAllocation(ledgerId, ledger, outputAllocation, saveSignal);
+        savedAcceptedAllocations = await syncYieldOutputAllocations(ledgerId, jobOrderId, "ACCEPTED", acceptedAllocations, saveSignal);
+        savedRejectedAllocations = await syncYieldOutputAllocations(ledgerId, jobOrderId, "REJECTED", rejectedAllocations, saveSignal);
 
         if (outputMetadata) {
             await persistOutputTraceability(ledgerId, jobOrderId, ledger, outputMetadata, saveSignal);
@@ -1189,7 +1800,7 @@ export async function POST(request: Request) {
         if (!Array.isArray(inspectionsPayload?.data)) {
             throw new DailyQAValidationError(502, "INSPECTION_LOOKUP_INVALID", "Daily QA inspection lookup returned an invalid response.");
         }
-        const inspections = inspectionsPayload.data;
+        const inspections = yieldAuditRowsAfterRevocation(ledger, inspectionsPayload.data);
 
         // Use the same precedence as the Daily QA queue: failures take priority over
         // incomplete audits, and only fully released passing audits become Passed.
@@ -1284,40 +1895,25 @@ export async function POST(request: Request) {
             }
         }
 
-        if (finalLedgerStatus === "Passed" && goodOutputQuantity > 0 && outputMetadata) {
+        if (finalLedgerStatus === "Passed" && goodOutputQuantity > 0 && savedAcceptedAllocations.length > 0) {
             operationForLog = "register released finished-goods lot";
             if (!inventoryLotCreatedBy) {
                 throw new DailyQAValidationError(401, "AUTHENTICATION_REQUIRED", "An authenticated user is required to register the audited finished-goods lot.");
             }
-
-            try {
-                const inventoryLot = await resolveOrCreateMmInventoryLot({
-                    mmLotId: outputMetadata.mmLotId,
-                    branchId,
-                    productId,
-                    batchNo: outputMetadata.batchNo,
-                    manufacturingDate: outputMetadata.manufacturingDate,
-                    expiryDate: outputMetadata.expiryDate,
-                    qaStatus: "GOOD",
-                    sourceType: "JOB_ORDER_YIELD",
-                    sourceReference: textValue(jobOrder.job_order_no) || `JO-${jobOrderId}`,
-                    remarks: `QA-released finished yield from Job Order ${textValue(jobOrder.job_order_no) || jobOrderId}`,
-                    createdBy: inventoryLotCreatedBy,
-                    signal: saveSignal
-                });
-                if (!Number(inventoryLot.inventory_lot_id)) {
-                    throw new MmLotError("The finished-goods inventory lot could not be verified after creation.", 503, "MM_INVENTORY_LOT_WRITE_FAILED");
-                }
-            } catch (error) {
-                if (error instanceof MmLotError) {
-                    throw new DailyQAValidationError(error.status, error.code, error.message);
-                }
-                throw error;
-            }
+            await registerAcceptedOutputAllocations({
+                ledger,
+                jobOrderId,
+                jobOrderNo: textValue(jobOrder.job_order_no) || `JO-${jobOrderId}`,
+                productId,
+                branchId,
+                rows: savedAcceptedAllocations,
+                createdBy: inventoryLotCreatedBy,
+                signal: saveSignal
+            });
         }
 
         if (
-            rejectedOutputMetadata
+            savedRejectedAllocations.length > 0
             && badStockBranchId
             && shouldRegisterRejectedOutput(rejectedOutputQuantity, outcome.isComplete)
         ) {
@@ -1325,31 +1921,54 @@ export async function POST(request: Request) {
             if (!inventoryLotCreatedBy) {
                 throw new DailyQAValidationError(401, "AUTHENTICATION_REQUIRED", "An authenticated user is required to register rejected finished-goods output.");
             }
-            assertRejectedOutputTraceability(ledger, rejectedOutputMetadata);
-            await resolveRejectedInventoryLot({
+            await registerRejectedOutputAllocations({
                 ledgerId,
+                jobOrderId,
                 jobOrderNo: textValue(jobOrder.job_order_no) || `JO-${jobOrderId}`,
-                branchId: badStockBranchId,
                 productId,
-                metadata: rejectedOutputMetadata,
+                badStockBranchId,
+                rows: savedRejectedAllocations,
                 createdBy: inventoryLotCreatedBy,
                 signal: saveSignal
             });
-            await persistRejectedOutputTraceability(ledgerId, ledger, rejectedOutputMetadata, saveSignal);
+            await persistRejectedOutputTraceability(ledgerId, ledger, savedRejectedAllocations[0], saveSignal);
             rejectedOutputRegistered = true;
         }
 
         // Sync QA disposition back to yield ledger (only "Passed" if all steps have been QA'd)
         operationForLog = "save final yield ledger QA status";
-        const ledgerPatchResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger/${ledgerId}`, {
-            method: "PATCH",
-            headers,
-            body: JSON.stringify({ qa_status: finalLedgerStatus }),
-            signal: saveSignal
+        await withJobOrderActualQuantityLock(jobOrderId, async () => {
+            const latestLedger = await readDirectusRecord(
+                `/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(ledgerId))}?fields=ledger_id,job_order_id,qa_accepted_quantity,yield_quantity,qa_status`,
+                `Reload yield ledger ${ledgerId} before saving its QA status`,
+                saveSignal
+            );
+            if (relationId(latestLedger.job_order_id, ["job_order_id", "id"]) !== jobOrderId) {
+                throw new DailyQAValidationError(409, "LEDGER_JOB_ORDER_MISMATCH", "The selected yield ledger no longer belongs to this Job Order.");
+            }
+            if (textValue(latestLedger.qa_status).toUpperCase() === "PASSED" && finalLedgerStatus !== "Passed") {
+                throw new DailyQAValidationError(409, "QA_AUDIT_ALREADY_VERIFIED", "This yield ledger has already been released and cannot be moved out of Passed by a regular audit.");
+            }
+
+            const nextLedger = { ...latestLedger, qa_status: finalLedgerStatus };
+            const quantityDelta = releasedYieldQuantityDelta(latestLedger, nextLedger);
+            const ledgerPatchResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger/${ledgerId}`, {
+                method: "PATCH",
+                headers,
+                body: JSON.stringify({ qa_status: finalLedgerStatus }),
+                signal: saveSignal
+            });
+            if (!ledgerPatchResponse.ok) {
+                throw new Error(`Failed to persist Daily QA status for yield ledger ${ledgerId}.`);
+            }
+
+            await applyParentQuantityDeltaWhileLocked(
+                jobOrderId,
+                ledgerId,
+                quantityDelta,
+                parentQuantitySyncClient(jobOrderId, saveSignal)
+            );
         });
-        if (!ledgerPatchResponse.ok) {
-            throw new Error(`Failed to persist Daily QA status for yield ledger ${ledgerId}.`);
-        }
 
         // The finished-yield inventory view resolves Passed yield rows through mm_inventory_lots.
         // The physical receipt and Job Order completion remain owned by yield closing.
@@ -1358,10 +1977,15 @@ export async function POST(request: Request) {
             success: true,
             message: "Daily yield QA inspection logged successfully.",
             outputMetadata,
+            acceptedAllocations: savedAcceptedAllocations,
+            rejectedAllocations: savedRejectedAllocations,
             rejectedOutputRegistered
         });
     } catch (e) {
         console.error(`Daily QA POST failed during ${operationForLog} after ${Date.now() - startedAt}ms:`, e);
+        if (e instanceof ParentYieldQuantitySyncError) {
+            return NextResponse.json({ error: e.message, code: e.code }, { status: e.status });
+        }
         if (saveSignal.aborted) {
             console.error(`Daily QA save timed out during ${operationForLog} after ${Date.now() - startedAt}ms for Job Order ${jobOrderIdForLog || "unknown"}, yield ledger ${ledgerIdForLog || "unknown"}.`);
             return NextResponse.json({

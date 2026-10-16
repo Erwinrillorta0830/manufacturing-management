@@ -11,6 +11,7 @@ export interface ResolvedYieldJobOrder {
     versionId: number | null;
     status?: string | null;
     actualQuantityProduced: number;
+    completedQuantity: number;
 }
 
 export interface YieldMaterial {
@@ -138,7 +139,8 @@ export async function resolveYieldJobOrder(reference: string | number): Promise<
         "target_quantity",
         "version_id",
         "status",
-        "actual_quantity_produced"
+        "actual_quantity_produced",
+        "completed_quantity"
     ].join(",");
     const data = await fetchDirectusData(
         `${DIRECTUS_URL}/items/manufacturing_job_orders?${filter}&fields=${fields}&limit=1`,
@@ -169,7 +171,8 @@ export async function resolveYieldJobOrder(reference: string | number): Promise<
         targetQuantity,
         versionId: versionId && versionId > 0 ? versionId : null,
         status: record.status == null ? null : String(record.status),
-        actualQuantityProduced: record.actual_quantity_produced == null ? 0 : requiredNumber(record.actual_quantity_produced, "Actual produced quantity")
+        actualQuantityProduced: record.actual_quantity_produced == null ? 0 : requiredNumber(record.actual_quantity_produced, "Actual produced quantity"),
+        completedQuantity: record.completed_quantity == null ? 0 : requiredNumber(record.completed_quantity, "Completed quantity")
     };
 }
 

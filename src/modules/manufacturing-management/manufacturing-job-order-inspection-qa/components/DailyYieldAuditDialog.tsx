@@ -12,10 +12,22 @@ import {
     Loader2,
     MapPin,
     Package,
+    Plus,
     Tag,
+    Trash2,
     User,
     Users,
 } from "lucide-react";
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
     Dialog,
     DialogContent,
@@ -147,6 +159,8 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
     const [checklistSectionOpen, setChecklistSectionOpen] = React.useState(false);
     const [evidenceSectionOpen, setEvidenceSectionOpen] = React.useState(false);
     const [auditTrailSectionOpen, setAuditTrailSectionOpen] = React.useState(false);
+    const [revokeDialogOpen, setRevokeDialogOpen] = React.useState(false);
+    const [revokeReason, setRevokeReason] = React.useState("");
     React.useEffect(() => {
         setEvidenceExpanded(false);
         setPreviewEvidence(null);
@@ -276,6 +290,16 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                     <div role="status" className="flex shrink-0 items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
                         <ClipboardCheck className="h-4 w-4 shrink-0" />
                         This daily yield has been verified. Details are read-only.
+                    </div>
+                )}
+                {yieldRecord?.qaRevocation && (
+                    <div role="status" className="flex shrink-0 items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
+                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                        <div>
+                            <p className="font-semibold">This yield has a prior QA release revocation ({formatAuditTimestamp(yieldRecord.qaRevocation.revokedAt)}).</p>
+                            {yieldRecord.qaRevocation.reason && <p className="mt-0.5">Reason: {yieldRecord.qaRevocation.reason}</p>}
+                            {yieldRecord.qaRevocation.revokedById && <p className="mt-0.5">Recorded by {yieldRecord.qaRevocation.revokedByName || controller.inspectorNamesById[yieldRecord.qaRevocation.revokedById] || "Name unavailable"}.</p>}
+                        </div>
                     </div>
                 )}
 
@@ -783,84 +807,58 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                         </p>
                                     </div>
 
-                                    <div className="space-y-1">
-                                        <Label htmlFor="daily-yield-output-batch" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
-                                            <Tag className="h-3.5 w-3.5 text-emerald-500" /> Output Batch / Lot No <span className="text-destructive">*</span>
-                                        </Label>
-                                        <Input
-                                            id="daily-yield-output-batch"
-                                            type="text"
-                                            maxLength={100}
-                                            value={controller.dailyOutputBatchNo}
-                                            onChange={(event) => controller.setDailyOutputBatchNo(event.target.value)}
-                                            className="h-9 rounded-lg bg-background border-border/80 text-foreground text-xs font-bold font-mono"
-                                            placeholder="e.g. JO-2026-YLD-001"
-                                            disabled={controller.actionLoading || !requiresOutputTraceability || isVerified}
-                                            required={requiresOutputTraceability}
-                                        />
-                                    </div>
-
-                                    <div className="space-y-1">
-                                        <Label htmlFor="daily-yield-storage-lot" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
-                                            <MapPin className="h-3.5 w-3.5 text-emerald-500" /> Storage Lot <span className="text-destructive">*</span>
-                                        </Label>
-                                        {isVerified ? (
-                                            <Input
-                                                id="daily-yield-storage-lot"
-                                                type="text"
-                                                value={yieldRecord?.lotName?.trim() || (yieldRecord?.mmLotId ? `Lot #${yieldRecord.mmLotId}` : "Not recorded")}
-                                                disabled
-                                                readOnly
-                                                className="h-9 rounded-lg bg-background border-border/80 text-foreground text-xs font-semibold"
-                                            />
-                                        ) : controller.dailyOutputLotsLoading ? (
-                                            <div role="status" aria-label="Loading finished-goods storage lots" aria-busy="true" className="space-y-1">
-                                                <span className="sr-only">Loading finished-goods storage lots...</span>
-                                                <Skeleton aria-hidden="true" className="h-9 w-full rounded-lg" />
-                                                <Skeleton aria-hidden="true" className="h-3 w-3/4" />
-                                            </div>
-                                        ) : (
-                                            <FinishedGoodsLotSelect
-                                                lots={controller.dailyOutputEligibleLots}
-                                                value={controller.dailyOutputMmLotId}
-                                                onValueChange={controller.setDailyOutputMmLotId}
-                                                disabled={controller.actionLoading || !requiresOutputTraceability || isVerified}
-                                                placeholder="Select storage lot..."
-                                                className="h-9 w-full justify-between rounded-lg border-border/80 text-xs font-semibold"
-                                                showBatchSummary
-                                            />
-                                        )}
-                                    </div>
-
-                                    <div className="space-y-1">
-                                        <Label htmlFor="daily-yield-manufacturing-date" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
-                                            <Calendar className="h-3.5 w-3.5 text-emerald-500" /> Manufacturing Date <span className="text-destructive">*</span>
-                                        </Label>
-                                        <Input
-                                            id="daily-yield-manufacturing-date"
-                                            type="date"
-                                            value={controller.dailyOutputManufacturingDate}
-                                            onChange={(event) => controller.setDailyOutputManufacturingDate(event.target.value)}
-                                            className="h-9 rounded-lg bg-background border-border/80 text-foreground text-xs"
-                                            disabled={controller.actionLoading || !requiresOutputTraceability || isVerified}
-                                            required={requiresOutputTraceability}
-                                        />
-                                    </div>
-
-                                    <div className="space-y-1">
-                                        <Label htmlFor="daily-yield-expiry-date" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
-                                            <Calendar className="h-3.5 w-3.5 text-emerald-500" /> Expiry Date <span className="text-destructive">*</span>
-                                        </Label>
-                                        <Input
-                                            id="daily-yield-expiry-date"
-                                            type="date"
-                                            value={controller.dailyOutputExpiryDate}
-                                            onChange={(event) => controller.setDailyOutputExpiryDate(event.target.value)}
-                                            className="h-9 rounded-lg bg-background border-border/80 text-foreground text-xs"
-                                            disabled={controller.actionLoading || !requiresOutputTraceability || isVerified}
-                                            required={requiresOutputTraceability}
-                                        />
-                                    </div>
+                                    {requiresOutputTraceability && (
+                                        <div className="sm:col-span-2 space-y-3">
+                                            {controller.acceptedOutputAllocations.map((allocation, index) => (
+                                                <div key={allocation.allocationKey} className="rounded-lg border border-emerald-500/20 bg-background/70 p-3 space-y-3">
+                                                    <div className="flex items-center justify-between">
+                                                        <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-800 dark:text-emerald-300">Allocation {index + 1}</p>
+                                                        {controller.acceptedOutputAllocations.length > 1 && !isVerified && (
+                                                            <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-destructive" disabled={controller.actionLoading} onClick={() => controller.removeAcceptedAllocation(allocation.allocationKey)}>
+                                                                <Trash2 className="mr-1 h-3.5 w-3.5" /> Remove
+                                                            </Button>
+                                                        )}
+                                                    </div>
+                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                        <div className="space-y-1">
+                                                            <Label htmlFor={`accepted-allocation-quantity-${allocation.allocationKey}`} className="text-muted-foreground font-medium text-[11px]">Allocation Quantity <span className="text-destructive">*</span></Label>
+                                                            <Input id={`accepted-allocation-quantity-${allocation.allocationKey}`} type="number" min="0" step="0.000001" value={allocation.quantity} onChange={(event) => controller.updateAcceptedAllocation(allocation.allocationKey, "quantity", event.target.value)} className="h-9 rounded-lg bg-background border-border/80 text-foreground text-xs font-mono" disabled={controller.actionLoading || isVerified} required />
+                                                        </div>
+                                                        <div className="space-y-1">
+                                                            <Label htmlFor={`accepted-allocation-batch-${allocation.allocationKey}`} className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]"><Tag className="h-3.5 w-3.5 text-emerald-500" /> Batch / Lot No <span className="text-destructive">*</span></Label>
+                                                            <Input id={`accepted-allocation-batch-${allocation.allocationKey}`} type="text" maxLength={100} value={allocation.batchNo} onChange={(event) => controller.updateAcceptedAllocation(allocation.allocationKey, "batchNo", event.target.value)} className="h-9 rounded-lg bg-background border-border/80 text-foreground text-xs font-bold font-mono" placeholder="e.g. JO-2026-YLD-001" disabled={controller.actionLoading || isVerified} required />
+                                                        </div>
+                                                        <div className="space-y-1">
+                                                            <Label htmlFor={`accepted-allocation-lot-${allocation.allocationKey}`} className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]"><MapPin className="h-3.5 w-3.5 text-emerald-500" /> Storage Lot <span className="text-destructive">*</span></Label>
+                                                            {isVerified ? (
+                                                                <Input id={`accepted-allocation-lot-${allocation.allocationKey}`} value={allocation.lotName || (allocation.mmLotId ? `Lot #${allocation.mmLotId}` : "Not recorded")} disabled readOnly className="h-9 rounded-lg bg-background border-border/80 text-foreground text-xs font-semibold" />
+                                                            ) : controller.dailyOutputLotsLoading ? (
+                                                                <Skeleton className="h-9 w-full rounded-lg" />
+                                                            ) : (
+                                                                <FinishedGoodsLotSelect lots={controller.dailyOutputEligibleLots} value={allocation.mmLotId} onValueChange={(value) => controller.updateAcceptedAllocation(allocation.allocationKey, "mmLotId", value)} disabled={controller.actionLoading} placeholder="Select storage lot..." className="h-9 w-full justify-between rounded-lg border-border/80 text-xs font-semibold" showBatchSummary />
+                                                            )}
+                                                        </div>
+                                                        <div className="space-y-1">
+                                                            <Label htmlFor={`accepted-allocation-mfg-${allocation.allocationKey}`} className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]"><Calendar className="h-3.5 w-3.5 text-emerald-500" /> Manufacturing Date <span className="text-destructive">*</span></Label>
+                                                            <Input id={`accepted-allocation-mfg-${allocation.allocationKey}`} type="date" value={allocation.manufacturingDate} onChange={(event) => controller.updateAcceptedAllocation(allocation.allocationKey, "manufacturingDate", event.target.value)} className="h-9 rounded-lg bg-background border-border/80 text-foreground text-xs" disabled={controller.actionLoading || isVerified} required />
+                                                        </div>
+                                                        <div className="space-y-1">
+                                                            <Label htmlFor={`accepted-allocation-expiry-${allocation.allocationKey}`} className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]"><Calendar className="h-3.5 w-3.5 text-emerald-500" /> Expiry Date <span className="text-destructive">*</span></Label>
+                                                            <Input id={`accepted-allocation-expiry-${allocation.allocationKey}`} type="date" value={allocation.expiryDate} onChange={(event) => controller.updateAcceptedAllocation(allocation.allocationKey, "expiryDate", event.target.value)} className="h-9 rounded-lg bg-background border-border/80 text-foreground text-xs" disabled={controller.actionLoading || isVerified} required />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                            {!isVerified && (
+                                                <Button type="button" variant="outline" className="h-8 text-xs" disabled={controller.actionLoading} onClick={controller.addAcceptedAllocation}>
+                                                    <Plus className="mr-1 h-3.5 w-3.5" /> Add Another Lot / Batch Allocation
+                                                </Button>
+                                            )}
+                                            {quantityAllocationError && (
+                                                <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{quantityAllocationError}</div>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                                 {requiresOutputTraceability && !isVerified && (
                                     <div className="mt-3 rounded-lg border border-emerald-500/20 bg-emerald-500/[0.03] p-3">
@@ -943,84 +941,70 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                             </div>
                                         )}
 
-                                        <div className="space-y-1">
-                                            <Label htmlFor="daily-yield-rejected-output-batch" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
-                                                <Tag className="h-3.5 w-3.5 text-rose-500" /> Rejected Batch / Lot No {requiresRejectedOutputTraceability && <span className="text-destructive">*</span>}
-                                            </Label>
-                                            <Input
-                                                id="daily-yield-rejected-output-batch"
-                                                type="text"
-                                                maxLength={100}
-                                                value={controller.dailyRejectedOutputBatchNo}
-                                                onChange={(event) => controller.setDailyRejectedOutputBatchNo(event.target.value)}
-                                                className="h-9 rounded-lg bg-background border-rose-500/30 text-foreground text-xs font-bold font-mono"
-                                                placeholder="Enter rejected batch or lot number"
-                                                disabled={rejectedOutputLocked || !requiresRejectedOutputTraceability}
-                                                required={requiresRejectedOutputTraceability}
-                                            />
-                                        </div>
-
-                                        <div className="space-y-1">
-                                            <Label htmlFor="daily-yield-rejected-storage-lot" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
-                                                <MapPin className="h-3.5 w-3.5 text-rose-500" /> Bad-stock Storage Lot {requiresRejectedOutputTraceability && <span className="text-destructive">*</span>}
-                                            </Label>
-                                            {isVerified || rejectedOutputRegistered ? (
-                                                <Input
-                                                    id="daily-yield-rejected-storage-lot"
-                                                    type="text"
-                                                    value={yieldRecord?.rejectedLotName?.trim() || "Not recorded"}
-                                                    disabled
-                                                    readOnly
-                                                    className="h-9 rounded-lg bg-background border-rose-500/30 text-foreground text-xs font-semibold"
-                                                />
-                                            ) : controller.dailyRejectedOutputLotsLoading ? (
-                                                <div role="status" aria-label="Loading bad-stock storage lots" aria-busy="true" className="space-y-1">
-                                                    <span className="sr-only">Loading bad-stock storage lots...</span>
-                                                    <Skeleton aria-hidden="true" className="h-9 w-full rounded-lg" />
-                                                    <Skeleton aria-hidden="true" className="h-3 w-3/4" />
-                                                </div>
-                                            ) : (
-                                                <FinishedGoodsLotSelect
-                                                    lots={controller.dailyRejectedOutputEligibleLots}
-                                                    value={controller.dailyRejectedOutputMmLotId}
-                                                    onValueChange={controller.setDailyRejectedOutputMmLotId}
-                                                    disabled={rejectedOutputLocked || !requiresRejectedOutputTraceability}
-                                                    placeholder="Select bad-stock storage lot..."
-                                                    className="h-9 w-full justify-between rounded-lg border-rose-500/30 text-xs font-semibold"
-                                                    showBatchSummary
-                                                />
-                                            )}
-                                        </div>
-
-                                        <div className="space-y-1">
-                                            <Label htmlFor="daily-yield-rejected-manufacturing-date" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
-                                                <Calendar className="h-3.5 w-3.5 text-rose-500" /> Manufacturing Date {requiresRejectedOutputTraceability && <span className="text-destructive">*</span>}
-                                            </Label>
-                                            <Input
-                                                id="daily-yield-rejected-manufacturing-date"
-                                                type="date"
-                                                value={controller.dailyRejectedOutputManufacturingDate}
-                                                onChange={(event) => controller.setDailyRejectedOutputManufacturingDate(event.target.value)}
-                                                className="h-9 rounded-lg bg-background border-rose-500/30 text-foreground text-xs"
-                                                disabled={rejectedOutputLocked || !requiresRejectedOutputTraceability}
-                                                required={requiresRejectedOutputTraceability}
-                                            />
-                                        </div>
-
-                                        <div className="space-y-1">
-                                            <Label htmlFor="daily-yield-rejected-expiry-date" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
-                                                <Calendar className="h-3.5 w-3.5 text-rose-500" /> Expiry Date {requiresRejectedOutputTraceability && <span className="text-destructive">*</span>}
-                                            </Label>
-                                            <Input
-                                                id="daily-yield-rejected-expiry-date"
-                                                type="date"
-                                                value={controller.dailyRejectedOutputExpiryDate}
-                                                onChange={(event) => controller.setDailyRejectedOutputExpiryDate(event.target.value)}
-                                                className="h-9 rounded-lg bg-background border-rose-500/30 text-foreground text-xs"
-                                                disabled={rejectedOutputLocked || !requiresRejectedOutputTraceability}
-                                                required={requiresRejectedOutputTraceability}
-                                            />
-                                        </div>
+                                        {requiresRejectedOutputTraceability && (
+                                            <div className="sm:col-span-2 space-y-3">
+                                                {controller.rejectedOutputAllocations.map((allocation, index) => (
+                                                    <div key={allocation.allocationKey} className="rounded-lg border border-rose-500/20 bg-background/70 p-3 space-y-3">
+                                                        <div className="flex items-center justify-between">
+                                                            <p className="text-[10px] font-bold uppercase tracking-wide text-rose-800 dark:text-rose-300">Rejected allocation {index + 1}</p>
+                                                            {controller.rejectedOutputAllocations.length > 1 && !isVerified && !rejectedOutputRegistered && (
+                                                                <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-destructive" disabled={controller.actionLoading} onClick={() => controller.removeRejectedAllocation(allocation.allocationKey)}>
+                                                                    <Trash2 className="mr-1 h-3.5 w-3.5" /> Remove
+                                                                </Button>
+                                                            )}
+                                                        </div>
+                                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                            <div className="space-y-1">
+                                                                <Label htmlFor={"rejected-allocation-quantity-" + allocation.allocationKey} className="text-muted-foreground font-medium text-[11px]">Allocation Quantity <span className="text-destructive">*</span></Label>
+                                                                <Input id={"rejected-allocation-quantity-" + allocation.allocationKey} type="number" min="0" step="0.000001" value={allocation.quantity} onChange={(event) => controller.updateRejectedAllocation(allocation.allocationKey, "quantity", event.target.value)} className="h-9 rounded-lg bg-background border-rose-500/30 text-foreground text-xs font-mono" disabled={rejectedOutputLocked || isVerified} required />
+                                                            </div>
+                                                            <div className="space-y-1">
+                                                                <Label htmlFor={"rejected-allocation-batch-" + allocation.allocationKey} className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]"><Tag className="h-3.5 w-3.5 text-rose-500" /> Rejected Batch / Lot No <span className="text-destructive">*</span></Label>
+                                                                <Input id={"rejected-allocation-batch-" + allocation.allocationKey} type="text" maxLength={100} value={allocation.batchNo} onChange={(event) => controller.updateRejectedAllocation(allocation.allocationKey, "batchNo", event.target.value)} className="h-9 rounded-lg bg-background border-rose-500/30 text-foreground text-xs font-bold font-mono" placeholder="Enter rejected batch or lot number" disabled={rejectedOutputLocked || isVerified} required />
+                                                            </div>
+                                                            <div className="space-y-1">
+                                                                <Label htmlFor={"rejected-allocation-lot-" + allocation.allocationKey} className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]"><MapPin className="h-3.5 w-3.5 text-rose-500" /> Bad-stock Storage Lot <span className="text-destructive">*</span></Label>
+                                                                {isVerified || rejectedOutputRegistered ? (
+                                                                    <Input id={"rejected-allocation-lot-" + allocation.allocationKey} value={allocation.lotName || (allocation.mmLotId ? "Lot #" + allocation.mmLotId : "Not recorded")} disabled readOnly className="h-9 rounded-lg bg-background border-rose-500/30 text-foreground text-xs font-semibold" />
+                                                                ) : controller.dailyRejectedOutputLotsLoading ? (
+                                                                    <Skeleton className="h-9 w-full rounded-lg" />
+                                                                ) : (
+                                                                    <FinishedGoodsLotSelect lots={controller.dailyRejectedOutputEligibleLots} value={allocation.mmLotId} onValueChange={(value) => controller.updateRejectedAllocation(allocation.allocationKey, "mmLotId", value)} disabled={rejectedOutputLocked} placeholder="Select bad-stock storage lot..." className="h-9 w-full justify-between rounded-lg border-rose-500/30 text-xs font-semibold" showBatchSummary />
+                                                                )}
+                                                            </div>
+                                                            <div className="space-y-1">
+                                                                <Label htmlFor={"rejected-allocation-reason-" + allocation.allocationKey} className="text-muted-foreground font-medium text-[11px]">Defect / Rejection Reason <span className="text-destructive">*</span></Label>
+                                                                {isVerified ? (
+                                                                    <Input id={"rejected-allocation-reason-" + allocation.allocationKey} value={allocation.rejectionReasonName || controller.qaRejectionReasons.find((reason) => String(reason.id) === allocation.rejectionReasonId)?.reason_name || allocation.rejectionReasonId || "Not recorded"} disabled readOnly className="h-9 rounded-lg bg-background border-rose-500/30 text-foreground text-xs" />
+                                                                ) : (
+                                                                    <Select value={allocation.rejectionReasonId || "__unselected__"} onValueChange={(value) => controller.updateRejectedAllocation(allocation.allocationKey, "rejectionReasonId", value === "__unselected__" ? "" : value)} disabled={controller.actionLoading || controller.qaRejectionReasonsLoading}>
+                                                                        <SelectTrigger id={"rejected-allocation-reason-" + allocation.allocationKey} className="h-9 text-xs"><SelectValue placeholder="Select a rejection reason..." /></SelectTrigger>
+                                                                        <SelectContent position="popper" className="z-[9999]">
+                                                                            <SelectItem value="__unselected__" className="text-xs">Select a rejection reason...</SelectItem>
+                                                                            {controller.qaRejectionReasons.filter((reason) => reason.is_active).map((reason) => <SelectItem key={reason.id} value={String(reason.id)} className="text-xs">{reason.reason_name}</SelectItem>)}
+                                                                        </SelectContent>
+                                                                    </Select>
+                                                                )}
+                                                            </div>
+                                                            <div className="space-y-1">
+                                                                <Label htmlFor={"rejected-allocation-mfg-" + allocation.allocationKey} className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]"><Calendar className="h-3.5 w-3.5 text-rose-500" /> Manufacturing Date <span className="text-destructive">*</span></Label>
+                                                                <Input id={"rejected-allocation-mfg-" + allocation.allocationKey} type="date" value={allocation.manufacturingDate} onChange={(event) => controller.updateRejectedAllocation(allocation.allocationKey, "manufacturingDate", event.target.value)} className="h-9 rounded-lg bg-background border-rose-500/30 text-foreground text-xs" disabled={rejectedOutputLocked || isVerified} required />
+                                                            </div>
+                                                            <div className="space-y-1">
+                                                                <Label htmlFor={"rejected-allocation-expiry-" + allocation.allocationKey} className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]"><Calendar className="h-3.5 w-3.5 text-rose-500" /> Expiry Date <span className="text-destructive">*</span></Label>
+                                                                <Input id={"rejected-allocation-expiry-" + allocation.allocationKey} type="date" value={allocation.expiryDate} onChange={(event) => controller.updateRejectedAllocation(allocation.allocationKey, "expiryDate", event.target.value)} className="h-9 rounded-lg bg-background border-rose-500/30 text-foreground text-xs" disabled={rejectedOutputLocked || isVerified} required />
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                                {!isVerified && !rejectedOutputRegistered && (
+                                                    <Button type="button" variant="outline" className="h-8 text-xs" disabled={controller.actionLoading} onClick={controller.addRejectedAllocation}>
+                                                        <Plus className="mr-1 h-3.5 w-3.5" /> Add Another Lot / Batch Allocation
+                                                    </Button>
+                                                )}
+                                                {controller.qaRejectionReasonsError && <p role="alert" className="text-xs text-destructive">{controller.qaRejectionReasonsError}</p>}
+                                            </div>
+                                        )}
                                     </div>
 
                                     {requiresRejectedOutputTraceability && !isVerified && !rejectedOutputRegistered && (
@@ -1157,10 +1141,55 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                 ) : "Save Audit & Authorize"}
                             </Button>
                         )}
+                        {isVerified && details?.canRevokeYieldAudit && (
+                            <Button
+                                type="button"
+                                variant="destructive"
+                                onClick={() => { setRevokeReason(""); setRevokeDialogOpen(true); }}
+                                disabled={controller.actionLoading}
+                                className="min-h-10 text-xs font-semibold"
+                            >
+                                Revoke QA Release
+                            </Button>
+                        )}
                     </DialogFooter>
                     </fieldset>
                 </form>
             </DialogContent>
+            <AlertDialog open={revokeDialogOpen} onOpenChange={setRevokeDialogOpen}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Revoke this QA release?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            The accepted quantity will be removed from released finished goods and the yield will return to the QA queue for re-audit. This action is recorded in the yield ledger.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <Label htmlFor="qa-release-revocation-reason">Reason</Label>
+                    <textarea
+                        id="qa-release-revocation-reason"
+                        value={revokeReason}
+                        onChange={(event) => setRevokeReason(event.target.value)}
+                        maxLength={500}
+                        rows={3}
+                        className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                        placeholder="Explain why this QA release must be revoked..."
+                    />
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={controller.actionLoading}>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                            disabled={controller.actionLoading || !revokeReason.trim()}
+                            onClick={(event) => {
+                                event.preventDefault();
+                                const reason = revokeReason.trim();
+                                setRevokeDialogOpen(false);
+                                void controller.revokeAudit(reason);
+                            }}
+                        >
+                            {controller.actionLoading ? "Revoking..." : "Revoke release"}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
             {previewEvidence && (
                 <Dialog open={evidenceExpanded} onOpenChange={setEvidenceExpanded}>
                     <DialogContent className="flex h-[calc(100dvh-2rem)] max-h-[52rem] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">

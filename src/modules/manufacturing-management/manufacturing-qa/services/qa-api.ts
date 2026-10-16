@@ -553,6 +553,13 @@ export interface DailyQAOutputMetadata {
     expiryDate: string;
 }
 
+export interface DailyQAOutputAllocationLine extends DailyQAOutputMetadata {
+    allocationKey: string;
+    allocationId?: number | null;
+    quantity: number;
+    rejectionReasonId?: number | null;
+}
+
 export interface DailyQAInspectionEntry {
     jobOrderId: number;
     joRouteId: number | null;
@@ -581,6 +588,8 @@ export interface DailyQAInspectionRequest {
     rejectedQuantity?: number;
     outputMetadata: DailyQAOutputMetadata | null;
     rejectedOutputMetadata: DailyQAOutputMetadata | null;
+    acceptedAllocations?: DailyQAOutputAllocationLine[];
+    rejectedAllocations?: DailyQAOutputAllocationLine[];
     inspections: DailyQAInspectionEntry[];
 }
 
@@ -674,7 +683,8 @@ export async function registerRejectedOutputAllocation(payload: {
     ledgerId: number;
     acceptedQuantity: number;
     rejectedQuantity: number;
-    rejectedOutputMetadata: DailyQAOutputMetadata;
+    rejectedOutputMetadata?: DailyQAOutputMetadata;
+    rejectedAllocations?: DailyQAOutputAllocationLine[];
 }, evidence?: { files: File[]; keys: string[] }): Promise<any> {
     let body: BodyInit;
     let headers: HeadersInit | undefined;
