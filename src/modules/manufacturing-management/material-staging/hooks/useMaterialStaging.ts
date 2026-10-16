@@ -21,14 +21,6 @@ export function useMaterialStaging() {
     const [jobOrders, setJobOrders] = useState<StagingJobOrder[]>([]);
 
     const [branches, setBranches] = useState<Branch[]>([]);
-    const [stats, setStats] = useState<StagingStats>({
-        totalActiveJobs: 0,
-        plannedJobs: 0,
-        reservedJobs: 0,
-        fullyStagedJobs: 0,
-        pendingStagingJobs: 0,
-        shortageAlertJobs: 0
-    });
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [hasSuccessfulLoad, setHasSuccessfulLoad] = useState(false);
@@ -101,7 +93,6 @@ export function useMaterialStaging() {
             setLoadError(null);
             setJobOrders(response.data);
             setBranches(response.branches || []);
-            if (response.stats) setStats(response.stats);
             setHasSuccessfulLoad(true);
             setLastRefreshedAt(new Date());
             if (showToast) toast.success("Material staging data refreshed");
@@ -144,6 +135,15 @@ export function useMaterialStaging() {
         if (!normalizedSearchQuery) return true;
         return searchIndex.get(jobOrder.job_order_id)?.includes(normalizedSearchQuery) ?? false;
     }), [jobOrders, selectedStatusFilter, onlyShortages, normalizedSearchQuery, searchIndex]);
+
+    const stats = useMemo<StagingStats>(() => ({
+        totalActiveJobs: filteredJobOrders.length,
+        plannedJobs: filteredJobOrders.length,
+        reservedJobs: 0,
+        fullyStagedJobs: filteredJobOrders.filter(jobOrder => jobOrder.all_staged).length,
+        pendingStagingJobs: filteredJobOrders.filter(jobOrder => !jobOrder.all_staged).length,
+        shortageAlertJobs: filteredJobOrders.filter(jobOrder => jobOrder.has_shortage).length
+    }), [filteredJobOrders]);
 
     useEffect(() => {
         // A pending deep link owns the initial selection.

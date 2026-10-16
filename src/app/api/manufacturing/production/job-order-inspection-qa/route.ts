@@ -6,9 +6,9 @@ import {
     requireJobOrderModuleAccess
 } from "@/app/api/manufacturing/job-orders/_module-access";
 import {
-    acceptedQuantityByJobOrder,
     buildQAYieldAssessments,
     isCommittedYieldLedger,
+    verifiedYieldOutputTotalsByJobOrder,
 } from "../_qa-accepted-output";
 import { qaRecordAfterRevocation, yieldAuditRowsAfterRevocation } from "../qa-release";
 import {
@@ -237,7 +237,7 @@ async function readRowsForIds(
 async function loadJobOrderSummaries(jobOrderIds?: number[]) {
     const yieldsQuery = new URLSearchParams({
         limit: "-1",
-        fields: "ledger_id,job_order_id,commit_status,yield_quantity,qa_accepted_quantity,qa_revoked_through_audit_id,rejected_quantity,scrap_quantity,logged_at,production_date",
+        fields: "ledger_id,job_order_id,commit_status,yield_quantity,qa_accepted_quantity,qa_rejected_quantity,qa_revoked_through_audit_id,rejected_quantity,scrap_quantity,logged_at,production_date",
     });
     if (jobOrderIds?.length) {
         yieldsQuery.set("filter[job_order_id][_in]", [...new Set(jobOrderIds)].join(","));
@@ -304,7 +304,7 @@ async function loadJobOrderSummaries(jobOrderIds?: number[]) {
         (yieldRow) => yieldRow.logged_at || yieldRow.production_date
     );
     const assessments = buildQAYieldAssessments(relevantYields, inspections, routes);
-    const acceptedByJobOrder = acceptedQuantityByJobOrder(assessments);
+    const verifiedOutputByJobOrder = verifiedYieldOutputTotalsByJobOrder(assessments);
     const qaStatusCountsByJobOrder = buildYieldQAStatusCountIndex(
         assessments,
         (assessment) => assessment.jobOrderId,
@@ -315,6 +315,7 @@ async function loadJobOrderSummaries(jobOrderIds?: number[]) {
         const id = jobOrderId(jobOrder);
         const yieldSummary = yieldsByJobOrder.get(id);
         const qaStatusCounts = qaStatusCountsByJobOrder.get(id);
+        const verifiedOutput = verifiedOutputByJobOrder.get(id);
         const productId = relationId(jobOrder.product_id, ["product_id", "id"]);
         const product = productsById.get(productId);
         return {
@@ -327,7 +328,9 @@ async function loadJobOrderSummaries(jobOrderIds?: number[]) {
             productUom: productUomValue(product),
             branchId: relationId(jobOrder.branch_id, ["branch_id", "id"]) || null,
             targetQuantity: numberValue(jobOrder.target_quantity),
-            producedQuantity: acceptedByJobOrder.get(id) || 0,
+            producedQuantity: verifiedOutput?.acceptedQuantity || 0,
+            verifiedRejectedQuantity: verifiedOutput?.rejectedQuantity || 0,
+            verifiedTotalProducedQuantity: verifiedOutput?.totalProducedQuantity || 0,
             yieldCount: yieldSummary?.count || 0,
             pendingYieldCount: qaStatusCounts?.pendingYieldCount || 0,
             discrepancyYieldCount: qaStatusCounts?.discrepancyYieldCount || 0,

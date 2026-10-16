@@ -63,11 +63,12 @@ function quantity(value: number): string {
 function AcceptedTargetProgress({ accepted, target }: { accepted: number; target: number }) {
     const hasTarget = target > 0;
     const progress = hasTarget ? Math.min(100, Math.max(0, (accepted / target) * 100)) : 0;
+    const overTarget = hasTarget && accepted > target;
 
     return (
-        <div className="min-w-0" aria-label={`Accepted ${quantity(accepted)} of ${quantity(target)} target units`}>
+        <div className="min-w-0" aria-label={`Verified good ${quantity(accepted)} of ${quantity(target)} target units`}>
             <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                <span>Accepted / target</span>
+                <span>Good / target</span>
                 <span className="shrink-0 font-mono">{quantity(accepted)} / {quantity(target)}</span>
             </div>
             {hasTarget ? (
@@ -83,6 +84,11 @@ function AcceptedTargetProgress({ accepted, target }: { accepted: number; target
                 </div>
             ) : (
                 <div className="mt-1 text-[11px] text-muted-foreground">No target quantity</div>
+            )}
+            {overTarget && (
+                <p role="status" className="mt-1 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+                    Over target by {quantity(accepted - target)}
+                </p>
             )}
         </div>
     );
@@ -165,9 +171,11 @@ function DailyYieldActionButton({
 function JobOrderSummaryCard({
     jobOrder,
     onViewDetails,
+    onReviewUnresolved,
 }: {
     jobOrder: JobOrderDailyYieldSummary;
     onViewDetails: (jobOrder: JobOrderDailyYieldSummary) => void;
+    onReviewUnresolved: (jobOrder: JobOrderDailyYieldSummary) => void;
 }) {
     return (
         <article className="min-w-0 rounded-xl border bg-card p-3 shadow-sm">
@@ -195,9 +203,21 @@ function JobOrderSummaryCard({
                         <dd className="mt-1 font-mono font-semibold">{quantity(jobOrder.targetQuantity)}</dd>
                     </div>
                     <div className="min-w-0">
-                        <dt className="text-muted-foreground">Accepted Qty</dt>
+                    <dt className="text-muted-foreground">Good (verified)</dt>
                         <dd className="mt-1 font-mono font-semibold">{quantity(jobOrder.producedQuantity)}</dd>
                     </div>
+                <div className="min-w-0 text-right">
+                    <dt className="text-muted-foreground">Rejected (verified)</dt>
+                    <dd className="mt-1 font-mono font-semibold text-red-600 dark:text-red-300">{quantity(jobOrder.verifiedRejectedQuantity)}</dd>
+                </div>
+                <div className="min-w-0">
+                    <dt className="text-muted-foreground">Total Produced</dt>
+                    <dd className="mt-1 font-mono font-semibold">{quantity(jobOrder.verifiedTotalProducedQuantity)}</dd>
+                </div>
+                <div className="min-w-0 text-right">
+                    <dt className="text-muted-foreground">Remaining Good</dt>
+                    <dd className="mt-1 font-mono font-semibold">{quantity(Math.max(0, jobOrder.targetQuantity - jobOrder.producedQuantity))}</dd>
+                </div>
                     <div className="min-w-0 text-right">
                         <dt className="text-muted-foreground">Pending Audits</dt>
                         <dd className={`mt-1 font-semibold ${jobOrder.pendingYieldCount > 0 ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground"}`}>
@@ -216,8 +236,18 @@ function JobOrderSummaryCard({
                 </div>
             </div>
 
-            <Button type="button" variant="outline" onClick={() => onViewDetails(jobOrder)} className="mt-3 min-h-10 w-full gap-2">
-                <Eye className="h-4 w-4" /> View Details
+            <Button
+                type="button"
+                variant={jobOrder.unresolvedYieldCount > 0 ? "default" : "outline"}
+                onClick={() => jobOrder.unresolvedYieldCount > 0 ? onReviewUnresolved(jobOrder) : onViewDetails(jobOrder)}
+                className="mt-3 min-h-10 w-full gap-2"
+                aria-label={jobOrder.unresolvedYieldCount > 0
+                    ? `Review unresolved audits for ${jobOrder.jobOrderNo}`
+                    : `View details for ${jobOrder.jobOrderNo}`}
+            >
+                {jobOrder.unresolvedYieldCount > 0
+                    ? <><ClipboardCheck className="h-4 w-4" /> Review {jobOrder.unresolvedYieldCount} open audit{jobOrder.unresolvedYieldCount === 1 ? "" : "s"}</>
+                    : <><Eye className="h-4 w-4" /> View Details</>}
             </Button>
         </article>
     );
@@ -233,15 +263,21 @@ function DailyYieldCard({
     onAction: (record: JobOrderDailyYieldRecord, mode: AuditActionMode) => void;
 }) {
     const isDiscrepancy = record.qaStatus === "QA Hold";
+    const isVerified = record.qaStatus === "Passed";
     const note = discrepancyNote(record);
     const { rejectedQuantity: displayedRejectedQuantity } = getYieldOutputTotals(
         record.goodQuantity,
         record.rejectedQuantity,
         record.scrapQuantity
     );
+    const displayedGoodQuantity = isVerified ? record.qaAcceptedQuantity : record.goodQuantity;
+    const displayedRejectedOutputQuantity = isVerified ? record.qaRejectedQuantity : displayedRejectedQuantity;
+    const displayedTotalQuantity = isVerified
+        ? record.qaAcceptedQuantity + record.qaRejectedQuantity
+        : record.totalQuantity;
 
     return (
-        <article className={`min-w-0 rounded-xl border p-3 ${isDiscrepancy ? "border-red-500/30 bg-red-500/5" : "bg-card"}`}>
+        <article data-daily-yield-ledger-id={record.ledgerId} className={`min-w-0 rounded-xl border p-3 ${isDiscrepancy ? "border-red-500/30 bg-red-500/5" : "bg-card"}`}>
             <div className="flex min-w-0 items-start justify-between gap-3">
                 <div className="min-w-0">
                     <h4 className="break-words text-sm font-semibold">{shiftLabel}</h4>
@@ -260,12 +296,12 @@ function DailyYieldCard({
                     {record.loggedAt && <dd className="mt-0.5 text-muted-foreground">Logged {formatPhtTimestamp12Hour(record.loggedAt)}</dd>}
                 </div>
                 <div className="min-w-0">
-                    <dt className="text-muted-foreground">Accepted</dt>
-                    <dd className="mt-1 break-words font-mono font-semibold text-emerald-700 dark:text-emerald-300">{quantity(record.goodQuantity)}</dd>
+                    <dt className="text-muted-foreground">{isVerified ? "Accepted" : "Logged Good"}</dt>
+                    <dd className="mt-1 break-words font-mono font-semibold text-emerald-700 dark:text-emerald-300">{quantity(displayedGoodQuantity)}</dd>
                 </div>
                 <div className="min-w-0">
-                    <dt className="text-muted-foreground">Rejected Qty</dt>
-                    <dd className="mt-1 break-words font-mono font-semibold text-red-600 dark:text-red-300">{quantity(displayedRejectedQuantity)}</dd>
+                    <dt className="text-muted-foreground">{isVerified ? "Rejected" : "Logged Rejected"}</dt>
+                    <dd className="mt-1 break-words font-mono font-semibold text-red-600 dark:text-red-300">{quantity(displayedRejectedOutputQuantity)}</dd>
                 </div>
                 <div className="min-w-0">
                     <dt className="text-muted-foreground">Lot</dt>
@@ -277,8 +313,8 @@ function DailyYieldCard({
                     <dd className="mt-1 break-all font-mono">{record.batchNo || "—"}</dd>
                 </div>
                 <div className="min-w-0">
-                    <dt className="text-muted-foreground">Total Qty</dt>
-                    <dd className="mt-1 break-words font-mono font-semibold">{quantity(record.totalQuantity)}</dd>
+                    <dt className="text-muted-foreground">{isVerified ? "Verified Total" : "Logged Total"}</dt>
+                    <dd className="mt-1 break-words font-mono font-semibold">{quantity(displayedTotalQuantity)}</dd>
                 </div>
             </dl>
 
@@ -307,9 +343,14 @@ function DailyYieldRow({
         record.rejectedQuantity,
         record.scrapQuantity
     );
+    const displayedGoodQuantity = isVerified ? record.qaAcceptedQuantity : record.goodQuantity;
+    const displayedRejectedOutputQuantity = isVerified ? record.qaRejectedQuantity : displayedRejectedQuantity;
+    const displayedTotalQuantity = isVerified
+        ? record.qaAcceptedQuantity + record.qaRejectedQuantity
+        : record.totalQuantity;
 
     return (
-        <TableRow className={isDiscrepancy ? "bg-red-500/10 hover:bg-red-500/15" : undefined}>
+        <TableRow data-daily-yield-ledger-id={record.ledgerId} className={isDiscrepancy ? "bg-red-500/10 hover:bg-red-500/15" : undefined}>
             <TableCell className="min-w-[180px] align-top">
                 <div className="font-semibold text-foreground">{shiftLabel}</div>
                 <div className="mt-1 text-[11px] text-muted-foreground font-mono">Ledger #{record.ledgerId}</div>
@@ -319,15 +360,15 @@ function DailyYieldRow({
                 <div className="font-medium">{formatPhtDate(record.productionDate)}</div>
                 {record.loggedAt && <div className="mt-1 text-[11px] text-muted-foreground">Logged {formatPhtTimestamp12Hour(record.loggedAt)}</div>}
             </TableCell>
-            <TableCell className="font-mono text-right align-top font-semibold text-emerald-700 dark:text-emerald-300">{quantity(record.goodQuantity)}</TableCell>
-            <TableCell className="font-mono text-right align-top font-semibold text-red-600 dark:text-red-300">{quantity(displayedRejectedQuantity)}</TableCell>
+            <TableCell className="font-mono text-right align-top font-semibold text-emerald-700 dark:text-emerald-300">{quantity(displayedGoodQuantity)}</TableCell>
+            <TableCell className="font-mono text-right align-top font-semibold text-red-600 dark:text-red-300">{quantity(displayedRejectedOutputQuantity)}</TableCell>
             <TableCell className="min-w-[130px] align-top">
                 <div className="font-semibold">{record.lotName || "—"}</div>
                 {record.mmLotId && <div className="text-[10px] text-muted-foreground font-mono">#{record.mmLotId}</div>}
             </TableCell>
             <TableCell className="min-w-[130px] align-top font-mono">{record.batchNo || "—"}</TableCell>
             <TableCell className="min-w-[130px] align-top text-right">
-                <div className="font-mono font-semibold">{quantity(record.totalQuantity)}</div>
+                <div className="font-mono font-semibold">{quantity(displayedTotalQuantity)}</div>
             </TableCell>
             <TableCell className="min-w-[165px] align-top">
                 <div className="flex items-center gap-1.5">
@@ -350,6 +391,7 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
     const auditState = useDailyYieldAudit({ onSaved: jobOrderState.refresh, inspectorName });
     const [closeConfirmOpen, setCloseConfirmOpen] = React.useState(false);
     const [additionalFiltersOpen, setAdditionalFiltersOpen] = React.useState(false);
+    const unresolvedReviewJobOrderId = React.useRef<number | null>(null);
     const details = jobOrderState.selectedDetails;
     const shiftDisplayLabels = React.useMemo(() => {
         const records = details?.dailyYields || [];
@@ -373,17 +415,52 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
         : false;
     const closeReady = details?.closeReadiness.ready === true;
     const verifiedYields = details?.dailyYields.filter((record) => record.qaStatus === "Passed") || [];
-    const acceptedQuantity = verifiedYields.reduce((sum, record) => sum + record.goodQuantity, 0);
+    const acceptedQuantity = verifiedYields.reduce((sum, record) => sum + record.qaAcceptedQuantity, 0);
+    const rejectedQuantity = verifiedYields.reduce((sum, record) => sum + record.qaRejectedQuantity, 0);
+    const verifiedTotalProducedQuantity = acceptedQuantity + rejectedQuantity;
     const pendingYieldCount = details?.dailyYields.filter((record) => record.qaStatus === "Pending").length || 0;
     const discrepancyYieldCount = details?.dailyYields.filter((record) => record.qaStatus === "QA Hold").length || 0;
     const dailyYieldTotals = details?.dailyYields.reduce((totals, record) => {
-        totals.accepted += record.goodQuantity;
-        totals.rejected += getYieldOutputTotals(record.goodQuantity, record.rejectedQuantity, record.scrapQuantity).rejectedQuantity;
-        totals.total += record.totalQuantity;
+        totals.loggedGood += record.goodQuantity;
+        totals.loggedRejected += getYieldOutputTotals(record.goodQuantity, record.rejectedQuantity, record.scrapQuantity).rejectedQuantity;
+        totals.loggedTotal += record.totalQuantity;
         return totals;
-    }, { accepted: 0, rejected: 0, total: 0 });
+    }, { loggedGood: 0, loggedRejected: 0, loggedTotal: 0 });
     const activeAdditionalFilterCount = Number(Boolean(jobOrderState.dateRange?.from || jobOrderState.dateRange?.to))
         + Number(Boolean(jobOrderState.productFilter));
+
+    const viewJobOrderDetails = (jobOrder: JobOrderDailyYieldSummary) => {
+        unresolvedReviewJobOrderId.current = null;
+        jobOrderState.openDetails(jobOrder);
+    };
+    const reviewUnresolvedJobOrder = (jobOrder: JobOrderDailyYieldSummary) => {
+        unresolvedReviewJobOrderId.current = jobOrder.jobOrderId;
+        jobOrderState.openDetails(jobOrder);
+    };
+
+    React.useEffect(() => {
+        const requestedJobOrderId = unresolvedReviewJobOrderId.current;
+        if (requestedJobOrderId === null || jobOrderState.detailsLoading) return;
+        if (jobOrderState.selectedJobOrder?.jobOrderId !== requestedJobOrderId) {
+            unresolvedReviewJobOrderId.current = null;
+            return;
+        }
+        if (!details || details.jobOrderId !== requestedJobOrderId) {
+            if (jobOrderState.detailsError) unresolvedReviewJobOrderId.current = null;
+            return;
+        }
+
+        const firstUnresolvedYield = details.dailyYields.find((record) => record.qaStatus === "QA Hold")
+            || details.dailyYields.find((record) => record.qaStatus === "Pending");
+        unresolvedReviewJobOrderId.current = null;
+        if (!firstUnresolvedYield) return;
+
+        window.requestAnimationFrame(() => {
+            const row = document.querySelector<HTMLElement>(`[data-daily-yield-ledger-id="${firstUnresolvedYield.ledgerId}"]`);
+            row?.scrollIntoView({ behavior: "smooth", block: "center" });
+            row?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
+        });
+    }, [details, jobOrderState.detailsError, jobOrderState.detailsLoading, jobOrderState.selectedJobOrder?.jobOrderId]);
 
     const renderDateFilter = () => (
         <Popover>
@@ -543,7 +620,9 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                             <span>{jobOrderState.unresolvedJobOrderCount} Job Order{jobOrderState.unresolvedJobOrderCount === 1 ? " has" : "s have"} daily yield records with unresolved audit flags.</span>
                         </div>
                         <Button type="button" size="sm" variant="outline" className="min-h-9 shrink-0 border-red-500/30 bg-background text-red-700 hover:bg-red-500/10 dark:text-red-300" onClick={() => jobOrderState.setFlaggedOnly(!jobOrderState.flaggedOnly)}>
-                            {jobOrderState.flaggedOnly ? "Show all" : "View flagged"}
+                            {jobOrderState.flaggedOnly
+                                ? "Show all Job Orders"
+                                : `Review ${jobOrderState.unresolvedJobOrderCount} flagged Job Orders`}
                         </Button>
                     </div>
                 )}
@@ -578,7 +657,7 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                         <TableHead className="min-w-[170px]">Product</TableHead>
                                         <TableHead className="min-w-[145px]">Latest Yield</TableHead>
                                         <TableHead className="text-right">Target Qty</TableHead>
-                                        <TableHead className="min-w-[175px] text-right">Accepted Qty</TableHead>
+                                        <TableHead className="min-w-[200px] text-right">Verified Output</TableHead>
                                         <TableHead className="min-w-[165px]">Status</TableHead>
                                         <TableHead className="min-w-[135px] text-right">Action</TableHead>
                                     </TableRow>
@@ -623,7 +702,7 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                 </TableBody>
                             </Table>
                         </div>
-                        <div className="space-y-3 px-4 pb-4 2xl:hidden" aria-hidden="true">
+                        <div className="grid grid-cols-1 gap-3 px-4 pb-4 xl:grid-cols-2 2xl:hidden" aria-hidden="true">
                             {Array.from({ length: 4 }, (_, index) => (
                                 <div key={`job-order-card-skeleton-${index}`} className="space-y-3 rounded-xl border p-3">
                                     <div className="flex items-start justify-between gap-3">
@@ -635,7 +714,7 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                     </div>
                                     <Skeleton className="h-4 w-40 max-w-full" />
                                     <div className="grid grid-cols-2 gap-3 border-t pt-3">
-                                        {Array.from({ length: 5 }, (_, metricIndex) => (
+                                        {Array.from({ length: 8 }, (_, metricIndex) => (
                                             <div key={`job-order-card-metric-${metricIndex}`} className="space-y-2">
                                                 <Skeleton className="h-3 w-20" />
                                                 <Skeleton className="h-4 w-24 max-w-full" />
@@ -671,12 +750,13 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                     </div>
                 ) : (
                     <>
-                        <div className="space-y-3 px-4 pb-4 2xl:hidden">
+                        <div className="grid grid-cols-1 gap-3 px-4 pb-4 xl:grid-cols-2 2xl:hidden">
                             {jobOrderState.jobOrders.map((jobOrder) => (
                                 <JobOrderSummaryCard
                                     key={jobOrder.jobOrderId}
                                     jobOrder={jobOrder}
-                                    onViewDetails={jobOrderState.openDetails}
+                                    onViewDetails={viewJobOrderDetails}
+                                    onReviewUnresolved={reviewUnresolvedJobOrder}
                                 />
                             ))}
                         </div>
@@ -688,7 +768,7 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                         <TableHead className="min-w-[170px]">Product</TableHead>
                                         <TableHead className="min-w-[145px]">Latest Yield</TableHead>
                                         <TableHead className="text-right">Target Qty</TableHead>
-                                        <TableHead className="min-w-[145px] text-right">Produced Qty</TableHead>
+                                        <TableHead className="min-w-[200px] text-right">Verified Output</TableHead>
                                         <TableHead className="min-w-[165px]">Status</TableHead>
                                         <TableHead className="min-w-[135px] text-right">Action</TableHead>
                                     </TableRow>
@@ -710,7 +790,9 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                             </TableCell>
                                             <TableCell className="text-right font-mono">{quantity(jobOrder.targetQuantity)}</TableCell>
                                             <TableCell className="text-right">
-                                                <div className="font-mono font-semibold">{quantity(jobOrder.producedQuantity)}</div>
+                                                <div className="font-mono font-semibold text-emerald-700 dark:text-emerald-300">Good {quantity(jobOrder.producedQuantity)}</div>
+                                                <div className="mt-0.5 text-[11px] font-mono text-red-600 dark:text-red-300">Rejected {quantity(jobOrder.verifiedRejectedQuantity)}</div>
+                                                <div className="mt-0.5 text-[11px] font-mono text-muted-foreground">Total {quantity(jobOrder.verifiedTotalProducedQuantity)}</div>
                                                 <div className="mt-2 text-left">
                                                     <AcceptedTargetProgress accepted={jobOrder.producedQuantity} target={jobOrder.targetQuantity} />
                                                 </div>
@@ -727,8 +809,19 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                                 </div>
                                             </TableCell>
                                             <TableCell className="text-right">
-                                                <Button type="button" size="sm" variant="outline" onClick={() => jobOrderState.openDetails(jobOrder)} className="min-h-9 gap-2">
-                                                    <Eye className="h-4 w-4" /> View Details
+                                                <Button
+                                                    type="button"
+                                                    size="sm"
+                                                    variant={jobOrder.unresolvedYieldCount > 0 ? "default" : "outline"}
+                                                    onClick={() => jobOrder.unresolvedYieldCount > 0 ? reviewUnresolvedJobOrder(jobOrder) : viewJobOrderDetails(jobOrder)}
+                                                    className="min-h-9 gap-2"
+                                                    aria-label={jobOrder.unresolvedYieldCount > 0
+                                                        ? `Review unresolved audits for ${jobOrder.jobOrderNo}`
+                                                        : `View details for ${jobOrder.jobOrderNo}`}
+                                                >
+                                                    {jobOrder.unresolvedYieldCount > 0
+                                                        ? <><ClipboardCheck className="h-4 w-4" /> Review audits</>
+                                                        : <><Eye className="h-4 w-4" /> View Details</>}
                                                 </Button>
                                             </TableCell>
                                         </TableRow>
@@ -835,11 +928,11 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                                 <TableRow>
                                                     <TableHead>Daily Yield Details</TableHead>
                                                     <TableHead>Created for that day</TableHead>
-                                                    <TableHead className="text-right">Accepted</TableHead>
-                                                    <TableHead className="text-right">Rejected Qty</TableHead>
+                                                    <TableHead className="text-right">Good / Accepted</TableHead>
+                                                    <TableHead className="text-right">Rejected</TableHead>
                                                     <TableHead>Lot</TableHead>
                                                     <TableHead>Batch</TableHead>
-                                                    <TableHead className="text-right">Total Qty</TableHead>
+                                                    <TableHead className="text-right">Total</TableHead>
                                                     <TableHead>Status</TableHead>
                                                     <TableHead className="min-w-[170px] text-right">Action</TableHead>
                                                 </TableRow>
@@ -902,12 +995,13 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                         </div>
                     ) : details ? (
                         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pr-1">
-                            <div className="grid grid-cols-2 gap-3 rounded-xl border bg-muted/20 p-3 text-sm sm:grid-cols-3 lg:grid-cols-6">
+                                <div className="grid grid-cols-2 gap-3 rounded-xl border bg-muted/20 p-3 text-sm sm:grid-cols-3 lg:grid-cols-7">
                                 <div><div className="text-[10px] uppercase tracking-wide text-muted-foreground">Product</div><div className="mt-1 font-semibold">{details.productName}</div></div>
                                 <div><div className="text-[10px] uppercase tracking-wide text-muted-foreground">JO Status</div><Badge variant="outline" className={`mt-1 ${statusClass(details.status)}`}>{details.status}</Badge></div>
                                 <div><div className="text-[10px] uppercase tracking-wide text-muted-foreground">Target Qty</div><div className="mt-1 font-mono font-semibold">{quantity(details.targetQuantity)}</div></div>
-                                <div><div className="text-[10px] uppercase tracking-wide text-muted-foreground">Accepted Qty</div><div className="mt-1 font-mono font-semibold text-emerald-700 dark:text-emerald-300">{quantity(acceptedQuantity)}</div><div className="text-[10px] text-muted-foreground">From verified records only</div></div>
-                                <div><div className="text-[10px] uppercase tracking-wide text-muted-foreground">Produced Qty</div><div className="mt-1 font-mono font-semibold">{quantity(details.producedQuantity)}</div><div className="text-[10px] text-muted-foreground">Accepted + Rejected, verified</div></div>
+                                <div><div className="text-[10px] uppercase tracking-wide text-muted-foreground">Good (verified)</div><div className="mt-1 font-mono font-semibold text-emerald-700 dark:text-emerald-300">{quantity(acceptedQuantity)}</div></div>
+                                <div><div className="text-[10px] uppercase tracking-wide text-muted-foreground">Rejected (verified)</div><div className="mt-1 font-mono font-semibold text-red-600 dark:text-red-300">{quantity(rejectedQuantity)}</div></div>
+                                <div><div className="text-[10px] uppercase tracking-wide text-muted-foreground">Total Produced</div><div className="mt-1 font-mono font-semibold">{quantity(verifiedTotalProducedQuantity)}</div><div className="text-[10px] text-muted-foreground">Verified records only</div></div>
                                 <div><div className="text-[10px] uppercase tracking-wide text-muted-foreground">Yield Records</div><div className="mt-1 font-semibold">{details.dailyYields.length}</div><div className="text-[10px] text-muted-foreground">{pendingYieldCount} pending · {discrepancyYieldCount} discrepancy</div></div>
                             </div>
 
@@ -946,7 +1040,7 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                         <div>
                                             <h3 className="font-bold">JO Daily Yield Table</h3>
-                                            <p className="mt-1 max-w-3xl text-xs text-muted-foreground">Each production session is listed once with its QA state and output traceability. A verified yield contributes its Accepted Qty and Rejected Qty to Produced Qty; pending or flagged records are not counted yet.</p>
+                                            <p className="mt-1 max-w-3xl text-xs text-muted-foreground">Each production session is listed once with its QA state and output traceability. Verified rows show QA-approved quantities; pending or discrepant rows show logged quantities and stay out of verified totals.</p>
                                         </div>
                                         <div className="flex shrink-0 flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
                                             <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-600" /> Pending</span>
@@ -970,18 +1064,18 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                             ))}
                                             {dailyYieldTotals && (
                                                 <dl className="grid grid-cols-3 gap-2 rounded-xl border bg-muted/20 p-3 text-xs">
-                                                    <div className="col-span-3 font-semibold text-foreground">Totals (all records)</div>
+                                                    <div className="col-span-3 font-semibold text-foreground">Logged totals (all records)</div>
                                                     <div className="min-w-0">
-                                                        <dt className="text-muted-foreground">Accepted</dt>
-                                                        <dd className="mt-1 break-words font-mono font-semibold text-emerald-700 dark:text-emerald-300">{quantity(dailyYieldTotals.accepted)}</dd>
+                                                        <dt className="text-muted-foreground">Logged Good</dt>
+                                                        <dd className="mt-1 break-words font-mono font-semibold text-emerald-700 dark:text-emerald-300">{quantity(dailyYieldTotals.loggedGood)}</dd>
                                                     </div>
                                                     <div className="min-w-0">
-                                                        <dt className="text-muted-foreground">Rejected</dt>
-                                                        <dd className="mt-1 break-words font-mono font-semibold text-red-600 dark:text-red-300">{quantity(dailyYieldTotals.rejected)}</dd>
+                                                        <dt className="text-muted-foreground">Logged Rejected</dt>
+                                                        <dd className="mt-1 break-words font-mono font-semibold text-red-600 dark:text-red-300">{quantity(dailyYieldTotals.loggedRejected)}</dd>
                                                     </div>
                                                     <div className="min-w-0">
-                                                        <dt className="text-muted-foreground">Total Qty</dt>
-                                                        <dd className="mt-1 break-words font-mono font-semibold">{quantity(dailyYieldTotals.total)}</dd>
+                                                        <dt className="text-muted-foreground">Logged Total</dt>
+                                                        <dd className="mt-1 break-words font-mono font-semibold">{quantity(dailyYieldTotals.loggedTotal)}</dd>
                                                     </div>
                                                 </dl>
                                             )}
@@ -994,11 +1088,11 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                             <TableRow>
                                                 <TableHead>Daily Yield Details</TableHead>
                                                 <TableHead>Created for that day</TableHead>
-                                                <TableHead className="text-right">Accepted</TableHead>
-                                                <TableHead className="text-right">Rejected Qty</TableHead>
+                                                <TableHead className="text-right">Good / Accepted</TableHead>
+                                                <TableHead className="text-right">Rejected</TableHead>
                                                 <TableHead>Lot</TableHead>
                                                 <TableHead>Batch</TableHead>
-                                                <TableHead className="text-right">Total Qty</TableHead>
+                                                <TableHead className="text-right">Total</TableHead>
                                                 <TableHead>Status</TableHead>
                                                 <TableHead className="sticky right-0 z-20 min-w-[170px] bg-card text-right shadow-[-8px_0_12px_-12px_hsl(var(--foreground)/0.45)]">Action</TableHead>
                                             </TableRow>
@@ -1016,11 +1110,11 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
                                             ))}
                                             {details.dailyYields.length > 0 && (
                                                 <TableRow className="font-semibold">
-                                                    <TableCell colSpan={2}>Totals (all records)</TableCell>
-                                                    <TableCell className="text-right font-mono text-emerald-700 dark:text-emerald-300">{quantity(dailyYieldTotals?.accepted || 0)}</TableCell>
-                                                    <TableCell className="text-right font-mono text-red-600 dark:text-red-300">{quantity(dailyYieldTotals?.rejected || 0)}</TableCell>
+                                                    <TableCell colSpan={2}>Logged totals (all records)</TableCell>
+                                                    <TableCell className="text-right font-mono text-emerald-700 dark:text-emerald-300">{quantity(dailyYieldTotals?.loggedGood || 0)}</TableCell>
+                                                    <TableCell className="text-right font-mono text-red-600 dark:text-red-300">{quantity(dailyYieldTotals?.loggedRejected || 0)}</TableCell>
                                                     <TableCell colSpan={2} />
-                                                    <TableCell className="text-right font-mono">{quantity(dailyYieldTotals?.total || 0)}</TableCell>
+                                                    <TableCell className="text-right font-mono">{quantity(dailyYieldTotals?.loggedTotal || 0)}</TableCell>
                                                     <TableCell colSpan={2} />
                                                 </TableRow>
                                             )}
@@ -1031,7 +1125,7 @@ export default function ManufacturingJobOrderInspectionQAModule({ inspectorName 
 
                             <div className="flex items-start gap-2 rounded-lg bg-primary/5 p-3 text-xs text-muted-foreground">
                                 <ClipboardCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                                <p><span className="font-semibold text-foreground">Produced Qty only counts Verified records.</span> Pending and Discrepancy rows remain visible in the table and totals for traceability, but their units stay out of Accepted and Produced Qty until they are audited or resolved.</p>
+                                <p><span className="font-semibold text-foreground">Verified totals above include only QA-passed records.</span> The logged totals below include pending and discrepant runs for traceability; they do not contribute to verified good, rejected, or produced quantities.</p>
                             </div>
 
                         </div>

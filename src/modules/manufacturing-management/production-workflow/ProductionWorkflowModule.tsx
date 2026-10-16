@@ -186,11 +186,6 @@ export default function ProductionWorkflowModule() {
 
     const dailyYieldAuditState = useDailyYieldAudit({ onSaved: handleAuditSaved });
 
-    const activeRuns = React.useMemo(() => {
-        return inProductionJobOrders.length;
-    }, [inProductionJobOrders]);
-
-    const totalRuns = inProductionJobOrders.length;
     const selectedJobOrderStatus = selectedJobOrder ? selectedJobOrder.status : null;
     const allRoutesCompleted = sortedTasks.length > 0
         && sortedTasks.every((task) => ["completed", "done", "closed"].includes(String(task.status || "").trim().toLowerCase()));
@@ -251,17 +246,17 @@ export default function ProductionWorkflowModule() {
         }
     };
 
-    const completedWorkstations = React.useMemo(() => {
-        let count = 0;
+    const operationProgress = React.useMemo(() => {
+        let completed = 0;
+        let total = 0;
         inProductionJobOrders.forEach((jo) => {
             const tasks = jo.routing_tasks || jo.routingTasks || [];
             tasks.forEach((t) => {
-                if (t.status === "Completed") {
-                    count++;
-                }
+                total++;
+                if (["completed", "done", "closed"].includes(String(t.status || "").trim().toLowerCase())) completed++;
             });
         });
-        return count;
+        return { completed, total };
     }, [inProductionJobOrders]);
 
     const parentJoNo = selectedJobOrder?.parent_job_order_no || null;
@@ -323,13 +318,12 @@ export default function ProductionWorkflowModule() {
 
             {/* Live Metrics Row */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {/* Active Runs Card */}
-                <div className="flex items-center justify-between p-5 bg-gradient-to-br from-card to-muted/20 border rounded-2xl shadow-sm hover:shadow-md transition-all duration-200" title="In-Production Job Orders currently loaded in this terminal.">
+                {/* In-Production Job Orders Card */}
+                <div className="flex items-center justify-between p-5 bg-gradient-to-br from-card to-muted/20 border rounded-2xl shadow-sm hover:shadow-md transition-all duration-200" title="Job Orders currently in production on this terminal.">
                     <div className="space-y-1">
-                        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Active WIP Runs</span>
+                        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">In-Production Job Orders</span>
                         <div className="flex items-baseline gap-2">
-                            <span className="text-2xl font-bold tracking-tight text-foreground">{activeRuns}</span>
-                            <span className="text-xs text-muted-foreground">/ {totalRuns} In Production JOs</span>
+                            <span className="text-2xl font-bold tracking-tight text-foreground">{inProductionJobOrders.length}</span>
                         </div>
                     </div>
                     <div className="p-3 bg-primary/10 text-primary rounded-xl">
@@ -356,8 +350,8 @@ export default function ProductionWorkflowModule() {
                     <div className="space-y-1">
                         <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Completed Operations</span>
                         <div className="flex items-baseline gap-2">
-                            <span className="text-2xl font-bold tracking-tight text-foreground">{completedWorkstations}</span>
-                            <span className="text-xs text-muted-foreground">steps completed</span>
+                            <span className="text-2xl font-bold tracking-tight text-foreground">{operationProgress.completed}</span>
+                            <span className="text-xs text-muted-foreground">of {operationProgress.total} steps</span>
                         </div>
                     </div>
                     <div className="p-3 bg-amber-500/10 text-amber-500 rounded-xl">

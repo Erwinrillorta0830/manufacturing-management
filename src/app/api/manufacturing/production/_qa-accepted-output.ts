@@ -25,6 +25,7 @@ export interface QAYieldAssessment {
     jobOrderId: number;
     goodQuantity: number;
     rejectedQuantity: number;
+    qaRejectedQuantity: number;
     scrapQuantity: number;
     totalQuantity: number;
     acceptedQuantity: number;
@@ -142,12 +143,16 @@ export function buildQAYieldAssessments(
             const rejectedQuantity = positiveQuantity(yieldRow.rejected_quantity);
             const scrapQuantity = positiveQuantity(yieldRow.scrap_quantity);
             const totalQuantity = goodQuantity + rejectedQuantity + scrapQuantity;
+            const qaRejectedQuantity = positiveQuantity(
+                yieldRow.qa_rejected_quantity ?? rejectedQuantity + scrapQuantity
+            );
 
             return {
                 ledgerId: currentLedgerId,
                 jobOrderId: currentJobOrderId,
                 goodQuantity,
                 rejectedQuantity,
+                qaRejectedQuantity,
                 scrapQuantity,
                 totalQuantity,
                 acceptedQuantity: releasedYieldGoodQuantity({
@@ -161,6 +166,35 @@ export function buildQAYieldAssessments(
             };
         })
         .filter((row) => row.ledgerId > 0 && row.jobOrderId > 0);
+}
+
+export interface VerifiedYieldOutputTotals {
+    acceptedQuantity: number;
+    rejectedQuantity: number;
+    totalProducedQuantity: number;
+}
+
+export function verifiedYieldOutputTotalsByJobOrder(
+    assessments: QAYieldAssessment[],
+    excludedJobOrderIds: ReadonlySet<number> = new Set()
+): Map<number, VerifiedYieldOutputTotals> {
+    const totalsByJobOrder = new Map<number, VerifiedYieldOutputTotals>();
+    for (const assessment of assessments) {
+        if (assessment.qaStatus !== "Passed" || excludedJobOrderIds.has(assessment.jobOrderId)) continue;
+
+        const acceptedQuantity = assessment.acceptedQuantity;
+        const rejectedQuantity = assessment.qaRejectedQuantity;
+        const total = totalsByJobOrder.get(assessment.jobOrderId) || {
+            acceptedQuantity: 0,
+            rejectedQuantity: 0,
+            totalProducedQuantity: 0,
+        };
+        total.acceptedQuantity += acceptedQuantity;
+        total.rejectedQuantity += rejectedQuantity;
+        total.totalProducedQuantity += acceptedQuantity + rejectedQuantity;
+        totalsByJobOrder.set(assessment.jobOrderId, total);
+    }
+    return totalsByJobOrder;
 }
 
 export function acceptedQuantityByJobOrder(

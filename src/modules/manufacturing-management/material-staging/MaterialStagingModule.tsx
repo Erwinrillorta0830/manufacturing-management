@@ -88,6 +88,12 @@ export default function MaterialStagingModule() {
         || selectedBranchId !== "all"
         || selectedStatusFilter !== "FOR_PICKING"
         || onlyShortages;
+    const handleClearQueueFilters = () => {
+        setSearchQuery("");
+        setSelectedBranchId("all");
+        setSelectedStatusFilter("FOR_PICKING");
+        setOnlyShortages(false);
+    };
 
     return (
         <div className="flex flex-col space-y-6 max-w-[1600px] mx-auto p-1 sm:p-2">
@@ -190,7 +196,7 @@ export default function MaterialStagingModule() {
                         <Clock className="h-5 w-5" />
                     </div>
                     <div>
-                        <div className="text-xs font-medium text-muted-foreground" title="In-flight Job Orders that still need staging attention. Cancelled and completed runs are excluded.">
+                        <div className="text-xs font-medium text-muted-foreground" title="In-flight Job Orders matching the current queue filters. Cancelled and completed runs are excluded.">
                             Active Staging JOs
                         </div>
                         <div className="text-xl sm:text-2xl font-extrabold text-foreground font-mono">
@@ -249,7 +255,7 @@ export default function MaterialStagingModule() {
                     <div className="relative flex-1 min-w-[200px]">
                         <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                         <Input
-                            placeholder="Search JO #, Product Name, SKU, Work Center..."
+                            placeholder="Search JO #, product, SKU, work center, component, or batch..."
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             className="pl-9 text-xs h-9 bg-background"
@@ -304,16 +310,29 @@ export default function MaterialStagingModule() {
                 </div>
 
                 {/* Shortage Filter Toggle */}
-                <Button
-                    variant={onlyShortages ? "destructive" : "outline"}
-                    size="sm"
-                    onClick={() => setOnlyShortages(!onlyShortages)}
-                    aria-pressed={onlyShortages}
-                    className="text-xs h-9 shrink-0 gap-1.5"
-                >
-                    <AlertTriangle className="h-3.5 w-3.5" />
-                    {onlyShortages ? "Showing Material Shortage JOs" : "Shortage JOs only"}
-                </Button>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                    <Button
+                        variant={onlyShortages ? "destructive" : "outline"}
+                        size="sm"
+                        onClick={() => setOnlyShortages(!onlyShortages)}
+                        aria-pressed={onlyShortages}
+                        className="text-xs h-9 shrink-0 gap-1.5"
+                    >
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                        {onlyShortages ? "Showing Material Shortage JOs" : "Shortage JOs only"}
+                    </Button>
+                    {hasActiveQueueFilters && (
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={handleClearQueueFilters}
+                            className="text-xs h-9 shrink-0"
+                        >
+                            Clear filters
+                        </Button>
+                    )}
+                </div>
             </div>
 
             {/* Main Interactive Dual-Panel Area: the right pick list expands
@@ -345,25 +364,9 @@ export default function MaterialStagingModule() {
                             <p className="text-xs text-muted-foreground mt-1">
                                 Try changing your search, status, branch, or shortage filters to view active manufacturing orders.
                             </p>
-                            {hasActiveQueueFilters && (
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    className="mt-3"
-                                    onClick={() => {
-                                        setSearchQuery("");
-                                        setSelectedBranchId("all");
-                                        setSelectedStatusFilter("FOR_PICKING");
-                                        setOnlyShortages(false);
-                                    }}
-                                >
-                                    Clear filters
-                                </Button>
-                            )}
                         </div>
                     ) : (
-                        <div className="space-y-3 max-h-[750px] overflow-y-auto pr-1 lg:flex-1 lg:min-h-0 lg:max-h-none">
+                        <div className="space-y-3 overflow-y-visible pr-1 lg:flex-1 lg:min-h-0 lg:overflow-y-auto">
                             {visibleJobOrders.map((jo) => {
                                 const isSelected = selectedJobOrder?.job_order_id === jo.job_order_id;
                                 const cancelled = isCancelledJobOrderStatus(jo.status);

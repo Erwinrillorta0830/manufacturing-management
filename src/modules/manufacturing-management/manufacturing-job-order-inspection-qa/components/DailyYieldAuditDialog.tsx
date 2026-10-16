@@ -161,16 +161,24 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
     const [auditTrailSectionOpen, setAuditTrailSectionOpen] = React.useState(false);
     const [revokeDialogOpen, setRevokeDialogOpen] = React.useState(false);
     const [revokeReason, setRevokeReason] = React.useState("");
+    const formContentRef = React.useRef<HTMLDivElement>(null);
     React.useEffect(() => {
         setEvidenceExpanded(false);
         setPreviewEvidence(null);
         setShowAllAuditTrail(false);
         setShowAllOperators(false);
-        const shouldStartOpen = window.matchMedia("(min-width: 64rem)").matches;
-        setChecklistSectionOpen(shouldStartOpen);
-        setEvidenceSectionOpen(shouldStartOpen);
-        setAuditTrailSectionOpen(shouldStartOpen);
+        setChecklistSectionOpen(false);
+        setEvidenceSectionOpen(false);
+        setAuditTrailSectionOpen(false);
     }, [controller.isOpen, yieldRecord?.ledgerId]);
+    React.useEffect(() => {
+        if (controller.saveError) formContentRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    }, [controller.saveError]);
+    React.useEffect(() => {
+        if (quantityAllocationError) {
+            document.getElementById("daily-yield-output-allocation-error")?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+    }, [quantityAllocationError]);
     const sortedAuditRoutes = React.useMemo(
         () => [...(controller.routes ?? [])].sort((left, right) => left.sequenceOrder - right.sequenceOrder),
         [controller.routes]
@@ -196,6 +204,7 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
         { key: "acceptedStock", label: "QA Accepted Stock Evidence", items: yieldRecord?.evidence?.acceptedStock ?? [] },
         { key: "rejectedStock", label: "QA Rejected Stock Evidence", items: yieldRecord?.evidence?.rejectedStock ?? [] }
     ];
+    const evidenceFileCount = evidenceChannels.reduce((count, channel) => count + channel.items.length, 0);
     const auditTrailEntries = React.useMemo(() => {
         type TrailEntry = {
             key: string;
@@ -303,7 +312,16 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                     </div>
                 )}
 
-                <form onSubmit={(event) => { event.preventDefault(); void controller.submitAudit(); }} className="min-h-0 flex-1 flex flex-col overflow-hidden text-sm" aria-busy={controller.actionLoading}>
+                <form
+                    onSubmit={(event) => { event.preventDefault(); void controller.submitAudit(); }}
+                    onInvalidCapture={(event) => {
+                        if (event.target instanceof HTMLElement) {
+                            event.target.scrollIntoView({ behavior: "smooth", block: "center" });
+                        }
+                    }}
+                    className="min-h-0 flex-1 flex flex-col overflow-hidden text-sm"
+                    aria-busy={controller.actionLoading}
+                >
                     <fieldset disabled={controller.actionLoading} className="contents">
                     {controller.saveError && (
                         <div role="alert" className="mb-2 shrink-0 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -342,6 +360,7 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                         </div>
                     </div>
                     <div
+                        ref={formContentRef}
                         role="region"
                         aria-label="Audit form content"
                         tabIndex={0}
@@ -481,7 +500,7 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                     onToggle={(event) => setChecklistSectionOpen(event.currentTarget.open)}
                                 >
                                     <summary className="flex select-none items-center justify-between text-xs font-bold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
-                                        <span>Operator Checklist Logs (Read-Only)</span>
+                                        <span>Operator Checklist Logs (Read-Only) · {controller.matchingLogs.length}</span>
                                         <span className="text-[10px] text-primary group-open:hidden font-semibold">Show logs</span>
                                         <span className="text-[10px] text-primary hidden group-open:inline font-semibold">Hide logs</span>
                                     </summary>
@@ -543,7 +562,9 @@ export function DailyYieldAuditDialog({ controller, displayShiftName }: DailyYie
                                         </div>
                                             <span className="truncate uppercase tracking-wider">Yield Evidence by Stage</span>
                                         </span>
-                                        <span className="shrink-0 text-[10px] font-semibold text-primary">{evidenceSectionOpen ? "Hide" : "Show"}</span>
+                                        <span className="shrink-0 text-[10px] font-semibold text-primary">
+                                            {evidenceFileCount} {evidenceFileCount === 1 ? "file" : "files"} · {evidenceSectionOpen ? "Hide" : "Show"}
+                                        </span>
                                     </summary>
                                     <div className="mt-2 space-y-2">
                                         {evidenceChannels.map((channel) => (
